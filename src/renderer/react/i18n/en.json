@@ -1,0 +1,37 @@
+{
+  "common": {
+    "cancel": "Cancel",
+    "confirm": "Confirm",
+    "remove": "Remove",
+    "retry": "Retry",
+    "copy": "Copy",
+    "copied": "Copied",
+    "close": "Close",
+    "loading": "Loading…",
+    "empty": "Nothing here"
+  },
+  "composer": {
+    "placeholderChat": "Cyrene is ready to chat with you ♪",
+    "placeholderTaskNoWorkspace": "Got a question or task? Cyrene can help ♪ (Pick a project folder first!)",
+    "placeholderTask": "Got a question or task? Cyrene can help ♪",
+    "placeholderBusy": "Press Enter to stop · Shift+Enter to queue",
+    "attachmentsLabel": "Attachments ready to send",
+    "queueLabel": "Messages queued",
+    "queueTruncated": "...",
+    "uploadFile": "Upload file",
+    "screenshot": "Screenshot",
+    "screenshotShortcut": "Screenshot (Alt+Shift+S)",
+    "stickerPicker": "Stickers",
+    "stickerList": "Sticker list",
+    "stickerEmpty": "No stickers available",
+    "stickerSelected": "Sticker selected",
+    "removeSticker": "Remove sticker",
+    "removeAttachment": "Remove {{name}}",
+    "removeQueuedMessage": "Remove",
+    "workspaceFolder": "Project folder",
+    "workspaceEnter": "Open project workspace",
+    "workspaceChoose": "Choose project folder",
+    "obsidianLibrary": "Obsidian vault",
+    "obsidianChoose": "Choose Obsidian vault"
+  }
+}

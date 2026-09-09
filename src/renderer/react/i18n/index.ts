@@ -9,6 +9,7 @@
  */
 import i18next from "i18next";
 import { useCallback, useSyncExternalStore } from "react";
+import en from "./en.json";
 import zhCN from "./zh-CN.json";
 
 export const UI_LOCALE_FALLBACK = "zh-CN";
@@ -17,6 +18,7 @@ void i18next.init({
   lng: UI_LOCALE_FALLBACK,
   fallbackLng: UI_LOCALE_FALLBACK,
   resources: {
+    en: { translation: en },
     "zh-CN": { translation: zhCN },
   },
   interpolation: { escapeValue: false },
