@@ -36,6 +36,8 @@ export type AnyStickerId = string;
 export interface ToolExecutionRecord {
   id: string;
   name: string;
+  /** 注册表中文展示名（如「播放歌曲」）；新记录由主进程事件携带，历史记录缺失时前端回退 i18n 映射或原始 ID。 */
+  displayName?: string;
   status: "running" | "success" | "error";
   result?: string;
   argsText?: string;
@@ -129,6 +131,8 @@ export interface ChatMessage {
   /** 父流程中的趣味子任务委托行；不包含子任务私有上下文。 */
   taskDelegations?: TaskDelegationDisplayRecord[];
   at: number;
+  /** 模型消息回答的用户消息 id：把认领派发与对应模型运行显式关联，恢复判定据此对账。 */
+  answersUserMessageId?: string;
   /** 不直接显示在聊天气泡里，但会拼入模型上下文。 */
   modelContext?: string;
   /** 绑定的微信/QQ等渠道来源；正文保持为用户实际发送的内容。 */
@@ -168,6 +172,8 @@ export interface ImageMessageAttachment {
   previewUrl?: string;
   caption?: string;
   status: "pending" | "done" | "error";
+  /** 截图标注标记：标注像素已绘入图片文件，恢复派发时用于 caption 提示词分支。 */
+  hasAnnotations?: boolean;
 }
 
 export interface DocumentMessageAttachment {
@@ -188,6 +194,54 @@ export interface ConversationWorkspaceBinding {
   displayName: string;
   /** 绑定时间戳 */
   boundAt: number;
+}
+
+/**
+ * 待发消息的附件引用：入队时刻的快照，只保留可恢复的稳定字段。
+ * blob: 预览 URL、预处理状态等瞬态数据不落盘，派发时由渲染层重建。
+ */
+export interface PendingChatAttachment {
+  kind: "image" | "document";
+  name: string;
+  /** 主进程落盘的附件绝对路径（临时文件或用户文件），派发时按它重新读取。 */
+  filePath: string;
+  mime?: string;
+  caption?: string;
+  /** 截图标注标记：标注像素已由截图 helper 绘入图片文件，此标记供派发时的 caption 提示词分支与展示使用。 */
+  hasAnnotations?: boolean;
+}
+
+/**
+ * 会话级待发消息：运行中排队、尚未派发的用户草稿快照。
+ * 独立于 messages 正式历史；派发成功后由队列消费逻辑转成 ChatMessage 并移除。
+ */
+export interface PendingChatMessage {
+  /** 稳定标识：页面生成（crypto.randomUUID），删除/去重/认领均按它处理。 */
+  id: string;
+  /** 用户原始输入（含表情包标记等未清洗内容）。 */
+  rawContent: string;
+  /** 展示内容（剥离表情包标记后；纯表情包消息可为空串）。 */
+  visibleContent: string;
+  /** 附件引用快照（入队时刻）；无附件时省略。 */
+  attachments?: PendingChatAttachment[];
+  /** 用户表情包 ID（内置或自定义）。 */
+  userSticker?: string;
+  /** 恢复指定旧 run（中断任务续跑）：随条目入队，认领派发时透传给模型运行。 */
+  resumeFromRunId?: string;
+  /** 入队时间戳（主进程写入）：数组顺序是派发顺序的权威依据，此字段作审计。 */
+  enqueuedAt: number;
+}
+
+/**
+ * 待发派发状态：队首已被认领（一次写入内转成正式用户消息并移出队列），
+ * 但模型运行尚未被主进程确认接受。run ack 成功后清除；
+ * 启动失败 / 页面刷新 / 进程退出时残留，恢复逻辑据此续派（不重复追加用户消息）。
+ */
+export interface PendingDispatchState {
+  /** 被认领的用户消息 id（即待发条目稳定标识）。 */
+  messageId: string;
+  /** 认领时间戳。 */
+  claimedAt: number;
 }
 
 export interface ChatSession {
@@ -217,6 +271,10 @@ export interface ChatSession {
    * 避免 UI 显示过期数据（known-issues 问题 3）。
    */
   currentContextUsage?: ContextUsageSnapshot;
+  /** 会话级待发队列：旧会话无此字段视为空队列（向后兼容）。 */
+  pendingMessages?: PendingChatMessage[];
+  /** 待发派发状态：认领后 run 确认接受前存在；残留即恢复入口（向后兼容缺省为无）。 */
+  pendingDispatch?: PendingDispatchState;
 }
 
 // index.json 里的轻量元数据（列表渲染用）。

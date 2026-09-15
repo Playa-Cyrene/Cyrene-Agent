@@ -3,12 +3,27 @@ import type {
   ChatSession,
   ChatSessionMeta,
   ConversationMode,
+  PendingChatMessage,
   ToolFileChange,
 } from "../../../../../shared/chat-types";
 import type {
   SpeechInputCommitRequest,
   SpeechInputCommitResult,
 } from "../../../../../shared/ipc-channels";
+
+/** 认领队首的返回形状（与主进程 chats-store 的 ClaimPendingResult 对齐）。 */
+export type PendingClaimResult =
+  | {
+      ok: true;
+      claimed: true;
+      userMessage: ChatMessage;
+      visibleContent: string;
+      resumeFromRunId?: string;
+      remainingQueue: PendingChatMessage[];
+      session: ChatSession;
+    }
+  | { ok: true; claimed: false }
+  | { ok: false; error: string };
 import type {
   PopQuizCard,
   PopQuizResolveResponse,
@@ -26,6 +41,19 @@ export interface ChatStoreApi {
   setMessageTtsCacheKey: (id: string, messageId: string, cacheKey: string, converterVersion: string) => Promise<ChatSession | null>;
   rename: (id: string, title: string) => Promise<ChatSession | null>;
   delete: (id: string) => Promise<boolean>;
+  // 会话级待发队列（主进程为权威）：入队失败时 ok=false，页面必须保留草稿
+  pendingEnqueue: (
+    id: string,
+    entry: Omit<PendingChatMessage, "enqueuedAt">,
+  ) => Promise<{ ok: true; queue: PendingChatMessage[] } | { ok: false; error: string }>;
+  pendingList: (id: string) => Promise<PendingChatMessage[] | null>;
+  pendingRemove: (id: string, messageId: string) => Promise<{ ok: boolean; error?: string }>;
+  // 认领队首（主进程单次写入：待发条目→正式用户消息+派发状态）；run 确认后清除派发状态
+  pendingClaim: (id: string) => Promise<PendingClaimResult>;
+  pendingCompleteDispatch: (
+    id: string,
+    messageId: string,
+  ) => Promise<{ ok: boolean; error?: string }>;
   setPinned: (id: string, pinned: boolean) => Promise<ChatSession | null>;
   setModelProfile: (id: string, modelProfileId?: string) => Promise<ChatSession | null>;
   pickWorkspaceFolder: () => Promise<{ ok: boolean; path?: string; displayName?: string; error?: string }>;
@@ -62,6 +90,8 @@ export interface AguiEvent {
   value?: unknown;
   toolCallId?: string;
   toolCallName?: string;
+  /** 主进程注册表里的中文展示名；用于工具执行卡片的用户可读标签。 */
+  toolCallDisplayName?: string;
   stepName?: string;
   status?: string;
   changes?: ToolFileChange[];

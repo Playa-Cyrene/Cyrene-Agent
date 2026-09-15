@@ -278,7 +278,6 @@ export function ChatComposer({
   };
 
   const hasComposerHeader = attachments.length > 0 || selectedStickers.length > 0 || pendingQueue.length > 0;
-  const shiftPressedRef = useRef(false);
 
   // Ctrl+V 粘贴图片：仅当剪贴板无 text/plain 且含白名单图片时才拦截默认粘贴行为——
   // 浏览器剪贴板常同时带 text/plain + image/png（复制网页富文本），
@@ -316,24 +315,38 @@ export function ChatComposer({
         rootClassName="cy-composer"
         value={value}
         placeholder={modelBusy ? t("composer.placeholderBusy") : placeholder}
-        loading={modelBusy}
-        // `disabled` 会同时禁掉 Sender 内建的取消键；运行中的任务必须始终可停止。
+        // 不能用 loading 承载忙态：Sender 源码在 loading 时直接拦截 onSubmit 并把发送键
+        // 换成内建停止键，运行中的排队入口会被整体切断。忙态改由 onSubmit 路由 + suffix
+        // 自定义按钮表达，输入仍可编辑。
+        // 运行中绝不禁用输入区：独立的停止按钮必须始终可点。
         disabled={!modelBusy && requiresWorkspace && !workspaceName}
         autoSize={{ minRows: 3, maxRows: 7 }}
         onChange={onChange}
         onCancel={onCancel}
         onPaste={handlePaste}
-        onKeyDown={(event) => { shiftPressedRef.current = event.shiftKey; }}
         onSubmit={(submitValue) => {
+          // 空内容直接忽略：显式传 disabled=false 会让 Sender 内建的空值保护
+          // （onSendDisabled）在 disabled 合并链中被短路，必须在路由入口自行拦截。
+          if (!submitValue.trim()) return;
+          // 忙闲路由：空闲正常发送；运行中加入当前会话的待发队列。
+          // Shift+Enter 换行、输入法组合期间不提交，均由 Sender 内建键盘逻辑保证。
           if (modelBusy) {
-            if (shiftPressedRef.current) {
-              onQueueMessage?.(submitValue);
-            } else {
-              onCancel?.();
-            }
+            onQueueMessage?.(submitValue);
           } else {
             onSubmit(submitValue);
           }
+        }}
+        suffix={(actionNode, { components }) => {
+          if (!modelBusy) return actionNode;
+          // 运行中：发送键变为“加入待发队列”，旁边是独立的停止按钮。
+          // LoadingButton 内建的 onCancelDisabled 是 !loading，本项目不再传 loading，
+          // 必须显式 disabled={false} 才能保持停止键可点。
+          return (
+            <div className="cy-composer__busy-actions">
+              <components.SendButton title={t("composer.queueSend")} aria-label={t("composer.queueSend")} />
+              <components.LoadingButton title={t("composer.stopRun")} aria-label={t("composer.stopRun")} disabled={false} />
+            </div>
+          );
         }}
         header={hasComposerHeader ? (
           <div className="cy-composer__attachments" aria-label={t("composer.attachmentsLabel")}>

@@ -695,6 +695,16 @@ const chatStoreApi = {
   rename: (id: string, title: string) =>
     ipcRenderer.invoke(IPC.CHATS_RENAME, { id, title }),
   delete: (id: string) => ipcRenderer.invoke(IPC.CHATS_DELETE, id),
+  // 会话级待发队列：入队成功才清草稿（失败保留并提示）；读取/删除按稳定标识
+  pendingEnqueue: (id: string, entry: unknown) =>
+    ipcRenderer.invoke(IPC.CHATS_PENDING_ENQUEUE, { sessionId: id, entry }),
+  pendingList: (id: string) => ipcRenderer.invoke(IPC.CHATS_PENDING_LIST, id),
+  pendingRemove: (id: string, messageId: string) =>
+    ipcRenderer.invoke(IPC.CHATS_PENDING_REMOVE, { sessionId: id, messageId }),
+  // 认领队首（主进程单次写入完成转正式消息 + 派发状态）；run 确认接受后清除派发状态
+  pendingClaim: (id: string) => ipcRenderer.invoke(IPC.CHATS_PENDING_CLAIM, id),
+  pendingCompleteDispatch: (id: string, messageId: string) =>
+    ipcRenderer.invoke(IPC.CHATS_PENDING_COMPLETE_DISPATCH, { sessionId: id, messageId }),
   setPinned: (id: string, pinned: boolean) =>
     ipcRenderer.invoke(IPC.CHATS_SET_PINNED, { id, pinned }),
   setModelProfile: (id: string, modelProfileId?: string) =>

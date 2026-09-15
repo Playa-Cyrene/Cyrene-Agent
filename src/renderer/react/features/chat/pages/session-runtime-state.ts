@@ -1,7 +1,6 @@
 import type { ChatMessageItem } from "../components/ChatMessageList";
-import type { ChatMessage, ConversationMode } from "../../../../../shared/chat-types";
+import type { ChatMessage, ChatSession, ConversationMode } from "../../../../../shared/chat-types";
 import type { ComposerInteraction } from "../components/run-presentation";
-import type { ComposerAttachment } from "../components/ChatComposer";
 import type { TodoItem } from "../../../../../shared/todo-types";
 import { t } from "../../../i18n";
 
@@ -186,34 +185,29 @@ export function mergeHarnessTodosForSession(
     [sessionId]: { runId: current?.runId ?? runId, todos, updatedAt },
   };
 }
-/** composer 上方待发队列的单条消息：run 进行中暂存，结束后按序自动发出。 */
-export interface PendingQueueEntry {
-  id: string;
-  rawContent: string;
-  visibleContent: string;
-  attachments: ComposerAttachment[];
-  userSticker?: string;
-  keepComposer?: boolean;
-}
+/** 残留认领（pendingDispatch）的恢复判定结果。 */
+export type ClaimRecoveryStatus =
+  /** 对应模型运行已有终态回答或错误提示：清除派发簿记后继续消费队列。 */
+  | { kind: "dispatched" }
+  /** 尚未派发或运行未终态：需要续派（旧 run 仍活着由主进程守卫与接管卡兜底）。 */
+  | { kind: "needs-dispatch" }
+  /** 认领记录指向的用户消息不存在（数据损坏）：暂停该会话队列并报错，绝不当作已完成。 */
+  | { kind: "claim-message-missing" };
 
-export type PendingQueueBySession = Record<string, PendingQueueEntry[]>;
-
-/** 会话忙时把消息追加到该会话的待发队列尾部（保持发送顺序）。 */
-export function appendPendingQueueEntry(
-  state: PendingQueueBySession,
-  sessionId: string,
-  entry: PendingQueueEntry,
-): PendingQueueBySession {
-  return { ...state, [sessionId]: [...(state[sessionId] ?? []), entry] };
-}
-
-/** 从待发队列移除一条消息（用户手动撤回）；队列未变时返回原引用。 */
-export function removePendingQueueEntry(
-  state: PendingQueueBySession,
-  sessionId: string,
-  id: string,
-): PendingQueueBySession {
-  const queue = state[sessionId];
-  if (!queue?.some((entry) => entry.id === id)) return state;
-  return { ...state, [sessionId]: queue.filter((entry) => entry.id !== id) };
+/**
+ * 判定残留认领的恢复路径：必须关联「本次认领的消息」与「它对应的模型运行」——
+ * 只统计 answersUserMessageId 指向该认领的 model 消息，其余消息（旧 run 的迟到回答、
+ * 其他轮次的回答）一律不算，避免误判已派发而丢消息。
+ */
+export function evaluateClaimRecovery(session: ChatSession, messageId: string): ClaimRecoveryStatus {
+  const index = session.messages.findIndex((message) => message.id === messageId && message.role === "user");
+  if (index < 0) return { kind: "claim-message-missing" };
+  const answered = session.messages.slice(index + 1).some((message) =>
+    message.role === "model"
+    && message.answersUserMessageId === messageId
+    && (message.runSnapshot
+      ? message.runSnapshot.status === "terminal"
+      : Boolean(message.content.trim() || message.sticker)),
+  );
+  return answered ? { kind: "dispatched" } : { kind: "needs-dispatch" };
 }

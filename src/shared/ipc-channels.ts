@@ -175,6 +175,13 @@ export const IPC = {
   CHATS_COMPACT: "chats:compact",
   CHATS_RENAME: "chats:rename",
   CHATS_DELETE: "chats:delete",
+  // 会话级待发队列（运行中排队、未派发；独立于正式 messages 历史）
+  CHATS_PENDING_ENQUEUE: "chats:pending-enqueue",
+  CHATS_PENDING_LIST: "chats:pending-list",
+  CHATS_PENDING_REMOVE: "chats:pending-remove",
+  // 认领队首（单次写入：待发条目 → 正式用户消息 + 派发状态）与派发确认
+  CHATS_PENDING_CLAIM: "chats:pending-claim",
+  CHATS_PENDING_COMPLETE_DISPATCH: "chats:pending-complete-dispatch",
   CHATS_SET_PINNED: "chats:set-pinned",
   CHATS_SET_MODEL_PROFILE: "chats:set-model-profile",
   CHATS_OPEN_FOLDER: "chats:open-folder",

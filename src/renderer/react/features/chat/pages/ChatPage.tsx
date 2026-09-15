@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "../../../i18n";
 import { DownOutlined } from "@ant-design/icons";
-import { ChatComposer, parseComposerMessage, type ComposerAttachment } from "../components/ChatComposer";
+import { ChatComposer, parseComposerMessage } from "../components/ChatComposer";
 import { ComposerSlot } from "../components/ComposerSlot";
 import { TodoPanel } from "../components/TodoPanel";
 import { CodeGitPanel } from "../components/CodeGitPanel";
@@ -23,7 +23,13 @@ import {
 import { getTtsPlaybackSnapshot, playTtsToCompletion, stopTtsPlayback } from "../components/tts-playback";
 import { EarlyTtsPlaybackQueue, type EarlyTtsSplitMode } from "../tts/early-tts-queue";
 
-import type { ChatMessage, ChatSession, ChatSessionMeta, ConversationMode } from "../../../../../shared/chat-types";
+import type {
+  ChatMessage,
+  ChatSession,
+  ChatSessionMeta,
+  ConversationMode,
+  PendingChatMessage,
+} from "../../../../../shared/chat-types";
 import { type ContextUsageSnapshot } from "../../../../../shared/context-usage";
 import { ChatPagePanelHost } from "../components/ChatPagePanelHost";
 import { useUserCallPreference } from "../../../hooks/useUserNickname";
@@ -59,19 +65,21 @@ import { useSchedulerEvents } from "../hooks/useSchedulerEvents";
 import { useChannelMirrorEvents } from "../hooks/useChannelMirrorEvents";
 import { AgentRunController, type AgentRunInput } from "./run/AgentRunController";
 import {
-  appendPendingQueueEntry,
   clearSessionInteraction,
   bindWorkspaceName,
   findSessionIdForRun,
   hasActiveRunForSession,
-  removePendingQueueEntry,
   sessionInteraction,
   setSessionInteraction,
   setSessionInteractionBusy,
-  type PendingQueueBySession,
   type SessionInteractionState,
   type TodoStateBySession,
 } from "./session-runtime-state";
+import {
+  createPendingQueueFlow,
+  type PendingQueueFlow,
+  type PendingQueueFlowHost,
+} from "./pending-queue-flow";
 import "../../../components/ui/SidebarToggle.css";
 import "../../../components/ui/ModeSwitch.css";
 import "../../../components/ui/WindowControls.css";
@@ -285,8 +293,9 @@ export function ChatPage() {
   const lastTurnRevisionStartingRef = useRef(false);
   const activeAguiOffsRef = useRef(new Set<() => void>());
   const cancelRequestedSessionsRef = useRef(new Set<string>());
-  // 外部提交（语音输入）入队的消息带 keepComposer，消费时不触碰用户草稿
-  const [pendingQueueBySession, setPendingQueueBySession] = useState<PendingQueueBySession>({});
+  // 会话待发队列投影：权威数据是主进程会话文件里的 pendingMessages，
+  // 页面只持显示快照，入队/删除/认领/其他窗口变更后按稳定标识（id）对账刷新
+  const [pendingQueueBySession, setPendingQueueBySession] = useState<Record<string, PendingChatMessage[]>>({});
   const pendingQueueBySessionRef = useRef(pendingQueueBySession);
   useEffect(() => {
     pendingQueueBySessionRef.current = pendingQueueBySession;
@@ -323,6 +332,45 @@ export function ChatPage() {
     getActiveScope: () => activeScopeRef.current,
     patchMessageAttachments: updateMessageAttachments,
   });
+
+  // 渲染态消息快照 ref：待发队列流程查询消息是否已在视图（刷新恢复时不重复追加）
+  const messagesBySessionRef = useRef(messagesBySession);
+  messagesBySessionRef.current = messagesBySession;
+
+  // 待发队列流程：入队/认领/派发/恢复的页面链路（独立模块，便于流程级测试）。
+  // host 经 ref 每次渲染刷新到最新闭包；流程实例与入队失败缓存跨渲染稳定。
+  const queueFlowHostRef = useRef<PendingQueueFlowHost | null>(null);
+  queueFlowHostRef.current = {
+    getStore: () => chatStore(),
+    isSessionBusy,
+    hasRenderedMessage: (sessionId, messageId) =>
+      (messagesBySessionRef.current[sessionId] ?? []).some((item) => item.id === messageId),
+    replaceProjection: (sessionId, queue) => {
+      setPendingQueueBySession((current) => {
+        if (queue === null) {
+          if (!(sessionId in current)) return current;
+          const next = { ...current };
+          delete next[sessionId];
+          return next;
+        }
+        return { ...current, [sessionId]: queue.map((item) => ({ ...item })) };
+      });
+    },
+    appendMessages,
+    prepareImageAttachments: (sessionId, messageId, attachmentList) => {
+      void prepareImageAttachments(sessionId, messageId, attachmentList);
+    },
+    refreshSessions: (targetMode) => {
+      void refreshSessions(targetMode, false);
+    },
+    startRun: runModel,
+    reportError: (message) => window.alert(message),
+  };
+  const queueFlowRef = useRef<PendingQueueFlow | null>(null);
+  if (!queueFlowRef.current) {
+    queueFlowRef.current = createPendingQueueFlow(() => queueFlowHostRef.current!);
+  }
+  const queueFlow = queueFlowRef.current;
   const sessions = sessionsByMode[mode] ?? [];
   const [activeSession, setActiveSession] = useState<ChatSession | null>(null);
   // 会话级最新上下文快照（环形图优先读取点）：run 事件实时写入；
@@ -352,9 +400,19 @@ export function ChatPage() {
   useEffect(() => {
     const store = chatStore();
     if (!store) return;
-    const refresh = () => void refreshSessions(activeModeRef.current, true);
+    const refresh = () => {
+      void refreshSessions(activeModeRef.current, true);
+      // 队列投影对账：刷新当前各模式活跃会话与所有仍有投影的会话
+      // （其他窗口可能入队/删除/认领；会话已删时 pendingList 返回 null 清除投影）
+      const sessionIds = new Set<string>(Object.keys(pendingQueueBySessionRef.current));
+      for (const activeId of Object.values(activeSessionIdsRef.current)) {
+        if (activeId) sessionIds.add(activeId);
+      }
+      for (const sessionId of sessionIds) void queueFlow.syncProjection(sessionId);
+    };
     const off = store.onChanged(refresh);
     return off;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // 模式 effect：bootstrap 完成后才刷新；bootstrap 自身由下方合并 effect 接管
@@ -642,6 +700,10 @@ export function ChatPage() {
       [targetMode]: session.workspaceBinding?.displayName,
     }));
     if (targetMode === activeModeRef.current) void store.setActiveSession(sessionId, targetMode);
+    // 切到会话即对账队列投影，并尝试消费队列/恢复残留认领
+    // （页面刷新、进程重启后队列消费的恢复入口；会话忙或队列空时内部直接返回）
+    void queueFlow.syncProjection(sessionId);
+    void queueFlow.consume(targetMode, sessionId);
   }
 
   /**
@@ -748,25 +810,9 @@ export function ChatPage() {
           start: createEarlyTtsQueue,
           finish: finishEarlyTtsQueue,
         },
-        onRunFinished: ({ mode, sessionId }) => {
-          void refreshSessions(mode, false);
-          // 当前 session 队列中的下一条消息自动消费
-          const queue = pendingQueueBySessionRef.current[sessionId] ?? [];
-          if (queue.length === 0) return;
-          const [next, ...rest] = queue;
-          pendingQueueBySessionRef.current = { ...pendingQueueBySessionRef.current, [sessionId]: rest };
-          setPendingQueueBySession(pendingQueueBySessionRef.current);
-          void dispatchUserMessage({
-            targetMode: mode,
-            sessionId,
-            rawContent: next.rawContent,
-            visibleContent: next.visibleContent,
-            attachments: next.attachments,
-            userSticker: next.userSticker,
-            assistantId: crypto.randomUUID(),
-            userMessageId: next.id,
-            keepComposer: next.keepComposer,
-          });
+        onRunFinished: ({ mode, sessionId, queuePaused }) => {
+          // 刷新列表与队列投影；queuePaused 时暂停消费（先恢复认领再说），否则消费下一条
+          queueFlow.handleRunFinished({ mode, sessionId, queuePaused });
         },
       },
       registries: {
@@ -1036,7 +1082,6 @@ export function ChatPage() {
     activeEarlyTtsRef.current = null;
     const userSticker = parsedMessage.userSticker;
     const visibleMessage = parsedMessage.visibleContent;
-    const assistantId = crypto.randomUUID();
     const userMessageId = crypto.randomUUID();
     const attachmentsForMessage = attachments.map((attachment) => ({ ...attachment }));
     const targetMode = mode;
@@ -1068,139 +1113,32 @@ export function ChatPage() {
       });
     }
 
-    // 如果当前 session 正在跑模型，新消息进入 composer 上方队列，等当前 run 结束后自动发送
-    if (isSessionBusy(sessionId)) {
-      const nextQueue = appendPendingQueueEntry(pendingQueueBySessionRef.current, sessionId, {
-        id: userMessageId,
-        rawContent: message,
-        visibleContent: visibleMessage,
-        attachments: attachmentsForMessage,
-        userSticker,
-      });
-      pendingQueueBySessionRef.current = nextQueue;
-      setPendingQueueBySession(nextQueue);
-      setDrafts((current) => ({ ...current, [scopeKey]: "" }));
-      clearScopeAttachments();
-      return;
-    }
-    await dispatchUserMessage({
-      targetMode,
-      sessionId,
+    // 统一走主进程权威队列：只有入队确认成功后才清草稿和附件（失败保留并提示）。
+    // 会话忙时留在队列等 run 结束消费；空闲时立即认领派发——
+    // 发送瞬间的并发由主进程 claim 原子性与 SESSION_RUN_ACTIVE 守卫兜底。
+    // 入队失败/异常时流程内部复用原稳定标识，重试靠主进程幂等去重不产生重复消息。
+    const enqueued = await queueFlow.enqueue(sessionId, targetMode, {
+      id: userMessageId,
       rawContent: message,
       visibleContent: visibleMessage,
       attachments: attachmentsForMessage,
       userSticker,
-      assistantId,
-      userMessageId,
-      resumeFromRunId,
+      ...(resumeFromRunId ? { resumeFromRunId } : {}),
     });
-  }
-
-  async function dispatchUserMessage(input: {
-    targetMode: ConversationMode;
-    sessionId: string;
-    rawContent: string;
-    visibleContent: string;
-    attachments: ComposerAttachment[];
-    userSticker?: string;
-    assistantId: string;
-    userMessageId: string;
-    resumeFromRunId?: string;
-    /** 外部提交（语音输入）为 true：不清空用户正在编辑的草稿与附件。 */
-    keepComposer?: boolean;
-    /** 为 false 时用户消息落盘后立即返回，模型运行转入后台继续。 */
-    waitForRun?: boolean;
-  }): Promise<{ persisted: boolean }> {
-    const { targetMode, sessionId, rawContent, visibleContent, attachments, userSticker, assistantId, userMessageId, resumeFromRunId, keepComposer } = input;
-    appendMessages(sessionId, [
-      {
-        id: userMessageId,
-        role: "user",
-        content: visibleContent,
-        sticker: userSticker,
-        attachments: attachments.length > 0 ? attachments : undefined,
-      },
-      {
-        id: assistantId,
-        role: "assistant" as const,
-        content: "",
-        loading: true,
-        waitingForFirstEvent: true,
-        streaming: false,
-        responseStarted: false,
-      },
-    ]);
-    if (!keepComposer) {
-      setDrafts((current) => ({ ...current, [scopeKey]: "" }));
-      clearScopeAttachments();
-    }
-    const updatedSession = await chatStore()?.append(sessionId, {
-      id: userMessageId,
-      role: "user",
-      content: rawContent,
-      at: Date.now(),
-      sticker: userSticker,
-      attachments: attachments
-        .filter((attachment) => (attachment.kind === "image" || attachment.kind === "document") && attachment.filePath)
-        .map((attachment) => attachment.kind === "image" ? {
-          kind: "image" as const,
-          name: attachment.name,
-          filePath: attachment.filePath!,
-          mime: attachment.mime ?? "application/octet-stream",
-          caption: attachment.caption,
-          status: "pending" as const,
-        } : {
-          kind: "document" as const,
-          name: attachment.name,
-          filePath: attachment.filePath!,
-          status: "pending" as const,
-        }),
-    });
-    void refreshSessions(targetMode, false);
-    if (attachments.length > 0) {
-      void prepareImageAttachments(sessionId, userMessageId, attachments);
-    }
-    if (!updatedSession) {
-      updateMessage(targetMode, assistantId, {
-        content: t("chatPage.errorUserMessageNotPersisted"),
-        loading: false,
-        waitingForFirstEvent: false,
-        streaming: false,
-        responseStarted: true,
-      });
-      return { persisted: false };
-    }
-    if (input.waitForRun === false) {
-      // 外部提交：用户消息已接受并落盘，模型运行在后台继续
-      void runModel({
-        targetMode,
-        sessionId,
-        userMessageId,
-        assistantId,
-        session: updatedSession,
-        attachments,
-        resumeFromRunId,
-      });
-    } else {
-      await runModel({
-        targetMode,
-        sessionId,
-        userMessageId,
-        assistantId,
-        session: updatedSession,
-        attachments,
-        resumeFromRunId,
-      });
-    }
-    return { persisted: true };
+    if (!enqueued) return;
+    // 请求期间用户继续输入时不清掉新内容：仅当草稿仍是发送时的文本才清空；
+    // 附件同样只清随消息发送的那些（空快照不清任何附件），期间新加的保留
+    setDrafts((current) => (current[scopeKey] === content ? { ...current, [scopeKey]: "" } : current));
+    clearScopeAttachments(attachmentsForMessage);
+    await queueFlow.consume(targetMode, sessionId);
   }
 
   /**
    * 外部（语音输入租约）向指定会话提交文本：
    * - 使用提交请求冻结的会话与模式，不读取当前页面状态；
    * - 不清空用户正在编辑的草稿、附件和输入框；
-   * - 会话忙时进入与手动发送相同的消息队列；
-   * - 用户消息被接受并落盘后即返回，不等待模型完整回答。
+   * - 与手动发送走同一持久队列：入队确认成功（消息已落盘）才返回成功，
+   *   绝不能只进页面内存就回执；空闲时随即认领派发，模型运行后台继续。
    */
   async function submitTextToSession(input: {
     sessionId: string;
@@ -1222,33 +1160,24 @@ export function ChatPage() {
     if (session.mode !== input.mode) {
       return { ok: false, error: { code: "E_INVALID_ARGUMENT", message: "会话模式不匹配" } };
     }
-    // 会话忙时进入同一消息队列，当前 run 结束后自动发送（视为已接受）
-    if (isSessionBusy(input.sessionId)) {
-      const nextQueue = appendPendingQueueEntry(pendingQueueBySessionRef.current, input.sessionId, {
+    // 入队失败不弹窗（外部提交场景）：错误码回传给语音调用方；
+    // 同样走流程的失败标识缓存——外部重试同文本也复用原稳定标识
+    const enqueued = await queueFlow.enqueue(
+      input.sessionId,
+      input.mode,
+      {
         id: crypto.randomUUID(),
         rawContent: text,
         visibleContent: text,
         attachments: [],
-        keepComposer: true,
-      });
-      pendingQueueBySessionRef.current = nextQueue;
-      setPendingQueueBySession(nextQueue);
-      return { ok: true };
+      },
+      false,
+    );
+    if (!enqueued) {
+      return { ok: false, error: { code: "E_INTERNAL", message: "消息入队失败" } };
     }
-    const dispatched = await dispatchUserMessage({
-      targetMode: input.mode,
-      sessionId: input.sessionId,
-      rawContent: text,
-      visibleContent: text,
-      attachments: [],
-      assistantId: crypto.randomUUID(),
-      userMessageId: crypto.randomUUID(),
-      keepComposer: true,
-      waitForRun: false,
-    });
-    if (!dispatched.persisted) {
-      return { ok: false, error: { code: "E_INTERNAL", message: "用户消息落盘失败" } };
-    }
+    // 空闲时立即消费派发（忙时等 run 结束的 onRunFinished）；不等待模型回答
+    void queueFlow.consume(input.mode, input.sessionId);
     return { ok: true };
   }
 
@@ -1274,13 +1203,20 @@ export function ChatPage() {
     await aguiApi()?.cancel(activeRun.runId);
   }
 
-  function removeQueuedMessage(sessionId: string, id: string) {
-    const next = removePendingQueueEntry(pendingQueueBySessionRef.current, sessionId, id);
-    pendingQueueBySessionRef.current = next;
-    setPendingQueueBySession(next);
+  /** 撤回排队消息：主进程按稳定标识删除（已被认领/移除时幂等成功），失败提示且投影不动。 */
+  async function removeQueuedMessage(sessionId: string, id: string) {
+    const store = chatStore();
+    if (!store) return;
+    const result = await store.pendingRemove(sessionId, id);
+    if (!result.ok) {
+      window.alert(t("chatPage.errorQueueRemoveFailed", { error: result.error ?? t("chatPage.unknownError") }));
+      return;
+    }
+    await queueFlow.syncProjection(sessionId);
   }
 
-  function queueCurrentDraft(value: string) {
+  /** 运行中把当前草稿排进持久队列（composer 加号按钮）：入队成功才清草稿与附件。 */
+  async function queueCurrentDraft(value: string) {
     if (!activeSessionId || !value.trim()) return;
     const sessionId = activeSessionId;
     const parsedMessage = parseComposerMessage(mode, value);
@@ -1289,17 +1225,18 @@ export function ChatPage() {
     const visibleContent = parsedMessage.visibleContent;
     const attachmentsForMessage = attachments.map((attachment) => ({ ...attachment }));
     const userMessageId = crypto.randomUUID();
-    const nextQueue = appendPendingQueueEntry(pendingQueueBySessionRef.current, sessionId, {
+    const enqueued = await queueFlow.enqueue(sessionId, mode, {
       id: userMessageId,
       rawContent: parsedMessage.rawContent,
       visibleContent,
       attachments: attachmentsForMessage,
       userSticker,
     });
-    pendingQueueBySessionRef.current = nextQueue;
-    setPendingQueueBySession(nextQueue);
-    setDrafts((current) => ({ ...current, [scopeKey]: "" }));
-    clearScopeAttachments();
+    if (!enqueued) return;
+    // 请求期间用户继续输入时不清掉新内容：仅当草稿仍是排队时的文本才清空；
+    // 附件同样只清随消息入队的那些（空快照不清任何附件），期间新加的保留
+    setDrafts((current) => (current[scopeKey] === value ? { ...current, [scopeKey]: "" } : current));
+    clearScopeAttachments(attachmentsForMessage);
   }
 
   const isCurrentScopeRunning = Boolean(activeSessionId && activeRunsBySession.current[activeSessionId]);
@@ -1444,8 +1381,8 @@ export function ChatPage() {
             onChange={(value) => setDrafts((current) => ({ ...current, [scopeKey]: value }))}
             onSubmit={(value) => void sendMessage(value)}
             onCancel={() => void cancelCurrentRun()}
-            onQueueMessage={(value) => queueCurrentDraft(value)}
-            onRemoveQueuedMessage={(id) => activeSessionId && removeQueuedMessage(activeSessionId, id)}
+            onQueueMessage={(value) => void queueCurrentDraft(value)}
+            onRemoveQueuedMessage={(id) => activeSessionId && void removeQueuedMessage(activeSessionId, id)}
             onChooseWorkspace={() => void chooseWorkspace()}
             onChooseFiles={(files) => void chooseFiles(files)}
             onRemoveAttachment={removeAttachment}

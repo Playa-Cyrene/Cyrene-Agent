@@ -51,6 +51,11 @@ export interface AgentRunInput {
   attachments: ComposerAttachment[];
   resumeFromRunId?: string;
   takeoverFromRunId?: string;
+  /**
+   * 待发队列认领派发：用户消息已由主进程认领写入历史（非本控制器追加）。
+   * run ack 成功后清除会话的 pendingDispatch；失败则保留供恢复续派（不重复追加）。
+   */
+  claimedPendingMessageId?: string;
 }
 
 /**
@@ -93,8 +98,10 @@ export interface AgentRunHost {
   /**
    * run 结束（含成功、失败、取消、接管冲突等所有路径）。
    * 宿主据此刷新会话列表并消费该会话的待发消息队列。
+   * queuePaused=true 表示 run 未被主进程接受（启动失败/守卫冲突挂起接管），
+   * 该会话的队列消费必须停住：认领的消息尚未派发成功，先恢复它再说。
    */
-  onRunFinished(input: { mode: ConversationMode; sessionId: string }): void;
+  onRunFinished(input: { mode: ConversationMode; sessionId: string; queuePaused: boolean }): void;
 }
 
 /** 跨 run 共享的可变注册表：由页面持有、按引用注入，语义与 ref 一致。 */
@@ -144,6 +151,8 @@ export class AgentRunController {
   private sticker: string | null = null;
   private toolExecutions: ToolExecutionRecord[] = [];
   private runStarted = false;
+  /** run 已被主进程接受（ack 成功）：false 时 onRunFinished 携带 queuePaused 暂停队列消费。 */
+  private runAccepted = false;
   private runActivity: RunActivityRecord | undefined;
   private currentTodos: TodoItem[] = [];
   private persistedFinalContent = "";
@@ -183,7 +192,11 @@ export class AgentRunController {
         role: "model",
         content: visibleError,
         at: Date.now(),
+        // 桥不可用的错误提示也锚定到本轮用户消息：恢复判定把它算作已派发
+        answersUserMessageId: this.input.userMessageId,
       });
+      // run 未被主进程接受：认领派发（若有）保留 pendingDispatch 供恢复，宿主暂停队列消费
+      this.deps.host.onRunFinished({ mode: this.input.targetMode, sessionId: this.input.sessionId, queuePaused: true });
       return;
     }
 
@@ -243,6 +256,32 @@ export class AgentRunController {
           })),
       });
       if (!ack.success) throw new Error(ack.error ?? t("chatPage.errorModelRequestStartFailed"));
+      // run 已被主进程接受：认领派发的消息确认派发完成，清除 pendingDispatch。
+      // 确认失败仅告警——残留状态会被恢复逻辑识别为"已有回答"后清除，不会重复派发。
+      this.runAccepted = true;
+      if (this.input.claimedPendingMessageId) {
+        // 模型启动已成功：派发状态清理失败/异常只告警，绝不落入下方 catch 的
+        // 「模型请求失败」分支（那会把成功的 run 污染成错误终态）。
+        // 残留的 pendingDispatch 由恢复逻辑识别为"已有回答"后清除，不会重复派发。
+        try {
+          const completed = await store.pendingCompleteDispatch(
+            this.input.sessionId,
+            this.input.claimedPendingMessageId,
+          );
+          if (!completed.ok) {
+            console.warn(
+              `[AgentRunController] 待发派发确认失败（保留恢复入口）: sessionId=${this.input.sessionId}`,
+              `messageId=${this.input.claimedPendingMessageId}`,
+            );
+          }
+        } catch (err) {
+          console.warn(
+            `[AgentRunController] 待发派发确认异常（保留恢复入口）: sessionId=${this.input.sessionId}`,
+            `messageId=${this.input.claimedPendingMessageId}`,
+            err,
+          );
+        }
+      }
       // 新 run 已被主进程接受：同会话旧的守卫冲突操作卡（若有）不再有效
       this.deps.host.clearTakeover(this.input.sessionId);
       // 立即把 ack.runId 写入注册表，让 cancel 在 RUN_STARTED 事件到达前也能找到正确的 runId。
@@ -367,7 +406,13 @@ export class AgentRunController {
         this.deps.registries.activeRuns.current = nextActive;
       }
       this.deps.host.setModeBusy(this.input.targetMode, false);
-      this.deps.host.onRunFinished({ mode: this.input.targetMode, sessionId: this.input.sessionId });
+      // queuePaused：run 从未被主进程接受（启动失败/守卫冲突挂起接管），
+      // 该会话的认领消息尚未派发成功——宿主必须暂停队列消费，先恢复认领再说。
+      this.deps.host.onRunFinished({
+        mode: this.input.targetMode,
+        sessionId: this.input.sessionId,
+        queuePaused: !this.runAccepted,
+      });
     }
   }
 
@@ -390,6 +435,8 @@ export class AgentRunController {
       taskDelegations: this.taskDelegations,
       runActivity: this.runActivity,
       at: this.assistantAt,
+      // 关联本轮回答的用户消息：残留认领的恢复判定只认这条锚点
+      answersUserMessageId: this.input.userMessageId,
       sticker: this.sticker,
       toolExecutions: this.toolExecutions,
       contextUsage: this.contextUsage,
@@ -441,6 +488,7 @@ export class AgentRunController {
       ? [...this.toolExecutions, {
           id: toolId,
           name: patch.name ?? t("chatPage.toolCallFallbackName"),
+          displayName: patch.displayName,
           status: patch.status ?? "running",
           result: patch.result,
           argsText: patch.argsText,
@@ -628,13 +676,16 @@ export class AgentRunController {
       const stage = stageForStep(event.stepName);
       if (stage) this.deps.host.patchMessage(this.input.sessionId, this.input.assistantId, { runStage: stage });
     } else if (event.type === "TOOL_CALL_START" && event.toolCallId) {
+      // 中文名优先（主进程注册表携带）；缺失时回退英文 ID
+      const displayToolName = event.toolCallDisplayName ?? event.toolCallName ?? t("chatPage.toolCallFallbackName");
       this.updateRunTool(event.toolCallId, {
         name: event.toolCallName ?? t("chatPage.toolCallFallbackName"),
+        displayName: event.toolCallDisplayName,
         status: "running",
         roundId: this.activeRoundId,
       });
       this.deps.host.patchMessage(this.input.sessionId, this.input.assistantId, {
-        runStage: { kind: "executing", detail: event.toolCallName ?? t("chatPage.toolCallFallbackName") },
+        runStage: { kind: "executing", detail: displayToolName },
       });
     } else if (event.type === "TOOL_CALL_ARGS" && event.toolCallId && event.delta) {
       const currentArgs = this.toolExecutions.find((tool) => tool.id === event.toolCallId)?.argsText ?? "";

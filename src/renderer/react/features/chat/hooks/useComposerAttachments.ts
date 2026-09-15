@@ -36,8 +36,11 @@ export interface ComposerAttachmentsApi {
   removeAttachment: (index: number) => void;
   /** 消息落盘后的图片预处理：direct 直传 / caption 视觉描述，结果写回消息上的附件条目 */
   prepareImageAttachments: (sessionId: string, messageId: string, attachments: ComposerAttachment[]) => Promise<void>;
-  /** 发送后清空当前 scope 的附件（语音提交 keepComposer 场景不调用） */
-  clearScopeAttachments: () => void;
+  /**
+   * 消息入队确认成功后清理附件：只移除 sent 快照里的条目，空快照不清任何附件
+   * （请求期间新加的保留；语音提交 keepComposer 场景不调用）。
+   */
+  clearScopeAttachments: (sent: ComposerAttachment[]) => void;
   /** 新建任务：删除整个 mode scope 的暂存附件 */
   deleteScopeAttachments: (scope: string) => void;
   dragHandlers: ComposerDragHandlers;
@@ -240,8 +243,22 @@ export function useComposerAttachments(input: {
     }));
   }
 
-  function clearScopeAttachments() {
-    setAttachmentsByScope((current) => ({ ...current, [scopeKey]: [] }));
+  /**
+   * 消息入队确认成功后清理附件：只移除随消息提交的 sent 快照里的条目
+   * （按 filePath/name 对账）。空快照（发送时本就没有附件）什么都不清——
+   * 入队请求期间用户新加的附件必须保留，与草稿清理守卫同口径。
+   */
+  function clearScopeAttachments(sent: ComposerAttachment[]) {
+    setAttachmentsByScope((current) => {
+      if (sent.length === 0) return current;
+      const sentKeys = new Set(sent.map((attachment) => attachment.filePath ?? attachment.name));
+      return {
+        ...current,
+        [scopeKey]: (current[scopeKey] ?? []).filter(
+          (attachment) => !sentKeys.has(attachment.filePath ?? attachment.name),
+        ),
+      };
+    });
   }
 
   function deleteScopeAttachments(scope: string) {

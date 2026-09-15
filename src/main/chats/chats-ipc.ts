@@ -290,6 +290,63 @@ export function registerChatsIpc(ipcOption?: IpcScope): void {
     return session;
   });
 
+  // ── 会话级待发队列：入队 / 读取 / 删除 ──────────────────
+  // 入队成功才返回 ok:true 和权威队列；失败原因机器可读，渲染层据此保留草稿并提示。
+  // 幂等命中（enqueued=false，同标识同内容重试）不广播：磁盘与队列均未变化。
+  ipc.handle(
+    IPC.CHATS_PENDING_ENQUEUE,
+    (event, payload: { sessionId?: unknown; entry?: unknown }) => {
+      const sessionId = typeof payload?.sessionId === "string" ? payload.sessionId : "";
+      const entry = payload?.entry as chatsStore.PendingChatMessageInput | undefined;
+      if (!sessionId || !entry || typeof entry !== "object") {
+        return { ok: false, error: "invalid-payload" };
+      }
+      const result = chatsStore.enqueuePendingMessage(sessionId, entry);
+      if (result.ok && result.enqueued) broadcastChanged(event.sender);
+      return result;
+    },
+  );
+
+  ipc.handle(IPC.CHATS_PENDING_LIST, (_event, sessionId: unknown) => {
+    if (typeof sessionId !== "string" || !sessionId) return null;
+    return chatsStore.getPendingMessages(sessionId);
+  });
+
+  // 删除按稳定标识处理竞争：条目恰好已被认领/移除时幂等成功（removed=false 不广播）。
+  ipc.handle(
+    IPC.CHATS_PENDING_REMOVE,
+    (event, payload: { sessionId?: unknown; messageId?: unknown }) => {
+      const sessionId = typeof payload?.sessionId === "string" ? payload.sessionId : "";
+      const messageId = typeof payload?.messageId === "string" ? payload.messageId : "";
+      if (!sessionId || !messageId) return { ok: false, error: "invalid-payload" };
+      const result = chatsStore.removePendingMessage(sessionId, messageId);
+      if (result.ok && result.removed) broadcastChanged(event.sender);
+      return result;
+    },
+  );
+
+  // 认领队首：单次会话文件写入完成待发条目 → 正式用户消息 + 派发状态。
+  // 认领产生真实历史消息，广播刷新；队列空/认领冲突原样透传。
+  ipc.handle(IPC.CHATS_PENDING_CLAIM, (event, sessionId: unknown) => {
+    if (typeof sessionId !== "string" || !sessionId) {
+      return { ok: false, error: "invalid-payload" };
+    }
+    const result = chatsStore.claimPendingMessage(sessionId);
+    if (result.ok && result.claimed) broadcastChanged(event.sender);
+    return result;
+  });
+
+  // 派发确认：run 被主进程接受后清除认领状态；纯簿记，不广播。
+  ipc.handle(
+    IPC.CHATS_PENDING_COMPLETE_DISPATCH,
+    (event, payload: { sessionId?: unknown; messageId?: unknown }) => {
+      const sessionId = typeof payload?.sessionId === "string" ? payload.sessionId : "";
+      const messageId = typeof payload?.messageId === "string" ? payload.messageId : "";
+      if (!sessionId || !messageId) return { ok: false, error: "invalid-payload" };
+      return chatsStore.completePendingDispatch(sessionId, messageId);
+    },
+  );
+
   ipc.handle(IPC.CHATS_SET_MODEL_PROFILE, (event, payload: { id: string; modelProfileId?: string }) => {
     if (!payload || typeof payload.id !== "string") return null;
     const session = chatsStore.setSessionModelProfile(payload.id, payload.modelProfileId);

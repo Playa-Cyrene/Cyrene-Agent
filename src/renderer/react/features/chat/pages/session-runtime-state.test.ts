@@ -1,22 +1,21 @@
 import { describe, expect, it } from "vitest";
 import type { ChatMessageItem } from "../components/ChatMessageList";
 import type { ComposerInteraction } from "../components/run-presentation";
+import type { ChatSession } from "../../../../../shared/chat-types";
 import {
-  appendPendingQueueEntry,
   clearSessionInteraction,
   buildTodoRecoveryContext,
   bindWorkspaceName,
   findSessionIdForRun,
   hasActiveRunForSession,
   hydrateSessionMessages,
+  evaluateClaimRecovery,
   mergeHarnessTodosForSession,
   patchSessionMessage,
   recoverInterruptedMessage,
-  removePendingQueueEntry,
   sessionInteraction,
   setSessionInteraction,
   startSessionTodos,
-  type PendingQueueEntry,
 } from "./session-runtime-state";
 
 const ask = (id: string): ComposerInteraction => ({
@@ -227,38 +226,121 @@ describe("session runtime presentation state", () => {
     }));
   });
 });
-describe("pending message queue", () => {
-  const entry = (id: string, overrides: Partial<PendingQueueEntry> = {}): PendingQueueEntry => ({
-    id,
-    rawContent: `raw-${id}`,
-    visibleContent: `显示 ${id}`,
-    attachments: [],
-    ...overrides,
+describe("残留认领的恢复判定（按 answersUserMessageId 关联本次认领与对应运行）", () => {
+  const buildSession = (messages: ChatSession["messages"]): ChatSession => ({
+    id: "s1",
+    title: "测试会话",
+    identityId: null,
+    messages,
+    createdAt: 1,
+    updatedAt: 2,
+    schemaVersion: 1,
+  });
+  const userMessage = { id: "claim-1", role: "user" as const, content: "帮我检查", at: 10 };
+
+  it("关联的 terminal 回答视为已派发：清簿记继续消费，不重跑该消息", () => {
+    const session = buildSession([
+      userMessage,
+      {
+        id: "assistant-1",
+        role: "model",
+        content: "检查完成",
+        at: 11,
+        answersUserMessageId: "claim-1",
+        runSnapshot: { status: "terminal", terminalStatus: "success", updatedAt: 12 },
+      },
+    ]);
+
+    expect(evaluateClaimRecovery(session, "claim-1")).toEqual({ kind: "dispatched" });
   });
 
-  it("appends entries in send order and isolates different sessions", () => {
-    const base = appendPendingQueueEntry({}, "s1", entry("a", { userSticker: "wave" }));
-    const next = appendPendingQueueEntry(base, "s1", entry("b", { keepComposer: true }));
-    const mixed = appendPendingQueueEntry(next, "s2", entry("c"));
-
-    expect(mixed.s1?.map((item) => item.id)).toEqual(["a", "b"]);
-    expect(mixed.s2?.map((item) => item.id)).toEqual(["c"]);
-    // 条目同时保留原始文本与展示文本：结束后按原始内容派发、按展示内容预览
-    expect(mixed.s1?.[0]).toMatchObject({ rawContent: "raw-a", visibleContent: "显示 a", userSticker: "wave" });
-    expect(mixed.s1?.[1]).toMatchObject({ keepComposer: true });
+  it("关联回答 run 进行中（running/waiting_user/interrupted）不算已派发：需要续派", () => {
+    for (const status of ["running", "waiting_user", "interrupted"] as const) {
+      const session = buildSession([
+        userMessage,
+        {
+          id: "assistant-1",
+          role: "model",
+          content: "半截回答",
+          at: 11,
+          answersUserMessageId: "claim-1",
+          runSnapshot: { status, updatedAt: 12 },
+        },
+      ]);
+      expect(evaluateClaimRecovery(session, "claim-1")).toEqual({ kind: "needs-dispatch" });
+    }
   });
 
-  it("removes only the target entry and keeps the original reference when nothing matches", () => {
-    const state = appendPendingQueueEntry(
-      appendPendingQueueEntry({}, "s1", entry("a")),
-      "s1",
-      entry("b"),
-    );
-    const next = removePendingQueueEntry(state, "s1", "a");
+  it("关联且无快照但有正文的错误提示消息（桥不可用路径）视为已派发", () => {
+    const session = buildSession([
+      userMessage,
+      { id: "assistant-1", role: "model", content: "模型请求失败", at: 11, answersUserMessageId: "claim-1" },
+    ]);
 
-    expect(next.s1?.map((item) => item.id)).toEqual(["b"]);
-    expect(next.s2).toBeUndefined();
-    // 移除不存在的条目返回原引用（调用方 setState 跳过无变化渲染）
-    expect(removePendingQueueEntry(next, "s1", "missing")).toBe(next);
+    expect(evaluateClaimRecovery(session, "claim-1")).toEqual({ kind: "dispatched" });
+  });
+
+  it("认领后从未启动 run（无任何关联回答）不算已派发", () => {
+    const session = buildSession([userMessage]);
+
+    expect(evaluateClaimRecovery(session, "claim-1")).toEqual({ kind: "needs-dispatch" });
+  });
+
+  it("认领的 user 消息本身丢失（数据损坏）：暂停并报错，绝不当作已完成", () => {
+    const session = buildSession([
+      { id: "other", role: "user" as const, content: "别的消息", at: 5 },
+    ]);
+
+    expect(evaluateClaimRecovery(session, "claim-1")).toEqual({ kind: "claim-message-missing" });
+  });
+
+  it("关联性：不带 answersUserMessageId 的终态回答（旧数据/其他来源）不算本认领的回答", () => {
+    const session = buildSession([
+      userMessage,
+      {
+        id: "assistant-1",
+        role: "model",
+        content: "没有关联锚点的回答",
+        at: 11,
+        runSnapshot: { status: "terminal", terminalStatus: "success", updatedAt: 12 },
+      },
+    ]);
+
+    expect(evaluateClaimRecovery(session, "claim-1")).toEqual({ kind: "needs-dispatch" });
+  });
+
+  it("关联性：回答锚定到其他用户消息（旧 run 迟到回答）时不算本认领已派发", () => {
+    const session = buildSession([
+      { id: "user-old", role: "user" as const, content: "旧问题", at: 2 },
+      {
+        id: "assistant-old",
+        role: "model",
+        content: "旧轮回答",
+        at: 3,
+        answersUserMessageId: "user-old",
+        runSnapshot: { status: "terminal", terminalStatus: "success", updatedAt: 4 },
+      },
+      userMessage,
+      { id: "assistant-loading", role: "model" as const, content: "", at: 11, runSnapshot: { status: "running", updatedAt: 12 } },
+    ]);
+
+    expect(evaluateClaimRecovery(session, "claim-1")).toEqual({ kind: "needs-dispatch" });
+  });
+
+  it("只统计认领消息之后的回答：之前的关联回答不影响判定", () => {
+    const session = buildSession([
+      { id: "user-early", role: "user" as const, content: "更早的问题", at: 1 },
+      {
+        id: "assistant-early",
+        role: "model",
+        content: "更早的回答",
+        at: 2,
+        answersUserMessageId: "claim-1",
+        runSnapshot: { status: "terminal", terminalStatus: "success", updatedAt: 3 },
+      },
+      userMessage,
+    ]);
+
+    expect(evaluateClaimRecovery(session, "claim-1")).toEqual({ kind: "needs-dispatch" });
   });
 });

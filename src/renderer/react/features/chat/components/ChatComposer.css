@@ -93,6 +93,13 @@
   background: #e7e7e7;
 }
 
+/* 运行中 suffix：排队发送 + 独立停止双按钮并排 */
+.cy-composer__busy-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .cy-composer__queue {
   display: flex;
   flex-direction: column;

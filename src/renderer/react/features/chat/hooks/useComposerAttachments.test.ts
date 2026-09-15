@@ -229,11 +229,11 @@ describe("useComposerAttachments", () => {
     // 按下标移除
     act(() => { latest.removeAttachment(0); });
     expect(latest.attachments).toHaveLength(0);
-    // 清空当前 scope：写入的是空数组而非删除键
+    // 清空当前 scope：写入的是空数组而非删除键（快照传入当前全部附件）
     act(() => {
       insertCallback!({ mime: "image/png", filePath: "C:/tmp/s3.png", previewUrl: "p3", hasAnnotations: false });
     });
-    act(() => { latest.clearScopeAttachments(); });
+    act(() => { latest.clearScopeAttachments(latest.attachments.map((attachment) => ({ ...attachment }))); });
     expect(latest.attachments).toHaveLength(0);
     // 删除整个 mode scope（键消失，与清空不同）
     act(() => {
@@ -241,6 +241,40 @@ describe("useComposerAttachments", () => {
     });
     act(() => { latest.deleteScopeAttachments("mode:chat"); });
     expect(latest.attachments).toHaveLength(1);
+  });
+
+  it("clearScopeAttachments 带快照只移除随消息发送的附件，期间新加的保留", () => {
+    // 截图插入目标切换到当前 scope（s1）后依次插入两张
+    activeScope = "s1";
+    act(() => {
+      insertCallback!({ mime: "image/png", filePath: "C:/tmp/a.png", previewUrl: "pa", hasAnnotations: false });
+      insertCallback!({ mime: "image/png", filePath: "C:/tmp/b.png", previewUrl: "pb", hasAnnotations: false });
+    });
+    const sent = latest.attachments.map((attachment) => ({ ...attachment }));
+    // 入队请求期间用户又加了一张
+    act(() => {
+      insertCallback!({ mime: "image/png", filePath: "C:/tmp/c.png", previewUrl: "pc", hasAnnotations: false });
+    });
+    expect(latest.attachments).toHaveLength(3);
+    // 只清随消息发送的 a/b：请求期间新加的 c 保留
+    act(() => { latest.clearScopeAttachments(sent); });
+    expect(latest.attachments).toHaveLength(1);
+    expect(latest.attachments[0]).toMatchObject({ filePath: "C:/tmp/c.png" });
+  });
+
+  it("clearScopeAttachments 空快照不清任何附件：发送时无附件，请求期间新加的必须保留", () => {
+    activeScope = "s1";
+    // 发送瞬间没有任何附件（空快照）
+    const sent: ComposerAttachment[] = [];
+    // 入队请求期间用户加了两张
+    act(() => {
+      insertCallback!({ mime: "image/png", filePath: "C:/tmp/x.png", previewUrl: "px", hasAnnotations: false });
+      insertCallback!({ mime: "image/png", filePath: "C:/tmp/y.png", previewUrl: "py", hasAnnotations: false });
+    });
+    // 空快照清理后：期间新加的附件原样保留
+    act(() => { latest.clearScopeAttachments(sent); });
+    expect(latest.attachments).toHaveLength(2);
+    expect(latest.attachments.map((attachment) => attachment.filePath)).toEqual(["C:/tmp/x.png", "C:/tmp/y.png"]);
   });
 
   it("卸载时释放全部本地 objectURL", async () => {
