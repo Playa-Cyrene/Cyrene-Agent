@@ -56,6 +56,7 @@ export async function callLLM(
   config: HarnessConfig,
   signal?: AbortSignal,
   onReasoningDelta?: (delta: string) => void,
+  onTextDelta?: (delta: string) => void,
 ): Promise<ChatResponse> {
   const adapter = getAdapterForConfig(vendorConfig);
   const composed = composePromptLayers(promptLayers, messages);
@@ -96,6 +97,7 @@ export async function callLLM(
       onDelta: (delta) => {
         receivedStreamDelta = true;
         if (delta.type === "reasoning_delta" && delta.delta) onReasoningDelta?.(delta.delta);
+        if (delta.type === "text_delta" && delta.delta) onTextDelta?.(delta.delta);
       },
     }));
   } catch (error) {

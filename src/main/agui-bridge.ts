@@ -35,6 +35,8 @@ import { perf } from "./perf-trace";
 import type { StyleId } from "../shared/style-sampling";
 import type { PendingTurnLifecycle } from "./plugin-host/pending-turn-lifecycle";
 import * as chatsStore from "./chats/chats-store";
+import { createRunAdjustmentPoller } from "./chats/pending-adjustment";
+import { broadcastChatsChanged } from "./chats/chats-ipc";
 import type { ConversationMode } from "../shared/chat-types";
 import {
   requestUserClarification,
@@ -205,6 +207,11 @@ function releaseSessionGuardEntry(sessionId: string, runId: string, resolveSettl
 /** 测试专用：读取会话当前 active run 的 runId。 */
 export function __getSessionActiveRunForTest(sessionId: string): string | undefined {
   return sessionActiveRuns.get(sessionId)?.runId;
+}
+
+/** 后台派生任务用：任一主会话运行期间避免并发占用模型配置。 */
+export function hasActiveConversationRun(): boolean {
+  return sessionActiveRuns.size > 0;
 }
 
 /** 测试专用：缩短 takeover 结算等待上限（避免真实等待 5s）。 */
@@ -475,6 +482,8 @@ export function registerAgUiIpc(
     }));
     } catch (error) {
       perf.dump();
+      // run 未开跑即失败：清掉这期间可能落下的插话标记，条目回普通队列
+      try { chatsStore.resetPendingAdjustByRun(sessionId, runId); } catch { /* 复位尽力而为 */ }
       releaseSessionGuard?.();
       releaseSessionGuard = null;
       lifecycle?.onConversationEnded();
@@ -494,6 +503,11 @@ export function registerAgUiIpc(
     // 触发 harness 返回 cancelled，CyreneAgent 发出 RUN_FINISHED(result.status="cancelled")，
     // complete 回调自然清理。
     options.signal = runAbortController.signal;
+    // 插话轮询：把"插入当前运行下一步"的待发条目在模型请求边界提交并注入。
+    // Chat 无工具链路是单请求运行，没有安全的下一步，不接轮询（IPC 侧同步拒绝）。
+    if (mode !== "chat") {
+      options.pollRunAdjustments = createRunAdjustmentPoller(sessionId, runId);
+    }
     options.requestUserClarification = (card) => requestUserClarification(card, (cardData) => {
       send({ type: "CUSTOM", name: "cyrene.choice", value: cardData, threadId, runId });
     }, (settlement) => {
@@ -510,6 +524,7 @@ export function registerAgUiIpc(
       } catch (error) {
         // 守卫已注册：configure 失败时必须释放，否则该会话永久拒绝新 run。
         // 语义保持"配置失败 → 中断本次 run"（learn 工具不可用时不静默降级）。
+        try { chatsStore.resetPendingAdjustByRun(sessionId, runId); } catch { /* 复位尽力而为 */ }
         releaseSessionGuard?.();
         releaseSessionGuard = null;
         lifecycle?.onConversationEnded();
@@ -568,6 +583,13 @@ export function registerAgUiIpc(
     const endLifecycle = (): void => {
       if (lifecycleEnded) return;
       lifecycleEnded = true;
+      // 插话复位：运行终态（任何路径）后，已标记但未注入的条目清标记回普通队列。
+      // 必须先于会话守卫释放执行，让接续的新 run 从干净的普通队列消费。
+      try {
+        chatsStore.resetPendingAdjustByRun(sessionId, runId);
+      } catch (err) {
+        console.warn("[AgUiBridge] 插话标记复位失败:", err);
+      }
       // 释放会话守卫（compare-and-delete）并 resolve settled：
       // 等待中的 takeover 此刻才被放行，保证其开局时旧 run 的 checkpoint 已落盘。
       releaseSessionGuard?.();
@@ -900,5 +922,29 @@ export function registerAgUiIpc(
       }
     }
     return true;
+  });
+
+  // ── 调整：把待发条目标记为"插入当前运行下一步" ──
+  // 绑定会话当前活跃运行（会话级运行守卫是唯一可信来源）。
+  // 无活跃运行、Chat 模式（单请求运行没有安全的下一步）、条目带附件、
+  // 已被认领或已标记其他运行时明确拒绝，消息留在普通队列并返回最新权威队列。
+  ipc.handle(IPC.CHATS_PENDING_ADJUST, (event: IpcMainInvokeEvent, payload: unknown) => {
+    const body = payload as { sessionId?: unknown; messageId?: unknown };
+    const sessionId = typeof body?.sessionId === "string" ? body.sessionId : "";
+    const messageId = typeof body?.messageId === "string" ? body.messageId : "";
+    if (!sessionId || !messageId) return { ok: false, error: "invalid-payload" };
+    const session = chatsStore.getSession(sessionId);
+    if (!session) return { ok: false, error: "session-not-found" };
+    const active = sessionActiveRuns.get(sessionId);
+    if (!active) {
+      return { ok: false, error: "no-active-run", queue: chatsStore.getPendingMessages(sessionId) ?? [] };
+    }
+    const mode = session.mode ?? (session.purpose === "proactive-chat" ? "chat" : "work");
+    if (mode === "chat") {
+      return { ok: false, error: "no-safe-next-step", queue: chatsStore.getPendingMessages(sessionId) ?? [] };
+    }
+    const result = chatsStore.markPendingAdjust(sessionId, messageId, active.runId);
+    if (result.ok) broadcastChatsChanged(event.sender);
+    return result;
   });
 }

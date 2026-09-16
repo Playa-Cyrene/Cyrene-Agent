@@ -64,7 +64,7 @@ import { runCyreneHarness } from "./cyrene-harness";
 import { getAdapterForConfig } from "../vendors";
 import { dispatchToolCall } from "./tool-dispatcher";
 import type { ToolDispatchResult } from "./tool-dispatcher";
-import type { HarnessCacheDiagnostic, HarnessCheckpoint, HarnessEvent, HarnessToolFinishedEvent } from "./types";
+import type { HarnessCacheDiagnostic, HarnessCheckpoint, HarnessEvent, HarnessToolFinishedEvent, RunAdjustmentMessage } from "./types";
 import type { ChatMessage, ChatResponse, ToolCall } from "../vendors/types";
 import type { ToolDefinition } from "../tools/registry/tool-registry";
 import { projectCacheRelevantChatRequest } from "../prompt-layers";
@@ -326,6 +326,83 @@ describe("CyreneHarness completion", () => {
       { type: "reasoning_delta", messageId: "reasoning-0", delta: "，再回答" },
     ]);
     expect(events).toContainEqual({ type: "reasoning_end", messageId: "reasoning-0" });
+  });
+
+  it("forwards filtered model text deltas as round-scoped candidate events before final settlement", async () => {
+    fakeStreamChatWithSdk.mockImplementationOnce(async (input: {
+      onDelta?: (delta: { type: "text_delta"; delta: string }) => void;
+    }) => {
+      input.onDelta?.({ type: "text_delta", delta: "[2026-09-15 10:00, Asia/Shanghai] " });
+      input.onDelta?.({ type: "text_delta", delta: "你好，" });
+      input.onDelta?.({ type: "text_delta", delta: "世界" });
+      return assistantResponse({ text: "你好，世界" });
+    });
+    const events: HarnessEvent[] = [];
+
+    await runCyreneHarness({
+      systemPrompt: "you are a test agent",
+      messages: [{ role: "user", content: "完成任务" }],
+      tools: [],
+      vendorConfig,
+      onEvent: (event) => events.push(event),
+    });
+
+    expect(events.filter((event) => event.type === "candidate_text_delta")).toEqual([
+      { type: "candidate_text_delta", roundId: "round-0", delta: "你好，" },
+      { type: "candidate_text_delta", roundId: "round-0", delta: "世界" },
+    ]);
+    expect(events.findIndex((event) => event.type === "candidate_text_delta"))
+      .toBeLessThan(events.findIndex((event) => event.type === "final_answer"));
+  });
+
+  it("forwards each candidate text chunk before the provider releases the next chunk", async () => {
+    let releaseSecondChunk!: () => void;
+    let releaseFinalChunk!: () => void;
+    const secondChunkGate = new Promise<void>((resolve) => { releaseSecondChunk = resolve; });
+    const finalChunkGate = new Promise<void>((resolve) => { releaseFinalChunk = resolve; });
+    fakeStreamChatWithSdk.mockImplementationOnce(async (input: {
+      onDelta?: (delta: { type: "text_delta"; delta: string }) => void;
+    }) => {
+      input.onDelta?.({ type: "text_delta", delta: "好的伙伴，" });
+      await secondChunkGate;
+      input.onDelta?.({ type: "text_delta", delta: "人家先去摸清这边项目的底，" });
+      await finalChunkGate;
+      input.onDelta?.({ type: "text_delta", delta: "再决定怎么跑测试♪" });
+      return assistantResponse({ text: "好的伙伴，人家先去摸清这边项目的底，再决定怎么跑测试♪" });
+    });
+    const events: HarnessEvent[] = [];
+
+    const running = runCyreneHarness({
+      systemPrompt: "you are a test agent",
+      messages: [{ role: "user", content: "完成任务" }],
+      tools: [],
+      vendorConfig,
+      onEvent: (event) => events.push(event),
+    });
+
+    await vi.waitFor(() => {
+      expect(events.filter((event) => event.type === "candidate_text_delta")).toEqual([
+        { type: "candidate_text_delta", roundId: "round-0", delta: "好的伙伴，" },
+      ]);
+    });
+
+    releaseSecondChunk();
+    await vi.waitFor(() => {
+      expect(events.filter((event) => event.type === "candidate_text_delta")).toEqual([
+        { type: "candidate_text_delta", roundId: "round-0", delta: "好的伙伴，" },
+        { type: "candidate_text_delta", roundId: "round-0", delta: "人家先去摸清这边项目的底，" },
+      ]);
+    });
+    expect(events.some((event) => event.type === "final_answer")).toBe(false);
+
+    releaseFinalChunk();
+    await running;
+
+    expect(events.filter((event) => event.type === "candidate_text_delta")).toEqual([
+      { type: "candidate_text_delta", roundId: "round-0", delta: "好的伙伴，" },
+      { type: "candidate_text_delta", roundId: "round-0", delta: "人家先去摸清这边项目的底，" },
+      { type: "candidate_text_delta", roundId: "round-0", delta: "再决定怎么跑测试♪" },
+    ]);
   });
 
   it("falls back to a non-stream request only when the provider explicitly rejects streaming", async () => {
@@ -916,6 +993,7 @@ describe("CyreneHarness completion", () => {
       message: "继续",
     } as ToolDispatchResult);
     const finished: HarnessToolFinishedEvent[] = [];
+    const events: HarnessEvent[] = [];
 
     await runCyreneHarness({
       systemPrompt: "test",
@@ -924,6 +1002,7 @@ describe("CyreneHarness completion", () => {
       vendorConfig,
       runId: "obs-run-2",
       onToolFinished: (event) => finished.push(event),
+      onEvent: (event) => events.push(event),
     });
 
     // read_file 被 ask_user 排他挤掉：not_executed 且无耗时；ask_user 正常完成带耗时
@@ -933,6 +1012,7 @@ describe("CyreneHarness completion", () => {
     ]);
     expect("durationMs" in finished[0]).toBe(false);
     expect(finished[1].durationMs).toBeGreaterThanOrEqual(0);
+    expect(events).toContainEqual({ type: "candidate_text_discard", roundId: "round-0" });
   });
 
   it("settles as a runtime error when a required checkpoint cannot be persisted", async () => {
@@ -1131,6 +1211,209 @@ describe("CyreneHarness completion", () => {
     expect(result.finalAnswer).toBe("已经按你的选择继续完成。");
     const secondRequest = fakeStreamChatWithSdk.mock.calls[1][0].request as { messages: ChatMessage[] };
     expect(JSON.stringify(secondRequest.messages)).toContain("停止当前任务");
+  });
+});
+
+describe("CyreneHarness run adjustments", () => {
+  beforeEach(() => {
+    mockedDispatch.mockReset();
+    fakeStreamChatWithSdk.mockClear();
+    recordUsage.mockReset();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("工具批次结束后：插话在下一次模型请求前按入队顺序进入上下文（核心事件顺序）", async () => {
+    const { fn: fetchMock } = fakeFetchSequencer([
+      assistantResponse({ toolCalls: [mutationToolCall("call-1")] }),
+      assistantResponse({ text: "已按插话调整方案完成。" }),
+    ]);
+    vi.stubGlobal("fetch", fetchMock);
+    // 用户在工具执行期间标记插话（模拟 dispatch 进行中点击"插入当前运行下一步"）
+    const adjustments: RunAdjustmentMessage[] = [];
+    mockedDispatch.mockImplementation(async () => {
+      adjustments.push({ id: "q-adj-1", rawContent: "插话：先看另一个文件" });
+      adjustments.push({ id: "q-adj-2", rawContent: "插话：顺便加上注释" });
+      return successDispatchResult("call-1");
+    });
+    const poll = vi.fn((): Promise<RunAdjustmentMessage[]> | undefined =>
+      adjustments.length > 0 ? Promise.resolve(adjustments.splice(0)) : undefined);
+    const checkpoints: HarnessCheckpoint[] = [];
+
+    const result = await runCyreneHarness({
+      systemPrompt: "you are a test agent",
+      messages: [{ role: "user", content: "创建一个文件" }],
+      tools: [mutationTool()],
+      vendorConfig,
+      pollRunAdjustments: poll,
+      onCheckpoint: (checkpoint) => checkpoints.push(checkpoint),
+    });
+
+    // 轮询点共三次：round-0 请求前（无标记）、round-1 请求前（取走插话）、最终结算前（空）
+    expect(poll).toHaveBeenCalledTimes(3);
+    // 第二次模型请求看到两条插话：位于 transcript 尾部、按入队顺序
+    const secondRequest = fakeStreamChatWithSdk.mock.calls[1]?.[0].request as { messages: ChatMessage[] };
+    expect(secondRequest.messages.slice(-2).map((message) => ({ role: message.role, content: message.content }))).toEqual([
+      { role: "user", content: "插话：先看另一个文件" },
+      { role: "user", content: "插话：顺便加上注释" },
+    ]);
+    // 插话紧跟工具结果之后（当前操作结束 → 插话 → 下一次模型请求）
+    const toolMessageIndex = secondRequest.messages.findIndex((message) => message.role === "tool");
+    expect(toolMessageIndex).toBe(secondRequest.messages.length - 3);
+    // 注入后、下一次请求前落盘 checkpoint（崩溃恢复不丢插话）
+    expect(checkpoints.some((checkpoint) =>
+      checkpoint.messages.some((message) => message.role === "user" && message.content === "插话：先看另一个文件"),
+    )).toBe(true);
+    expect(result.finalAnswer).toBe("已按插话调整方案完成。");
+  });
+
+  it("模型准备结束但有插话：最终结算前检查，本轮回复转中间过程并继续处理", async () => {
+    const { fn: fetchMock } = fakeFetchSequencer([
+      assistantResponse({ text: "我准备收尾了。" }),
+      assistantResponse({ text: "结合插话后的最终回答。" }),
+    ]);
+    vi.stubGlobal("fetch", fetchMock);
+    // 插话在 round-0 请求前不存在，模型回复后、最终结算前被标记
+    let pollCount = 0;
+    const poll = vi.fn((): Promise<RunAdjustmentMessage[]> | undefined => {
+      pollCount++;
+      return pollCount === 2
+        ? Promise.resolve([{ id: "q-adj", rawContent: "插话：再补充一点" }])
+        : undefined;
+    });
+    const events: HarnessEvent[] = [];
+
+    const result = await runCyreneHarness({
+      systemPrompt: "you are a test agent",
+      messages: [{ role: "user", content: "完成任务" }],
+      tools: [],
+      vendorConfig,
+      pollRunAdjustments: poll,
+      onEvent: (event) => events.push(event),
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    // 原本要结束的回复转为中间过程（progress_text），绝不作为 final
+    const progressTexts = events
+      .filter((event): event is Extract<HarnessEvent, { type: "progress_text" }> => event.type === "progress_text")
+      .map((event) => event.content);
+    expect(progressTexts).toEqual(["我准备收尾了。"]);
+    expect(result.finalAnswer).toBe("结合插话后的最终回答。");
+    // 第二次请求的上下文尾部是插话用户消息
+    const secondRequest = fakeStreamChatWithSdk.mock.calls[1]?.[0].request as { messages: ChatMessage[] };
+    expect(secondRequest.messages.at(-1)).toMatchObject({ role: "user", content: "插话：再补充一点" });
+    // 插话轮按工具轮口径计数（轮次上限能正确约束插话续轮）
+    expect(result.rounds).toBe(1);
+    // 事件顺序：round_end(0) → progress_text（中间过程）→ round_start(1) → final_answer
+    const roundEndIdx = events.findIndex((event) => event.type === "round_end" && event.roundId === "round-0");
+    const progressIdx = events.findIndex((event) => event.type === "progress_text");
+    const roundStartIdx = events.findIndex((event) => event.type === "round_start" && event.roundId === "round-1");
+    const finalIdx = events.findIndex((event) => event.type === "final_answer");
+    expect(roundEndIdx).toBeLessThan(progressIdx);
+    expect(progressIdx).toBeLessThan(roundStartIdx);
+    expect(roundStartIdx).toBeLessThan(finalIdx);
+  });
+
+  it("取消：工具执行中被取消后不再轮询/注入插话，也不再有模型请求", async () => {
+    const { fn: fetchMock } = fakeFetchSequencer([
+      assistantResponse({ toolCalls: [mutationToolCall("call-1")] }),
+      assistantResponse({ text: "不应被请求。" }),
+    ]);
+    vi.stubGlobal("fetch", fetchMock);
+    const controller = new AbortController();
+    const adjustments: RunAdjustmentMessage[] = [];
+    mockedDispatch.mockImplementation(async () => {
+      // 工具执行中用户标记插话又立刻取消：插话尚未注入
+      adjustments.push({ id: "q-adj", rawContent: "插话：来不及了" });
+      controller.abort();
+      return successDispatchResult("call-1");
+    });
+    const poll = vi.fn((): Promise<RunAdjustmentMessage[]> | undefined =>
+      adjustments.length > 0 ? Promise.resolve(adjustments.splice(0)) : undefined);
+
+    const result = await runCyreneHarness({
+      systemPrompt: "you are a test agent",
+      messages: [{ role: "user", content: "创建一个文件" }],
+      tools: [mutationTool()],
+      vendorConfig,
+      signal: controller.signal,
+      pollRunAdjustments: poll,
+    });
+
+    expect(result.terminateReason).toBe("cancelled");
+    // 取消后不再有模型请求，也不再有轮询（插话未被消费，标记留给运行结束复位）
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(poll).toHaveBeenCalledTimes(1);
+  });
+
+  it("轮次上限不被插话绕过：达到上限直接结算，不注入插话、不再请求模型", async () => {
+    const { fn: fetchMock } = fakeFetchSequencer([
+      assistantResponse({ toolCalls: [mutationToolCall("call-1")] }),
+      assistantResponse({ text: "不应被请求。" }),
+    ]);
+    vi.stubGlobal("fetch", fetchMock);
+    const adjustments: RunAdjustmentMessage[] = [];
+    mockedDispatch.mockImplementation(async () => {
+      // 工具执行期间标记插话，但本运行轮次即将达上限
+      adjustments.push({ id: "q-adj", rawContent: "插话：改需求" });
+      return successDispatchResult("call-1");
+    });
+    const poll = vi.fn((): Promise<RunAdjustmentMessage[]> | undefined =>
+      adjustments.length > 0 ? Promise.resolve(adjustments.splice(0)) : undefined);
+
+    const result = await runCyreneHarness({
+      systemPrompt: "you are a test agent",
+      messages: [{ role: "user", content: "执行受轮次限制的任务" }],
+      tools: [mutationTool()],
+      vendorConfig,
+      config: { maxRounds: 1 },
+      pollRunAdjustments: poll,
+    });
+
+    expect(result.terminateReason).toBe("max_rounds");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // 上限检查先于插话注入：插话未被消费（仍留在标记里，由运行结束复位回普通队列）
+    expect(poll).toHaveBeenCalledTimes(1);
+  });
+
+  it("插话注入后 checkpoint 失败：按既有的状态保存失败语义熔断，不得静默继续", async () => {
+    const { fn: fetchMock } = fakeFetchSequencer([
+      assistantResponse({ toolCalls: [mutationToolCall("call-1")] }),
+      assistantResponse({ text: "不应被请求。" }),
+    ]);
+    vi.stubGlobal("fetch", fetchMock);
+    const adjustments: RunAdjustmentMessage[] = [];
+    mockedDispatch.mockImplementation(async () => {
+      adjustments.push({ id: "q-adj", rawContent: "插话：写盘会失败" });
+      return successDispatchResult("call-1");
+    });
+    const poll = vi.fn((): Promise<RunAdjustmentMessage[]> | undefined =>
+      adjustments.length > 0 ? Promise.resolve(adjustments.splice(0)) : undefined);
+    let failed = false;
+    const checkpoints: HarnessCheckpoint[] = [];
+
+    const result = await runCyreneHarness({
+      systemPrompt: "you are a test agent",
+      messages: [{ role: "user", content: "创建一个文件" }],
+      tools: [mutationTool()],
+      vendorConfig,
+      pollRunAdjustments: poll,
+      // 只在插话注入后的 checkpoint 抛错（普通轮次 checkpoint 正常）
+      onCheckpoint: (checkpoint) => {
+        checkpoints.push(checkpoint);
+        if (!failed && checkpoint.messages.some((message) => message.content === "插话：写盘会失败")) {
+          failed = true;
+          throw new Error("disk unavailable");
+        }
+      },
+    });
+
+    expect(result.terminateReason).toBe("error");
+    expect(result.finalAnswer).toContain("执行状态保存失败");
+    // 熔断发生在下一次模型请求之前
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
 

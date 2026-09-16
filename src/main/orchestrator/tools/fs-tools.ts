@@ -486,11 +486,13 @@ toolRegistry.register({
 // 资源访问层：读图片→base64→交 vision-captioner 看图→返回文字。
 // 不懂视觉，看图的活外包给 captioner。
 
-// loadVisionConfig 已迁出到 settings/model-settings，但本文件仍被 index.ts 副作用注册。
-// 用懒加载规避：运行时才 require，此时相关模块已初始化完。
-function loadVisionConfigLazy() {
-  const mod = require("../../settings/model-settings") as { loadVisionConfig: () => import("../vision-captioner").VisionConfig | null };
-  return mod.loadVisionConfig();
+// 懒加载图片转述视觉配置：动态 import，规避注册期副作用。
+// 路由判定收口在 image-router（全项目唯一），本文件不再自行判断。
+async function loadCaptionVisionConfigLazy(): Promise<import("../image-router").CaptionVisionConfig> {
+  const settingsMod = await import("../../settings/model-settings");
+  const settings = settingsMod.resolveModelSettingsProfile(settingsMod.loadModelSettings());
+  const router = await import("../image-router");
+  return router.resolveCaptionVisionConfig(settings);
 }
 
 async function executeReadImage(
@@ -533,10 +535,10 @@ async function executeReadImage(
     return "[错误] 读取失败: " + msg;
   }
 
-  // 查视觉模型配置（统一判断入口，不再有调度层门控）
-  const visionConfig = loadVisionConfigLazy();
-  if (!visionConfig) {
-    return "[错误·配置] 未启用视觉能力。请在「设置 → API 设置 → 视觉模型」配置一个 OpenAI 兼容的视觉模型。";
+  // 查图片转述路由（image-router 统一判定；Anthropic 主模型未配视觉模型时在此明确拒绝）
+  const captionVision = await loadCaptionVisionConfigLazy();
+  if (!captionVision.ok) {
+    return "[错误·配置] " + captionVision.error;
   }
 
   // 调视觉模型看图，用户问题从 ToolContext 来
@@ -544,7 +546,7 @@ async function executeReadImage(
   const result = await captionImage(
     { base64: buf.toString("base64"), mime },
     userQuery,
-    visionConfig,
+    captionVision.config,
   );
   return result;
 }

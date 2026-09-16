@@ -379,6 +379,30 @@ function parseAskQuestions(raw: unknown): { questions?: HarnessAskQuestion[]; er
 }
 
 /**
+ * 把 ask_user 的回答格式化为工具卡可读的「问题 → 回答」预览行。
+ * 失败/超时回退原始 message；未回答的问题标记为「未回答」。
+ */
+export function formatAskUserPreview(
+  parsed: { questions?: HarnessAskQuestion[] },
+  observation: ToolObservation,
+): string[] | string {
+  if (observation.outcome !== "success") return observation.message;
+  let answers: AskAnswer[] = [];
+  try {
+    const output = JSON.parse(observation.output ?? "{}") as { answers?: AskAnswer[] };
+    if (Array.isArray(output.answers)) answers = output.answers;
+  } catch {
+    // 输出不是合法 JSON 时按全部未回答处理
+  }
+  return (parsed.questions ?? []).map((question) => {
+    const matched = answers.find((answer) => answer.questionId === question.id);
+    const custom = matched?.customInput?.trim();
+    const reply = custom || (matched?.selectedLabels ?? []).filter(Boolean).join("、");
+    return `${question.question} → ${reply || "未回答"}`;
+  });
+}
+
+/**
  * 执行 ask_user（交互式澄清提问，await 用户应答）。
  * 完全复用现有 requestUserClarification 链路。
  */
@@ -470,11 +494,17 @@ export async function executeAskUser(
       answers.push({ questionId: q.id, selectedValues, selectedLabels });
     }
 
-    return {
+    // 成功返回：把「问题 → 回答」逐条写进 message，工具卡点开即可看到具体问答
+    const observation: ToolObservation = {
       outcome: "success",
       tool: ASK_USER_TOOL_ID,
       message: `用户已回答 ${answers.length} 个问题`,
       output: JSON.stringify({ answers }),
+    };
+    const preview = formatAskUserPreview({ questions }, observation);
+    return {
+      ...observation,
+      message: Array.isArray(preview) ? `${observation.message}\n${preview.join("\n")}` : observation.message,
     };
   } catch (err) {
     if (isAbortError(err)) throw err;

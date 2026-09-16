@@ -121,6 +121,18 @@ describe.runIf(process.platform === "win32")("run_shell sandbox fail-closed gate
     expect(result.stdout).toContain("cyrene-fc-direct");
   });
 
+  it("wrap 返回 not_ready：后台模式同样 fail-closed（0 次 spawn，无 jobId）", async () => {
+    wrapMock.mockResolvedValue({ ok: false, reason: "not_ready" });
+    const raw = await runShellTool.execute({ command: writeCommand(), shell: "cmd", run_in_background: true }, undefined);
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    expect(spawnCalls).toHaveLength(0);
+    expect(fs.existsSync(markerPath)).toBe(false);
+    expect(parsed.ranInBackground).toBeUndefined();
+    expect(parsed.jobId).toBeUndefined();
+    expect(parsed.stderr).toContain("[拒绝]");
+    expect(parsed.stderr).toContain("沙箱不可用");
+  });
+
   it("wrap 成功：仅 spawn 包装后的 argv，sandboxed=true", async () => {
     wrapMock.mockResolvedValue({
       ok: true,

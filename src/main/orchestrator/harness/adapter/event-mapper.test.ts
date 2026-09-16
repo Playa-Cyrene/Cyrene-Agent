@@ -31,6 +31,35 @@ describe("harness event mapper", () => {
     ]);
   });
 
+  it("maps candidate text as a round-scoped custom event without opening a formal message", () => {
+    expect(capture({
+      type: "candidate_text_delta",
+      roundId: "round-2",
+      delta: "正在生成",
+    } as HarnessEvent)).toEqual([
+      expect.objectContaining({
+        type: "CUSTOM",
+        name: "cyrene.candidate_text",
+        value: { action: "delta", roundId: "round-2", delta: "正在生成" },
+        runId: "run-1",
+      }),
+    ]);
+  });
+
+  it("maps candidate discard without emitting formal text events", () => {
+    expect(capture({
+      type: "candidate_text_discard",
+      roundId: "round-2",
+    } as HarnessEvent)).toEqual([
+      expect.objectContaining({
+        type: "CUSTOM",
+        name: "cyrene.candidate_text",
+        value: { action: "discard", roundId: "round-2" },
+        runId: "run-1",
+      }),
+    ]);
+  });
+
   it("maps task lifecycle presentation to a stamped custom event", () => {
     const sent: BaseEvent[] = [];
     sendTaskLifecycleAsAgui({ taskId: "task-1", status: "running" } as never, "thread-1", "run-1", (event) => sent.push(event));

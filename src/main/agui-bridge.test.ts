@@ -9,6 +9,9 @@ const mocks = vi.hoisted(() => ({
   handlers: new Map<string, (...args: any[]) => unknown>(),
   listeners: new Map<string, (...args: any[]) => void>(),
   getSession: vi.fn(),
+  getPendingMessages: vi.fn(),
+  markPendingAdjust: vi.fn(),
+  resetPendingAdjustByRun: vi.fn(),
   runCyreneAgent: vi.fn(),
   requestUserClarification: vi.fn(),
   agentEvents: [] as unknown[],
@@ -33,6 +36,10 @@ vi.mock("electron", () => ({
       mocks.listeners.set(channel, listener);
     }),
     removeListener: vi.fn(),
+  },
+  // 插话 IPC 的成功路径会广播会话变更（遍历全部窗口）
+  BrowserWindow: {
+    getAllWindows: () => [],
   },
 }));
 
@@ -95,6 +102,9 @@ vi.mock("./orchestrator/tools/history-tools", () => ({
 
 vi.mock("./chats/chats-store", () => ({
   getSession: mocks.getSession,
+  getPendingMessages: mocks.getPendingMessages,
+  markPendingAdjust: mocks.markPendingAdjust,
+  resetPendingAdjustByRun: mocks.resetPendingAdjustByRun,
 }));
 
 
@@ -1404,5 +1414,158 @@ describe("agui-bridge session run guard", () => {
     expect(first.status).toBe("fulfilled");
     expect(second.status).toBe("rejected");
     expect((second as PromiseRejectedResult).reason.message).toMatch(/^SESSION_RUN_ACTIVE:/);
+  });
+});
+
+describe("agui-bridge pending adjust IPC", () => {
+  const defaultBuildOptions = async () => ({
+    options: {
+      settings: { provider: "test", baseUrl: "", model: "", apiKey: "", contextWindowTokens: 256000 },
+      messages: [],
+      timeoutMs: 60000,
+      toolSystemContent: "TOOL",
+      soulSystemBaseContent: "SOUL",
+    },
+    latestUserText: "hi",
+  });
+
+  function makeSender() {
+    return { isDestroyed: () => false, send: () => {} };
+  }
+
+  beforeEach(() => {
+    mocks.runFinishedResult = undefined;
+    mocks.emitDuplicateRunFinished = false;
+    mocks.errorAfterRunFinished = null;
+    mocks.skipDefaultRunFinished = false;
+    mocks.neverComplete = false;
+    mocks.completeOnAbort = false;
+    mocks.getSession.mockReset();
+    mocks.getPendingMessages.mockReset();
+    mocks.markPendingAdjust.mockReset();
+    mocks.resetPendingAdjustByRun.mockReset();
+  });
+
+  async function setupBridge(buildOptions = defaultBuildOptions) {
+    vi.resetModules();
+    mocks.handlers.clear();
+    mocks.runCyreneAgent.mockClear();
+    const bridge = await import("./agui-bridge");
+    bridge.registerAgUiIpc(buildOptions, async () => {}, () => null);
+    const adjustHandler = mocks.handlers.get(IPC.CHATS_PENDING_ADJUST);
+    const runHandler = mocks.handlers.get(IPC.AGUI_RUN);
+    if (!adjustHandler || !runHandler) {
+      throw new Error("CHATS_PENDING_ADJUST / AGUI_RUN handlers were not registered");
+    }
+    return { bridge, adjustHandler, runHandler };
+  }
+
+  it("载荷校验与会话不存在：invalid-payload / session-not-found", async () => {
+    mocks.getSession.mockReturnValue(null);
+    const { adjustHandler } = await setupBridge();
+    const sender = makeSender();
+
+    expect(await adjustHandler({ sender }, null)).toEqual({ ok: false, error: "invalid-payload" });
+    expect(await adjustHandler({ sender }, { sessionId: "", messageId: "q-1" })).toEqual({
+      ok: false,
+      error: "invalid-payload",
+    });
+    expect(await adjustHandler({ sender }, { sessionId: "missing", messageId: "q-1" })).toEqual({
+      ok: false,
+      error: "session-not-found",
+    });
+    expect(mocks.markPendingAdjust).not.toHaveBeenCalled();
+  });
+
+  it("无活跃运行：no-active-run 并返回最新权威队列（消息留在普通队列）", async () => {
+    mocks.getSession.mockReturnValue({ id: "adj-1", mode: "work" });
+    mocks.getPendingMessages.mockReturnValue([{ id: "q-1", rawContent: "排队中", visibleContent: "排队中", enqueuedAt: 1 }]);
+    const { adjustHandler } = await setupBridge();
+    const sender = makeSender();
+
+    const result = await adjustHandler({ sender }, { sessionId: "adj-1", messageId: "q-1" });
+    expect(result).toEqual({
+      ok: false,
+      error: "no-active-run",
+      queue: [expect.objectContaining({ id: "q-1" })],
+    });
+    expect(mocks.markPendingAdjust).not.toHaveBeenCalled();
+  });
+
+  it("Chat 模式没有安全的下一步：no-safe-next-step 并返回队列", async () => {
+    mocks.getSession.mockReturnValue({ id: "adj-2", mode: "chat" });
+    mocks.getPendingMessages.mockReturnValue([]);
+    const { adjustHandler, runHandler } = await setupBridge();
+    const sender = makeSender();
+    mocks.skipDefaultRunFinished = true;
+    mocks.neverComplete = true;
+    await runHandler({ sender }, { messages: [{ role: "user", content: "run" }], sessionId: "adj-2" });
+
+    const result = await adjustHandler({ sender }, { sessionId: "adj-2", messageId: "q-1" });
+    expect(result).toEqual({ ok: false, error: "no-safe-next-step", queue: [] });
+    expect(mocks.markPendingAdjust).not.toHaveBeenCalled();
+  });
+
+  it("Work 模式活跃运行：以会话当前活跃 runId 标记插话并透传结果", async () => {
+    mocks.getSession.mockReturnValue({
+      id: "adj-3",
+      mode: "work",
+      workspaceBinding: { workspaceRoot: "C:\\workspace", displayName: "workspace", boundAt: 1 },
+    });
+    mocks.skipDefaultRunFinished = true;
+    mocks.neverComplete = true;
+    const { bridge, adjustHandler, runHandler } = await setupBridge();
+    const sender = makeSender();
+    const ack = await runHandler({ sender }, {
+      messages: [{ role: "user", content: "执行任务" }],
+      sessionId: "adj-3",
+    }) as { runId: string };
+    expect(bridge.__getSessionActiveRunForTest("adj-3")).toBe(ack.runId);
+
+    mocks.markPendingAdjust.mockReturnValue({ ok: true, queue: [{ id: "q-1", adjustRunId: ack.runId }] });
+    const result = await adjustHandler({ sender }, { sessionId: "adj-3", messageId: "q-1" });
+    // 绑定的是会话当前活跃运行（会话级守卫是唯一可信来源）
+    expect(mocks.markPendingAdjust).toHaveBeenCalledWith("adj-3", "q-1", ack.runId);
+    expect(result).toEqual({
+      ok: true,
+      queue: [expect.objectContaining({ id: "q-1", adjustRunId: ack.runId })],
+    });
+  });
+
+  it("运行结束复位：run 结算后已标记未注入的条目清标记回普通队列", async () => {
+    mocks.getSession.mockReturnValue({
+      id: "adj-4",
+      mode: "work",
+      workspaceBinding: { workspaceRoot: "C:\\workspace", displayName: "workspace", boundAt: 1 },
+    });
+    const { bridge, runHandler } = await setupBridge();
+    const sender = makeSender();
+    const ack = await runHandler({ sender }, {
+      messages: [{ role: "user", content: "很快结束" }],
+      sessionId: "adj-4",
+    }) as { runId: string };
+
+    // run 自然结算（complete 回调 → endLifecycle）：插话标记按 runId 复位
+    await vi.waitFor(() => expect(bridge.__getSessionActiveRunForTest("adj-4")).toBeUndefined());
+    expect(mocks.resetPendingAdjustByRun).toHaveBeenCalledWith("adj-4", ack.runId);
+  });
+
+  it("buildOptions 失败的早期退出同样复位插话标记（消息不困在标记态）", async () => {
+    mocks.getSession.mockReturnValue({
+      id: "adj-5",
+      mode: "work",
+      workspaceBinding: { workspaceRoot: "C:\\workspace", displayName: "workspace", boundAt: 1 },
+    });
+    const { runHandler } = await setupBridge(async () => {
+      throw new Error("boom: build options failed");
+    });
+    const sender = makeSender();
+
+    await expect(runHandler({ sender }, {
+      messages: [{ role: "user", content: "run" }],
+      sessionId: "adj-5",
+    })).rejects.toThrow("boom: build options failed");
+
+    expect(mocks.resetPendingAdjustByRun).toHaveBeenCalled();
   });
 });

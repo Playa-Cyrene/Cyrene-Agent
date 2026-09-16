@@ -1,9 +1,10 @@
 import { app, dialog, safeStorage } from "electron";
 import path from "node:path";
 import { channelManager } from "./channels/manager";
+import type { ChannelAdapter } from "./channels/adapters/base";
 import type { ChannelId } from "./channels/types";
 import * as chatsStore from "./chats/chats-store";
-import { toolRegistry } from "./orchestrator/tools/registry/tool-registry";
+import { toolRegistry, type ToolDefinition } from "./orchestrator/tools/registry/tool-registry";
 import { loadGeneralSettings, saveGeneralSettings } from "./settings/settings-facade";
 import { loadModelSettings, resolveModelSettingsProfile } from "./settings/model-settings";
 import { pluginGenerateText } from "./plugin-llm";
@@ -70,10 +71,17 @@ export async function startPluginRuntime(deps: PluginRuntimeDeps): Promise<Plugi
     ],
     storageRoot: pluginDataRoot,
     runtime: {
-      toolRegistry,
+      // 宿主工具注册表端口：插件侧传 PluginTool（宽松端口类型），
+      // 在此信任边界处适配进主进程注册表；缺省字段由运行时默认值兜底
+      toolRegistry: {
+        register: (tool) => toolRegistry.register(tool as ToolDefinition),
+        unregister: (id) => toolRegistry.unregister(id),
+        getById: (id) => toolRegistry.getById(id),
+      },
+      // 宿主渠道管理器端口：同样在宿主侧完成 PluginChannelAdapter → ChannelAdapter 的适配
       channelManager: {
         has: (id) => channelManager.has(id as ChannelId),
-        register: (adapter) => channelManager.register(adapter),
+        register: (adapter) => channelManager.register(adapter as unknown as ChannelAdapter),
         unregister: (id) => channelManager.unregister(id as ChannelId),
         startOne: (id) => channelManager.startOne(id as ChannelId),
       },

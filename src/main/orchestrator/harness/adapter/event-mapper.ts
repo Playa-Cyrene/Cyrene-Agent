@@ -30,6 +30,19 @@ export function sendHarnessEventAsAgui(
       } as BaseEvent);
       break;
     }
+    case "candidate_text_delta":
+    case "candidate_text_discard": {
+      send({
+        type: EventType.CUSTOM,
+        name: "cyrene.candidate_text",
+        value: event.type === "candidate_text_delta"
+          ? { action: "delta", roundId: event.roundId, delta: event.delta }
+          : { action: "discard", roundId: event.roundId },
+        threadId,
+        runId,
+      } as BaseEvent);
+      break;
+    }
     case "progress_text": {
       send({
         type: EventType.CUSTOM,
@@ -64,6 +77,7 @@ export function sendHarnessEventAsAgui(
         type: EventType.TOOL_CALL_START,
         toolCallId: event.toolCallId,
         toolCallName: event.toolName,
+        toolCallDisplayName: event.displayName,
         threadId,
         runId,
       } as BaseEvent);

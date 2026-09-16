@@ -381,7 +381,7 @@ toolRegistry.register({
     },
   },
   execute: async (args) => {
-    // 懒加载避开注册期副作用（与 fs-tools 的 loadVisionConfigLazy 同模式）
+    // 懒加载避开注册期副作用（与 fs-tools 的视觉配置懒加载同模式）
     const { memoryStore } = require("../../../memory/memory-store") as
       typeof import("../../../memory/memory-store");
 

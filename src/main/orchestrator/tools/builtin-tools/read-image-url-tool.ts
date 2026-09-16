@@ -15,10 +15,12 @@ import type { ToolContext } from "../registry/tool-context";
 
 const LOG_PREFIX = "[BuiltinTools]";
 
-/** 懒加载视觉配置：动态 import，规避注册期副作用（vitest 里原生 require 解析不了 .ts 源文件）。 */
-async function loadVisionConfigLazy(): Promise<import("../../vision-captioner").VisionConfig | null> {
-  const mod = await import("../../../settings/model-settings");
-  return mod.loadVisionConfig();
+/** 懒加载图片转述视觉配置：动态 import，规避注册期副作用。路由判定收口在 image-router。 */
+async function loadCaptionVisionConfigLazy(): Promise<import("../../image-router").CaptionVisionConfig> {
+  const settingsMod = await import("../../../settings/model-settings");
+  const settings = settingsMod.resolveModelSettingsProfile(settingsMod.loadModelSettings());
+  const router = await import("../../image-router");
+  return router.resolveCaptionVisionConfig(settings);
 }
 
 async function executeReadImageUrl(
@@ -30,9 +32,9 @@ async function executeReadImageUrl(
     return "[错误] url 必须以 http:// 或 https:// 开头";
   }
 
-  const visionConfig = await loadVisionConfigLazy();
-  if (!visionConfig) {
-    return "[错误·配置] 未启用视觉能力。请在「设置 → API 设置 → 视觉模型」配置一个 OpenAI 兼容的视觉模型。";
+  const captionVision = await loadCaptionVisionConfigLazy();
+  if (!captionVision.ok) {
+    return "[错误·配置] " + captionVision.error;
   }
 
   console.log(LOG_PREFIX, "read_image_url:", url);
@@ -40,7 +42,7 @@ async function executeReadImageUrl(
   // URL 直传：厂商服务器自行拉图，本机不下载
   const { captionImage } = await import("../../vision-captioner");
   const userQuery = ctx?.userQuery ?? "";
-  return captionImage({ url }, userQuery, visionConfig);
+  return captionImage({ url }, userQuery, captionVision.config);
 }
 
 export const readImageUrlTool: ToolDefinition = {

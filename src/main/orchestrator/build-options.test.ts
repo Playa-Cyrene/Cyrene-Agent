@@ -648,6 +648,7 @@ describe("build-options", () => {
     const deps = createBuildDeps()
     deps.loadModelSettings = () => ({
       provider: "test", baseUrl: "https://example.test", model: "text-only", apiKey: "k", multimodal: false,
+      vision: { baseUrl: "https://vlm.test/v1", apiKey: "k", model: "vlm-model" },
     })
     deps.captionImageForFallback = async () => ({ ok: true, caption: "截图显示一个红色错误提示" })
 
@@ -661,6 +662,24 @@ describe("build-options", () => {
       "这张图报什么错？\n\n【图片视觉信息】\n以下内容是视觉模型对用户本轮图片的观察结果，请将其视为你已经看到的图片内容；如果某张图分析失败，请不要编造。\n- error.png：截图显示一个红色错误提示",
     )
     expect(result.options.imageCaptionFallback).toBeUndefined()
+  })
+
+  it("纯文本主模型且未配视觉模型时注入人话拒绝提示（不再静默丢图）", async () => {
+    const deps = createBuildDeps()
+    deps.loadModelSettings = () => ({
+      provider: "test", baseUrl: "https://example.test", model: "text-only", apiKey: "k", multimodal: false,
+    })
+
+    const result = await buildAgentRunOptions({
+      messages: [{ role: "user", content: "这张图报什么错？" }],
+      imageAttachments: [{ name: "error.png", filePath: "C:\\tmp\\error.png", mime: "image/png" }],
+    }, deps)
+
+    const latestUser = result.options.messages.at(-1)
+    expect(latestUser?.content).toContain("【图片发送失败】")
+    expect(latestUser?.content).toContain("error.png")
+    expect(latestUser?.content).toContain("视觉模型")
+    expect(latestUser?.content).not.toContain("image_url")
   })
 
   it("builds caption fallback messages for direct image send failures", async () => {

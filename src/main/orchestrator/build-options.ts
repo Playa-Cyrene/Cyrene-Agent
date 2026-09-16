@@ -35,6 +35,7 @@ import type { AguiRunInput } from "../agui-bridge";
 import type { RelationshipChannel, RelationshipTurnInput } from "../relationship/relationship-log";
 import type { ChannelId } from "../channels/types";
 import { validateCaptionImagePath } from "../chat/image-caption";
+import { resolveImageRoute } from "./image-router";
 import {
   buildConversationTimeContext,
   resolveChatContextTimezone,
@@ -215,6 +216,8 @@ export interface ModelSettingsLite {
   stickerSimilarityThreshold?: number;
   /** 默认为 true；用户显式关闭时，图片先交给独立视觉模型转成文字。 */
   multimodal?: boolean;
+  /** 独立视觉模型配置（可选）。image-router 路由判定用。 */
+  vision?: { baseUrl: string; apiKey: string; model: string };
   /** 上下文窗口大小（Token）。来自 ModelSettings.contextWindowTokens。 */
   contextWindowTokens?: number;
 }
@@ -394,6 +397,35 @@ function buildImageCaptionFallbackMessages(
     { role: "system", content: systemContent },
     ...await withCaptionedImageAttachments(messages, input, deps),
   ];
+}
+
+/**
+ * 路由拒绝时的诚实提示：当前配置既不能直发也没有可用的转述链路，
+ * 把原因写进最后一条 user 消息，让模型如实告知用户怎么修，而不是静默丢图。
+ */
+function withImageRejectNotice(
+  messages: ChatMessage[],
+  input: AguiRunInput,
+  reason: string,
+): ChatMessage[] {
+  const images = input.imageAttachments?.filter((image) =>
+    typeof image?.filePath === "string" && typeof image?.name === "string",
+  ) ?? [];
+  if (images.length === 0) return messages;
+
+  const latestUserIndex = messages.map((message) => message.role).lastIndexOf("user");
+  if (latestUserIndex < 0) return messages;
+
+  const current = messages[latestUserIndex];
+  const text = contentToText(current.content);
+  const names = images.map((image) => image.name).join("、");
+  const notice = `【图片发送失败】用户发送的图片（${names}）无法处理：${reason}请如实告知用户当前无法查看图片及修复方法，不要编造图片内容。`;
+  const next = messages.slice();
+  next[latestUserIndex] = {
+    ...current,
+    content: text ? `${text}\n\n${notice}` : notice,
+  };
+  return next;
 }
 
 function isStyleId(value: unknown): value is StyleId {
@@ -823,31 +855,33 @@ export async function buildAgentRunOptions(
     pluginPromptContext,
   ].filter((context): context is string => Boolean(context?.trim())).join("\n\n---\n\n");
 
-  // 原始 messages 不携带 system。system 由 chat-loop / harness-adapter 按 promptLayers 组装。
-  // `multimodal=false` is an explicit user decision: never send image bytes to
-  // the main model.  Describe first with the independent vision model, then
-  // give Harness only the resulting text context.
-  // 直发判定只看用户开关：能力对错交给服务端仲裁（400 时 chat-loop 会用
-  // imageCaptionFallback 自动降级重试）。不维护「哪个协议支持发图」的静态表——
-  // 该信息必然滞后于服务端实际状态（MiniMax /anthropic 支持发图晚于文档标注）。
-  const directVisionOk = settings.multimodal !== false;
+  // 图片路由统一收口在 image-router：direct 直发 / caption 转述 / reject 拒绝。
+  // 能力对错交给服务端仲裁（直发 400 时 chat-loop 会用 imageCaptionFallback
+  // 自动降级重试）。不维护「哪个协议支持发图」的静态表——该信息必然滞后于
+  // 服务端实际状态（MiniMax /anthropic 支持发图晚于文档标注）。
+  const imageRoute = resolveImageRoute("attachment", settings);
+  const directVisionOk = imageRoute.mode === "direct";
   // [image-send] 链路日志①：直发判定。图片"传不过去"先看这条——
   // direct=false 时图片走 caption 降级/文本占位，根本不会以 image 块发给主模型。
   if (input.imageAttachments?.length) {
     console.log("[image-send] 直发判定:", {
       provider: settings.provider,
       model: settings.model,
-      multimodal开关: directVisionOk,
+      multimodal开关: settings.multimodal !== false,
       图片数: input.imageAttachments.length,
-      结果: directVisionOk ? "直发 image 块" : "降级（caption/文本占位）",
+      结果: directVisionOk ? "直发 image 块" : imageRoute.mode === "caption" ? "降级（caption/文本占位）" : "拒绝（无可用视觉链路）",
     });
   }
   const fcMessages: ChatMessage[] = directVisionOk
     ? withDirectImageAttachments(llmMessages as unknown as ChatMessage[], input)
-    : await withCaptionedImageAttachments(llmMessages as unknown as ChatMessage[], input, deps);
+    : imageRoute.mode === "caption"
+      ? await withCaptionedImageAttachments(llmMessages as unknown as ChatMessage[], input, deps)
+      : withImageRejectNotice(llmMessages as unknown as ChatMessage[], input, imageRoute.reason);
   const cleanFcMessages: ChatMessage[] = directVisionOk
     ? withDirectImageAttachments(cleanLlm as unknown as ChatMessage[], input)
-    : await withCaptionedImageAttachments(cleanLlm as unknown as ChatMessage[], input, deps);
+    : imageRoute.mode === "caption"
+      ? await withCaptionedImageAttachments(cleanLlm as unknown as ChatMessage[], input, deps)
+      : withImageRejectNotice(cleanLlm as unknown as ChatMessage[], input, imageRoute.reason);
   const imageCaptionFallback = directVisionOk
     ? buildImageCaptionFallbackMessages(
     isChatMode

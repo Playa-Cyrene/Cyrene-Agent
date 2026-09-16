@@ -80,6 +80,7 @@ import {
 import { memoryStore } from "../memory/memory-store";
 import { backupMemoryRagFiles, reconcileMemoryRag } from "../memory/memory-rag-reconciliation";
 import { registerChatsIpc } from "../chats/chats-ipc";
+import { registerWorkspaceFilesIpc } from "../chats/workspace-files-ipc";
 import { registerMomentsIpc } from "../moments/moments-ipc";
 import { registerChatUiIpc, getActiveChatSessionId } from "../chats/chat-ui-ipc";
 import { createToastWindowController } from "../toast/toast-window";
@@ -92,7 +93,7 @@ import { TtsSessionService } from "../tts/tts-session-service";
 import { registerTtsIpc } from "../tts/tts-ipc";
 import { loadUserProfile } from "../settings-store";
 import { getAppIconPath } from "../app-icon";
-import { registerAgUiIpc } from "../agui-bridge";
+import { hasActiveConversationRun, registerAgUiIpc } from "../agui-bridge";
 import { updateLocaleContext } from "../locale-context";
 import { registerCallIpc } from "../call/call-manager";
 import { initSkills, skillRegistry } from "../skills";
@@ -488,9 +489,14 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
         registerTtsIpc({ ipc, ttsSessionService: services.ttsSession });
 
         // 聊天会话存储 IPC（chats-store.initialize 建好 cyrene-chats 目录并加载 index）
-        registerChatsIpc(ipc);
+        registerChatsIpc(ipc, {
+          llmClient: services.llm,
+          isPrimaryModelBusy: hasActiveConversationRun,
+        });
         registerMomentsIpc(ipc);
         registerCodeGitIpc({ ipc, service: services.git });
+        // 会话工作区只读文件（右侧面板文件树 / 预览）
+        registerWorkspaceFilesIpc(ipc);
 
         // AG-UI 事件流桥：渲染进程 invoke(AGUI_RUN) → CyreneAgent 跑 Agent 循环 → 事件透传
         registerAgUiIpc(

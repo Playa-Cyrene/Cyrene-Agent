@@ -72,6 +72,7 @@ export async function runToolRound(run: HarnessRun, toolCalls: ToolCall[]): Prom
 
   // ── ask_user 排他分支 ──
   if (askCalls.length > 0) {
+    input.onEvent?.({ type: "candidate_text_discard", roundId: `round-${run.rounds}` });
     try {
       await runAskUserRound(run, askCalls, otherCalls);
     } catch (error) {
@@ -163,6 +164,13 @@ async function runAskUserRound(
   }
 
   // 执行 ask_user（等待期间不计入执行超时）
+  // ask_user 同样走工具卡事件链：运行流里出现「询问用户」卡片，等待与问答结果可见
+  input.onEvent?.({
+    type: "tool_start",
+    toolCallId: primaryAsk.id,
+    toolName: primaryAsk.name,
+    args: parseToolCallArgs(primaryAsk),
+  });
   run.clock.startUserWait();
   input.onToolLifecycle?.({ toolCallId: primaryAsk.id, toolName: primaryAsk.name, toolSideEffect: "read_only", status: "started" });
   const askStartedAt = Date.now();
@@ -178,6 +186,13 @@ async function runAskUserRound(
   }
   run.clock.stopUserWait();
 
+  // 问答结果发布到工具卡：message 已含「问题 → 回答」逐行预览
+  input.onEvent?.({
+    type: "tool_end",
+    toolCallId: primaryAsk.id,
+    outcome: askResult.outcome === "success" ? "success" : "failure",
+    preview: askResult.message.slice(0, 200),
+  });
   run.messages.push(toolResultMessage(primaryAsk, askResult));
   input.onToolLifecycle?.({
     toolCallId: primaryAsk.id,

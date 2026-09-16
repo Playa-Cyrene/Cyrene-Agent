@@ -46,6 +46,7 @@ import { TimeoutClock } from "./timeout-clock";
 import { buildCurrentTodoNotebookContext } from "./todo-working-notebook";
 import { appendInternalTranscriptMessage, createInternalTranscriptMessage } from "./internal-transcript";
 import { callLLM, summarizeHistory } from "./harness-llm";
+import { ChatTimeStreamPrefixFilter } from "../../chat-time-stream-filter";
 import { runToolRound, type ToolRoundOutcome } from "./tool-round";
 import {
   buildStableSystemPrefix,
@@ -107,6 +108,24 @@ export async function runCyreneHarness(input: HarnessInput): Promise<HarnessResu
       return finishRun(run, finalAnswer, true, "max_rounds");
     }
 
+    // ── 插话注入（下一次模型请求前）──
+    // 工具批次或上一轮模型请求已结束：把标记插入当前运行的待发消息提交为
+    // 正式用户消息并按入队顺序追加进 transcript。无标记时保持同步直达，
+    // 不引入 await 挂起点（与压缩的门控方式一致）。
+    const adjustmentPoll = input.pollRunAdjustments?.();
+    if (adjustmentPoll) {
+      const adjustments = await adjustmentPoll;
+      if (adjustments.length > 0) {
+        for (const adjustment of adjustments) {
+          run.messages.push({ role: "user", content: adjustment.rawContent });
+        }
+        checkpoint(run);
+        if (run.checkpointFailure) {
+          return finishRun(run, `执行状态保存失败：${run.checkpointFailure}`, true, "error");
+        }
+      }
+    }
+
     const promptLayers = buildRoundPromptLayers(input);
     const roundId = `round-${run.rounds}`;
     input.onEvent?.({ type: "round_start", roundId });
@@ -131,7 +150,7 @@ export async function runCyreneHarness(input: HarnessInput): Promise<HarnessResu
     // ── callLLM ──
     let response: ChatResponse;
     try {
-      response = await callRoundLLM(run, promptLayers);
+      response = await callRoundLLM(run, promptLayers, roundId);
     } catch (err) {
       // signal abort 属于用户取消：按 cancelled 结算，不归类为 error。
       if (input.signal?.aborted) return cancelledResult(run);
@@ -181,6 +200,28 @@ export async function runCyreneHarness(input: HarnessInput): Promise<HarnessResu
     const truncatedSuffix = response.finishReason === "length"
       ? "\n\n⚠️ 模型输出达到长度上限，以上回复可能不完整。"
       : "";
+    // ── 最终结算前的插话检查 ──
+    // 模型准备结束当前运行：若仍有待插入的调整消息，本轮回复转为中间过程
+    // （progress_text），插话进上下文后继续循环处理，不在结算前丢弃插话。
+    const endAdjustments = await input.pollRunAdjustments?.() ?? [];
+    if (endAdjustments.length > 0) {
+      const intermediate = run.streamController.commitProgressBuffer() + truncatedSuffix;
+      input.onEvent?.({ type: "round_end", roundId });
+      if (intermediate) {
+        input.onEvent?.({ type: "progress_text", content: intermediate });
+      }
+      for (const adjustment of endAdjustments) {
+        run.messages.push({ role: "user", content: adjustment.rawContent });
+      }
+      // 本轮模型已产出回复且运行未结束：按工具轮口径推进轮次，
+      // 让下一轮拿到新 roundId，轮次上限也能正确计数
+      run.rounds++;
+      checkpoint(run);
+      if (run.checkpointFailure) {
+        return finishRun(run, `执行状态保存失败：${run.checkpointFailure}`, true, "error");
+      }
+      continue;
+    }
     const finalAnswer = run.streamController.commitProgressBuffer() + truncatedSuffix;
     input.onEvent?.({ type: "round_end", roundId });
     input.onEvent?.({ type: "final_answer", content: finalAnswer });
@@ -346,9 +387,10 @@ async function runCompaction(run: HarnessRun, roundSystemPrompt: string, budget:
 }
 
 /** 发起一轮 LLM 调用，并桥接 reasoning 流式事件（start/delta/end 配对）。 */
-async function callRoundLLM(run: HarnessRun, promptLayers: PromptLayers): Promise<ChatResponse> {
+async function callRoundLLM(run: HarnessRun, promptLayers: PromptLayers, roundId: string): Promise<ChatResponse> {
   const reasoningMessageId = `reasoning-${run.rounds}`;
   let reasoningStarted = false;
+  const candidateFilter = new ChatTimeStreamPrefixFilter();
   try {
     return await callLLM(
       run.input.vendorConfig,
@@ -364,8 +406,14 @@ async function callRoundLLM(run: HarnessRun, promptLayers: PromptLayers): Promis
         }
         run.input.onEvent?.({ type: "reasoning_delta", messageId: reasoningMessageId, delta });
       },
+      (delta) => {
+        const visibleDelta = candidateFilter.push(delta);
+        if (visibleDelta) run.input.onEvent?.({ type: "candidate_text_delta", roundId, delta: visibleDelta });
+      },
     );
   } finally {
+    const tail = candidateFilter.finish();
+    if (tail) run.input.onEvent?.({ type: "candidate_text_delta", roundId, delta: tail });
     if (reasoningStarted) {
       run.input.onEvent?.({ type: "reasoning_end", messageId: reasoningMessageId });
     }

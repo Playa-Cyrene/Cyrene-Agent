@@ -194,6 +194,12 @@ export interface CyreneRunOptions {
    * 只携带稳定元数据供插件事件旁路使用，不参与执行决策。
    */
   onToolFinished?: (event: import("./harness/types").HarnessToolFinishedEvent) => void;
+  /**
+   * 插话轮询（AG-UI bridge 注入，透传给 harness）：
+   * 返回待插入当前运行的用户消息；harness 在每轮模型请求前与最终结算前调用。
+   * Chat 无工具链路是单请求运行，不消费该回调。
+   */
+  pollRunAdjustments?: () => Promise<import("./harness/types").RunAdjustmentMessage[]> | undefined;
 }
 
 /** Agent run 最终结果（供桥层做副作用用）。 */
@@ -258,12 +264,16 @@ export function toAguiEvent(event: AgentLoopEvent): BaseEvent {
       return { type: EventType.STEP_STARTED, stepName: event.stepName };
     case "step_finished":
       return { type: EventType.STEP_FINISHED, stepName: event.stepName };
-    case "tool_call_start":
+    case "tool_call_start": {
+      // 查注册表补中文展示名；查不到不填，前端回退原始 ID
+      const registryTool = toolRegistry.getById(event.toolCallName ?? "");
       return {
         type: EventType.TOOL_CALL_START,
         toolCallId: event.toolCallId,
         toolCallName: event.toolCallName,
+        toolCallDisplayName: registryTool?.name,
       };
+    };
     case "tool_call_args":
       return {
         type: EventType.TOOL_CALL_ARGS,

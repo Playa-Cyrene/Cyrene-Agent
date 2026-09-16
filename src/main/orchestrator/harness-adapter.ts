@@ -108,6 +108,7 @@ export async function runHarnessWithAdapter(
     },
     onCompactionLifecycle: (event) => runStore.recordCompaction(runId, event),
     ...(options.onToolFinished ? { onToolFinished: options.onToolFinished } : {}),
+    ...(options.pollRunAdjustments ? { pollRunAdjustments: options.pollRunAdjustments } : {}),
     requestUserClarification: options.requestUserClarification
       ? (card) => options.requestUserClarification!(card as never, signal)
       : undefined,

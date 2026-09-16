@@ -213,6 +213,65 @@ describe("streamChatWithSdk", () => {
     ]);
   });
 
+  it("delivers each Anthropic text delta while the provider stream is still open", async () => {
+    const adapter = new AnthropicAdapter("claude", anthropicCapability);
+    let releaseSecondChunk!: () => void;
+    let releaseStreamEnd!: () => void;
+    const secondChunkGate = new Promise<void>((resolve) => { releaseSecondChunk = resolve; });
+    const streamEndGate = new Promise<void>((resolve) => { releaseStreamEnd = resolve; });
+    const seen: string[] = [];
+
+    async function* gatedEvents(): AsyncIterable<unknown> {
+      yield { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } };
+      yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "好的伙伴，" } };
+      await secondChunkGate;
+      yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "人家先去摸清这边项目的底，" } };
+      await streamEndGate;
+      yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "再决定怎么跑测试♪" } };
+      yield { type: "content_block_stop", index: 0 };
+      yield { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 3 } };
+      yield { type: "message_stop" };
+    }
+
+    const deps: SdkStreamRuntimeDeps = {
+      openAI: unusedFactory,
+      responses: unusedFactory,
+      anthropic: async () => ({
+        events: gatedEvents(),
+        finalMessage: async () => ({
+          stop_reason: "end_turn",
+          usage: { input_tokens: 5, output_tokens: 3 },
+          content: [{ type: "text", text: "好的伙伴，人家先去摸清这边项目的底，再决定怎么跑测试♪" }],
+        }),
+      }),
+    };
+
+    const running = streamChatWithSdk({
+      adapter,
+      request,
+      config: anthropicConfig,
+      timeoutMs: 1_000,
+      onDelta: (delta) => {
+        if (delta.type === "text_delta") seen.push(delta.delta);
+      },
+    }, deps);
+
+    await vi.waitFor(() => expect(seen).toEqual(["好的伙伴，"]));
+    releaseSecondChunk();
+    await vi.waitFor(() => expect(seen).toEqual([
+      "好的伙伴，",
+      "人家先去摸清这边项目的底，",
+    ]));
+
+    releaseStreamEnd();
+    await running;
+    expect(seen).toEqual([
+      "好的伙伴，",
+      "人家先去摸清这边项目的底，",
+      "再决定怎么跑测试♪",
+    ]);
+  });
+
   it("streams Responses deltas and attaches rawAssistant from the terminal event", async () => {
     const adapter = new ResponsesAdapter("chatgpt", responsesCapability);
     const seen: UnifiedStreamDelta[] = [];
