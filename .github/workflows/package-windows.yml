@@ -1,0 +1,85 @@
+name: package-windows
+
+# Windows 安装包构建工作流（治理方案阶段 B）：
+# - 复用与本地 package:win:dir 相同的构建链（build / build:screenshot-helper /
+#   prepare:mingit / prepare:mpv），产出 NSIS 安装器并留存为工作流产物
+# - --publish never：只构建不上传；应用更新源（GitHub Releases，由
+#   update-packaging-config.test.ts 固定）不在本工作流变更
+# - 发布（草稿 Release）待 GitHub 托管恢复后另建独立工作流：仅版本标签触发、
+#   contents:write 最小权限、测试与安装验证通过后建草稿、人工核对再公开。
+#   详见 docs/refactor/2026-09-14-engineering-governance-plan.md 阶段 B
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: windows-latest
+    env:
+      NODE_OPTIONS: --max-old-space-size=4096
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js 24 LTS
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      # 截图辅助程序用 cargo --locked 构建；win25 运行器镜像自带 Rust 工具链
+      - name: Verify Rust toolchain
+        run: cargo --version
+
+      # 标签构建先做版本一致性检查，避免产物与标签对不上还白跑十几分钟
+      - name: Check tag matches package version
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}".Substring(1)
+          $pkg = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          if ($tag -ne $pkg) {
+            Write-Error "标签版本 v$tag 与 package.json 版本 $pkg 不一致"
+            exit 1
+          }
+          Write-Host "标签与 package.json 版本一致：$pkg"
+
+      - name: Install dependencies
+        run: npm ci --foreground-scripts
+
+      - name: Verify Electron installation
+        run: npx electron --version
+
+      - name: Build application
+        run: npm run build
+
+      - name: Build screenshot helper (Rust, --locked)
+        run: npm run build:screenshot-helper
+
+      # 两个脚本自带 sha256 清单校验（vendor/*-manifest.json），缓存命中则跳过下载
+      - name: Prepare MinGit
+        run: npm run prepare:mingit
+
+      - name: Prepare mpv
+        run: npm run prepare:mpv
+
+      - name: Build NSIS installer
+        run: npx electron-builder --win nsis --publish never
+
+      # 验证安装器、latest.yml 更新元数据与 win-unpacked 内随包二进制齐全
+      - name: Verify installer artifacts
+        run: npm run verify:installer
+
+      # 留存为内部测试产物，不自动公开发布
+      - name: Upload installer artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cyrene-windows-installer
+          path: |
+            release/Cyrene-Setup-*.exe
+            release/latest.yml
+          if-no-files-found: error
+          # 安装器数百 MB，缩短留存时间避免占满产物配额
+          retention-days: 14

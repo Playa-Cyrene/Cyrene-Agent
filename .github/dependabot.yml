@@ -1,0 +1,28 @@
+# 每周依赖巡检：根目录 npm 依赖与工作流 Actions 版本
+# 插件 SDK 包（packages/plugin-sdk）有独立的 plugin-sdk.yml 流程，不在此重复配置。
+# 注意：原生模块、Electron、模型运行时（@xenova/transformers 等）的升级 PR
+# 需人工单独验收（npm ci + 全量测试 + 安装包冒烟），不随常规小版本直接合入。
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 10
+    groups:
+      # 开发依赖的补丁与小版本合并提 PR，减少噪音；生产依赖逐个单独出 PR 便于审查
+      dev-dependencies:
+        dependency-type: development
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 5

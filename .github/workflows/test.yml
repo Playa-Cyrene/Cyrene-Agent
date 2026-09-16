@@ -25,70 +25,27 @@ jobs:
       - name: Verify Electron installation
         run: npx electron --version
 
+      # 生产依赖审计：高危基线清零或限期登记前仅留存报告，不阻断合入。
+      # 处置清单见 docs/refactor/2026-09-14-dependency-audit-baseline.md；
+      # 基线清零后把本步骤改为 npm audit --omit=dev --audit-level=high 并移除 continue-on-error。
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --json > npm-audit-prod.json
+        continue-on-error: true
+
+      - name: Upload production dependency audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-audit-prod
+          path: npm-audit-prod.json
+
       - name: Build
         run: npm run build
 
-      - name: Test src/main/orchestrator/vendors
-        if: success() || failure()
-        run: npx vitest run --reporter=verbose --maxWorkers=1 src/main/orchestrator/vendors
+      # 插件清单契约检查：源码类型与 manifest.schema.json 保持一致
+      - name: Check plugin schema contract
+        run: npm run check:plugin-schema
 
-      - name: Test src/main/orchestrator/structured-output
-        if: success() || failure()
-        run: npx vitest run --reporter=verbose --maxWorkers=1 src/main/orchestrator/structured-output
-
-      - name: Test src/main/orchestrator/tools
-        if: success() || failure()
-        run: npx vitest run --reporter=verbose --maxWorkers=1 src/main/orchestrator/tools
-
-      - name: Test src/main/orchestrator root files
-        if: success() || failure()
-        shell: pwsh
-        run: |
-          $files = Get-ChildItem -Path "src/main/orchestrator" -Filter "*.test.ts" | Select-Object -ExpandProperty FullName
-          if (-not $files) { Write-Host "No root test files found"; exit 0 }
-          npx vitest run --reporter=verbose --maxWorkers=1 $files
-
-      - name: Test src/main/music
-        if: success() || failure()
-        run: npx vitest run --reporter=verbose --maxWorkers=1 src/main/music
-
-      - name: Test src/main/memory
-        if: success() || failure()
-        run: npx vitest run --reporter=verbose --maxWorkers=1 src/main/memory
-
-      - name: Test src/main/channels+chats+chat+cita
-        if: success() || failure()
-        run: npx vitest run --reporter=verbose --maxWorkers=1 src/main/channels src/main/chats src/main/chat src/main/cita
-
-      - name: Test src/main/screenshot+rag+scheduler+proactive
-        if: success() || failure()
-        run: npx vitest run --reporter=verbose --maxWorkers=1 src/main/screenshot src/main/rag src/main/scheduler src/main/proactive
-
-      - name: Test src/main/skills+social+relationship+runtime-policy+game-bot
-        if: success() || failure()
-        run: npx vitest run --reporter=verbose --maxWorkers=1 src/main/skills src/main/social-context src/main/relationship src/main/runtime-policy src/main/game-bot
-
-      - name: Test src/main root files
-        if: success() || failure()
-        shell: pwsh
-        run: |
-          $files = Get-ChildItem -Path "src/main" -Filter "*.test.ts" | Select-Object -ExpandProperty FullName
-          if (-not $files) { Write-Host "No root test files found"; exit 0 }
-          npx vitest run --reporter=verbose --maxWorkers=1 $files
-
-      - name: Test src/plugins
-        if: success() || failure()
-        run: npx vitest run --reporter=verbose --maxWorkers=1 src/plugins
-
-      - name: Test src/renderer
-        if: success() || failure()
-        run: npx vitest run --reporter=verbose --maxWorkers=1 src/renderer
-
-      - name: Test src/shared + src/cli
-        if: success() || failure()
-        run: npx vitest run --reporter=verbose --maxWorkers=1 src/shared src/cli
-
-      - name: Test skills
-        if: success() || failure()
-        run: npx vitest run --reporter=verbose --maxWorkers=1 skills
-
+      # 全量测试：vitest.config.ts 的 include 即权威测试集，新增测试自动纳入门禁
+      - name: Run full test suite
+        run: npm test -- --reporter=dot
