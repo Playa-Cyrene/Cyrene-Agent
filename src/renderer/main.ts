@@ -5,6 +5,7 @@ import { MouseFocusController } from "./live2d/focus";
 import { ExpressionResetController } from "./live2d/expression-reset";
 import { MouthSyncController } from "./live2d/mouth-sync";
 import { SpeakingMotionController } from "./live2d/speaking-motion";
+import { BlinkController } from "./live2d/blink";
 // OpenerBubbleController 已被移除（主动开口子系统整体删除）。
 import { ClickThroughController } from "./live2d/click-through";
 import { Live2DRendererLifecycleTracker } from "./live2d/lifecycle-diagnostics";
@@ -47,6 +48,7 @@ let focus: MouseFocusController | null = null;
 let expressionReset: ExpressionResetController | null = null;
 let mouthSync: MouthSyncController | null = null;
 let speakingMotion: SpeakingMotionController | null = null;
+let blink: BlinkController | null = null;
 let clickThrough: ClickThroughController | null = null;
 let petZoomOff: (() => void) | null = null;
 let petVisibilityOff: (() => void) | null = null;
@@ -81,6 +83,7 @@ const manager = new Live2DManager({
     expressionReset = new ExpressionResetController(model);
     mouthSync = new MouthSyncController(model);
     speakingMotion = new SpeakingMotionController(model);
+    blink = new BlinkController(model);
     const speechOffs: Array<() => void> = [];
     speechOffs.push(
       trackSubscription("live2dSpeech:onPrepare", window.live2dSpeech?.onPrepare(() => {
@@ -162,6 +165,7 @@ const manager = new Live2DManager({
           expressionReset: expressionReset !== null,
           mouthSync: mouthSync !== null,
           speakingMotion: speakingMotion !== null,
+          blink: blink !== null,
           clickThrough: clickThrough !== null,
         },
         petVisible,
@@ -190,6 +194,8 @@ window.addEventListener("beforeunload", () => {
   mouthSync = null;
   speakingMotion?.dispose();
   speakingMotion = null;
+  blink?.dispose();
+  blink = null;
   focus?.dispose();
   focus = null;
   clickThrough?.dispose();

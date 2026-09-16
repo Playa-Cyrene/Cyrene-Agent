@@ -264,7 +264,16 @@
       }
     ]
   },
-  "Groups": [],
+  "Groups": [
+    {
+      "Name": "EyeBlink",
+      "Ids": ["ParamEyeLOpen", "ParamEyeROpen"]
+    },
+    {
+      "Name": "LipSync",
+      "Ids": ["ParamMouthOpenY"]
+    }
+  ],
   "HitAreas": [
     {
       "Name": "左侧秋千",
