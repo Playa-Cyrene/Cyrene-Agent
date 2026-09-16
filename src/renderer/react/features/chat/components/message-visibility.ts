@@ -2,6 +2,7 @@ import type { RunActivityRecord } from "../../../../../shared/chat-types";
 
 export interface AssistantVisibilityState {
   content: string;
+  transientText?: string;
   loading?: boolean;
   reasoning?: string;
   reasoningStreaming?: boolean;
@@ -16,7 +17,7 @@ export function assistantRenderStages(message: AssistantVisibilityState): Array<
   // `loading` only means the run is pending. It must not fabricate a visible
   // chain of thought for tool-capable models that do not return reasoning.
   if (message.reasoning || message.reasoningStreaming) stages.push("reasoning");
-  if (message.responseStarted || message.content || message.sticker) stages.push("assistant");
+  if (message.responseStarted || message.transientText || message.content || message.sticker) stages.push("assistant");
   return stages;
 }
 

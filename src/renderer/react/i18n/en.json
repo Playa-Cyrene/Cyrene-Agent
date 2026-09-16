@@ -17,8 +17,15 @@
     "placeholderBusy": "Running · Enter to queue · Shift+Enter for a new line",
     "attachmentsLabel": "Attachments ready to send",
     "queueLabel": "Pending queue",
+    "queueCount": "Pending · {{count}} messages",
     "queueSend": "Add to pending queue",
     "stopRun": "Stop run",
+    "queueEdit": "Edit",
+    "queueEditInput": "Edit pending message",
+    "queueSave": "Save edit",
+    "queueCancelEdit": "Cancel edit",
+    "queueAdjust": "Adjust into the current task's next step",
+    "queueAdjustUnavailable": "No active run to adjust",
     "queueTruncated": "...",
     "uploadFile": "Upload file",
     "screenshot": "Screenshot",
@@ -73,6 +80,10 @@
     "errorAttachmentIncomplete": "An attachment is not ready (missing file); send cancelled and draft kept",
     "errorClaimMessageMissing": "Pending queue error: the claimed message record is missing; this session's queue is paused",
     "errorQueueRemoveFailed": "Failed to remove queued message: {{error}}",
+    "errorPendingEditFailed": "Failed to edit queued message: {{error}}",
+    "errorPendingAdjustFailed": "Adjust failed: {{error}}",
+    "errorPendingAdjustNoRun": "No active run to insert into; the message stays in the queue",
+    "errorPendingAdjustAttachments": "Messages with attachments can't be inserted into the current run yet; kept in the queue",
     "openProjectFolderFailed": "Couldn't open project folder: {{error}}",
     "unknownError": "Unknown error",
     "lastRunInterrupted": "The last run was interrupted"
@@ -90,6 +101,8 @@
     "toolExecutionsAria": "Tool execution",
     "roundChangedFiles": "{{count}} files changed",
     "organizingReply": "I'm putting together this reply…",
+    "generatingAnswer": "Cyrene is generating…",
+    "interruptedCandidate": "Incomplete generated content",
     "activityProcessingTitle": "Working on it — {{elapsed}}",
     "activityProcessedTitle": "Finished — {{elapsed}}",
     "attachmentProcessing": "Analyzing image…",
@@ -167,7 +180,11 @@
     "failureCount": "{{count}} failed",
     "runningLive": "I'm {{action}}",
     "runningThinking": "I'm thinking",
-    "completedTitle": "All done"
+    "completedTitle": "All done",
+    "toolAskUser": "Ask user",
+    "askUserWaiting": "Waiting for answer",
+    "askUserAnswered": "User answered",
+    "askUserFailed": "Ask failed"
   },
   "runPresentation": {
     "permissionWeather": "Check weather for {{city}}",
@@ -217,7 +234,26 @@
     "remind": "Reminder"
   },
   "rightInspector": {
-    "panelAria": "Inspector panel"
+    "panelAria": "Inspector panel",
+    "toggle": "Toggle right panel"
+  },
+  "fileTree": {
+    "viewPreview": "Preview",
+    "viewSource": "Source",
+    "title": "Files",
+    "loading": "Reading directory…",
+    "empty": "Directory is empty",
+    "truncated": "Too many entries, showing first {{count}}",
+    "errNoWorkspace": "No workspace bound to this conversation",
+    "errOutOfRoot": "Path escapes the workspace root",
+    "errNotFound": "Path not found or deleted",
+    "errIsDirectory": "This is a directory",
+    "errTooLarge": "File exceeds 1MB, preview unsupported",
+    "errBinary": "Binary file, preview unsupported",
+    "errListFailed": "Failed to list directory",
+    "errReadFailed": "Failed to read file",
+    "previewLoading": "Reading file…",
+    "previewLinesHint": "Large file, showing first {{count}} lines"
   },
   "modelPanel": {
     "title": "Model",

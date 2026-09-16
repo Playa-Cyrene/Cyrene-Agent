@@ -139,6 +139,66 @@ html, body {
   flex: 1;
   min-width: 0;
   min-height: 0;
+  /* 右上角的右侧面板开关以此定位锚点 */
+  position: relative;
+}
+
+/* 白色工作区右上角：右侧面板展开/收起开关 */
+.cy-inspector-toggle-float {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 30;
+}
+
+/* 全局文字选中：用应用粉色强调色替代浏览器默认蓝 */
+::selection {
+  background: rgba(255, 91, 138, 0.24);
+  color: inherit;
+}
+
+/* ── 右栏可拖宽布局（react-resizable-panels）── */
+
+/* Group 容器：替代 .cy-page-main 成为 .cy-page 的弹性子项 */
+.cy-page-dock {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* Panel 内层容器：撑满面板，承载工作区 / 右侧面板 */
+.cy-dock-body {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* 拖动条：常驻 12px 呼吸区，悬停/拖动时显示 2px 强调线 */
+.cy-dock-separator {
+  position: relative;
+  width: 12px;
+  background: transparent;
+}
+
+.cy-dock-separator::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 2px;
+  transform: translateX(-50%);
+  border-radius: 1px;
+  background: transparent;
+  transition: background 0.12s ease;
+}
+
+.cy-dock-separator:hover::after,
+.cy-dock-separator:active::after {
+  background: var(--cy-accent, #ff5b8a);
 }
 
 .cy-page-newtask {
@@ -183,7 +243,6 @@ html, body {
   min-height: 0;
   flex-direction: column;
   overflow: hidden;
-  transition: width 220ms ease;
 }
 
 .cy-workspace::before {

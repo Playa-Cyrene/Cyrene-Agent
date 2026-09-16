@@ -25,10 +25,14 @@ import {
 import { applyAgentRoundBoundary, createRoundProcessMessage } from "../../components/agent-rounds";
 import { applyTaskDelegationEvent, normalizeTaskDelegationEvent } from "../../components/task-delegations";
 import { t } from "../../../../i18n";
-import type { AguiApi, AguiEvent, ChatStoreApi } from "../chat-page-bridge";
+import type { AguiApi, AguiEvent, CandidateTextEventValue, ChatStoreApi } from "../chat-page-bridge";
 import { normalizeWeatherData, parseSessionRunActiveError, stageForStep } from "../chat-page-normalizers";
 import { RunEventGate } from "../run-event-gate";
-import { splitTextForReveal } from "../message-reveal";
+import {
+  SMOOTH_REVEAL_TICK_MS,
+  SmoothTextRevealQueue,
+  splitTextForReveal,
+} from "../message-reveal";
 import {
   buildTodoRecoveryContext,
   mergeHarnessTodosForSession,
@@ -145,9 +149,23 @@ export class AgentRunController {
   private taskDelegations: TaskDelegationDisplayRecord[] = [];
   private activeRoundId: string | undefined;
   private processMessageSequence = 0;
+  /** run 内单调递增的时间线序号：推理块、过程消息、工具记录创建时各领一个。 */
+  private eventSequence = 0;
   private finalMessageCompleted = false;
   private revealCancelled = false;
   private revealChain: Promise<void> = Promise.resolve();
+  /** 当前模型轮的临时候选正文；只用于界面预览，不进入检查点。 */
+  private candidateRoundId: string | undefined;
+  private candidateText = "";
+  private candidateVisibleText = "";
+  private readonly candidateRevealQueue = new SmoothTextRevealQueue();
+  /** 候选正文开始流式时的时间线序号：轮闭合转过程消息时沿用，保证正文排在同轮工具之前。 */
+  private candidateSeq: number | undefined;
+  private candidateFrameId: number | undefined;
+  private candidateFrameUsesRaf = false;
+  private candidateLastFrameAt: number | undefined;
+  private candidateDrainResolve: (() => void) | undefined;
+  private pendingCandidateClassification: { processId: string; content: string } | undefined;
   private sticker: string | null = null;
   private toolExecutions: ToolExecutionRecord[] = [];
   private runStarted = false;
@@ -308,11 +326,14 @@ export class AgentRunController {
       // 只有 success + 完整 TEXT_MESSAGE_END + 非空正文才提交正式回答。
       // cancelled / timeout / runtime_error 与半截流都只保留在展开的过程区。
       const formalAnswerCommitted = isFormalAnswerCommitted(this.streamContent, this.terminalStatus, this.finalMessageCompleted);
+      if (!formalAnswerCommitted) this.moveCandidateToInterruptedProcess();
+      else this.resetCandidateState();
       this.completeRunActivity(!formalAnswerCommitted);
       const finalContent = formalAnswerCommitted ? resolveTerminalContent(this.streamContent, this.terminalStatus) : "";
       this.persistedFinalContent = finalContent;
       this.deps.host.patchMessage(this.input.sessionId, this.input.assistantId, {
         content: finalContent,
+        transientText: undefined,
         loading: false,
         waitingForFirstEvent: false,
         streaming: false,
@@ -340,14 +361,17 @@ export class AgentRunController {
       // 不走通用错误文案，改为挂起操作卡等用户决定是否终止旧 run 并重开本轮。
       const conflictRunId = parseSessionRunActiveError(errorMessage);
       if (conflictRunId) {
+        this.moveCandidateToInterruptedProcess();
         this.processMessages = [...this.processMessages, createRoundProcessMessage(
           `process-${this.processMessageSequence++}`,
           t("chatPage.sessionRunActiveNotice"),
           this.toolExecutions.length,
           this.activeRoundId,
+          this.nextSeq(),
         )];
         this.deps.host.patchMessage(this.input.sessionId, this.input.assistantId, {
           content: "",
+          transientText: undefined,
           processMessages: this.processMessages,
           loading: false,
           waitingForFirstEvent: false,
@@ -371,14 +395,17 @@ export class AgentRunController {
         return;
       }
       const visibleError = t("chatPage.errorModelRequestFailedWith", { message: errorMessage });
+      this.moveCandidateToInterruptedProcess();
       this.processMessages = [...this.processMessages, createRoundProcessMessage(
         `process-${this.processMessageSequence++}`,
         visibleError,
         this.toolExecutions.length,
         this.activeRoundId,
+        this.nextSeq(),
       )];
       this.deps.host.patchMessage(this.input.sessionId, this.input.assistantId, {
         content: "",
+        transientText: undefined,
         processMessages: this.processMessages,
         loading: false,
         waitingForFirstEvent: false,
@@ -392,6 +419,7 @@ export class AgentRunController {
       // 错误终态的快照也已落盘：上报落盘确认（runId 未知时静默跳过）
       this.reportRunPersisted();
     } finally {
+      this.cancelCandidateFrame();
       if (this.checkpointTimer !== undefined) window.clearTimeout(this.checkpointTimer);
       const checkpointCallbacks = { ...this.deps.registries.checkpointTriggers.current };
       delete checkpointCallbacks[this.input.sessionId];
@@ -494,6 +522,7 @@ export class AgentRunController {
           argsText: patch.argsText,
           changes: patch.changes,
           roundId: patch.roundId ?? this.activeRoundId,
+          seq: this.nextSeq(),
         }]
       : this.toolExecutions.map((tool, toolIndex) => toolIndex === index ? { ...tool, ...patch } : tool);
     this.deps.host.patchMessage(this.input.sessionId, this.input.assistantId, { toolExecutions: this.toolExecutions });
@@ -515,6 +544,169 @@ export class AgentRunController {
         await new Promise<void>((resolve) => window.setTimeout(resolve, 14));
       }
     });
+  }
+
+  private publishCandidateChunk(chunk: string): void {
+    if (!chunk) return;
+    this.candidateVisibleText += chunk;
+    this.deps.host.patchMessage(this.input.sessionId, this.input.assistantId, {
+      transientText: this.candidateVisibleText,
+      loading: false,
+      waitingForFirstEvent: false,
+      streaming: true,
+      responseStarted: true,
+      runStage: { kind: "responding" },
+    });
+  }
+
+  private ensureCandidateDrainTracked(): void {
+    if (this.candidateDrainResolve || !this.candidateRevealQueue.hasPending) return;
+    const drain = new Promise<void>((resolve) => {
+      this.candidateDrainResolve = resolve;
+    });
+    this.revealChain = this.revealChain.then(() => drain);
+  }
+
+  private completeCandidateDrain(): void {
+    const resolve = this.candidateDrainResolve;
+    this.candidateDrainResolve = undefined;
+    this.candidateLastFrameAt = undefined;
+    resolve?.();
+  }
+
+  private appendCandidateDelta(delta: string): void {
+    const immediate = this.candidateRevealQueue.push(delta);
+    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+    if (reduceMotion) {
+      this.publishCandidateChunk(immediate + this.candidateRevealQueue.drain());
+      this.completeCandidateDrain();
+      return;
+    }
+    this.publishCandidateChunk(immediate);
+    if (!this.candidateRevealQueue.hasPending) {
+      this.completeCandidateDrain();
+      return;
+    }
+    this.ensureCandidateDrainTracked();
+    this.scheduleCandidateFrame();
+  }
+
+  private scheduleCandidateFrame(): void {
+    if (this.candidateFrameId !== undefined || !this.candidateRevealQueue.hasPending) return;
+    if (this.candidateLastFrameAt === undefined) this.candidateLastFrameAt = performance.now();
+    this.candidateFrameUsesRaf = Boolean(window.requestAnimationFrame);
+    const schedule = window.requestAnimationFrame?.bind(window)
+      ?? ((callback: FrameRequestCallback) => window.setTimeout(() => callback(performance.now()), SMOOTH_REVEAL_TICK_MS));
+    this.candidateFrameId = schedule((timestamp) => {
+      this.candidateFrameId = undefined;
+      if (!this.candidateRevealQueue.hasPending) {
+        this.completeCandidateDrain();
+        return;
+      }
+      const elapsed = Math.max(0, timestamp - (this.candidateLastFrameAt ?? timestamp));
+      if (elapsed >= SMOOTH_REVEAL_TICK_MS) {
+        this.candidateLastFrameAt = timestamp;
+        this.publishCandidateChunk(this.candidateRevealQueue.takeNext(Math.min(elapsed, 160)));
+      }
+      if (this.candidateRevealQueue.hasPending) this.scheduleCandidateFrame();
+      else this.completeCandidateDrain();
+    });
+  }
+
+  private cancelCandidateFrame(): void {
+    if (this.candidateFrameId === undefined) return;
+    if (this.candidateFrameUsesRaf && window.cancelAnimationFrame) window.cancelAnimationFrame(this.candidateFrameId);
+    else window.clearTimeout(this.candidateFrameId);
+    this.candidateFrameId = undefined;
+  }
+
+  private abortCandidateReveal(): void {
+    this.cancelCandidateFrame();
+    this.candidateRevealQueue.clear();
+    this.completeCandidateDrain();
+  }
+
+  private resetCandidateState(): void {
+    this.abortCandidateReveal();
+    this.candidateRoundId = undefined;
+    this.candidateText = "";
+    this.candidateVisibleText = "";
+    this.candidateSeq = undefined;
+  }
+
+  private commitPendingCandidateClassification(): void {
+    const pending = this.pendingCandidateClassification;
+    if (!pending) return;
+    this.pendingCandidateClassification = undefined;
+    this.processMessages = this.processMessages.map((message) => message.id === pending.processId
+      ? { ...message, content: pending.content }
+      : message);
+    this.resetCandidateState();
+    this.deps.host.patchMessage(this.input.sessionId, this.input.assistantId, {
+      transientText: undefined,
+      streaming: false,
+      responseStarted: false,
+      processMessages: this.processMessages,
+    });
+    void this.checkpointRun("running");
+  }
+
+  private scheduleCandidateClassification(
+    content: string,
+    roundId = this.candidateRoundId ?? this.activeRoundId,
+    seq = this.candidateSeq,
+  ): void {
+    if (this.pendingCandidateClassification) {
+      this.pendingCandidateClassification.content = content;
+      return;
+    }
+    const processId = `process-${this.processMessageSequence++}`;
+    this.processMessages = [...this.processMessages, createRoundProcessMessage(
+      processId,
+      "",
+      this.toolExecutions.length,
+      roundId,
+      seq,
+    )];
+    this.pendingCandidateClassification = { processId, content };
+    this.revealChain = this.revealChain.then(() => {
+      this.commitPendingCandidateClassification();
+    });
+  }
+
+  /** 领取下一个时间线序号（run 内单调递增）。 */
+  private nextSeq(): number {
+    return this.eventSequence++;
+  }
+
+  /**
+   * 闭合当前轮的候选正文：append 为一条过程消息（带 roundId + seq），
+   * 内容保留显示——数据进 processMessages 不等于视觉进折叠区，
+   * 运行中渲染层照样把它平铺在展开区。
+   */
+  private closeRoundCandidateText(): void {
+    if (this.pendingCandidateClassification) return;
+    if (!this.candidateText.trim()) {
+      this.resetCandidateState();
+      return;
+    }
+    this.scheduleCandidateClassification(this.candidateText);
+  }
+
+  private moveCandidateToInterruptedProcess(): void {
+    if (!this.candidateText.trim()) {
+      this.resetCandidateState();
+      return;
+    }
+    this.processMessages = [...this.processMessages, {
+      id: `process-${this.processMessageSequence++}`,
+      content: this.candidateText,
+      interrupted: true,
+      afterToolCount: this.toolExecutions.length,
+      roundId: this.candidateRoundId,
+      seq: this.candidateSeq,
+    }];
+    this.resetCandidateState();
   }
 
   /** 把运行活动统计发布到消息视图。 */
@@ -563,7 +755,7 @@ export class AgentRunController {
   private updateReasoningBlock(id: string, patch: Partial<ReasoningBlock>) {
     const index = this.reasoningBlocks.findIndex((block) => block.id === id);
     this.reasoningBlocks = index < 0
-      ? [...this.reasoningBlocks, { id, content: "", afterToolCount: this.toolExecutions.length, roundId: this.activeRoundId, ...patch }]
+      ? [...this.reasoningBlocks, { id, content: "", afterToolCount: this.toolExecutions.length, roundId: this.activeRoundId, seq: this.nextSeq(), ...patch }]
       : this.reasoningBlocks.map((block, blockIndex) => blockIndex === index ? { ...block, ...patch } : block);
     this.reasoningContent = this.reasoningBlocks.map((block) => block.content).filter(Boolean).join("\n\n");
     this.deps.host.patchMessage(this.input.sessionId, this.input.assistantId, {
@@ -578,6 +770,10 @@ export class AgentRunController {
     if (event.type === "CUSTOM" && event.name === "cyrene.round") {
       const value = event.value as { action?: unknown; roundId?: unknown } | null | undefined;
       if ((value?.action === "start" || value?.action === "end") && typeof value.roundId === "string") {
+        // 新轮开始：防御性闭合上一轮候选正文（不依赖 progress_text / discard 事件到达）
+        if (value.action === "start" && value.roundId !== this.candidateRoundId) {
+          this.closeRoundCandidateText();
+        }
         const next = applyAgentRoundBoundary(
           { rounds: this.agentRounds, activeRoundId: this.activeRoundId },
           value.action,
@@ -587,6 +783,27 @@ export class AgentRunController {
         this.activeRoundId = next.activeRoundId;
         this.deps.host.patchMessage(this.input.sessionId, this.input.assistantId, { agentRounds: this.agentRounds });
         void this.checkpointRun("running", true);
+      }
+    } else if (event.type === "CUSTOM" && event.name === "cyrene.candidate_text") {
+      const value = event.value as Partial<CandidateTextEventValue> | null | undefined;
+      if (typeof value?.roundId !== "string" || value.roundId !== this.activeRoundId) return;
+      if (value.action === "delta" && typeof value.delta === "string" && value.delta) {
+        if (this.candidateRoundId !== value.roundId) {
+          if (this.pendingCandidateClassification) {
+            this.publishCandidateChunk(this.candidateRevealQueue.drain());
+            this.completeCandidateDrain();
+            this.commitPendingCandidateClassification();
+          }
+          this.resetCandidateState();
+          this.candidateRoundId = value.roundId;
+          // 候选正文开始流式：领取时间线序号，轮闭合转过程消息时沿用
+          this.candidateSeq = this.nextSeq();
+        }
+        this.candidateText += value.delta;
+        this.appendCandidateDelta(value.delta);
+      } else if (value.action === "discard") {
+        // discard 是历史协议名：语义是「该轮正文不再是候选」，内容保留为过程消息
+        this.closeRoundCandidateText();
       }
     } else if (event.type === "RUN_STARTED") {
       this.runStarted = true;
@@ -708,40 +925,56 @@ export class AgentRunController {
         runStage: { kind: "responding" },
       });
     } else if (event.type === "TEXT_MESSAGE_CONTENT" && event.delta) {
-      this.enqueuePublicTextReveal(event.delta, (chunk) => {
-        this.streamContent += chunk;
-        this.earlyTtsQueue?.append(chunk);
-        this.deps.host.patchMessage(this.input.sessionId, this.input.assistantId, {
-          content: this.streamContent,
-          loading: false,
-          streaming: true,
-          responseStarted: true,
+      if (this.candidateText) {
+        this.streamContent += event.delta;
+      } else {
+        this.enqueuePublicTextReveal(event.delta, (chunk) => {
+          this.streamContent += chunk;
+          this.earlyTtsQueue?.append(chunk);
+          this.deps.host.patchMessage(this.input.sessionId, this.input.assistantId, {
+            content: this.streamContent,
+            loading: false,
+            streaming: true,
+            responseStarted: true,
+          });
+          void this.checkpointRun("running");
         });
-        void this.checkpointRun("running");
-      });
+      }
     } else if (event.type === "TEXT_MESSAGE_END") {
-      this.revealChain = this.revealChain.then(() => {
+      if (this.candidateText) {
         this.finalMessageCompleted = true;
-        this.deps.host.patchMessage(this.input.sessionId, this.input.assistantId, { streaming: false });
-      });
+      } else {
+        this.revealChain = this.revealChain.then(() => {
+          this.finalMessageCompleted = true;
+          this.deps.host.patchMessage(this.input.sessionId, this.input.assistantId, { streaming: false });
+        });
+      }
     } else if (event.type === "CUSTOM" && event.name === "cyrene.process_text") {
       const content = (event.value as { content?: unknown } | null | undefined)?.content;
       if (typeof content === "string" && content.trim()) {
-        const processId = `process-${this.processMessageSequence++}`;
-        this.processMessages = [...this.processMessages, createRoundProcessMessage(
-          processId,
-          "",
-          this.toolExecutions.length,
-          this.activeRoundId,
-        )];
-        this.deps.host.patchMessage(this.input.sessionId, this.input.assistantId, { processMessages: this.processMessages });
-        this.enqueuePublicTextReveal(content, (chunk) => {
-          this.processMessages = this.processMessages.map((message) => message.id === processId
-            ? { ...message, content: message.content + chunk }
-            : message);
+        const replacesCandidate = Boolean(this.candidateText);
+        // 权威全文替换候选：沿用候选开始时的时间线序号，正文保持在同轮工具之前
+        const processSeq = replacesCandidate ? this.candidateSeq : this.nextSeq();
+        if (replacesCandidate) {
+          this.scheduleCandidateClassification(content, this.candidateRoundId ?? this.activeRoundId, processSeq);
+        } else {
+          const processId = `process-${this.processMessageSequence++}`;
+          this.processMessages = [...this.processMessages, createRoundProcessMessage(
+            processId,
+            "",
+            this.toolExecutions.length,
+            this.activeRoundId,
+            processSeq,
+          )];
           this.deps.host.patchMessage(this.input.sessionId, this.input.assistantId, { processMessages: this.processMessages });
-          void this.checkpointRun("running");
-        });
+          this.enqueuePublicTextReveal(content, (chunk) => {
+            this.processMessages = this.processMessages.map((message) => message.id === processId
+              ? { ...message, content: message.content + chunk }
+              : message);
+            this.deps.host.patchMessage(this.input.sessionId, this.input.assistantId, { processMessages: this.processMessages });
+            void this.checkpointRun("running");
+          });
+        }
       }
     } else if (event.type === "CUSTOM" && event.name === "cyrene.task") {
       const delegation = normalizeTaskDelegationEvent(event.value);
@@ -817,7 +1050,10 @@ export class AgentRunController {
       // 读取 result.status 区分终态（success / cancelled / timeout / runtime_error）
       const result = (event as { result?: { status?: string } }).result;
       this.terminalStatus = result?.status;
-      if (this.terminalStatus !== "success") this.revealCancelled = true;
+      if (this.terminalStatus !== "success") {
+        this.revealCancelled = true;
+        this.abortCandidateReveal();
+      }
       const stage = resolveRunFinishedStage(result);
       this.deps.host.patchMessage(this.input.sessionId, this.input.assistantId, { runStage: stage });
       const activeRunId = this.deps.registries.activeRuns.current[this.input.sessionId]?.runId;
@@ -827,6 +1063,7 @@ export class AgentRunController {
       this.resolveTerminal();
     } else if (event.type === "RUN_ERROR") {
       this.revealCancelled = true;
+      this.abortCandidateReveal();
       this.completeRunActivity(true);
       this.deps.host.patchMessage(this.input.sessionId, this.input.assistantId, { runStage: { kind: "failed" } });
       const activeRunId = this.deps.registries.activeRuns.current[this.input.sessionId]?.runId;

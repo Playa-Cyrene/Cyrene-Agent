@@ -1,6 +1,8 @@
 /* ReviewDiffContent — diff 内容（由 RightInspector 容器承载） */
 
 .cy-review-diff-content {
+  /* 父级（tabpane）是块级布局，用 height:100% 撑满而不是 flex:1 */
+  height: 100%;
   flex: 1;
   display: flex;
   flex-direction: column;

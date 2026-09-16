@@ -1,0 +1,53 @@
+/* 白色工作区右上角的右侧面板开关（浮动定位由使用方容器决定） */
+.cy-inspector-toggle {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  color: var(--cy-text-muted);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.cy-inspector-toggle:hover {
+  background: var(--cy-bg-hover);
+  color: var(--cy-text);
+}
+
+.cy-inspector-toggle:active {
+  background: var(--cy-bg-active);
+}
+
+.cy-inspector-toggle > svg {
+  transform: scaleY(0.88);
+}
+
+/* 竖线 */
+.cy-inspector-line {
+  transition: d 0.25s ease;
+}
+
+/* 悬停时竖线朝右边缘滑动并缩短（镜像左栏版：左栏版是朝左滑），预演面板向右收起 */
+.cy-inspector-toggle.is-hovered .cy-inspector-line {
+  d: path("M31.2 14V34");
+}
+
+/* Chevron */
+.cy-inspector-chevron {
+  opacity: 0;
+  transform-origin: 18px 24px;
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+
+.cy-inspector-toggle.is-hovered .cy-inspector-chevron {
+  opacity: 1;
+}
+
+/* 面板收起时箭头翻转：朝左，表示点击把面板拉回来 */
+.cy-inspector-toggle:not(.is-open).is-hovered .cy-inspector-chevron {
+  transform: scaleX(-1);
+}

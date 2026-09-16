@@ -22,6 +22,8 @@ interface SchedulerStreamEvent {
   status?: string;
   toolCallId?: string;
   toolCallName?: string;
+  /** 主进程注册表里的中文展示名；用于工具行的用户可读标签。 */
+  toolCallDisplayName?: string;
   schedulerRunId?: string;
   schedulerTaskId?: string;
   runId?: string;
@@ -144,7 +146,7 @@ export function useSchedulerEvents(deps: UseSchedulerEventsDeps): void {
           if (!event.toolCallId) return;
           state.tools = [
             ...(state.tools ?? []),
-            { id: event.toolCallId, name: event.toolCallName ?? "工具", status: "running" },
+            { id: event.toolCallId, name: event.toolCallName ?? "工具", displayName: event.toolCallDisplayName, status: "running" },
           ];
           depsRef.current.patchMessage(state.sessionId, state.replyId, {
             toolExecutions: [...state.tools],
@@ -195,8 +197,9 @@ export function useSchedulerEvents(deps: UseSchedulerEventsDeps): void {
           return;
         }
         case "RUN_FINISHED": {
+          // 兜底摘要行优先用中文展示名，缺失回退英文 ID
           const finalContent = state.content
-            || state.tools?.map((tool) => `${tool.name}：${tool.status === "error" ? "失败" : "完成"}`).join("\n")
+            || state.tools?.map((tool) => `${tool.displayName ?? tool.name}：${tool.status === "error" ? "失败" : "完成"}`).join("\n")
             || "任务执行完毕。";
           finishStream(state, finalContent);
           streamsRef.current.delete(runKey);

@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
 /**
  * 真实 Sender（@ant-design/x，不 mock）× ChatComposer 集成测试。
- * 覆盖阶段一“运行中排队入口”修复：
- * - 忙闲路由：空闲 Enter 提交 / 运行中 Enter 与排队按钮入队
+ * 覆盖“运行中按 Enter 入队 + 输入框上方队列栏”：
+ * - 忙闲路由：空闲 Enter 提交 / 运行中 Enter 入队
  * - Shift+Enter 换行（不提交、不拦截默认行为）
  * - 输入法组合期间 Enter 不提交，组合结束后恢复
- * - 独立停止按钮：运行中始终可点、点击触发 onCancel
- * - 附件与待发队列条目在运行中仍可见可操作
+ * - 停止按钮：运行中始终可点、点击触发 onCancel，且不再显示单独的入队按钮
+ * - 附件与待发队列条目在运行中仍可见，可修改、调整和删除
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import React, { act, createElement, useState } from "react";
@@ -33,12 +33,14 @@ const handlers = {
   onQueueMessage: vi.fn(),
   onCancel: vi.fn(),
   onRemoveQueuedMessage: vi.fn(),
+  onEditQueuedMessage: vi.fn().mockResolvedValue(true),
+  onAdjustQueuedMessage: vi.fn().mockResolvedValue(true),
 };
 
 interface MountOptions {
   modelBusy?: boolean;
   attachments?: ComposerAttachment[];
-  pendingQueue?: Array<{ id: string; content: string }>;
+  pendingQueue?: Array<{ id: string; content: string; attachmentCount?: number }>;
 }
 
 /** 挂载受控 Composer：value 由内部 state 驱动，走真实 onChange 流转。 */
@@ -47,6 +49,8 @@ async function mountComposer(options: MountOptions = {}) {
   handlers.onQueueMessage.mockClear();
   handlers.onCancel.mockClear();
   handlers.onRemoveQueuedMessage.mockClear();
+  handlers.onEditQueuedMessage.mockClear();
+  handlers.onAdjustQueuedMessage.mockClear();
 
   function Harness() {
     const [value, setValue] = useState("");
@@ -62,6 +66,8 @@ async function mountComposer(options: MountOptions = {}) {
       onCancel: handlers.onCancel,
       onQueueMessage: handlers.onQueueMessage,
       onRemoveQueuedMessage: handlers.onRemoveQueuedMessage,
+      onEditQueuedMessage: handlers.onEditQueuedMessage,
+      onAdjustQueuedMessage: handlers.onAdjustQueuedMessage,
       onChooseWorkspace: vi.fn(),
       onChooseFiles: vi.fn(),
       onRemoveAttachment: vi.fn(),
@@ -187,13 +193,14 @@ describe("ChatComposer 忙闲路由（真实 Sender）", () => {
     expect(handlers.onCancel).not.toHaveBeenCalled();
   });
 
-  it("运行中点击排队按钮加入待发队列", async () => {
+  it("运行中不再显示单独的入队按钮", async () => {
     await mountComposer({ modelBusy: true });
     input("按钮排队");
-    act(() => {
-      buttonByLabel(t("composer.queueSend")).click();
-    });
-    expect(handlers.onQueueMessage).toHaveBeenCalledWith("按钮排队");
+    const queueButton = [...host!.querySelectorAll("button")]
+      .find((item) => item.getAttribute("aria-label") === t("composer.queueSend"));
+    expect(queueButton).toBeUndefined();
+    expect(buttonByLabel(t("composer.stopRun"))).toBeTruthy();
+    expect(handlers.onQueueMessage).not.toHaveBeenCalled();
     expect(handlers.onSubmit).not.toHaveBeenCalled();
   });
 
@@ -264,18 +271,50 @@ describe("ChatComposer 键盘边界（真实 Sender）", () => {
 });
 
 describe("ChatComposer 队列与附件展示", () => {
-  it("待发队列条目展示并可单独移除", async () => {
+  it("待发队列在输入框上方展示并可单独移除", async () => {
     await mountComposer({
       modelBusy: true,
       pendingQueue: [{ id: "q1", content: "第一条排队消息" }, { id: "q2", content: "第二条排队消息" }],
     });
-    const items = [...host!.querySelectorAll(".cy-composer__queue-item")];
+    const dock = host!.querySelector(".cy-queue-dock")!;
+    const shell = host!.querySelector(".cy-composer-shell")!;
+    expect(dock.compareDocumentPosition(shell) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    act(() => {
+      (dock.querySelector(".cy-queue-dock__header") as HTMLButtonElement).click();
+    });
+    const items = [...host!.querySelectorAll(".cy-queue-dock__row")];
     expect(items).toHaveLength(2);
     expect(items[0].textContent).toContain("第一条排队消息");
     act(() => {
       buttonByLabel(t("composer.removeQueuedMessage")).click();
     });
     expect(handlers.onRemoveQueuedMessage).toHaveBeenCalledWith("q1");
+  });
+
+  it("待发条目支持修改和调整", async () => {
+    await mountComposer({
+      modelBusy: true,
+      pendingQueue: [{ id: "q1", content: "原消息", attachmentCount: 1 }],
+    });
+
+    act(() => {
+      buttonByLabel(t("composer.queueEdit")).click();
+    });
+    const editor = host!.querySelector(".cy-queue-dock__editor") as HTMLInputElement;
+    const inputSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    act(() => {
+      inputSetter.call(editor, "修改后的消息");
+      editor.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => {
+      buttonByLabel(t("composer.queueSave")).click();
+    });
+    expect(handlers.onEditQueuedMessage).toHaveBeenCalledWith("q1", "修改后的消息");
+
+    await act(async () => {
+      buttonByLabel(t("composer.queueAdjust")).click();
+    });
+    expect(handlers.onAdjustQueuedMessage).toHaveBeenCalledWith("q1");
   });
 
   it("运行中附件条目仍展示、上传入口仍可点", async () => {

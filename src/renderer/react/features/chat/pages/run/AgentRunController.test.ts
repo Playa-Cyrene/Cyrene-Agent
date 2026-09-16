@@ -114,6 +114,41 @@ async function flush() {
   await new Promise<void>((resolve) => setTimeout(resolve, 0));
 }
 
+function installManualAnimationFrame() {
+  let nextId = 1;
+  let now = performance.now();
+  const frames = new Map<number, FrameRequestCallback>();
+  Object.assign(window, {
+    requestAnimationFrame: vi.fn((callback: FrameRequestCallback) => {
+      const id = nextId++;
+      frames.set(id, callback);
+      return id;
+    }),
+    cancelAnimationFrame: vi.fn((id: number) => {
+      frames.delete(id);
+    }),
+  });
+  return {
+    flushFrames() {
+      now = Math.max(now + 40, performance.now() + 50);
+      const pending = [...frames.values()];
+      frames.clear();
+      pending.forEach((callback) => callback(now));
+    },
+    async flushAllFrames() {
+      for (let index = 0; frames.size > 0 && index < 200; index += 1) {
+        now = Math.max(now + 40, performance.now() + 50);
+        const pending = [...frames.values()];
+        frames.clear();
+        pending.forEach((callback) => callback(now));
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      }
+    },
+  };
+}
+
 beforeEach(() => {
   // node 环境没有 window：补上控制器用到的 setTimeout/clearTimeout 与 chat 桥占位
   vi.stubGlobal("window", {
@@ -307,6 +342,401 @@ describe("AgentRunController", () => {
     expect(registries.checkpointTriggers.current["session-1"]).toBeUndefined();
     expect(registries.eventUnsubscribers.current.size).toBe(0);
     expect(host.onRunFinished).toHaveBeenCalledWith({ mode: "chat", sessionId: "session-1", queuePaused: false });
+  });
+
+  it("候选正文首组立即显示，后续积压按小组继续显示，且不进检查点或早播语音", async () => {
+    const { flushFrames } = installManualAnimationFrame();
+    const api = createFakeApi({ success: true, runId: "run-1" });
+    const store = createFakeStore();
+    const { host, earlyTtsQueue } = createRecordingHost();
+    const { promise } = launch(createInput(), { api, store, host, registries: createRegistries() });
+    await flush();
+
+    api.emit(RUN_STARTED_EVENT);
+    api.emit({ type: "CUSTOM", name: "cyrene.round", runId: "run-1", value: { action: "start", roundId: "round-0" } });
+    api.emit({ type: "CUSTOM", name: "cyrene.candidate_text", runId: "run-1", value: { action: "delta", roundId: "round-0", delta: "你好，" } });
+    expect(host.patchMessage).toHaveBeenCalledWith("session-1", "assistant-1", expect.objectContaining({ transientText: "你好，" }));
+    api.emit({ type: "CUSTOM", name: "cyrene.candidate_text", runId: "run-1", value: { action: "delta", roundId: "round-0", delta: "世界" } });
+    flushFrames();
+
+    api.emit({ type: "TEXT_MESSAGE_START", runId: "run-1", messageId: "m-1" });
+    api.emit({ type: "TEXT_MESSAGE_CONTENT", runId: "run-1", delta: "你好，世界" });
+    api.emit({ type: "TEXT_MESSAGE_END", runId: "run-1", messageId: "m-1" });
+    api.emit({ type: "RUN_FINISHED", runId: "run-1", result: { status: "success" } });
+    await promise;
+
+    const candidatePatches = host.patchMessage.mock.calls
+      .map((call) => call[2] as { transientText?: string; waitingForFirstEvent?: boolean })
+      .filter((patch) => patch.transientText);
+    expect(candidatePatches.map((patch) => patch.transientText)).toEqual(["你好，", "你好，世界"]);
+    expect(store.upsert.mock.calls.slice(0, -1).every((call) => call[1].content === "")).toBe(true);
+    expect(earlyTtsQueue.append).not.toHaveBeenCalled();
+  });
+
+  it("跨绘制帧到达的候选正文会按小组平滑追加到界面", async () => {
+    const { flushFrames, flushAllFrames } = installManualAnimationFrame();
+    const api = createFakeApi({ success: true, runId: "run-1" });
+    const store = createFakeStore();
+    const { host } = createRecordingHost();
+    const { promise } = launch(createInput(), { api, store, host, registries: createRegistries() });
+    await flush();
+
+    api.emit(RUN_STARTED_EVENT);
+    api.emit({ type: "CUSTOM", name: "cyrene.round", runId: "run-1", value: { action: "start", roundId: "round-0" } });
+
+    api.emit({ type: "CUSTOM", name: "cyrene.candidate_text", runId: "run-1", value: { action: "delta", roundId: "round-0", delta: "好的伙伴，" } });
+    expect(host.patchMessage).toHaveBeenCalledWith("session-1", "assistant-1", expect.objectContaining({ transientText: "好的伙" }));
+    await flushAllFrames();
+
+    api.emit({ type: "CUSTOM", name: "cyrene.candidate_text", runId: "run-1", value: { action: "delta", roundId: "round-0", delta: "人家先去摸清这边项目的底，" } });
+    flushFrames();
+    const partialSecond = host.patchMessage.mock.calls
+      .map((call) => call[2]?.transientText as string | undefined)
+      .filter(Boolean).at(-1)!;
+    expect(partialSecond.startsWith("好的伙伴，")).toBe(true);
+    expect(partialSecond.length).toBeLessThan("好的伙伴，人家先去摸清这边项目的底，".length);
+    await flushAllFrames();
+
+    api.emit({ type: "CUSTOM", name: "cyrene.candidate_text", runId: "run-1", value: { action: "delta", roundId: "round-0", delta: "再决定怎么跑测试♪" } });
+    await flushAllFrames();
+
+    const candidatePatches = host.patchMessage.mock.calls
+      .map((call) => call[2] as { transientText?: string })
+      .filter((patch) => patch.transientText);
+    expect(candidatePatches.at(-1)?.transientText).toBe("好的伙伴，人家先去摸清这边项目的底，再决定怎么跑测试♪");
+    expect(candidatePatches.length).toBeGreaterThan(3);
+
+    api.emit({ type: "RUN_FINISHED", runId: "run-1", result: { status: "cancelled" } });
+    await promise;
+  });
+
+  it("工具轮等待候选队列显完后再归类，不突然整段替换或播放第二遍", async () => {
+    const { flushAllFrames } = installManualAnimationFrame();
+    const api = createFakeApi({ success: true, runId: "run-1" });
+    const store = createFakeStore();
+    const { host } = createRecordingHost();
+    const { promise } = launch(createInput(), { api, store, host, registries: createRegistries() });
+    await flush();
+
+    api.emit(RUN_STARTED_EVENT);
+    api.emit({ type: "CUSTOM", name: "cyrene.round", runId: "run-1", value: { action: "start", roundId: "round-0" } });
+    api.emit({ type: "CUSTOM", name: "cyrene.candidate_text", runId: "run-1", value: { action: "delta", roundId: "round-0", delta: "我先读取文件。" } });
+    api.emit({
+      type: "CUSTOM",
+      name: "cyrene.process_text",
+      runId: "run-1",
+      value: { content: "我先读取文件。" },
+    });
+    expect(host.patchMessage.mock.calls.some((call) => call[2]?.processMessages?.some(
+      (message: { content?: string }) => message.content === "我先读取文件。",
+    ))).toBe(false);
+    await flushAllFrames();
+    await Promise.resolve();
+    const processPatchAtClassification = host.patchMessage.mock.calls.at(-1)?.[2];
+
+    api.emit({ type: "CUSTOM", name: "cyrene.round", runId: "run-1", value: { action: "end", roundId: "round-0" } });
+    api.emit({ type: "RUN_FINISHED", runId: "run-1", result: { status: "cancelled" } });
+    await promise;
+
+    expect(processPatchAtClassification).toEqual(expect.objectContaining({
+      transientText: undefined,
+      processMessages: [expect.objectContaining({ content: "我先读取文件。", roundId: "round-0" })],
+    }));
+  });
+
+  it("discard 归类也等待显示队列排空", async () => {
+    const { flushAllFrames } = installManualAnimationFrame();
+    const api = createFakeApi({ success: true, runId: "run-1" });
+    const store = createFakeStore();
+    const { host } = createRecordingHost();
+    const { promise } = launch(createInput(), { api, store, host, registries: createRegistries() });
+    await flush();
+
+    api.emit(RUN_STARTED_EVENT);
+    api.emit({ type: "CUSTOM", name: "cyrene.round", runId: "run-1", value: { action: "start", roundId: "round-0" } });
+    api.emit({ type: "CUSTOM", name: "cyrene.candidate_text", runId: "run-1", value: { action: "delta", roundId: "round-0", delta: "先确认项目结构再继续处理。" } });
+    api.emit({ type: "CUSTOM", name: "cyrene.candidate_text", runId: "run-1", value: { action: "discard", roundId: "round-0" } });
+
+    expect(host.patchMessage.mock.calls.some((call) => call[2]?.processMessages?.some(
+      (message: { content?: string }) => message.content === "先确认项目结构再继续处理。",
+    ))).toBe(false);
+    await flushAllFrames();
+    expect(host.patchMessage).toHaveBeenCalledWith("session-1", "assistant-1", expect.objectContaining({
+      transientText: undefined,
+      processMessages: [expect.objectContaining({ content: "先确认项目结构再继续处理。", roundId: "round-0" })],
+    }));
+
+    api.emit({ type: "RUN_FINISHED", runId: "run-1", result: { status: "cancelled" } });
+    await promise;
+  });
+
+  it("已有候选预览时先收齐权威最终全文，只在成功终态原地提交", async () => {
+    const { flushAllFrames } = installManualAnimationFrame();
+    const api = createFakeApi({ success: true, runId: "run-1" });
+    const store = createFakeStore();
+    const { host, earlyTtsQueue } = createRecordingHost();
+    const { promise } = launch(createInput(), { api, store, host, registries: createRegistries() });
+    await flush();
+
+    api.emit(RUN_STARTED_EVENT);
+    api.emit({ type: "CUSTOM", name: "cyrene.round", runId: "run-1", value: { action: "start", roundId: "round-0" } });
+    api.emit({ type: "CUSTOM", name: "cyrene.candidate_text", runId: "run-1", value: { action: "delta", roundId: "round-0", delta: "预览草稿" } });
+    await flushAllFrames();
+    api.emit({ type: "TEXT_MESSAGE_START", runId: "run-1", messageId: "m-1" });
+    api.emit({ type: "TEXT_MESSAGE_CONTENT", runId: "run-1", delta: "权威最终答案" });
+    api.emit({ type: "TEXT_MESSAGE_END", runId: "run-1", messageId: "m-1" });
+    const committedBeforeTerminal = host.patchMessage.mock.calls.some((call) => call[2]?.content === "权威最终答案");
+    api.emit({ type: "RUN_FINISHED", runId: "run-1", result: { status: "success" } });
+    await promise;
+
+    expect(committedBeforeTerminal).toBe(false);
+    expect(host.patchMessage).toHaveBeenCalledWith("session-1", "assistant-1", expect.objectContaining({
+      content: "权威最终答案",
+      transientText: undefined,
+      responseStarted: true,
+      streaming: false,
+    }));
+    expect(earlyTtsQueue.append).not.toHaveBeenCalled();
+    expect(host.earlyTts.finish).toHaveBeenCalledWith(earlyTtsQueue, "权威最终答案");
+  });
+
+  it("忽略旧轮次候选；discard 仅闭合当前轮，正文保留为过程消息（ask_user 不丢字）", async () => {
+    const { flushAllFrames } = installManualAnimationFrame();
+    const api = createFakeApi({ success: true, runId: "run-1" });
+    const store = createFakeStore();
+    const { host } = createRecordingHost();
+    const { promise } = launch(createInput(), { api, store, host, registries: createRegistries() });
+    await flush();
+
+    api.emit(RUN_STARTED_EVENT);
+    api.emit({ type: "CUSTOM", name: "cyrene.round", runId: "run-1", value: { action: "start", roundId: "round-1" } });
+    api.emit({ type: "CUSTOM", name: "cyrene.candidate_text", runId: "run-1", value: { action: "delta", roundId: "round-0", delta: "迟到旧文字" } });
+    api.emit({ type: "CUSTOM", name: "cyrene.candidate_text", runId: "run-1", value: { action: "delta", roundId: "round-1", delta: "当前文字" } });
+    await flushAllFrames();
+    api.emit({ type: "CUSTOM", name: "cyrene.candidate_text", runId: "run-1", value: { action: "discard", roundId: "round-1" } });
+    api.emit({ type: "RUN_FINISHED", runId: "run-1", result: { status: "cancelled" } });
+    await promise;
+
+    expect(host.patchMessage).not.toHaveBeenCalledWith(
+      "session-1", "assistant-1", expect.objectContaining({ transientText: expect.stringContaining("迟到旧文字") }),
+    );
+    // discard 是历史协议名：语义是「闭合该轮候选」而非删除——正文保留为过程消息
+    expect(host.patchMessage).toHaveBeenCalledWith("session-1", "assistant-1", expect.objectContaining({
+      transientText: undefined,
+      processMessages: [expect.objectContaining({ content: "当前文字", roundId: "round-1" })],
+    }));
+  });
+
+  it("新轮开始时防御性闭合上一轮候选正文，不依赖 progress_text", async () => {
+    const { flushAllFrames } = installManualAnimationFrame();
+    const api = createFakeApi({ success: true, runId: "run-1" });
+    const store = createFakeStore();
+    const { host } = createRecordingHost();
+    const { promise } = launch(createInput(), { api, store, host, registries: createRegistries() });
+    await flush();
+
+    api.emit(RUN_STARTED_EVENT);
+    api.emit({ type: "CUSTOM", name: "cyrene.round", runId: "run-1", value: { action: "start", roundId: "round-0" } });
+    api.emit({ type: "CUSTOM", name: "cyrene.candidate_text", runId: "run-1", value: { action: "delta", roundId: "round-0", delta: "上一轮的正文" } });
+    await flushAllFrames();
+    // 没有 progress_text / discard，直接开始下一轮：上一轮候选必须被闭合保留
+    api.emit({ type: "CUSTOM", name: "cyrene.round", runId: "run-1", value: { action: "start", roundId: "round-1" } });
+    api.emit({ type: "RUN_FINISHED", runId: "run-1", result: { status: "cancelled" } });
+    await promise;
+
+    expect(host.patchMessage).toHaveBeenCalledWith("session-1", "assistant-1", expect.objectContaining({
+      transientText: undefined,
+      processMessages: [expect.objectContaining({ content: "上一轮的正文", roundId: "round-0" })],
+    }));
+  });
+
+  it("时间线序号：过程消息、推理块、工具记录按事件发生顺序获得单调递增 seq", async () => {
+    const { flushFrames } = installManualAnimationFrame();
+    const api = createFakeApi({ success: true, runId: "run-1" });
+    const store = createFakeStore();
+    const { host } = createRecordingHost();
+    const { promise } = launch(createInput(), { api, store, host, registries: createRegistries() });
+    await flush();
+
+    api.emit(RUN_STARTED_EVENT);
+    api.emit({ type: "CUSTOM", name: "cyrene.round", runId: "run-1", value: { action: "start", roundId: "round-0" } });
+    api.emit({ type: "REASONING_MESSAGE_START", runId: "run-1", messageId: "r-0" });
+    api.emit({ type: "REASONING_MESSAGE_CONTENT", runId: "run-1", messageId: "r-0", delta: "先想一下" });
+    api.emit({ type: "CUSTOM", name: "cyrene.candidate_text", runId: "run-1", value: { action: "delta", roundId: "round-0", delta: "我先看结构。" } });
+    flushFrames();
+    api.emit({ type: "CUSTOM", name: "cyrene.process_text", runId: "run-1", value: { content: "我先看结构。" } });
+    api.emit({ type: "TOOL_CALL_START", runId: "run-1", toolCallId: "t-0", toolCallName: "list_dir" });
+    api.emit({ type: "TOOL_CALL_END", runId: "run-1", toolCallId: "t-0" });
+    api.emit({ type: "CUSTOM", name: "cyrene.round", runId: "run-1", value: { action: "end", roundId: "round-0" } });
+    api.emit({ type: "CUSTOM", name: "cyrene.round", runId: "run-1", value: { action: "start", roundId: "round-1" } });
+    api.emit({ type: "REASONING_MESSAGE_START", runId: "run-1", messageId: "r-1" });
+    api.emit({ type: "REASONING_MESSAGE_CONTENT", runId: "run-1", messageId: "r-1", delta: "接着找入口" });
+    api.emit({ type: "RUN_FINISHED", runId: "run-1", result: { status: "cancelled" } });
+    await promise;
+
+    const finalUpsert = store.upsert.mock.calls.at(-1)?.[1] as {
+      processMessages?: Array<{ content: string; seq?: number }>;
+      reasoningBlocks?: Array<{ content: string; seq?: number }>;
+      toolExecutions?: Array<{ name: string; seq?: number }>;
+    };
+    const seqOf = (record: { seq?: number }) => {
+      expect(record.seq).toBeDefined();
+      return record.seq!;
+    };
+    const reasoning0 = finalUpsert.reasoningBlocks?.find((block) => block.content === "先想一下");
+    const reasoning1 = finalUpsert.reasoningBlocks?.find((block) => block.content === "接着找入口");
+    const process0 = finalUpsert.processMessages?.find((message) => message.content === "我先看结构。");
+    const tool0 = finalUpsert.toolExecutions?.find((tool) => tool.name === "list_dir");
+    expect(reasoning0 && reasoning1 && process0 && tool0).toBeTruthy();
+    // 事件顺序：推理 → 正文 → 工具 → 下一轮推理；seq 必须单调
+    expect(seqOf(reasoning0!)).toBeLessThan(seqOf(process0!));
+    expect(seqOf(process0!)).toBeLessThan(seqOf(tool0!));
+    expect(seqOf(tool0!)).toBeLessThan(seqOf(reasoning1!));
+  });
+
+  it("长正文后出现工具轮：闭合时正文只保留一份，不双显不丢失", async () => {
+    const { flushFrames } = installManualAnimationFrame();
+    const api = createFakeApi({ success: true, runId: "run-1" });
+    const store = createFakeStore();
+    const { host } = createRecordingHost();
+    const { promise } = launch(createInput(), { api, store, host, registries: createRegistries() });
+    await flush();
+
+    const longText = "已经流式输出了很长的一段正文。".repeat(24);
+    api.emit(RUN_STARTED_EVENT);
+    api.emit({ type: "CUSTOM", name: "cyrene.round", runId: "run-1", value: { action: "start", roundId: "round-0" } });
+    api.emit({ type: "CUSTOM", name: "cyrene.candidate_text", runId: "run-1", value: { action: "delta", roundId: "round-0", delta: longText } });
+    flushFrames();
+    api.emit({ type: "CUSTOM", name: "cyrene.process_text", runId: "run-1", value: { content: longText } });
+    api.emit({ type: "CUSTOM", name: "cyrene.round", runId: "run-1", value: { action: "end", roundId: "round-0" } });
+    api.emit({ type: "RUN_FINISHED", runId: "run-1", result: { status: "cancelled" } });
+    await promise;
+
+    const finalUpsert = store.upsert.mock.calls.at(-1)?.[1] as { processMessages?: Array<{ content: string }> };
+    const matches = finalUpsert.processMessages?.filter((message) => message.content === longText) ?? [];
+    expect(matches).toHaveLength(1);
+  });
+
+  it("success 但权威正文为空：不提交正式回答，候选保留为中断过程", async () => {
+    const { flushAllFrames } = installManualAnimationFrame();
+    const api = createFakeApi({ success: true, runId: "run-1" });
+    const store = createFakeStore();
+    const { host } = createRecordingHost();
+    const { promise } = launch(createInput(), { api, store, host, registries: createRegistries() });
+    await flush();
+
+    api.emit(RUN_STARTED_EVENT);
+    api.emit({ type: "CUSTOM", name: "cyrene.round", runId: "run-1", value: { action: "start", roundId: "round-0" } });
+    api.emit({ type: "CUSTOM", name: "cyrene.candidate_text", runId: "run-1", value: { action: "delta", roundId: "round-0", delta: "只有预览没有权威" } });
+    await flushAllFrames();
+    api.emit({ type: "TEXT_MESSAGE_START", runId: "run-1", messageId: "m-1" });
+    api.emit({ type: "TEXT_MESSAGE_END", runId: "run-1", messageId: "m-1" });
+    api.emit({ type: "RUN_FINISHED", runId: "run-1", result: { status: "success" } });
+    await promise;
+
+    expect(host.patchMessage).toHaveBeenCalledWith("session-1", "assistant-1", expect.objectContaining({
+      content: "",
+      processMessages: [expect.objectContaining({ content: "只有预览没有权威", interrupted: true })],
+    }));
+    expect(store.upsert.mock.calls.at(-1)?.[1].content).toBe("");
+  });
+
+  it("权威全文与候选预览不一致时以权威为准，同一消息原地替换", async () => {
+    const { flushAllFrames } = installManualAnimationFrame();
+    const api = createFakeApi({ success: true, runId: "run-1" });
+    const store = createFakeStore();
+    const { host, earlyTtsQueue } = createRecordingHost();
+    const { promise } = launch(createInput(), { api, store, host, registries: createRegistries() });
+    await flush();
+
+    api.emit(RUN_STARTED_EVENT);
+    api.emit({ type: "CUSTOM", name: "cyrene.round", runId: "run-1", value: { action: "start", roundId: "round-0" } });
+    api.emit({ type: "CUSTOM", name: "cyrene.candidate_text", runId: "run-1", value: { action: "delta", roundId: "round-0", delta: "ABCDEF" } });
+    await flushAllFrames();
+    api.emit({ type: "TEXT_MESSAGE_START", runId: "run-1", messageId: "m-1" });
+    api.emit({ type: "TEXT_MESSAGE_CONTENT", runId: "run-1", delta: "ABCDE" });
+    api.emit({ type: "TEXT_MESSAGE_END", runId: "run-1", messageId: "m-1" });
+    api.emit({ type: "RUN_FINISHED", runId: "run-1", result: { status: "success" } });
+    await promise;
+
+    // 权威只有 ABCDE：终态以权威全文提交，不是预览的 ABCDEF
+    expect(host.patchMessage).toHaveBeenCalledWith("session-1", "assistant-1", expect.objectContaining({
+      content: "ABCDE",
+      transientText: undefined,
+    }));
+    expect(store.upsert.mock.calls.at(-1)?.[1].content).toBe("ABCDE");
+    expect(host.earlyTts.finish).toHaveBeenCalledWith(earlyTtsQueue, "ABCDE");
+  });
+
+  it.each(["cancelled", "timeout"] as const)("%s 时把尚未归类的候选正文转成中断过程片段，不提交正式回答", async (status) => {
+    const { flushFrames } = installManualAnimationFrame();
+    const api = createFakeApi({ success: true, runId: "run-1" });
+    const store = createFakeStore();
+    const { host } = createRecordingHost();
+    const { promise } = launch(createInput(), { api, store, host, registries: createRegistries() });
+    await flush();
+
+    api.emit(RUN_STARTED_EVENT);
+    api.emit({ type: "CUSTOM", name: "cyrene.round", runId: "run-1", value: { action: "start", roundId: "round-0" } });
+    api.emit({ type: "CUSTOM", name: "cyrene.candidate_text", runId: "run-1", value: { action: "delta", roundId: "round-0", delta: "做到一半" } });
+    flushFrames();
+    api.emit({ type: "RUN_FINISHED", runId: "run-1", result: { status } });
+    await promise;
+
+    expect(host.patchMessage).toHaveBeenCalledWith("session-1", "assistant-1", expect.objectContaining({
+      content: "",
+      transientText: undefined,
+      responseStarted: false,
+      processMessages: [expect.objectContaining({ content: "做到一半", interrupted: true })],
+    }));
+    expect(store.upsert.mock.calls.at(-1)?.[1].content).toBe("");
+  });
+
+  it("运行错误时把候选正文保留为中断过程片段，并继续显示错误信息", async () => {
+    const { flushFrames } = installManualAnimationFrame();
+    const api = createFakeApi({ success: true, runId: "run-1" });
+    const store = createFakeStore();
+    const { host } = createRecordingHost();
+    const { promise } = launch(createInput(), { api, store, host, registries: createRegistries() });
+    await flush();
+
+    api.emit(RUN_STARTED_EVENT);
+    api.emit({ type: "CUSTOM", name: "cyrene.round", runId: "run-1", value: { action: "start", roundId: "round-0" } });
+    api.emit({ type: "CUSTOM", name: "cyrene.candidate_text", runId: "run-1", value: { action: "delta", roundId: "round-0", delta: "正在处理到这里" } });
+    flushFrames();
+    api.emit({ type: "RUN_ERROR", runId: "run-1", message: "连接中断" });
+    await promise;
+
+    const finalPatch = host.patchMessage.mock.calls.at(-1)?.[2];
+    expect(finalPatch).toEqual(expect.objectContaining({
+      content: "",
+      transientText: undefined,
+      responseStarted: false,
+      processMessages: expect.arrayContaining([
+        expect.objectContaining({ content: "正在处理到这里", interrupted: true }),
+        expect.objectContaining({ content: expect.stringContaining("连接中断") }),
+      ]),
+    }));
+    expect(store.upsert.mock.calls.at(-1)?.[1].content).toBe("");
+  });
+
+  it("过程归类等待期间发生运行错误时不会重复保留候选正文", async () => {
+    installManualAnimationFrame();
+    const api = createFakeApi({ success: true, runId: "run-1" });
+    const store = createFakeStore();
+    const { host } = createRecordingHost();
+    const { promise } = launch(createInput(), { api, store, host, registries: createRegistries() });
+    await flush();
+
+    api.emit(RUN_STARTED_EVENT);
+    api.emit({ type: "CUSTOM", name: "cyrene.round", runId: "run-1", value: { action: "start", roundId: "round-0" } });
+    api.emit({ type: "CUSTOM", name: "cyrene.candidate_text", runId: "run-1", value: { action: "delta", roundId: "round-0", delta: "正在检查关键文件。" } });
+    api.emit({ type: "CUSTOM", name: "cyrene.process_text", runId: "run-1", value: { content: "正在检查关键文件。" } });
+    api.emit({ type: "RUN_ERROR", runId: "run-1", message: "连接中断" });
+    await promise;
+
+    const finalUpsert = store.upsert.mock.calls.at(-1)?.[1] as { processMessages?: Array<{ content: string }> };
+    expect(finalUpsert.processMessages?.filter((message) => message.content === "正在检查关键文件。")).toHaveLength(1);
   });
 
   it("其他 run 的事件被门控忽略，不污染本轮消息", async () => {

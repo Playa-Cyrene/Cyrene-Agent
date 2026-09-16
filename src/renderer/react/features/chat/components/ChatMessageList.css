@@ -180,19 +180,27 @@
   text-decoration: underline;
 }
 
+/* 昔涟正式回答固定为无边框文本（气泡开关已删除）；用户消息气泡始终保留 */
 .cy-message--assistant .ant-bubble-content {
   max-width: 100%;
-  padding: 12px 16px;
-  border-radius: 4px 16px 16px;
-  background: #f7f7f7;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   color: var(--cy-text);
-  border: 1px solid rgba(31, 35, 48, 0.065);
-  box-shadow: var(--cy-shadow-bubble-neutral);
+  box-shadow: none;
 }
 
 .cy-message--assistant .ant-bubble-body {
   min-width: 0;
-  max-width: var(--cy-message-reading-width);
+  width: calc(100% - 54px);
+  max-width: calc(100% - 54px);
+}
+
+/* 运行块内的正文：头像已钉在活动卡头部，这里视觉隐藏但保留占位，
+   保证正文左边缘与活动卡时间线内容精确对齐、且流式过程中头像不反复出现 */
+.cy-message--assistant-run .ant-bubble-avatar {
+  visibility: hidden;
 }
 
 .cy-message--reasoning {
@@ -233,6 +241,17 @@
   box-shadow: none;
 }
 
+/* 运行块内的 Review 面板：头像占位隐藏（头像钉在活动卡头部），面板与正文/时间线内容左对齐 */
+.cy-message--review-run .ant-bubble-avatar {
+  display: block;
+  visibility: hidden;
+}
+
+.cy-message--review-run .ant-bubble-body {
+  width: calc(100% - 54px);
+  max-width: calc(100% - 54px);
+}
+
 .cy-message--waiting {
   width: var(--cy-message-reading-width);
   max-width: var(--cy-message-reading-width);
@@ -259,17 +278,15 @@
   max-width: var(--cy-message-reading-width);
 }
 
-.cy-message--activity .ant-bubble-avatar {
-  display: none;
+/* 头像钉在活动卡头部（状态行左侧）：一次运行只出现一次，时间线内容缩进到头像右侧 */
+.cy-message--activity .ant-bubble-body {
+  width: calc(100% - 54px);
+  max-width: calc(100% - 54px);
 }
 
-.cy-message--activity .ant-bubble-body,
 .cy-message--activity .ant-bubble-content {
   width: 100%;
   max-width: none;
-}
-
-.cy-message--activity .ant-bubble-content {
   padding: 0;
   background: transparent;
   border: 0;
@@ -460,6 +477,13 @@
   font-size: 12px;
 }
 
+.cy-run-activity__process-label {
+  margin-bottom: 4px;
+  color: var(--cy-text-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
 .cy-run-activity__divider {
   height: 1px;
   background: linear-gradient(90deg, transparent, rgb(209 144 173 / 38%), transparent);
@@ -594,6 +618,38 @@
   white-space: pre-wrap;
 }
 
+/* ask_user 工具卡展开后的问答配对：问题弱化、回答强调 */
+.cy-ask-user-qa {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 7px 0 2px;
+  padding: 0;
+  list-style: none;
+}
+
+.cy-ask-user-qa__row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 7px 9px;
+  border-radius: 8px;
+  background: #f4f4f5;
+}
+
+.cy-ask-user-qa__question {
+  color: var(--cy-text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.cy-ask-user-qa__answer {
+  color: var(--cy-text);
+  font-size: 12.5px;
+  line-height: 1.5;
+  font-weight: 500;
+}
+
 .cy-message-reasoning {
   color: var(--cy-text-muted);
 }
@@ -698,6 +754,25 @@
   line-height: var(--cy-chat-line-height, 1.75);
   font-family: var(--rb-font-sans, sans-serif);
   user-select: text;
+}
+
+/* 正式回答的标题节奏：保留 XMarkdown 字号，增加章节留白；一级标题用细线建立清晰边界。 */
+.cy-message--assistant .cy-message-markdown h1 {
+  margin: 28px 0 18px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid color-mix(in srgb, currentColor 16%, transparent);
+}
+
+.cy-message--assistant .cy-message-markdown h2 {
+  margin: 28px 0 12px;
+}
+
+.cy-message--assistant .cy-message-markdown h3 {
+  margin: 24px 0 10px;
+}
+
+.cy-message--assistant .cy-message-markdown > :is(h1, h2, h3):first-child {
+  margin-top: 0;
 }
 
 .cy-message-markdown pre {
@@ -1043,20 +1118,6 @@
 .cy-message--assistant .ant-bubble-footer {
   display: flex;
   justify-content: flex-start;
-}
-
-:root[data-assistant-bubble="off"] .cy-message--assistant .ant-bubble-content {
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-}
-
-/* 无气泡时不为可拖动的 Todo/Git 卡片预留阅读宽度；保留头像与固定右侧边距。 */
-:root[data-assistant-bubble="off"] .cy-message--assistant .ant-bubble-body {
-  width: calc(100% - 54px);
-  max-width: calc(100% - 54px);
 }
 
 .cy-message:hover .cy-copy-button,

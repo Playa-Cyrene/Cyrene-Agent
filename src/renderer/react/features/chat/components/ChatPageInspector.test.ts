@@ -8,18 +8,29 @@ vi.mock("./PlanReviewPanel", () => ({
   planTabLabel: () => "计划 · 待审批",
 }));
 vi.mock("./ReviewInspector", () => ({ ReviewDiffContent: () => null }));
+// FileTreePanel 会引入 ChatMessageList 的 MarkdownContent（MD 预览用），
+// 该模块连带 @ant-design/x-markdown 在测试环境解析报语法错，这里 mock 成轻量替身
+vi.mock("./ChatMessageList", () => ({
+  MarkdownContent: ({ content }: { content: string }) => createElement("div", null, content),
+}));
 
 import { ChatPageInspector } from "./ChatPageInspector";
 
 describe("ChatPageInspector", () => {
   it("renders nothing when no inspector tab is available", () => {
     const html = renderToStaticMarkup(createElement(ChatPageInspector, {
-      reviewInspector: null,
+      sessionId: undefined,
+      workspaceRoot: undefined,
+      filesTabOpen: false,
+      fileTabs: [],
+      diffTabs: [],
       activePlan: null,
       planDrawerOpen: false,
-      activeTabId: "plan",
+      planTabId: "plan:session",
+      activeTabId: null,
       onTabChange: () => undefined,
       onCloseTab: () => undefined,
+      onOpenFile: () => undefined,
     }));
 
     expect(html).toBe("");

@@ -24,6 +24,11 @@ export type PendingClaimResult =
     }
   | { ok: true; claimed: false }
   | { ok: false; error: string };
+
+/** 修改/调整待发条目的返回形状：失败时附带主进程最新权威队列（可能缺省）。 */
+export type PendingMutationResult =
+  | { ok: true; queue: PendingChatMessage[] }
+  | { ok: false; error: string; queue?: PendingChatMessage[] };
 import type {
   PopQuizCard,
   PopQuizResolveResponse,
@@ -54,6 +59,14 @@ export interface ChatStoreApi {
     id: string,
     messageId: string,
   ) => Promise<{ ok: boolean; error?: string }>;
+  // 修改未认领条目文字（调用方按现有解析规则产出三个文字字段；冲突返回最新队列）
+  pendingEdit: (
+    id: string,
+    messageId: string,
+    update: { rawContent: string; visibleContent: string; userSticker?: string },
+  ) => Promise<PendingMutationResult>;
+  // 调整：把待发条目插入当前运行下一步；无活跃运行/带附件等明确拒绝并留队
+  pendingAdjust: (id: string, messageId: string) => Promise<PendingMutationResult>;
   setPinned: (id: string, pinned: boolean) => Promise<ChatSession | null>;
   setModelProfile: (id: string, modelProfileId?: string) => Promise<ChatSession | null>;
   pickWorkspaceFolder: () => Promise<{ ok: boolean; path?: string; displayName?: string; error?: string }>;
@@ -96,6 +109,11 @@ export interface AguiEvent {
   status?: string;
   changes?: ToolFileChange[];
 }
+
+/** Harness 正文候选事件：只驱动本次运行的临时预览，不代表正式消息提交。 */
+export type CandidateTextEventValue =
+  | { action: "delta"; roundId: string; delta: string }
+  | { action: "discard"; roundId: string };
 
 export interface AguiApi {
   run: (input: {

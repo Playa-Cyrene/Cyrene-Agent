@@ -41,7 +41,7 @@ export function ReviewPanel({
   onOpenInspector,
 }: {
   runId: string;
-  onOpenInspector?: (runId: string, fileIndex: number) => void;
+  onOpenInspector?: (runId: string, fileIndex: number, filePath: string) => void;
 }) {
   const { t } = useTranslation();
   const [snapshot, setSnapshot] = useState<ReviewSnapshot | null>(null);
@@ -163,7 +163,7 @@ export function ReviewPanel({
                 key={`${file.kind}:${file.oldPath}:${file.newPath}:${index}`}
                 type="button"
                 className="cy-review-panel__file-item"
-                onClick={() => onOpenInspector?.(runId, index)}
+                onClick={() => onOpenInspector?.(runId, index, file.newPath)}
                 title={file.newPath}
               >
                 <span className={`cy-review-panel__kind ${KIND_CLASS[file.kind]}`}>

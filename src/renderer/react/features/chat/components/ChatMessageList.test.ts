@@ -1,5 +1,7 @@
 import * as React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@ant-design/x", async () => {
@@ -12,11 +14,37 @@ vi.mock("@ant-design/x", async () => {
     ThoughtChain: () => null,
   };
 });
-vi.mock("@ant-design/x-markdown", () => ({ XMarkdown: ({ content }: { content?: string }) => content ?? null }));
+vi.mock("@ant-design/x-markdown", async () => {
+  const ReactModule = await import("react");
+  return {
+    XMarkdown: ({ content, streaming }: {
+      content?: string;
+      streaming?: {
+        hasNextChunk?: boolean;
+        enableAnimation?: boolean;
+        animationConfig?: { fadeDuration?: number; easing?: string };
+        tail?: { component?: React.ComponentType } | false;
+      };
+    }) => {
+      const Tail = typeof streaming?.tail === "object" ? streaming.tail.component : undefined;
+      return ReactModule.createElement(
+        "div",
+        {
+          "data-has-next": String(Boolean(streaming?.hasNextChunk)),
+          "data-animation": String(Boolean(streaming?.enableAnimation)),
+          "data-fade-duration": String(streaming?.animationConfig?.fadeDuration ?? ""),
+          "data-easing": streaming?.animationConfig?.easing ?? "",
+        },
+        content ?? null,
+        Tail ? ReactModule.createElement(Tail) : null,
+      );
+    },
+  };
+});
 vi.mock("@ant-design/x-markdown/plugins/Latex", () => ({ default: () => ({}) }));
 vi.mock("../../../../../shared/renderer-base", () => ({ resolveAsset: (path: string) => path }));
 
-import { createMessageItems, formatChannelSourceLabel, resolveChannelConversationLabel, RunActivityDetail, type ChatMessageItem } from "./ChatMessageList";
+import { createMessageItems, formatChannelSourceLabel, MarkdownContent, resolveChannelConversationLabel, RunActivityDetail, type ChatMessageItem } from "./ChatMessageList";
 import { extractMessageStickerId, stripMessageStickerMarkers } from "./message-sticker";
 
 describe("React chat sticker messages", () => {
@@ -42,6 +70,173 @@ describe("formal answer visibility", () => {
     };
 
     expect(createMessageItems([message], []).map((item) => item.role)).toEqual(["activity"]);
+  });
+
+  it("shows transient candidate text in the assistant answer slot without treating it as persisted content", () => {
+    const message: ChatMessageItem = {
+      id: "assistant-live",
+      role: "assistant",
+      content: "",
+      transientText: "正在实时生成",
+      responseStarted: true,
+      streaming: true,
+    };
+
+    const [item] = createMessageItems([message], []);
+    expect(item).toMatchObject({
+      role: "assistant",
+      content: "正在实时生成",
+      extraInfo: { streaming: true },
+    });
+    expect(message.content).toBe("");
+  });
+
+  it("fades in live text while keeping the tail cursor and generating hint disabled", () => {
+    (globalThis as typeof globalThis & { React: typeof React }).React = React;
+    const liveHtml = renderToStaticMarkup(React.createElement(MarkdownContent, {
+      content: "正在生成",
+      streaming: true,
+    }));
+    const completedHtml = renderToStaticMarkup(React.createElement(MarkdownContent, {
+      content: "已经完成",
+      streaming: false,
+    }));
+
+    expect(liveHtml).toContain('data-has-next="true"');
+    expect(liveHtml).toContain('data-animation="true"');
+    expect(liveHtml).toContain('data-fade-duration="100"');
+    expect(liveHtml).toContain('data-easing="ease-out"');
+    expect(liveHtml).not.toContain("cy-live-answer-tail");
+    expect(completedHtml).toContain('data-has-next="false"');
+    expect(completedHtml).toContain('data-animation="false"');
+    expect(completedHtml).not.toContain("cy-live-answer-tail");
+  });
+
+  it("keeps the source free of breathing tails, tail animations and generating hints", () => {
+    const source = readFileSync(resolve(__dirname, "ChatMessageList.tsx"), "utf8");
+    const stylesheet = readFileSync(resolve(__dirname, "ChatMessageList.css"), "utf8");
+    expect(source).not.toContain("cy-live-answer");
+    expect(source).not.toContain("LiveAnswerTail");
+    expect(source).not.toContain("generatingAnswer");
+    expect(stylesheet).not.toContain("cy-live-answer");
+    expect(stylesheet).not.toContain("cy-live-answer-breathe");
+  });
+
+  it("separates assistant Markdown headings from the following body text", () => {
+    const stylesheet = readFileSync(resolve(__dirname, "ChatMessageList.css"), "utf8");
+
+    expect(stylesheet).toMatch(/\.cy-message--assistant \.cy-message-markdown h1 \{[^}]*padding-bottom:\s*10px;[^}]*border-bottom:\s*1px solid/s);
+    expect(stylesheet).toMatch(/\.cy-message--assistant \.cy-message-markdown h1 \{[^}]*margin:\s*28px 0 18px;/s);
+    expect(stylesheet).toMatch(/\.cy-message--assistant \.cy-message-markdown h2 \{[^}]*margin:\s*28px 0 12px;/s);
+    expect(stylesheet).toMatch(/\.cy-message--assistant \.cy-message-markdown h3 \{[^}]*margin:\s*24px 0 10px;/s);
+  });
+
+  it("hides the run activity card at terminal when the run produced no process content", () => {
+    const message: ChatMessageItem = {
+      id: "assistant-plain",
+      role: "assistant",
+      content: "第一轮就没有工具调用，直接是正式回答",
+      responseStarted: true,
+      runActivity: { startedAt: 1, completedAt: 2, reasoningMs: 0 },
+    };
+    expect(createMessageItems([message], []).map((item) => item.role)).toEqual(["assistant"]);
+  });
+
+  it("keeps the run activity card while processing even without content yet", () => {
+    const message: ChatMessageItem = {
+      id: "assistant-starting",
+      role: "assistant",
+      content: "",
+      runActivity: { startedAt: 1, reasoningMs: 0 },
+    };
+    expect(createMessageItems([message], []).map((item) => item.role)).toEqual(["activity"]);
+  });
+
+  it("keeps the run activity card at terminal when process content exists", () => {
+    const message: ChatMessageItem = {
+      id: "assistant-tools",
+      role: "assistant",
+      content: "最终回答",
+      responseStarted: true,
+      runActivity: { startedAt: 1, completedAt: 2, reasoningMs: 0 },
+      processMessages: [{ id: "process-1", content: "先看结构", afterToolCount: 0 }],
+    };
+    expect(createMessageItems([message], []).map((item) => item.role)).toEqual(["activity", "assistant"]);
+  });
+
+  it("pins one avatar on the run activity card and hides the assistant avatar while the card is visible", () => {
+    const message: ChatMessageItem = {
+      id: "assistant-tools",
+      role: "assistant",
+      content: "最终回答",
+      responseStarted: true,
+      runActivity: { startedAt: 1, completedAt: 2, reasoningMs: 0 },
+      processMessages: [{ id: "process-1", content: "先看结构", afterToolCount: 0 }],
+    };
+    const items = createMessageItems([message], []);
+    const activityItem = items.find((item) => item.role === "activity");
+    const assistantItem = items.find((item) => item.role === "assistant");
+    // 头像钉在活动卡（运行块头部），一次运行只出现一次
+    expect(activityItem?.avatar).toBeTruthy();
+    // 运行块内的正文隐藏自己的头像（占位保留，左边缘与时间线内容对齐）
+    expect(assistantItem?.rootClassName).toContain("cy-message--assistant-run");
+    const stylesheet = readFileSync(resolve(__dirname, "ChatMessageList.css"), "utf8");
+    expect(stylesheet).toMatch(/\.cy-message--assistant-run \.ant-bubble-avatar \{\s*visibility: hidden/);
+    expect(stylesheet).not.toMatch(/\.cy-message--activity \.ant-bubble-avatar \{\s*display: none/);
+  });
+
+  it("keeps the assistant avatar when the run activity card is not rendered", () => {
+    const message: ChatMessageItem = {
+      id: "assistant-plain",
+      role: "assistant",
+      content: "第一轮就没有工具调用，直接是正式回答",
+      responseStarted: true,
+      runActivity: { startedAt: 1, completedAt: 2, reasoningMs: 0 },
+    };
+    const [assistantItem] = createMessageItems([message], []);
+    // 活动卡未渲染（无过程内容的终态）：正文保留自己的头像，不出现空占位
+    expect(assistantItem?.rootClassName ?? "").not.toContain("cy-message--assistant-run");
+  });
+
+  it("renders a flat continuous timeline while the run is live, without per-round fold bars", () => {
+    (globalThis as typeof globalThis & { React: typeof React }).React = React;
+    const html = renderToStaticMarkup(React.createElement(RunActivityDetail, {
+      live: true,
+      agentRounds: [
+        { id: "round-0", status: "completed", startedAt: 1, completedAt: 2 },
+        { id: "round-1", status: "running", startedAt: 3 },
+      ],
+      processMessages: [{ id: "process-0", roundId: "round-0", content: "先看项目结构", seq: 1 }],
+      reasoningBlocks: [
+        { id: "reason-0", roundId: "round-0", content: "思考目录结构", seq: 0 },
+        { id: "reason-1", roundId: "round-1", content: "查找 IPC 入口", seq: 3 },
+      ],
+      tools: [{ id: "tool-0", roundId: "round-0", name: "list_dir", status: "success", seq: 2 }],
+      interrupted: false,
+    }));
+
+    expect(html).not.toContain("cy-agent-round");
+    expect(html).not.toContain("昔涟已完成");
+    expect(html).toContain("思考目录结构");
+    expect(html).toContain("先看项目结构");
+    expect(html).toContain("查找 IPC 入口");
+    // 按 seq 连续排序：推理 → 过程正文 → 下一轮推理
+    expect(html.indexOf("思考目录结构")).toBeLessThan(html.indexOf("先看项目结构"));
+    expect(html.indexOf("先看项目结构")).toBeLessThan(html.indexOf("查找 IPC 入口"));
+  });
+
+  it("labels a cancelled candidate as interrupted process content", () => {
+    (globalThis as typeof globalThis & { React: typeof React }).React = React;
+    const html = renderToStaticMarkup(React.createElement(RunActivityDetail, {
+      agentRounds: [{ id: "round-0", status: "running", startedAt: 1 }],
+      processMessages: [{ id: "process-0", roundId: "round-0", content: "做到一半", interrupted: true }],
+      reasoningBlocks: [],
+      tools: [],
+      interrupted: true,
+    }));
+
+    expect(html).toContain("未完成的生成内容");
+    expect(html).toContain("做到一半");
   });
 });
 
@@ -101,6 +296,12 @@ describe("review panel visibility", () => {
     expect(roles).toContain("review");
     const reviewItem = createMessageItems([message], []).find((item) => item.role === "review");
     expect(reviewItem?.extraInfo?.runId).toBe("run-abc-123");
+    // Review 面板属于运行块：头像占位隐藏，面板与正文/时间线内容左对齐
+    expect(reviewItem?.rootClassName).toContain("cy-message--review-run");
+    expect(reviewItem?.avatar).toBeTruthy();
+    const stylesheet = readFileSync(resolve(__dirname, "ChatMessageList.css"), "utf8");
+    expect(stylesheet).toMatch(/\.cy-message--review-run \.ant-bubble-avatar \{\s*display: block;\s*visibility: hidden/);
+    expect(stylesheet).toMatch(/\.cy-message--review-run \.ant-bubble-body \{[\s\S]*width: calc\(100% - 54px\)/);
   });
 
   it("does not append review bubble while streaming", () => {

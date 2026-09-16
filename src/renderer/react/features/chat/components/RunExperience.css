@@ -522,6 +522,8 @@ button.cy-file-change-card__row:hover { background: #f7f4f6; }
 
 /* 计划内容（PlanContent，由 RightInspector 承载） */
 .cy-plan-content {
+  /* 父级（tabpane）是块级布局，用 height:100% 撑满而不是 flex:1 */
+  height: 100%;
   flex: 1;
   display: flex;
   flex-direction: column;

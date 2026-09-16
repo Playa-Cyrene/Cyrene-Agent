@@ -17,8 +17,15 @@
     "placeholderBusy": "运行中 · Enter 加入待发队列 · Shift+Enter 换行",
     "attachmentsLabel": "待发送附件",
     "queueLabel": "待发队列",
+    "queueCount": "待发消息 · {{count}} 条",
     "queueSend": "加入待发队列",
     "stopRun": "停止运行",
+    "queueEdit": "修改",
+    "queueEditInput": "修改待发消息",
+    "queueSave": "保存修改",
+    "queueCancelEdit": "取消修改",
+    "queueAdjust": "调整到当前任务下一步",
+    "queueAdjustUnavailable": "当前没有可调整的运行",
     "queueTruncated": "...",
     "uploadFile": "上传文件",
     "screenshot": "截图",
@@ -73,6 +80,10 @@
     "errorAttachmentIncomplete": "有附件尚未就绪（缺少文件），本次发送已取消，草稿已保留",
     "errorClaimMessageMissing": "待发队列异常：认领的消息记录不存在，该会话的队列已暂停",
     "errorQueueRemoveFailed": "移除排队消息失败：{{error}}",
+    "errorPendingEditFailed": "修改排队消息失败：{{error}}",
+    "errorPendingAdjustFailed": "调整失败：{{error}}",
+    "errorPendingAdjustNoRun": "当前没有可插入的任务运行，消息仍保留在队列中",
+    "errorPendingAdjustAttachments": "带附件的消息暂不能插入当前运行，已保留在队列中",
     "openProjectFolderFailed": "无法打开项目文件夹：{{error}}",
     "unknownError": "未知错误",
     "lastRunInterrupted": "上次运行已中断"
@@ -90,6 +101,8 @@
     "toolExecutionsAria": "工具执行过程",
     "roundChangedFiles": "{{count}} 个文件已被改动",
     "organizingReply": "昔涟正在整理这一轮回复…",
+    "generatingAnswer": "昔涟正在生成…",
+    "interruptedCandidate": "未完成的生成内容",
     "activityProcessingTitle": "昔涟正在处理中 {{elapsed}}",
     "activityProcessedTitle": "昔涟已处理 {{elapsed}}",
     "attachmentProcessing": "视觉分析中…",
@@ -167,7 +180,11 @@
     "failureCount": "{{count}} 项失败",
     "runningLive": "昔涟正在{{action}}",
     "runningThinking": "昔涟正在思考",
-    "completedTitle": "昔涟已完成"
+    "completedTitle": "昔涟已完成",
+    "toolAskUser": "询问用户",
+    "askUserWaiting": "等待用户回答",
+    "askUserAnswered": "用户已回答",
+    "askUserFailed": "询问用户失败"
   },
   "runPresentation": {
     "permissionWeather": "查询{{city}}天气",
@@ -217,7 +234,26 @@
     "remind": "提醒"
   },
   "rightInspector": {
-    "panelAria": "右侧检查面板"
+    "panelAria": "右侧检查面板",
+    "toggle": "展开/收起右侧面板"
+  },
+  "fileTree": {
+    "viewPreview": "预览",
+    "viewSource": "源码",
+    "title": "文件",
+    "loading": "正在读取目录…",
+    "empty": "目录为空",
+    "truncated": "条目过多，仅显示前 {{count}} 项",
+    "errNoWorkspace": "当前会话未绑定工作区",
+    "errOutOfRoot": "路径超出工作区范围",
+    "errNotFound": "路径不存在或已删除",
+    "errIsDirectory": "这是一个目录",
+    "errTooLarge": "文件超过 1MB，暂不支持预览",
+    "errBinary": "二进制文件，不支持预览",
+    "errListFailed": "目录读取失败",
+    "errReadFailed": "文件读取失败",
+    "previewLoading": "正在读取文件…",
+    "previewLinesHint": "文件较大，仅显示前 {{count}} 行"
   },
   "modelPanel": {
     "title": "模型",

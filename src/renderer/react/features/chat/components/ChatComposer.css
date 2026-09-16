@@ -93,59 +93,148 @@
   background: #e7e7e7;
 }
 
-/* 运行中 suffix：排队发送 + 独立停止双按钮并排 */
-.cy-composer__busy-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.cy-composer__queue {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  width: 100%;
-  padding: 8px 12px;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
-}
-
-.cy-composer__queue-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  font-size: 13px;
-  color: rgba(0, 0, 0, 0.65);
-  background: rgba(0, 0, 0, 0.03);
-  border-radius: 8px;
-  padding: 6px 8px;
-}
-
-.cy-composer__queue-text {
-  flex: 1;
-  white-space: nowrap;
+.cy-queue-dock {
+  position: relative;
+  z-index: 0;
+  box-sizing: border-box;
+  width: calc(100% - 28px);
+  margin: 0 auto -5px;
+  padding: 3px 6px 8px;
   overflow: hidden;
+  border: 1px solid #f3d9e2;
+  border-bottom: 0;
+  border-radius: 14px 14px 0 0;
+  background: #fff4f7;
+  color: #604c54;
+}
+
+.cy-queue-dock__header,
+.cy-queue-dock__row {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 34px;
+}
+
+.cy-queue-dock__header {
+  gap: 9px;
+  padding: 4px 7px;
+  appearance: none;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: 500 13px/1.4 var(--rb-font-sans, sans-serif);
+  text-align: left;
+  cursor: pointer;
+}
+
+.cy-queue-dock__header span:nth-child(2) {
+  flex: 1;
+}
+
+.cy-queue-dock__header:hover {
+  background: #fbe5ed;
+  color: #d84f7d;
+}
+
+.cy-queue-dock__list {
+  max-height: 154px;
+  overflow-y: auto;
+}
+
+.cy-queue-dock__row {
+  gap: 7px;
+  padding: 3px 4px 3px 7px;
+  border-radius: 8px;
+}
+
+.cy-queue-dock__row + .cy-queue-dock__row {
+  border-top: 1px solid rgba(31, 35, 48, 0.07);
+}
+
+.cy-queue-dock__lead {
+  flex: none;
+  color: #9b7281;
+}
+
+.cy-queue-dock__content {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 4px 2px;
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: 500 13px/1.45 var(--rb-font-sans, sans-serif);
+  text-align: left;
+  cursor: text;
+}
+
+.cy-queue-dock__content > span {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
   text-overflow: ellipsis;
 }
 
-.cy-composer__queue-item button {
+.cy-queue-dock__content small {
+  display: inline-flex;
   flex: none;
-  width: 20px;
-  height: 20px;
+  align-items: center;
+  gap: 3px;
+  color: rgba(31, 35, 48, 0.44);
+  font-size: 11px;
+}
+
+.cy-queue-dock__editor {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  padding: 3px 8px;
+  border: 1px solid rgba(255, 91, 138, 0.38);
+  border-radius: 7px;
+  outline: none;
+  background: #fff;
+  color: var(--cy-text);
+  font: 400 13px/1.4 var(--rb-font-sans, sans-serif);
+  box-shadow: 0 0 0 2px rgba(255, 91, 138, 0.08);
+}
+
+.cy-queue-dock__actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+}
+
+.cy-queue-dock__actions button {
+  flex: none;
+  width: 27px;
+  height: 27px;
   display: grid;
   place-items: center;
   appearance: none;
   border: 0;
-  border-radius: 4px;
+  border-radius: 6px;
   padding: 0;
   background: transparent;
-  color: rgba(0, 0, 0, 0.45);
+  color: #9b7281;
   cursor: pointer;
 }
 
-.cy-composer__queue-item button:hover {
-  background: rgba(0, 0, 0, 0.06);
-  color: rgba(0, 0, 0, 0.75);
+.cy-queue-dock__actions button:hover:not(:disabled) {
+  background: #fbe5ed;
+  color: #d84f7d;
+}
+
+.cy-queue-dock__actions button:disabled,
+.cy-queue-dock__content:disabled {
+  cursor: default;
+  opacity: 0.38;
 }
 
 .cy-composer__icon-button,

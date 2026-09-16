@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "../../../i18n";
 import { DownOutlined } from "@ant-design/icons";
+import { Group, Panel, Separator, useDefaultLayout } from "react-resizable-panels";
 import { ChatComposer, parseComposerMessage } from "../components/ChatComposer";
 import { ComposerSlot } from "../components/ComposerSlot";
 import { TodoPanel } from "../components/TodoPanel";
 import { CodeGitPanel } from "../components/CodeGitPanel";
 import type { PlanReviewPhase } from "../components/PlanReviewPanel";
-import { ChatPageInspector, type ChatPageInspectorTabId } from "../components/ChatPageInspector";
+import { ChatPageInspector } from "../components/ChatPageInspector";
 import {
   normalizeDeferredPlanChoice,
   normalizePopQuizCard,
@@ -81,6 +82,7 @@ import {
   type PendingQueueFlowHost,
 } from "./pending-queue-flow";
 import "../../../components/ui/SidebarToggle.css";
+import { InspectorToggle } from "../../../components/ui/InspectorToggle";
 import "../../../components/ui/ModeSwitch.css";
 import "../../../components/ui/WindowControls.css";
 import "../../../components/ui/SettingsButton.css";
@@ -110,10 +112,23 @@ export function ChatPage() {
   const preferredAddress = useUserCallPreference();
   const [collapsed, setCollapsed] = useState(false);
   const [activePanel, setActivePanel] = useState<ChatPagePanel | null>(null);
-  /** 右侧 Review 检查面板：打开时把白色工作区挤窄 */
-  const [reviewInspector, setReviewInspector] = useState<{ runId: string; fileIndex: number } | null>(null);
-  /** 右侧面板当前激活的 tab（diff / plan），由打开动作自动切换 */
-  const [inspectorTab, setInspectorTab] = useState<"diff" | "plan">("plan");
+  /** 右侧面板已打开的 diff 标签，ID 规范 diff:<runId>:<文件路径>，同 ID 只激活不重开 */
+  const [diffTabs, setDiffTabs] = useState<
+    { id: string; runId: string; fileIndex: number; filePath: string }[]
+  >([]);
+  /** 右侧面板已打开的文件预览标签，ID 规范 file:<相对路径> */
+  const [fileTabs, setFileTabs] = useState<{ id: string; relPath: string }[]>([]);
+  /** 工作区文件树标签是否打开（ID 固定为 files） */
+  const [filesTabOpen, setFilesTabOpen] = useState(false);
+  /** 右侧面板当前激活的标签 ID（files / file:... / diff:... / plan:...），null 时面板取第一个标签 */
+  const [activeTabId, setActiveTabId] = useState<string | null>(null);
+  // 右栏拖宽布局：聊天区 + 右侧面板套 Group/Panel，宽度持久化到 localStorage。
+  // onlySaveAfterUserInteractions 保证只记用户拖动结果，不在挂载/程序化布局时写盘。
+  const { defaultLayout, onLayoutChanged } = useDefaultLayout({
+    id: "cyrene.chat-page-dock",
+    panelIds: ["chat", "inspector"],
+    onlySaveAfterUserInteractions: true,
+  });
   const [mode, setMode] = useState<ConversationMode>(getInitialMode);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
 
@@ -565,7 +580,7 @@ export function ChatPage() {
               },
             }));
             setPlanDrawerOpen(true);
-            setInspectorTab("plan");
+            setActiveTabId(`plan:${value.sessionId}`);
           }
           break;
         case "cyrene.plan.approved":
@@ -1215,6 +1230,22 @@ export function ChatPage() {
     await queueFlow.syncProjection(sessionId);
   }
 
+  /** 修改待发文字：保留原条目的附件快照，只更新解析后的正文与表情标记。 */
+  async function editQueuedMessage(
+    sessionId: string,
+    targetMode: ConversationMode,
+    id: string,
+    content: string,
+  ) {
+    const parsedMessage = parseComposerMessage(targetMode, content);
+    if (!parsedMessage.rawContent) return false;
+    return queueFlow.editMessage(sessionId, id, {
+      rawContent: parsedMessage.rawContent,
+      visibleContent: parsedMessage.visibleContent,
+      userSticker: parsedMessage.userSticker,
+    });
+  }
+
   /** 运行中把当前草稿排进持久队列（composer 加号按钮）：入队成功才清草稿与附件。 */
   async function queueCurrentDraft(value: string) {
     if (!activeSessionId || !value.trim()) return;
@@ -1241,13 +1272,87 @@ export function ChatPage() {
 
   const isCurrentScopeRunning = Boolean(activeSessionId && activeRunsBySession.current[activeSessionId]);
   const currentPendingQueue = activeSessionId
-    ? (pendingQueueBySession[activeSessionId] ?? []).map((item) => ({ id: item.id, content: item.visibleContent }))
+    ? (pendingQueueBySession[activeSessionId] ?? []).map((item) => ({
+      id: item.id,
+      content: item.visibleContent || item.rawContent,
+      attachmentCount: item.attachments?.length,
+    }))
     : [];
   // 上下文容量圆环：session 级快照优先（手动压缩等不产生新消息的操作也即时刷新），
   // 消息级快照兜底兼容旧数据；无快照不渲染。
   const latestContextUsage = (activeSessionId ? sessionContextUsageBySession[activeSessionId] : undefined)
     ?? messages.findLast((message) => message.contextUsage)?.contextUsage;
   const activePlan = mode === "code" && activeSessionId ? planReviewBySession[activeSessionId] : null;
+
+  // ── 右侧面板标签管理 ──
+  // 会话隔离：切换会话时清空工作区相关标签，避免把 A 会话的文件带进 B 会话
+  useEffect(() => {
+    setDiffTabs([]);
+    setFileTabs([]);
+    setFilesTabOpen(false);
+    setActiveTabId(null);
+  }, [activeSessionId]);
+
+  /** 打开/激活一个 diff 标签：同 runId + 文件路径已存在则仅激活，不重复开 */
+  const openDiffTab = (runId: string, fileIndex: number, filePath: string) => {
+    const id = `diff:${runId}:${filePath || `#${fileIndex}`}`;
+    setDiffTabs((tabs) =>
+      tabs.some((tab) => tab.id === id) ? tabs : [...tabs, { id, runId, fileIndex, filePath }],
+    );
+    setActiveTabId(id);
+  };
+
+  /** 打开/激活文件树标签 */
+  const openFilesTab = () => {
+    setFilesTabOpen(true);
+    setActiveTabId("files");
+  };
+
+  /** 收起右侧面板：关闭全部标签（再次点击开关可重新展开文件树） */
+  const collapseInspector = () => {
+    setFilesTabOpen(false);
+    setFileTabs([]);
+    setDiffTabs([]);
+    setPlanDrawerOpen(false);
+    setActiveTabId(null);
+  };
+
+  /** 打开/激活一个文件预览标签：同路径只激活不重开 */
+  const openFileTab = (relPath: string) => {
+    const id = `file:${relPath}`;
+    setFileTabs((tabs) => (tabs.some((tab) => tab.id === id) ? tabs : [...tabs, { id, relPath }]));
+    setActiveTabId(id);
+  };
+
+  /** 计划标签 ID：会话内唯一（计划内容始终跟随当前会话） */
+  const planTabId = `plan:${activeSessionId ?? "session"}`;
+
+  /** 右侧面板标签的固定顺序：文件树 → 文件预览 → Diff → 计划 */
+  const inspectorTabIds = [
+    ...(filesTabOpen ? ["files"] : []),
+    ...fileTabs.map((tab) => tab.id),
+    ...diffTabs.map((tab) => tab.id),
+    ...((activePlan !== null && planDrawerOpen) ? [planTabId] : []),
+  ];
+
+  /** 关闭右侧面板标签：活动标签关闭后回退到相邻标签（优先左侧） */
+  const closeInspectorTab = (id: string) => {
+    const index = inspectorTabIds.indexOf(id);
+    if (index < 0) return;
+    const remaining = inspectorTabIds.filter((tabId) => tabId !== id);
+    if (id === "files") {
+      setFilesTabOpen(false);
+    } else if (id.startsWith("file:")) {
+      setFileTabs((tabs) => tabs.filter((tab) => tab.id !== id));
+    } else if (id.startsWith("plan:")) {
+      setPlanDrawerOpen(false);
+    } else {
+      setDiffTabs((tabs) => tabs.filter((tab) => tab.id !== id));
+    }
+    if (activeTabId === id) {
+      setActiveTabId(remaining[index - 1] ?? remaining[index] ?? null);
+    }
+  };
 
   return (
     <div className={`cy-page ${collapsed ? "is-collapsed" : ""}`}>
@@ -1282,6 +1387,16 @@ export function ChatPage() {
         onCloseWindow={() => window.chat?.close()}
         onOpenSettings={() => sidebarApi()?.openSettings("appearance")}
       />
+      {/* 右栏可拖宽布局：聊天区 Panel 常驻（保证内容不重挂载），右侧面板按需挂载 */}
+      <Group
+        orientation="horizontal"
+        className="cy-page-dock"
+        defaultLayout={defaultLayout}
+        onLayoutChanged={onLayoutChanged}
+        // 拖动条命中区外溢到两侧（视觉条只有 12px，命中区鼠标 24px / 触屏 33px）
+        resizeTargetMinimumSize={{ coarse: 33, fine: 24 }}
+      >
+        <Panel id="chat" minSize={480} className="cy-dock-body">
       <main
         className={`cy-page-main cy-workspace ${hasMessages ? "has-messages" : "is-empty"} ${isDraggingFiles ? "is-dragging-files" : ""}`}
         onDragEnter={dragHandlers.onDragEnter}
@@ -1290,6 +1405,15 @@ export function ChatPage() {
         onDrop={dragHandlers.onDrop}
       >
         <FileDropOverlay visible={isDraggingFiles} />
+        {/* 白色工作区右上角：右侧面板展开/收起开关（左上角 SidebarToggle 的镜像同款动画） */}
+        {(activeSession?.workspaceBinding || inspectorTabIds.length > 0) && (
+          <span className="cy-inspector-toggle-float">
+            <InspectorToggle
+              open={inspectorTabIds.length > 0}
+              onToggle={() => (inspectorTabIds.length > 0 ? collapseInspector() : openFilesTab())}
+            />
+          </span>
+        )}
         {activePanel ? (
           <ChatPagePanelHost panel={activePanel} />
         ) : (
@@ -1308,7 +1432,7 @@ export function ChatPage() {
             planPhase={planReviewBySession[activeSessionId]?.phase}
             onOpenPlan={() => {
               setPlanDrawerOpen(true);
-              setInspectorTab("plan");
+              setActiveTabId(planTabId);
             }}
           />
         )}
@@ -1347,9 +1471,8 @@ export function ChatPage() {
             onRegisterScrollToBottom={(scroll) => {
               scrollToBottomRef.current = scroll;
             }}
-            onOpenReviewInspector={(runId, fileIndex) => {
-              setReviewInspector({ runId, fileIndex });
-              setInspectorTab("diff");
+            onOpenReviewInspector={(runId, fileIndex, filePath) => {
+              openDiffTab(runId, fileIndex, filePath);
             }}
           />
         )}
@@ -1383,6 +1506,12 @@ export function ChatPage() {
             onCancel={() => void cancelCurrentRun()}
             onQueueMessage={(value) => void queueCurrentDraft(value)}
             onRemoveQueuedMessage={(id) => activeSessionId && void removeQueuedMessage(activeSessionId, id)}
+            onEditQueuedMessage={(id, content) => activeSessionId
+              ? editQueuedMessage(activeSessionId, mode, id, content)
+              : Promise.resolve(false)}
+            onAdjustQueuedMessage={(id) => activeSessionId
+              ? queueFlow.adjustMessage(activeSessionId, id)
+              : Promise.resolve(false)}
             onChooseWorkspace={() => void chooseWorkspace()}
             onChooseFiles={(files) => void chooseFiles(files)}
             onRemoveAttachment={removeAttachment}
@@ -1471,22 +1600,30 @@ export function ChatPage() {
         </>
         )}
       </main>
-      <ChatPageInspector
-        reviewInspector={reviewInspector}
-        activePlan={activePlan}
-        planDrawerOpen={planDrawerOpen}
-        activeTabId={inspectorTab}
-        onTabChange={setInspectorTab}
-        onCloseTab={(tabId: ChatPageInspectorTabId) => {
-          if (tabId === "diff") {
-            setReviewInspector(null);
-            if (activePlan && planDrawerOpen) setInspectorTab("plan");
-          } else {
-            setPlanDrawerOpen(false);
-            if (reviewInspector) setInspectorTab("diff");
-          }
-        }}
-      />
+        </Panel>
+        {/* 右侧面板打开时才挂载 Panel + 拖动条；默认 45% 宽，范围 320px ～ 窗口 70% */}
+        {inspectorTabIds.length > 0 && (
+          <>
+            <Separator className="cy-dock-separator" />
+            <Panel id="inspector" defaultSize="45" minSize={320} maxSize="70%" className="cy-dock-body">
+              <ChatPageInspector
+                sessionId={activeSessionId}
+                workspaceRoot={activeSession?.workspaceBinding?.workspaceRoot}
+                filesTabOpen={filesTabOpen}
+                fileTabs={fileTabs}
+                diffTabs={diffTabs}
+                activePlan={activePlan}
+                planDrawerOpen={planDrawerOpen}
+                planTabId={planTabId}
+                activeTabId={activeTabId}
+                onTabChange={setActiveTabId}
+                onCloseTab={closeInspectorTab}
+                onOpenFile={openFileTab}
+              />
+            </Panel>
+          </>
+        )}
+      </Group>
     </div>
   );
 }

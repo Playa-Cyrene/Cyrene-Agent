@@ -1,7 +1,7 @@
 import { Bubble, CodeHighlighter, Think, ThoughtChain, type BubbleItemType } from "@ant-design/x";
 import { XMarkdown, type ComponentProps } from "@ant-design/x-markdown";
 import Latex from "@ant-design/x-markdown/plugins/Latex";
-import { Component, createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ErrorInfo, type KeyboardEvent, type ReactNode } from "react";
+import { Component, createContext, createElement, useCallback, useContext, useEffect, useMemo, useRef, useState, type ErrorInfo, type KeyboardEvent, type ReactNode } from "react";
 import { t, useTranslation } from "../../../i18n";
 import { normalizeModelMarkdown } from "./markdown-normalize";
 import { resolveAsset } from "../../../../../shared/renderer-base";
@@ -31,7 +31,7 @@ import { resolveRevisableLastTurn, type RevisableLastTurn } from "./last-turn-ac
 import { extractMessageStickerId, stripMessageStickerMarkers } from "./message-sticker";
 import type { WeatherData } from "./weather/weather-types";
 import { WeatherCard } from "./weather/WeatherCard";
-import { countRoundChangedFiles, describeToolExecution, resolveAgentRoundTitle } from "./agent-rounds";
+import { buildAskUserQa, buildFlatRunTimeline, countRoundChangedFiles, describeToolExecution, resolveAgentRoundTitle } from "./agent-rounds";
 import { TaskDelegationRow } from "./TaskDelegationRow";
 import { extractFileChanges, FileChangeCard } from "./FileChangeCard";
 import { ReviewPanel } from "./ReviewPanel";
@@ -42,6 +42,8 @@ export interface ChatMessageItem {
   id: string;
   role: "user" | "assistant" | "system";
   content: string;
+  /** 当前模型轮尚未结算的可见正文；只存在于渲染态，不写入会话消息。 */
+  transientText?: string;
   reasoning?: string;
   reasoningBlocks?: ReasoningBlock[];
   processMessages?: ProcessMessageRecord[];
@@ -95,8 +97,8 @@ interface ChatMessageListProps {
   onRegenerateLastResponse?: (userMessageId: string, assistantMessageId: string) => Promise<boolean>;
   onScrollToBottomVisibilityChange?: (visible: boolean) => void;
   onRegisterScrollToBottom?: (scroll: () => void) => void;
-  /** 点击 Review 文件项时打开右侧检查面板 */
-  onOpenReviewInspector?: (runId: string, fileIndex: number) => void;
+  /** 点击 Review 文件项时打开右侧检查面板（filePath 用于标签标识与去重） */
+  onOpenReviewInspector?: (runId: string, fileIndex: number, filePath: string) => void;
 }
 
 const markdownConfig = { extensions: Latex() };
@@ -129,6 +131,15 @@ const completedMarkdownOptions = {
   enableAnimation: false,
   tail: false,
 };
+const streamingMarkdownOptions = {
+  hasNextChunk: true,
+  enableAnimation: true,
+  animationConfig: {
+    fadeDuration: 100,
+    easing: "ease-out",
+  },
+  tail: false,
+};
 
 class MarkdownRenderBoundary extends Component<{
   content: string;
@@ -152,7 +163,13 @@ class MarkdownRenderBoundary extends Component<{
   }
 }
 
-export function MarkdownContent({ content, streaming }: { content: string; streaming?: boolean }) {
+export function MarkdownContent({
+  content,
+  streaming,
+}: {
+  content: string;
+  streaming?: boolean;
+}) {
   // 模型偶尔输出畸形 Markdown（# 后缺空格、标题粘正文、围栏粘句子），
   // 渲染前先做机械归一化；归一化与 XMarkdown 解析都在同一 memo 周期内完成
   const normalized = useMemo(() => normalizeModelMarkdown(content), [content]);
@@ -166,7 +183,7 @@ export function MarkdownContent({ content, streaming }: { content: string; strea
           openLinksInNewTab
           escapeRawHtml
           rootClassName="cy-message-markdown"
-          streaming={completedMarkdownOptions}
+          streaming={streaming ? streamingMarkdownOptions : completedMarkdownOptions}
         />
       </MessageStreamingContext.Provider>
     </MarkdownRenderBoundary>
@@ -195,7 +212,6 @@ function AssistantContent({
   stickerUrl?: string;
   channelSource?: ChatMessageChannelSource;
 }) {
-  const { t } = useTranslation();
   return (
     <div className="cy-message__assistant-body">
       {channelSource && <ChannelSourceLabel source={channelSource} direction="outgoing" />}
@@ -365,6 +381,9 @@ function AgentRoundGroup({
     <section className={`cy-agent-round${running ? " is-running" : " is-complete"}`}>
       {processMessages.filter((message) => message.content.trim()).map((message) => (
         <div className="cy-run-activity__process" key={message.id}>
+          {message.interrupted && (
+            <div className="cy-run-activity__process-label">{t("messageList.interruptedCandidate")}</div>
+          )}
           <MarkdownContent content={message.content} />
         </div>
       ))}
@@ -407,7 +426,21 @@ function AgentRoundGroup({
   );
 }
 
+/** 运行中平铺时间线的单条渲染：正文直接展开，推理块保持可折叠，工具卡逐条显示。 */
+function FlatTimelineProcess({ message }: { message: ProcessMessageRecord }) {
+  const { t } = useTranslation();
+  return (
+    <div className="cy-run-activity__process">
+      {message.interrupted && (
+        <div className="cy-run-activity__process-label">{t("messageList.interruptedCandidate")}</div>
+      )}
+      <MarkdownContent content={message.content} />
+    </div>
+  );
+}
+
 export function RunActivityDetail({
+  live = false,
   agentRounds = [],
   reasoningBlocks,
   processMessages,
@@ -415,6 +448,8 @@ export function RunActivityDetail({
   tools,
   interrupted = false,
 }: {
+  /** 运行中：所有事件按实际发生顺序平铺，不做轮次折叠归类。 */
+  live?: boolean;
   agentRounds?: AgentRoundRecord[];
   reasoningBlocks: ReasoningBlock[];
   processMessages: ProcessMessageRecord[];
@@ -423,6 +458,29 @@ export function RunActivityDetail({
   interrupted?: boolean;
 }) {
   const { t } = useTranslation();
+  if (live) {
+    // 运行中统一平铺时间线：推理、过程正文、工具卡、任务委派按 seq 交错连续显示，
+    // 不出现每轮的折叠头部——终态才做一次分界归类
+    const entries = buildFlatRunTimeline({ processMessages, reasoningBlocks, tools, taskDelegations });
+    const timeline = entries.flatMap((entry) => {
+      if (entry.kind === "process" && entry.process?.content.trim()) {
+        return [<FlatTimelineProcess message={entry.process} key={entry.key} />];
+      }
+      if (entry.kind === "reasoning" && entry.reasoning?.content.trim()) {
+        return [<RunActivityReasoningBlock block={entry.reasoning} key={entry.key} />];
+      }
+      if (entry.kind === "tool" && entry.tool) {
+        return [<ToolExecutionContent key={entry.key} tools={[entry.tool]} />];
+      }
+      if (entry.kind === "task" && entry.task) {
+        return [<TaskDelegationRow delegation={entry.task} key={entry.key} />];
+      }
+      return [];
+    });
+    return timeline.length
+      ? <div className="cy-run-activity__detail">{timeline}</div>
+      : <div className="cy-run-activity__empty">{t("messageList.organizingReply")}</div>;
+  }
   if (agentRounds.length > 0) {
     const visibleRounds = agentRounds.filter((round) =>
       processMessages.some((message) => message.roundId === round.id && message.content.trim())
@@ -459,6 +517,9 @@ export function RunActivityDetail({
         if (!message.content.trim()) return;
         timeline.push(
           <div className="cy-run-activity__process" key={`process-${message.id}`}>
+            {message.interrupted && (
+              <div className="cy-run-activity__process-label">{t("messageList.interruptedCandidate")}</div>
+            )}
             <MarkdownContent content={message.content} />
           </div>,
         );
@@ -548,6 +609,7 @@ function RunActivityContent({
           {taskPlan && <TaskPlanCard plan={taskPlan} />}
           <div className="cy-run-activity__divider" />
           <RunActivityDetail
+            live={snapshot.processing}
             agentRounds={agentRounds}
             reasoningBlocks={reasoningBlocks}
             processMessages={processMessages}
@@ -584,7 +646,7 @@ function ToolExecutionContent({ tools }: { tools: ToolExecutionRecord[] }) {
             blink: tool.status === "running",
             collapsible: Boolean(tool.result || tool.changes),
             content: (tool.result || tool.changes)
-              ? <ToolResultContent result={tool.result} changes={tool.changes} />
+              ? <ToolResultContent tool={tool} result={tool.result} changes={tool.changes} />
               : undefined,
           };
         })}
@@ -593,8 +655,31 @@ function ToolExecutionContent({ tools }: { tools: ToolExecutionRecord[] }) {
   );
 }
 
-/** 工具结果展示：优先用事件携带的结构化 changes 渲染 Diff Review 卡片；否则尝试解析完整 result JSON；最后原样展示 */
-function ToolResultContent({ result, changes }: { result?: string; changes?: ToolFileChange[] }) {
+/** ask_user 问答配对展示：问题 + 用户回答成对出现，不展示原始 JSON。 */
+function AskUserQaContent({ rows }: { rows: string[] }) {
+  return (
+    <ul className="cy-ask-user-qa">
+      {rows.map((row) => {
+        const separator = row.indexOf("→");
+        const question = separator >= 0 ? row.slice(0, separator).trim() : row;
+        const answer = separator >= 0 ? row.slice(separator + 1).trim() : "";
+        return (
+          <li className="cy-ask-user-qa__row" key={row}>
+            <span className="cy-ask-user-qa__question">{question}</span>
+            <span className="cy-ask-user-qa__answer">{answer}</span>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+/** 工具结果展示：ask_user 渲染问答配对；优先用事件携带的结构化 changes 渲染 Diff Review 卡片；否则尝试解析完整 result JSON；最后原样展示 */
+function ToolResultContent({ tool, result, changes }: { tool?: ToolExecutionRecord; result?: string; changes?: ToolFileChange[] }) {
+  if (tool?.name === "ask_user") {
+    const rows = buildAskUserQa(tool);
+    if (rows.length > 0) return <AskUserQaContent rows={rows} />;
+  }
   if (changes && changes.length > 0) return <FileChangeCard changes={changes} />;
   if (result) {
     const parsed = extractFileChanges(result);
@@ -762,7 +847,7 @@ function createRoles(
   reasoningExpanded: Readonly<Record<string, boolean>>,
   onReasoningExpand: (id: string, expanded: boolean) => void,
   onTtsCacheKey?: (messageId: string, cacheKey: string, converterVersion: string) => void,
-  onOpenReviewInspector?: (runId: string, fileIndex: number) => void,
+  onOpenReviewInspector?: (runId: string, fileIndex: number, filePath: string) => void,
 ) {
   return {
   user: {
@@ -983,23 +1068,36 @@ export function createMessageItems(messages: ChatMessageItem[], enabledStickers:
       });
     };
     const tools = message.toolExecutions ?? [];
+    // 活动卡是否渲染：运行中始终显示；终态只在确实产生了过程内容（正文/推理/工具/委派）时保留，
+    // 首轮无工具调用的成功运行不产生空折叠头部。头像钉在活动卡头部，正文据此决定是否隐藏自己的头像。
+    const hasProcessContent = (message.processMessages ?? []).some((item) => item.content.trim())
+      || tools.length > 0
+      || (message.taskDelegations ?? []).length > 0
+      || reasoningBlocks.some((block) => block.content.trim());
+    const processing = message.runActivity?.completedAt === undefined;
+    const activityVisible = Boolean(message.runActivity) && (processing || hasProcessContent);
     if (message.runActivity) {
-      assistantItems.push({
-        key: `${message.id}-activity`,
-        role: "activity",
-        content: "",
-        extraInfo: {
-          activityId: `${message.id}-activity`,
-          activity: message.runActivity,
-          reasoningBlocks,
-          processMessages: message.processMessages ?? [],
-          agentRounds: message.agentRounds ?? [],
-          taskDelegations: message.taskDelegations ?? [],
-          tools,
-          runStage: message.runStage,
-          taskPlan: message.taskPlan,
-        },
-      });
+      if (activityVisible) {
+        assistantItems.push({
+          key: `${message.id}-activity`,
+          role: "activity",
+          content: "",
+          // 头像钉在运行块头部（状态行左侧）：一次运行只出现一次，不随每条消息重复。
+          // 用 createElement 而非 JSX：createMessageItems 在测试里直接执行，不经过 JSX 运行时
+          avatar: createElement(CyreneMessageAvatar),
+          extraInfo: {
+            activityId: `${message.id}-activity`,
+            activity: message.runActivity,
+            reasoningBlocks,
+            processMessages: message.processMessages ?? [],
+            agentRounds: message.agentRounds ?? [],
+            taskDelegations: message.taskDelegations ?? [],
+            tools,
+            runStage: message.runStage,
+            taskPlan: message.taskPlan,
+          },
+        });
+      }
     } else {
       for (let index = 0; index <= tools.length; index += 1) {
         reasoningBlocks.filter((block) => (block.afterToolCount ?? 0) === index).forEach(appendReasoning);
@@ -1021,11 +1119,16 @@ export function createMessageItems(messages: ChatMessageItem[], enabledStickers:
       });
     }
     if (stages.includes("assistant")) {
+      // 运行块内的正文不重复头像（头像已钉在活动卡头部）：
+      // 保留头像占位只做视觉隐藏，正文左边缘与活动卡时间线内容精确对齐。
+      // 活动卡未渲染时（如首轮直接回答的纯文本运行）正文保留自己的头像。
+      const hideAvatar = activityVisible;
       assistantItems.push({
         key: message.id,
         role: "assistant",
-        content: message.content,
+        content: message.transientText ?? message.content,
         streaming: message.streaming,
+        ...(hideAvatar ? { rootClassName: "cy-message cy-message--assistant cy-message--assistant-run" } : {}),
         extraInfo: {
           messageId: message.id,
           streaming: message.streaming,
@@ -1041,6 +1144,9 @@ export function createMessageItems(messages: ChatMessageItem[], enabledStickers:
         key: `${message.id}-review`,
         role: "review",
         content: "",
+        // Review 面板属于运行块：头像占位隐藏（头像钉在活动卡头部），面板与正文/时间线内容左对齐
+        avatar: createElement(CyreneMessageAvatar),
+        rootClassName: "cy-message cy-message--review cy-message--review-run",
         extraInfo: { runId: message.runId },
       });
     }

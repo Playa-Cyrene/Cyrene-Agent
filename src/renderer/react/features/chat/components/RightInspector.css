@@ -1,8 +1,8 @@
 /* RightInspector — 统一右侧挤出式面板（diff / 计划清单 tab 切换） */
 
+/* 宽度由外层 react-resizable-panels Panel 控制（默认 45%、320px～70% 窗口），这里只撑满 */
 .cy-right-inspector {
-  flex-shrink: 0;
-  width: 620px;
+  width: 100%;
   min-width: 0;
   height: 100%;
   display: flex;
@@ -25,60 +25,92 @@
   to   { opacity: 1; transform: translateX(0); }
 }
 
-/* ── 顶部：tab 栏 + 关闭按钮 ── */
-.cy-right-inspector__header {
-  display: flex;
-  align-items: stretch;
-  border-bottom: 1px solid var(--cy-border, #f0ebee);
-  background: rgb(255 247 250 / 92%);
-  flex-shrink: 0;
-  min-height: 38px;
+/* ── 顶部：antd Tabs 标签栏（editable-card 样式全部抹平，只留底部强调线） ── */
+
+.cy-right-inspector__tabs.ant-tabs {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
 }
 
-.cy-right-inspector__tabs {
-  flex: 1;
-  display: flex;
-  align-items: stretch;
-  gap: 2px;
-  padding: 0 6px;
+/* 导航栏：38px 高、底部细分割线、与面板同色 */
+.cy-right-inspector__tabs > .ant-tabs-nav {
+  margin: 0;
+  min-height: 38px;
+  border-bottom: 1px solid var(--cy-border, #f0ebee);
+  background: rgb(255 247 250 / 92%);
+  padding: 0 2px;
+}
+
+.cy-right-inspector__tabs .ant-tabs-nav-list {
   min-width: 0;
 }
 
-.cy-right-inspector__tab {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 14px;
-  border: 0;
+/* 标签：抹平 antd 卡片边框，hover 变深，活动标签粉线 + 提亮。
+   选择器多带一层 __tabs.ant-tabs 是为了压过 antd 运行时注入的样式（文件名字号默认会被顶回 14px） */
+.cy-right-inspector__tabs.ant-tabs .ant-tabs-tab {
+  border: 0 !important;
+  border-radius: 0;
   background: transparent;
+  padding: 7px 10px 7px 12px;
+  margin: 0;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.2;
+  font-family: var(--rb-font-sans, sans-serif);
   color: var(--cy-text-muted, #99939a);
-  font: 500 12px/1.2 var(--rb-font-sans, sans-serif);
-  cursor: pointer;
-  border-bottom: 2px solid transparent;
-  transition: color 0.12s, border-color 0.12s, background 0.12s;
-  white-space: nowrap;
+  transition: color 0.12s, background 0.12s;
 }
 
-.cy-right-inspector__tab:hover {
+.cy-right-inspector__tabs.ant-tabs .ant-tabs-tab .ant-tabs-tab-btn {
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.2;
+}
+
+.cy-right-inspector__tabs .ant-tabs-tab:hover {
   color: var(--cy-text, #2f2d31);
   background: rgb(0 0 0 / 2%);
 }
 
-.cy-right-inspector__tab.is-active {
-  color: var(--cy-text, #2f2d31);
-  border-bottom-color: var(--cy-accent, #ff5b8a);
+.cy-right-inspector__tabs .ant-tabs-tab.ant-tabs-tab-active {
   background: rgb(255 251 252 / 96%);
+  color: var(--cy-text, #2f2d31);
+  box-shadow: inset 0 -2px 0 var(--cy-accent, #ff5b8a);
 }
 
-/* 单 tab 时的标题（退化模式，不显示 tab 切换条） */
-.cy-right-inspector__single-title {
-  flex: 1;
+/* antd 直接给活动标签的文字上默认蓝色（选择器命中 .ant-tabs-tab-btn），
+   必须以更高优先级把文字颜色覆盖为应用深色，仅保留下划线的粉色强调 */
+.cy-right-inspector__tabs.ant-tabs .ant-tabs-tab.ant-tabs-tab-active .ant-tabs-tab-btn {
+  color: var(--cy-text, #2f2d31);
+}
+
+.cy-right-inspector__tabs .ant-tabs-tab-btn {
+  color: inherit;
+  /* 文件名可能很长：超宽省略 */
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 每个标签自带的关闭小按钮（chip 上的 ×） */
+.cy-right-inspector__tabs .ant-tabs-tab-remove {
+  margin-left: 4px;
+  padding: 0 2px;
+  color: var(--cy-text-muted, #99939a);
+  font-size: 10px;
+}
+
+.cy-right-inspector__tabs .ant-tabs-tab-remove:hover {
+  color: var(--cy-accent, #ff5b8a);
+}
+
+/* 右上角整体关闭按钮（关闭活动标签） */
+.cy-right-inspector__tabs .ant-tabs-extra-content {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 0 14px;
-  color: var(--cy-text, #2f2d31);
-  font: 600 12px/1.3 var(--rb-font-sans, sans-serif);
 }
 
 /* 阶段色点 */
@@ -116,11 +148,21 @@
   color: var(--cy-text, #2f2d31);
 }
 
-/* ── 主体：tab 内容 ── */
-.cy-right-inspector__body {
+/* ── 主体：antd Tabs 内容区（滚动由各内容组件自理） ──
+   antd v6 的结构是 .ant-tabs-body-holder > .ant-tabs-body > .ant-tabs-content > .ant-tabs-tabpane，
+   旧版类名 .ant-tabs-content-holder 一并保留以防降级 */
+.cy-right-inspector__tabs > .ant-tabs-body-holder,
+.cy-right-inspector__tabs > .ant-tabs-content-holder {
   flex: 1;
-  display: flex;
-  flex-direction: column;
   min-height: 0;
   overflow: hidden;
+}
+
+.cy-right-inspector__tabs > .ant-tabs-body-holder > .ant-tabs-body {
+  height: 100%;
+}
+
+.cy-right-inspector__tabs .ant-tabs-content,
+.cy-right-inspector__tabs .ant-tabs-tabpane {
+  height: 100%;
 }
