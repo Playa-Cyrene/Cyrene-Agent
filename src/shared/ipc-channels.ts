@@ -182,6 +182,10 @@ export const IPC = {
   // 认领队首（单次写入：待发条目 → 正式用户消息 + 派发状态）与派发确认
   CHATS_PENDING_CLAIM: "chats:pending-claim",
   CHATS_PENDING_COMPLETE_DISPATCH: "chats:pending-complete-dispatch",
+  // 修改未认领的待发条目文字（按会话 + 条目稳定标识；复用页面解析结果）
+  CHATS_PENDING_EDIT: "chats:pending-edit",
+  // 调整：把待发条目插入当前运行的下一步（绑定 active run，由 agui-bridge 处理）
+  CHATS_PENDING_ADJUST: "chats:pending-adjust",
   CHATS_SET_PINNED: "chats:set-pinned",
   CHATS_SET_MODEL_PROFILE: "chats:set-model-profile",
   CHATS_OPEN_FOLDER: "chats:open-folder",
@@ -227,6 +231,12 @@ export const IPC = {
   REVIEW_GET: "review:get",
   // renderer → main：把指定 Run 修改过的文件恢复到运行前状态（基于 before/ 基线）
   REVIEW_RESTORE: "review:restore",
+
+  // 会话工作区只读文件（右侧面板文件树 / 文件预览）
+  // renderer → main：列出工作区内某目录的条目（懒加载用）
+  WORKSPACE_FILES_LIST: "workspace-files:list",
+  // renderer → main：读取工作区内某文件的内容（预览用，带大小/二进制限制）
+  WORKSPACE_FILES_READ: "workspace-files:read",
 
 // sticker manager window
 	  STICKERS_MINIMIZE: "stickers:minimize",

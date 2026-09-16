@@ -32,6 +32,8 @@ type FakeStore = ChatStoreApi & {
   pendingClaim: ReturnType<typeof vi.fn>;
   pendingCompleteDispatch: ReturnType<typeof vi.fn>;
   pendingRemove: ReturnType<typeof vi.fn>;
+  pendingEdit: ReturnType<typeof vi.fn>;
+  pendingAdjust: ReturnType<typeof vi.fn>;
 };
 
 function createFakeStore(): FakeStore {
@@ -42,6 +44,8 @@ function createFakeStore(): FakeStore {
     pendingClaim: vi.fn(async () => ({ ok: true, claimed: false }) as PendingClaimResult),
     pendingCompleteDispatch: vi.fn(async () => ({ ok: true, cleared: true })),
     pendingRemove: vi.fn(async () => ({ ok: true })),
+    pendingEdit: vi.fn(async () => ({ ok: true, queue: [] as PendingChatMessage[] })),
+    pendingAdjust: vi.fn(async () => ({ ok: true, queue: [] as PendingChatMessage[] })),
   } as unknown as FakeStore;
 }
 
@@ -408,5 +412,141 @@ describe("页面待发队列流程", () => {
     flow.handleRunFinished({ mode: "chat", sessionId: "s1", queuePaused: false });
     await flushAsync();
     expect(store.pendingClaim).toHaveBeenCalledWith("s1");
+  });
+
+  it("editMessage 成功：透传三个文字字段并用返回的权威队列刷新投影", async () => {
+    const { flow, store, calls } = createHarness();
+    store.pendingEdit.mockResolvedValueOnce({
+      ok: true,
+      queue: [makeQueueEntry("q-2")],
+    });
+
+    const ok = await flow.editMessage("s1", "q-1", {
+      rawContent: "改后的文字 [sticker:shy]",
+      visibleContent: "改后的文字",
+      userSticker: "shy",
+    });
+    expect(ok).toBe(true);
+    expect(store.pendingEdit).toHaveBeenCalledWith("s1", "q-1", {
+      rawContent: "改后的文字 [sticker:shy]",
+      visibleContent: "改后的文字",
+      userSticker: "shy",
+    });
+    expect(calls.projectionReplaces.at(-1)?.queue?.map((item) => item.id)).toEqual(["q-2"]);
+    expect(calls.errors).toHaveLength(0);
+  });
+
+  it("editMessage 冲突（已认领）：用最新权威队列刷新投影（不覆盖新状态）并报错", async () => {
+    const { flow, store, calls } = createHarness();
+    store.pendingEdit.mockResolvedValueOnce({
+      ok: false,
+      error: "already-claimed",
+      queue: [makeQueueEntry("q-2")],
+    });
+
+    const ok = await flow.editMessage("s1", "q-1", { rawContent: "迟到编辑", visibleContent: "迟到编辑" });
+    expect(ok).toBe(false);
+    // 冲突时也用附带队列刷新投影：页面立刻看到主进程的新状态
+    expect(calls.projectionReplaces.at(-1)?.queue?.map((item) => item.id)).toEqual(["q-2"]);
+    expect(calls.errors).toHaveLength(1);
+    expect(calls.errors[0]).toContain("already-claimed");
+  });
+
+  it("editMessage 失败无队列（写盘失败等）：只报错，投影保持不动", async () => {
+    const { flow, store, calls } = createHarness();
+    store.pendingEdit.mockResolvedValueOnce({ ok: false, error: "write-failed" });
+
+    const ok = await flow.editMessage("s1", "q-1", { rawContent: "编辑", visibleContent: "编辑" });
+    expect(ok).toBe(false);
+    expect(calls.projectionReplaces).toHaveLength(0);
+    expect(calls.errors).toHaveLength(1);
+  });
+
+  it("editMessage / adjustMessage 存储不可用：报错返回 false", async () => {
+    const errors: string[] = [];
+    const flow = createPendingQueueFlow(() => ({
+      getStore: () => undefined,
+      isSessionBusy: () => false,
+      hasRenderedMessage: () => false,
+      replaceProjection: () => {},
+      appendMessages: () => {},
+      prepareImageAttachments: () => {},
+      refreshSessions: () => {},
+      startRun: async () => {},
+      reportError: (message: string) => errors.push(message),
+    }));
+
+    const editOk = await flow.editMessage("s1", "q-1", { rawContent: "编辑", visibleContent: "编辑" });
+    expect(editOk).toBe(false);
+    expect(errors[0]).toContain("聊天会话服务尚未就绪");
+
+    const adjustOk = await flow.adjustMessage("s1", "q-1");
+    expect(adjustOk).toBe(false);
+    expect(errors[1]).toContain("聊天会话服务尚未就绪");
+  });
+
+  it("adjustMessage 成功：透传条目标识并用权威队列刷新投影", async () => {
+    const { flow, store, calls } = createHarness();
+    store.pendingAdjust.mockResolvedValueOnce({
+      ok: true,
+      queue: [makeQueueEntry("q-2")],
+    });
+
+    const ok = await flow.adjustMessage("s1", "q-1");
+    expect(ok).toBe(true);
+    expect(store.pendingAdjust).toHaveBeenCalledWith("s1", "q-1");
+    expect(calls.projectionReplaces.at(-1)?.queue?.map((item) => item.id)).toEqual(["q-2"]);
+    expect(calls.errors).toHaveLength(0);
+  });
+
+  it("adjustMessage 无活跃运行/Chat 模式：明确提示不可调整，消息仍保留队列（投影刷新）", async () => {
+    const { flow, store, calls } = createHarness();
+    store.pendingAdjust.mockResolvedValueOnce({
+      ok: false,
+      error: "no-active-run",
+      queue: [makeQueueEntry("q-1")],
+    });
+
+    const ok = await flow.adjustMessage("s1", "q-1");
+    expect(ok).toBe(false);
+    // 条目仍留在队列：投影按最新权威队列刷新
+    expect(calls.projectionReplaces.at(-1)?.queue?.map((item) => item.id)).toEqual(["q-1"]);
+    // 错误文案是面向用户的"不可调整"提示，而不是裸错误码
+    expect(calls.errors).toHaveLength(1);
+    expect(calls.errors[0]).toContain("仍保留在队列中");
+
+    // no-safe-next-step（Chat 模式）共用同一条用户文案
+    store.pendingAdjust.mockResolvedValueOnce({
+      ok: false,
+      error: "no-safe-next-step",
+      queue: [makeQueueEntry("q-1")],
+    });
+    await flow.adjustMessage("s1", "q-1");
+    expect(calls.errors[1]).toContain("仍保留在队列中");
+  });
+
+  it("adjustMessage 带附件被拒：提示附件不可插入，条目留队", async () => {
+    const { flow, store, calls } = createHarness();
+    store.pendingAdjust.mockResolvedValueOnce({
+      ok: false,
+      error: "has-attachments",
+      queue: [makeQueueEntry("q-att")],
+    });
+
+    const ok = await flow.adjustMessage("s1", "q-att");
+    expect(ok).toBe(false);
+    expect(calls.projectionReplaces.at(-1)?.queue?.map((item) => item.id)).toEqual(["q-att"]);
+    expect(calls.errors).toHaveLength(1);
+    expect(calls.errors[0]).toContain("带附件");
+  });
+
+  it("adjustMessage 请求异常（IPC reject）：报错返回 false", async () => {
+    const { flow, store, calls } = createHarness();
+    store.pendingAdjust.mockRejectedValueOnce(new Error("ipc broken"));
+
+    const ok = await flow.adjustMessage("s1", "q-1");
+    expect(ok).toBe(false);
+    expect(calls.errors).toHaveLength(1);
+    expect(calls.errors[0]).toContain("ipc broken");
   });
 });

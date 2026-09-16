@@ -76,6 +76,82 @@ describe("chats IPC mode filtering", () => {
     }));
   });
 
+  it("schedules first-message title generation for every conversation mode with visible text only", async () => {
+    const { registerChatsIpc } = await import("./chats-ipc");
+    const scheduled: Array<{ sessionId: string; userMessageId: string; text: string }> = [];
+    registerChatsIpc(undefined, {
+      titleService: {
+        schedule: (input) => {
+          scheduled.push(input);
+          return true;
+        },
+      },
+    });
+
+    const create = mocks.handlers.get(IPC.CHATS_CREATE);
+    const enqueue = mocks.handlers.get(IPC.CHATS_PENDING_ENQUEUE);
+    const claim = mocks.handlers.get(IPC.CHATS_PENDING_CLAIM);
+    if (!create || !enqueue || !claim) throw new Error("title generation IPC handlers were not registered");
+    const event = { sender: {} };
+
+    for (const mode of ["chat", "work", "code", "learn"] as const) {
+      const created = await create(event, { mode }) as { id: string };
+      await enqueue(event, {
+        sessionId: created.id,
+        entry: {
+          id: `first-${mode}`,
+          rawContent: `处理${mode}问题[sticker:wave]`,
+          visibleContent: `处理${mode}问题`,
+          attachments: [{ kind: "document", name: "notes.txt", filePath: "C:\\tmp\\notes.txt" }],
+          enqueuedAt: 1,
+        },
+      });
+      await claim(event, created.id);
+    }
+
+    expect(scheduled).toEqual([
+      expect.objectContaining({ userMessageId: "first-chat", text: "处理chat问题" }),
+      expect.objectContaining({ userMessageId: "first-work", text: "处理work问题" }),
+      expect.objectContaining({ userMessageId: "first-code", text: "处理code问题" }),
+      expect.objectContaining({ userMessageId: "first-learn", text: "处理learn问题" }),
+    ]);
+  });
+
+  it("also schedules legacy direct appends without sticker markers or attachments", async () => {
+    const { registerChatsIpc } = await import("./chats-ipc");
+    const scheduled: Array<{ sessionId: string; userMessageId: string; text: string }> = [];
+    registerChatsIpc(undefined, {
+      titleService: {
+        schedule: (input) => {
+          scheduled.push(input);
+          return true;
+        },
+      },
+    });
+    const create = mocks.handlers.get(IPC.CHATS_CREATE);
+    const append = mocks.handlers.get(IPC.CHATS_APPEND);
+    if (!create || !append) throw new Error("direct append IPC handlers were not registered");
+    const event = { sender: {} };
+    const created = await create(event, { mode: "chat" }) as { id: string };
+
+    await append(event, {
+      id: created.id,
+      message: {
+        id: "legacy-first",
+        role: "user",
+        content: "  总结这份材料 [sticker:wave]  ",
+        at: 1,
+        attachments: [{ kind: "document", name: "secret.txt", filePath: "C:\\tmp\\secret.txt", status: "pending" }],
+      },
+    });
+
+    expect(scheduled).toEqual([{
+      sessionId: created.id,
+      userMessageId: "legacy-first",
+      text: "总结这份材料",
+    }]);
+  });
+
   it("does not register the removed Cline plan/act IPC", async () => {
     const { registerChatsIpc } = await import("./chats-ipc");
     registerChatsIpc();

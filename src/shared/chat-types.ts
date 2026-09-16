@@ -44,6 +44,8 @@ export interface ToolExecutionRecord {
   roundId?: string;
   /** 结构化文件变更证据（Diff Review 卡片）；由 tool_end 事件独立携带，不依赖被截断的 result 文本。 */
   changes?: ToolFileChange[];
+  /** run 内单调递增的时间线序号：保证推理/正文/工具跨类别按实际发生顺序排列。 */
+  seq?: number;
 }
 
 /** Diff Review 卡片：单行展示（hunk=@@ 头，context=未变行）。 */
@@ -83,9 +85,13 @@ export interface RunActivityRecord {
 export interface ProcessMessageRecord {
   id: string;
   content: string;
+  /** 运行取消、失败或超时时，从尚未结算的候选回答保留下来的中断片段。 */
+  interrupted?: boolean;
   /** 该过程消息出现前已完成的工具数，用于恢复大致执行顺序。 */
   afterToolCount?: number;
   roundId?: string;
+  /** run 内单调递增的时间线序号；旧记录缺失时回退 afterToolCount 排序。 */
+  seq?: number;
 }
 
 export interface ReasoningBlock {
@@ -95,6 +101,8 @@ export interface ReasoningBlock {
   /** 已完成的工具数，用于恢复 Think 与工具链的真实顺序。 */
   afterToolCount?: number;
   roundId?: string;
+  /** run 内单调递增的时间线序号；旧记录缺失时回退 afterToolCount 排序。 */
+  seq?: number;
 }
 
 export interface AgentRoundRecord {
@@ -228,6 +236,12 @@ export interface PendingChatMessage {
   userSticker?: string;
   /** 恢复指定旧 run（中断任务续跑）：随条目入队，认领派发时透传给模型运行。 */
   resumeFromRunId?: string;
+  /**
+   * 调整目标运行 id：非空表示该条目已被请求"插入当前运行下一步"。
+   * 注入成功后条目转为正式用户消息并移出队列；运行结束/取消时未注入的
+   * 条目由复位逻辑清除此标记，回普通队列按序派发。
+   */
+  adjustRunId?: string;
   /** 入队时间戳（主进程写入）：数组顺序是派发顺序的权威依据，此字段作审计。 */
   enqueuedAt: number;
 }

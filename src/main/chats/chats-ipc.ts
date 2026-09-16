@@ -30,6 +30,12 @@ import { getAdapterForConfig } from "../orchestrator/vendors";
 import { activeChatTargetRegistry } from "../plugin-host/active-chat-target";
 import { callSummarizeModel } from "../orchestrator/context-manager";
 import { buildContextUsageSnapshot } from "../orchestrator/context-usage";
+import type { LlmClient } from "../services/llm/llm-client";
+import { enqueueLLMTask } from "../llm-queue";
+import {
+  createConversationTitleService,
+  type ConversationTitleService,
+} from "./conversation-title-service";
 
 function broadcastChanged(senderWebContents?: WebContents | null): void {
   for (const win of BrowserWindow.getAllWindows()) {
@@ -51,9 +57,33 @@ const COMPACT_KEEP_RECENT = 6;
 /** 并发保护：同一会话压缩进行中时拒绝重复触发。 */
 const compactingSessions = new Set<string>();
 
-export function registerChatsIpc(ipcOption?: IpcScope): void {
+function visibleUserText(content: string): string {
+  return content.replace(/\[sticker:[^\]]+\]/gi, "").trim();
+}
+
+export function registerChatsIpc(
+  ipcOption?: IpcScope,
+  options: {
+    titleService?: ConversationTitleService;
+    llmClient?: LlmClient;
+    isPrimaryModelBusy?: () => boolean;
+  } = {},
+): void {
   const ipc = ipcOption ?? createIpcScope();
+  const titleService = options.titleService ?? (options.llmClient
+    ? createConversationTitleService({
+        getSession: chatsStore.getSession,
+        setGeneratedTitle: chatsStore.setGeneratedTitle,
+        resolveSettings: (session) => resolveModelSettingsProfile(loadModelSettings(), session.modelProfileId),
+        isPrimaryModelBusy: options.isPrimaryModelBusy,
+        llmClient: options.llmClient,
+        enqueueTask: enqueueLLMTask,
+        onTitleChanged: () => broadcastChanged(),
+      })
+    : undefined);
   chatsStore.initialize();
+  // 进程刚启动时没有任何存活运行：磁盘上遗留的插话标记都是陈旧的，清回普通队列
+  chatsStore.clearStalePendingAdjustMarks();
 
   ipc.handle(
     IPC.CHATS_LIST,
@@ -88,7 +118,16 @@ export function registerChatsIpc(ipcOption?: IpcScope): void {
     (event, payload: { id: string; message: ChatMessage }) => {
       if (!payload || !payload.id || !payload.message) return null;
       const session = chatsStore.appendMessage(payload.id, payload.message);
-      if (session) broadcastChanged(event.sender);
+      if (session) {
+        broadcastChanged(event.sender);
+        if (payload.message.role === "user") {
+          titleService?.schedule({
+            sessionId: payload.id,
+            userMessageId: payload.message.id,
+            text: visibleUserText(payload.message.content),
+          });
+        }
+      }
       return session;
     },
   );
@@ -332,7 +371,14 @@ export function registerChatsIpc(ipcOption?: IpcScope): void {
       return { ok: false, error: "invalid-payload" };
     }
     const result = chatsStore.claimPendingMessage(sessionId);
-    if (result.ok && result.claimed) broadcastChanged(event.sender);
+    if (result.ok && result.claimed) {
+      broadcastChanged(event.sender);
+      titleService?.schedule({
+        sessionId,
+        userMessageId: result.userMessage.id,
+        text: result.visibleContent,
+      });
+    }
     return result;
   });
 
@@ -344,6 +390,35 @@ export function registerChatsIpc(ipcOption?: IpcScope): void {
       const messageId = typeof payload?.messageId === "string" ? payload.messageId : "";
       if (!sessionId || !messageId) return { ok: false, error: "invalid-payload" };
       return chatsStore.completePendingDispatch(sessionId, messageId);
+    },
+  );
+
+  // 修改未认领条目文字：内容按页面现有解析规则产出（原文/展示文字/表情标记），
+  // 条目标识、入队时间、顺序与附件保持不变。冲突与失败返回最新权威队列。
+  ipc.handle(
+    IPC.CHATS_PENDING_EDIT,
+    (
+      event,
+      payload: {
+        sessionId?: unknown;
+        messageId?: unknown;
+        rawContent?: unknown;
+        visibleContent?: unknown;
+        userSticker?: unknown;
+      },
+    ) => {
+      const sessionId = typeof payload?.sessionId === "string" ? payload.sessionId : "";
+      const messageId = typeof payload?.messageId === "string" ? payload.messageId : "";
+      if (!sessionId || !messageId || typeof payload.rawContent !== "string") {
+        return { ok: false, error: "invalid-payload" };
+      }
+      const result = chatsStore.editPendingMessage(sessionId, messageId, {
+        rawContent: payload.rawContent,
+        visibleContent: typeof payload.visibleContent === "string" ? payload.visibleContent : payload.rawContent,
+        ...(typeof payload.userSticker === "string" ? { userSticker: payload.userSticker } : {}),
+      });
+      if (result.ok) broadcastChanged(event.sender);
+      return result;
     },
   );
 
@@ -565,4 +640,3 @@ function validateAndNormalizeWorkspace(inputPath: string): string {
 // 这些都是主进程发起的写，没有 sender，广播给所有窗口（含聊天窗口）--对聊天窗口
 // 而言属于"真正的外部变更"，应当触发重载。
 export { broadcastChanged as broadcastChatsChanged };
-

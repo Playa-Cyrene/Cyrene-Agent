@@ -440,6 +440,21 @@ export function renameSession(id: string, title: string): ChatSession | null {
   return session;
 }
 
+export function setGeneratedTitle(id: string, firstUserMessageId: string, title: string): boolean {
+  const session = readSessionFile(id);
+  if (!session || session.titleIsCustom) return false;
+  const firstUserMessage = session.messages.find(
+    (message) => message.role === "user" && message.content.trim(),
+  );
+  if (firstUserMessage?.id !== firstUserMessageId) return false;
+  const trimmed = title.trim();
+  if (!trimmed) return false;
+  session.title = trimmed.slice(0, 80);
+  writeSessionFile(session);
+  upsertMeta(metaFromSession(session));
+  return true;
+}
+
 export function setSessionPinned(id: string, pinned: boolean): ChatSession | null {
   const session = readSessionFile(id);
   if (!session) return null;
@@ -679,6 +694,7 @@ export function claimPendingMessage(sessionId: string): ClaimPendingResult {
   session.pendingMessages = remaining;
   session.pendingDispatch = { messageId: head.id, claimedAt };
   session.updatedAt = claimedAt;
+  if (!session.titleIsCustom) session.title = deriveTitle(session.messages);
   try {
     writeSessionFile(session);
   } catch (err) {
@@ -726,6 +742,241 @@ export function completePendingDispatch(sessionId: string, messageId: string): C
     return { ok: false, error: "write-failed" };
   }
   return { ok: true, cleared: true };
+}
+
+// ── 待发队列的修改与调整 ─────────────────────────────────
+
+/** 编辑结果：冲突与失败时附带最新权威队列，调用方据此刷新投影、不覆盖新状态。 */
+export type EditPendingResult =
+  | { ok: true; queue: PendingChatMessage[] }
+  | {
+      ok: false;
+      error: "session-not-found" | "not-found" | "already-claimed" | "already-adjusting" | "empty-content" | "write-failed";
+      queue?: PendingChatMessage[];
+    };
+
+/**
+ * 编辑未认领待发条目的文字：更新原始文字、展示文字与表情标记；
+ * 条目标识、入队时间、顺序与附件保持不变（内容由调用方按现有解析规则产出）。
+ * 空文字拒绝；条目已被认领（进入派发流程）或已标记插入当前运行时明确报错，
+ * 并返回最新权威队列，绝不覆盖新状态。
+ */
+export function editPendingMessage(
+  sessionId: string,
+  messageId: string,
+  update: { rawContent: string; visibleContent: string; userSticker?: string },
+): EditPendingResult {
+  const session = readSessionFile(sessionId);
+  if (!session) return { ok: false, error: "session-not-found" };
+  const queue = session.pendingMessages ?? [];
+  const snapshot = (): PendingChatMessage[] => queue.map((item) => ({ ...item }));
+  // 写盘失败时返回写盘前的权威状态（磁盘未变，内存改动作废）
+  const beforeWrite = snapshot();
+  // 已认领：条目已转正式消息并进入派发流程，编辑会破坏派发一致性
+  if (session.pendingDispatch?.messageId === messageId) {
+    return { ok: false, error: "already-claimed", queue: beforeWrite };
+  }
+  const index = queue.findIndex((item) => item.id === messageId);
+  if (index === -1) return { ok: false, error: "not-found", queue: beforeWrite };
+  const target = queue[index];
+  // 已标记插入当前运行：条目正在注入流程中，编辑会造成注入内容与记录不一致
+  if (target.adjustRunId) return { ok: false, error: "already-adjusting", queue: beforeWrite };
+  if (typeof update?.rawContent !== "string" || !update.rawContent.trim()) {
+    return { ok: false, error: "empty-content", queue: beforeWrite };
+  }
+  const next: PendingChatMessage = {
+    ...target,
+    rawContent: update.rawContent,
+    visibleContent: typeof update.visibleContent === "string" && update.visibleContent
+      ? update.visibleContent
+      : update.rawContent,
+  };
+  if (typeof update.userSticker === "string" && update.userSticker.trim()) {
+    next.userSticker = update.userSticker.trim();
+  } else {
+    delete next.userSticker;
+  }
+  queue[index] = next;
+  try {
+    writeSessionFile(session);
+  } catch (err) {
+    console.warn("[chats-store] 待发消息编辑落盘失败:", sessionId, err);
+    return { ok: false, error: "write-failed", queue: beforeWrite };
+  }
+  return { ok: true, queue: snapshot() };
+}
+
+/** 标记调整结果：失败时附带最新权威队列（条目保持原样留在普通队列）。 */
+export type MarkPendingAdjustResult =
+  | { ok: true; queue: PendingChatMessage[] }
+  | {
+      ok: false;
+      error: "session-not-found" | "not-found" | "already-claimed" | "already-adjusting" | "has-attachments" | "write-failed";
+      queue?: PendingChatMessage[];
+    };
+
+/**
+ * 把待发条目标记为"插入当前运行下一步"（绑定 runId）。
+ * 同一 runId 重复标记幂等成功；已标记其他运行、已被认领、带附件（附件要走
+ * 完整派发链路，无法只插文字安全注入）时明确拒绝并留队。
+ */
+export function markPendingAdjust(
+  sessionId: string,
+  messageId: string,
+  runId: string,
+): MarkPendingAdjustResult {
+  const session = readSessionFile(sessionId);
+  if (!session) return { ok: false, error: "session-not-found" };
+  const queue = session.pendingMessages ?? [];
+  const snapshot = (): PendingChatMessage[] => queue.map((item) => ({ ...item }));
+  if (session.pendingDispatch?.messageId === messageId) {
+    return { ok: false, error: "already-claimed", queue: snapshot() };
+  }
+  const index = queue.findIndex((item) => item.id === messageId);
+  if (index === -1) return { ok: false, error: "not-found", queue: snapshot() };
+  const target = queue[index];
+  // 同一运行重复请求：幂等成功，不写盘
+  if (target.adjustRunId === runId) return { ok: true, queue: snapshot() };
+  if (target.adjustRunId) return { ok: false, error: "already-adjusting", queue: snapshot() };
+  if (target.attachments && target.attachments.length > 0) {
+    return { ok: false, error: "has-attachments", queue: snapshot() };
+  }
+  queue[index] = { ...target, adjustRunId: runId };
+  try {
+    writeSessionFile(session);
+  } catch (err) {
+    console.warn("[chats-store] 待发消息调整标记落盘失败:", sessionId, err);
+    return { ok: false, error: "write-failed", queue: snapshot() };
+  }
+  return { ok: true, queue: snapshot() };
+}
+
+/** 提交调整结果：ok=false 时条目保持标记态，等下个边界重试或运行结束复位。 */
+export type CommitPendingAdjustResult =
+  | { ok: true; userMessage: ChatMessage; remainingQueue: PendingChatMessage[] }
+  | { ok: false; error: "session-not-found" | "not-found" | "run-mismatch" | "write-failed" };
+
+/**
+ * 提交一次调整注入：在【一次会话文件写入】内完成——条目移出队列、
+ * 转成正式用户消息追加进 messages。与认领同构但不写 pendingDispatch：
+ * 调整消息由当前运行直接消费，没有独立的派发 run。
+ * 写盘失败时条目保留在队列中（绝不丢消息）。
+ */
+export function commitPendingAdjust(
+  sessionId: string,
+  messageId: string,
+  runId: string,
+): CommitPendingAdjustResult {
+  const session = readSessionFile(sessionId);
+  if (!session) return { ok: false, error: "session-not-found" };
+  const queue = session.pendingMessages ?? [];
+  const index = queue.findIndex((item) => item.id === messageId);
+  if (index === -1) return { ok: false, error: "not-found" };
+  const target = queue[index];
+  if (target.adjustRunId !== runId) return { ok: false, error: "run-mismatch" };
+  const committedAt = Date.now();
+  const userMessage: ChatMessage = {
+    id: target.id,
+    role: "user",
+    content: target.rawContent,
+    at: committedAt,
+    ...(target.userSticker ? { sticker: target.userSticker } : {}),
+    // 标记阶段已拒绝附件；此处仅防御性映射，保证任何残留标记条目也不会丢附件
+    ...(target.attachments && target.attachments.length > 0 ? {
+      attachments: target.attachments.map((attachment) => attachment.kind === "image" ? {
+        kind: "image" as const,
+        name: attachment.name,
+        filePath: attachment.filePath,
+        mime: attachment.mime ?? "application/octet-stream",
+        caption: attachment.caption,
+        status: "pending" as const,
+        ...(attachment.hasAnnotations === true ? { hasAnnotations: true } : {}),
+      } : {
+        kind: "document" as const,
+        name: attachment.name,
+        filePath: attachment.filePath,
+        status: "pending" as const,
+      }),
+    } : {}),
+  };
+  session.messages = [...session.messages, userMessage];
+  session.pendingMessages = queue.filter((item) => item.id !== messageId);
+  session.updatedAt = committedAt;
+  try {
+    writeSessionFile(session);
+  } catch (err) {
+    console.warn("[chats-store] 待发消息调整提交落盘失败:", sessionId, err);
+    return { ok: false, error: "write-failed" };
+  }
+  // 与认领同理：会话文件已写成功即成立，索引失败只告警不推翻结果
+  try {
+    upsertMeta(metaFromSession(session));
+  } catch (err) {
+    console.warn("[chats-store] 待发消息调整提交后索引写入失败（会话列表计数可能滞后）:", sessionId, err);
+  }
+  return {
+    ok: true,
+    userMessage,
+    remainingQueue: session.pendingMessages.map((item) => ({ ...item })),
+  };
+}
+
+/** 复位结果：reset 为清掉标记的条目数（0 表示无匹配，未写盘）。 */
+export type ResetPendingAdjustResult =
+  | { ok: true; reset: number }
+  | { ok: false; error: "session-not-found" | "write-failed" };
+
+/**
+ * 运行终态复位：把标记插入该运行但尚未注入的条目清除标记，
+ * 回普通队列按序派发（不改变顺序与内容）。写盘失败时标记保留，
+ * 认领派发不依赖该标记，消息不会丢失。
+ */
+export function resetPendingAdjustByRun(sessionId: string, runId: string): ResetPendingAdjustResult {
+  const session = readSessionFile(sessionId);
+  if (!session) return { ok: false, error: "session-not-found" };
+  const queue = session.pendingMessages ?? [];
+  let reset = 0;
+  const nextQueue = queue.map((item) => {
+    if (item.adjustRunId !== runId) return item;
+    const restored = { ...item };
+    delete restored.adjustRunId;
+    reset++;
+    return restored;
+  });
+  if (reset === 0) return { ok: true, reset: 0 };
+  session.pendingMessages = nextQueue;
+  try {
+    writeSessionFile(session);
+  } catch (err) {
+    console.warn("[chats-store] 待发消息调整复位落盘失败:", sessionId, err);
+    return { ok: false, error: "write-failed" };
+  }
+  return { ok: true, reset };
+}
+
+/**
+ * 启动清扫：进程重启后没有任何存活运行，磁盘上遗留的调整标记都是陈旧的，
+ * 统一清回普通队列（避免陈旧标记永久阻塞编辑与再次调整）。
+ * 由应用启动时的 IPC 注册入口调用一次。
+ */
+export function clearStalePendingAdjustMarks(): void {
+  for (const meta of [...indexCache]) {
+    try {
+      const session = readSessionFile(meta.id);
+      if (!session?.pendingMessages?.some((item) => item.adjustRunId)) continue;
+      let changed = false;
+      session.pendingMessages = session.pendingMessages.map((item) => {
+        if (!item.adjustRunId) return item;
+        changed = true;
+        const restored = { ...item };
+        delete restored.adjustRunId;
+        return restored;
+      });
+      if (changed) writeSessionFile(session);
+    } catch (err) {
+      console.warn("[chats-store] 清理陈旧调整标记失败:", meta.id, err);
+    }
+  }
 }
 
 export function deleteSession(id: string): boolean {

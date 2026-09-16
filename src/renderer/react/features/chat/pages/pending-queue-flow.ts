@@ -7,7 +7,7 @@ import type {
   PendingChatMessage,
 } from "../../../../../shared/chat-types";
 import { t } from "../../../i18n";
-import type { ChatStoreApi, PendingClaimResult } from "./chat-page-bridge";
+import type { ChatStoreApi, PendingClaimResult, PendingMutationResult } from "./chat-page-bridge";
 import type { AgentRunInput } from "./run/AgentRunController";
 import { evaluateClaimRecovery } from "./session-runtime-state";
 
@@ -58,6 +58,14 @@ export interface PendingQueueFlow {
   ): Promise<boolean>;
   /** 消费会话待发队列：先恢复残留认领（刷新/进程退出/启动失败），再认领队首并派发 */
   consume(mode: ConversationMode, sessionId: string): Promise<void>;
+  /** 修改未认领条目文字（调用方已按现有解析规则产出原文/展示文字/表情标记） */
+  editMessage(
+    sessionId: string,
+    messageId: string,
+    update: { rawContent: string; visibleContent: string; userSticker?: string },
+  ): Promise<boolean>;
+  /** 把待发条目插入当前运行的下一步；不可调整时提示并保留普通队列 */
+  adjustMessage(sessionId: string, messageId: string): Promise<boolean>;
   /** 拉取主进程权威队列刷新该会话的页面投影 */
   syncProjection(sessionId: string): Promise<void>;
   /** run 结束回调：刷新列表与投影；queuePaused 时暂停消费（先恢复认领再说） */
@@ -316,6 +324,78 @@ export function createPendingQueueFlow(getHost: () => PendingQueueFlowHost): Pen
     });
   }
 
+  /**
+   * 修改未认领条目文字：成功时用主进程返回的权威队列刷新投影；
+   * 失败/冲突时若返回了最新队列也刷新投影（不覆盖新状态），并按错误提示。
+   */
+  async function editMessage(
+    sessionId: string,
+    messageId: string,
+    update: { rawContent: string; visibleContent: string; userSticker?: string },
+  ): Promise<boolean> {
+    const host = getHost();
+    const store = host.getStore();
+    if (!store) {
+      host.reportError(t("chatPage.errorPendingEditFailed", { error: t("chatPage.errorChatStoreUnavailable") }));
+      return false;
+    }
+    let result: PendingMutationResult;
+    try {
+      result = await store.pendingEdit(sessionId, messageId, update);
+    } catch (error) {
+      host.reportError(t("chatPage.errorPendingEditFailed", {
+        error: error instanceof Error ? error.message : String(error),
+      }));
+      return false;
+    }
+    if (!result.ok) {
+      if (result.queue) {
+        host.replaceProjection(sessionId, result.queue.map((item) => ({ ...item })));
+      }
+      host.reportError(t("chatPage.errorPendingEditFailed", { error: result.error }));
+      return false;
+    }
+    host.replaceProjection(sessionId, result.queue.map((item) => ({ ...item })));
+    return true;
+  }
+
+  /**
+   * 把待发条目插入当前运行的下一步：主进程绑定会话当前活跃运行。
+   * 无活跃运行/Chat 模式没有安全下一步/条目带附件等被明确拒绝时，
+   * 条目留在普通队列并按错误类型提示。
+   */
+  async function adjustMessage(sessionId: string, messageId: string): Promise<boolean> {
+    const host = getHost();
+    const store = host.getStore();
+    if (!store) {
+      host.reportError(t("chatPage.errorPendingAdjustFailed", { error: t("chatPage.errorChatStoreUnavailable") }));
+      return false;
+    }
+    let result: PendingMutationResult;
+    try {
+      result = await store.pendingAdjust(sessionId, messageId);
+    } catch (error) {
+      host.reportError(t("chatPage.errorPendingAdjustFailed", {
+        error: error instanceof Error ? error.message : String(error),
+      }));
+      return false;
+    }
+    if (!result.ok) {
+      if (result.queue) {
+        host.replaceProjection(sessionId, result.queue.map((item) => ({ ...item })));
+      }
+      const errorKey = result.error === "no-active-run" || result.error === "no-safe-next-step"
+        ? t("chatPage.errorPendingAdjustNoRun")
+        : result.error === "has-attachments"
+          ? t("chatPage.errorPendingAdjustAttachments")
+          : result.error;
+      host.reportError(t("chatPage.errorPendingAdjustFailed", { error: errorKey }));
+      return false;
+    }
+    host.replaceProjection(sessionId, result.queue.map((item) => ({ ...item })));
+    return true;
+  }
+
   async function syncProjection(sessionId: string): Promise<void> {
     const host = getHost();
     const store = host.getStore();
@@ -340,5 +420,5 @@ export function createPendingQueueFlow(getHost: () => PendingQueueFlowHost): Pen
     void consume(input.mode, input.sessionId);
   }
 
-  return { enqueue, consume, syncProjection, handleRunFinished };
+  return { enqueue, consume, editMessage, adjustMessage, syncProjection, handleRunFinished };
 }

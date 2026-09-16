@@ -41,7 +41,6 @@ vi.mock("electron", () => ({
 
 vi.mock("../settings/model-settings", () => ({
   loadModelSettings: () => mocks.settings,
-  loadVisionConfig: () => null,
   resolveModelSettingsProfile: (settings: typeof mocks.settings, id?: string) => {
     const profile = settings.modelProfiles.find((candidate) => candidate.id === id);
     return profile ? { ...settings, ...profile } : settings;

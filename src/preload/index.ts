@@ -10,9 +10,10 @@ import type { UiTheme } from "../shared/ui-theme";
 import type { UiFont } from "../shared/ui-font";
 import type { PluginPanelApi } from "../shared/plugin-management";
 import type { ReasoningPreference } from "../shared/reasoning";
-import type { DocumentIndexProgress } from "../main/rag/document-index-queue";
+import type { DocumentIndexProgress } from "../shared/document-index";
 import type { AguiRunAck } from "../shared/run-terminal";
 import type { ReviewSnapshot, ReviewRestoreOutcome } from "../shared/review-types";
+import type { WorkspaceListResult, WorkspaceReadResult } from "../shared/workspace-files-types";
 import { getLive2DIpcListenerCounts } from "./live2d-listener-diagnostics";
 import { exposeMusicApi } from "./music";
 import { normalizeChatAppearance, type ChatAppearanceSettings } from "../shared/chat-appearance";
@@ -705,6 +706,22 @@ const chatStoreApi = {
   pendingClaim: (id: string) => ipcRenderer.invoke(IPC.CHATS_PENDING_CLAIM, id),
   pendingCompleteDispatch: (id: string, messageId: string) =>
     ipcRenderer.invoke(IPC.CHATS_PENDING_COMPLETE_DISPATCH, { sessionId: id, messageId }),
+  // 修改未认领条目文字（保持标识/顺序/附件不变；冲突返回最新权威队列）
+  pendingEdit: (
+    id: string,
+    messageId: string,
+    update: { rawContent: string; visibleContent: string; userSticker?: string },
+  ) =>
+    ipcRenderer.invoke(IPC.CHATS_PENDING_EDIT, {
+      sessionId: id,
+      messageId,
+      rawContent: update.rawContent,
+      visibleContent: update.visibleContent,
+      ...(update.userSticker !== undefined ? { userSticker: update.userSticker } : {}),
+    }),
+  // 调整：把待发条目插入当前运行下一步（绑定活跃运行；不可调整时明确拒绝并留队）
+  pendingAdjust: (id: string, messageId: string) =>
+    ipcRenderer.invoke(IPC.CHATS_PENDING_ADJUST, { sessionId: id, messageId }),
   setPinned: (id: string, pinned: boolean) =>
     ipcRenderer.invoke(IPC.CHATS_SET_PINNED, { id, pinned }),
   setModelProfile: (id: string, modelProfileId?: string) =>
@@ -787,6 +804,16 @@ const reviewApi = {
 };
 
 contextBridge.exposeInMainWorld("review", reviewApi);
+
+// 会话工作区只读文件（右侧面板文件树 / 预览；主进程负责 realpath 防越界）
+const workspaceFilesApi = {
+  list: (sessionId: string, relPath: string) =>
+    ipcRenderer.invoke(IPC.WORKSPACE_FILES_LIST, { sessionId, relPath }) as Promise<WorkspaceListResult>,
+  read: (sessionId: string, relPath: string) =>
+    ipcRenderer.invoke(IPC.WORKSPACE_FILES_READ, { sessionId, relPath }) as Promise<WorkspaceReadResult>,
+};
+
+contextBridge.exposeInMainWorld("workspaceFiles", workspaceFilesApi);
 
 const codeGitApi = {
   getStatus: (sessionId: string) => ipcRenderer.invoke(IPC.CODE_GIT_STATUS, sessionId),

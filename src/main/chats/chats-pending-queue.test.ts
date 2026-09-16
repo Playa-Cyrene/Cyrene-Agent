@@ -580,6 +580,20 @@ describe("chats pending claim & dispatch", () => {
     expect(store.listSessions().find((item) => item.id === sessionId)?.messageCount).toBe(2);
   });
 
+  it("首条用户消息认领后立即派生临时标题，等待异步模型标题时不显示新对话", async () => {
+    const store = await import("./chats-store");
+    store.initialize();
+    const session = store.createSession({ mode: "learn" });
+    store.enqueuePendingMessage(session.id, entry({
+      id: "first-user",
+      rawContent: "请帮我制定机器学习计划",
+      visibleContent: "请帮我制定机器学习计划",
+    }));
+
+    expect(store.claimPendingMessage(session.id)).toEqual(expect.objectContaining({ ok: true, claimed: true }));
+    expect(store.getSession(session.id)?.title).toBe("请帮我制定机器学习计划");
+  });
+
   it("入队携带的恢复 run 标识随认领带出，供续派启动模型时使用", async () => {
     const store = await import("./chats-store");
     store.initialize();
@@ -593,6 +607,373 @@ describe("chats pending claim & dispatch", () => {
 
     const claim = store.claimPendingMessage(session.id);
     expect(claim).toEqual(expect.objectContaining({ ok: true, claimed: true, resumeFromRunId: "run-old" }));
+  });
+});
+
+describe("chats pending edit & adjust", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    mocks.userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-pending-edit-"));
+  });
+
+  /** 建会话并入队两条消息，返回会话 id 与首条入队时间。 */
+  async function seedTwoMessages() {
+    const store = await import("./chats-store");
+    store.initialize();
+    const session = store.createSession({
+      mode: "work",
+      initialMessages: [{ id: "m0", role: "user", content: "已有历史", at: 1 }],
+    });
+    store.enqueuePendingMessage(session.id, entry({ id: "q-a", rawContent: "消息甲", visibleContent: "消息甲" }));
+    store.enqueuePendingMessage(session.id, entry({ id: "q-b", rawContent: "消息乙", visibleContent: "消息乙" }));
+    const enqueuedAt = store.getPendingMessages(session.id)?.[0].enqueuedAt ?? 0;
+    return { store, sessionId: session.id, enqueuedAt };
+  }
+
+  it("编辑成功：三个文字字段更新，标识/入队时间/顺序/附件保持不变", async () => {
+    const { store, sessionId, enqueuedAt } = await seedTwoMessages();
+    store.enqueuePendingMessage(sessionId, entry({
+      id: "q-att",
+      rawContent: "带附件的",
+      visibleContent: "带附件的",
+      attachments: [{ kind: "document", name: "报告.txt", filePath: "C:/tmp/报告.txt" }],
+    }));
+
+    const result = store.editPendingMessage(sessionId, "q-a", {
+      rawContent: "改后的文字 [sticker:shy]",
+      visibleContent: "改后的文字",
+      userSticker: "shy",
+    });
+    expect(result).toEqual(expect.objectContaining({ ok: true }));
+    const queue = result.ok ? result.queue : [];
+    expect(queue.map((item) => item.id)).toEqual(["q-a", "q-b", "q-att"]);
+    expect(queue[0]).toMatchObject({
+      rawContent: "改后的文字 [sticker:shy]",
+      visibleContent: "改后的文字",
+      userSticker: "shy",
+      enqueuedAt,
+    });
+    // 其他条目与附件不受影响
+    expect(queue[2].attachments).toEqual([
+      { kind: "document", name: "报告.txt", filePath: "C:/tmp/报告.txt" },
+    ]);
+    // 编辑不把待发条目转成正式消息，也不动列表计数
+    expect(store.getSession(sessionId)?.messages.map((message) => message.id)).toEqual(["m0"]);
+    expect(store.listSessions().find((item) => item.id === sessionId)?.messageCount).toBe(1);
+  });
+
+  it("编辑清空表情标记：未传 userSticker 时移除原标记", async () => {
+    const store = await import("./chats-store");
+    store.initialize();
+    const session = store.createSession({ mode: "chat" });
+    store.enqueuePendingMessage(session.id, {
+      id: "q-sticker",
+      rawContent: "抱抱 [sticker:playful]",
+      visibleContent: "抱抱",
+      userSticker: "playful",
+    });
+
+    const result = store.editPendingMessage(session.id, "q-sticker", {
+      rawContent: "只改文字",
+      visibleContent: "只改文字",
+    });
+    expect(result.ok).toBe(true);
+    expect(store.getPendingMessages(session.id)?.[0]).not.toHaveProperty("userSticker");
+    expect(store.getPendingMessages(session.id)?.[0].rawContent).toBe("只改文字");
+  });
+
+  it("空文字拒绝：队列保持原样", async () => {
+    const { store, sessionId } = await seedTwoMessages();
+
+    const result = store.editPendingMessage(sessionId, "q-a", { rawContent: "   ", visibleContent: "" });
+    expect(result).toEqual(expect.objectContaining({ ok: false, error: "empty-content" }));
+    expect(store.getPendingMessages(sessionId)?.[0].rawContent).toBe("消息甲");
+  });
+
+  it("编辑与认领竞争：条目已被认领转正后编辑被拒，返回 already-claimed 与最新队列", async () => {
+    const { store, sessionId } = await seedTwoMessages();
+    // 认领队首（q-a 转正式消息并进入派发流程）
+    const claim = store.claimPendingMessage(sessionId);
+    expect(claim).toEqual(expect.objectContaining({ ok: true, claimed: true }));
+
+    // 另一窗口此时编辑同一条目：明确拒绝，不覆盖新状态
+    const result = store.editPendingMessage(sessionId, "q-a", {
+      rawContent: "迟到的编辑",
+      visibleContent: "迟到的编辑",
+    });
+    expect(result).toEqual(expect.objectContaining({ ok: false, error: "already-claimed" }));
+    // 附带的最新权威队列反映认领后的世界（q-a 已移出）
+    if (!result.ok) {
+      expect(result.queue?.map((item) => item.id)).toEqual(["q-b"]);
+    }
+    // 认领转正的消息内容未被编辑覆盖
+    expect(store.getSession(sessionId)?.messages.at(-1)?.content).toBe("消息甲");
+    // 队首外的条目（未认领）仍可编辑
+    const editB = store.editPendingMessage(sessionId, "q-b", {
+      rawContent: "消息乙改",
+      visibleContent: "消息乙改",
+    });
+    expect(editB.ok).toBe(true);
+  });
+
+  it("编辑已标记插入当前运行的条目被拒：already-adjusting", async () => {
+    const { store, sessionId } = await seedTwoMessages();
+    expect(store.markPendingAdjust(sessionId, "q-a", "run-1")).toEqual(expect.objectContaining({ ok: true }));
+
+    const result = store.editPendingMessage(sessionId, "q-a", {
+      rawContent: "改标记中的条目",
+      visibleContent: "改标记中的条目",
+    });
+    expect(result).toEqual(expect.objectContaining({ ok: false, error: "already-adjusting" }));
+    expect(store.getPendingMessages(sessionId)?.[0].rawContent).toBe("消息甲");
+  });
+
+  it("编辑不存在的条目与会话：not-found / session-not-found", async () => {
+    const { store, sessionId } = await seedTwoMessages();
+
+    expect(store.editPendingMessage(sessionId, "ghost", {
+      rawContent: "文字",
+      visibleContent: "文字",
+    })).toEqual(expect.objectContaining({ ok: false, error: "not-found" }));
+    expect(store.editPendingMessage("missing", "q-a", {
+      rawContent: "文字",
+      visibleContent: "文字",
+    })).toEqual({ ok: false, error: "session-not-found" });
+  });
+
+  it("编辑写盘失败：返回写盘前权威队列，内容未变", async () => {
+    const { store, sessionId } = await seedTwoMessages();
+    // 物理方式制造写盘失败：原子写 .tmp 路径被目录占用
+    const tmpPath = path.join(store.getRootDir(), "sessions", `${sessionId}.json.tmp`);
+    fs.mkdirSync(tmpPath, { recursive: true });
+
+    const result = store.editPendingMessage(sessionId, "q-a", {
+      rawContent: "不会落盘的编辑",
+      visibleContent: "不会落盘的编辑",
+    });
+    expect(result).toEqual(expect.objectContaining({ ok: false, error: "write-failed" }));
+    if (!result.ok) {
+      expect(result.queue?.[0].rawContent).toBe("消息甲");
+    }
+    fs.rmdirSync(tmpPath);
+    // 磁盘事实：编辑从未发生
+    expect(store.getPendingMessages(sessionId)?.[0].rawContent).toBe("消息甲");
+  });
+
+  it("标记调整：绑定 runId 落盘；同 runId 重复幂等；其他 runId 拒绝", async () => {
+    const { store, sessionId } = await seedTwoMessages();
+
+    const first = store.markPendingAdjust(sessionId, "q-a", "run-1");
+    expect(first).toEqual(expect.objectContaining({ ok: true }));
+    expect(store.getPendingMessages(sessionId)?.[0]).toMatchObject({ id: "q-a", adjustRunId: "run-1" });
+
+    // 同一运行重复请求：幂等成功
+    expect(store.markPendingAdjust(sessionId, "q-a", "run-1")).toEqual(expect.objectContaining({ ok: true }));
+    // 已标记其他运行（如旧运行复位前的新请求）：拒绝且不覆盖
+    const conflict = store.markPendingAdjust(sessionId, "q-a", "run-2");
+    expect(conflict).toEqual(expect.objectContaining({ ok: false, error: "already-adjusting" }));
+    expect(store.getPendingMessages(sessionId)?.[0].adjustRunId).toBe("run-1");
+
+    // 不存在的条目 / 会话
+    expect(store.markPendingAdjust(sessionId, "ghost", "run-1")).toEqual(
+      expect.objectContaining({ ok: false, error: "not-found" }),
+    );
+    expect(store.markPendingAdjust("missing", "q-a", "run-1")).toEqual(
+      { ok: false, error: "session-not-found" },
+    );
+  });
+
+  it("带附件的条目不能标记调整：明确拒绝并留队（绝不能只插文字）", async () => {
+    const store = await import("./chats-store");
+    store.initialize();
+    const session = store.createSession({ mode: "work" });
+    store.enqueuePendingMessage(session.id, entry({
+      id: "q-att",
+      rawContent: "看这张图",
+      visibleContent: "看这张图",
+      attachments: [{ kind: "image", name: "截图.png", filePath: "C:/tmp/shot.png", mime: "image/png" }],
+    }));
+
+    const result = store.markPendingAdjust(session.id, "q-att", "run-1");
+    expect(result).toEqual(expect.objectContaining({ ok: false, error: "has-attachments" }));
+    // 条目原样留在队列：无标记、附件完整
+    const queue = store.getPendingMessages(session.id);
+    expect(queue?.[0]).not.toHaveProperty("adjustRunId");
+    expect(queue?.[0].attachments).toHaveLength(1);
+  });
+
+  it("已被认领的条目不能标记调整：already-claimed", async () => {
+    const { store, sessionId } = await seedTwoMessages();
+    const claim = store.claimPendingMessage(sessionId);
+    expect(claim).toEqual(expect.objectContaining({ ok: true, claimed: true }));
+
+    const result = store.markPendingAdjust(sessionId, "q-a", "run-1");
+    expect(result).toEqual(expect.objectContaining({ ok: false, error: "already-claimed" }));
+  });
+
+  it("提交调整：单次写入完成移出队列与正式消息入册（含表情），不写派发状态", async () => {
+    const store = await import("./chats-store");
+    store.initialize();
+    const session = store.createSession({
+      mode: "work",
+      initialMessages: [{ id: "m0", role: "user", content: "已有历史", at: 1 }],
+    });
+    store.enqueuePendingMessage(session.id, entry({
+      id: "q-adj",
+      rawContent: "插话：换个思路 [sticker:playful]",
+      visibleContent: "插话：换个思路",
+      userSticker: "playful",
+    }));
+    store.enqueuePendingMessage(session.id, entry({ id: "q-next", rawContent: "下一条", visibleContent: "下一条" }));
+    store.markPendingAdjust(session.id, "q-adj", "run-1");
+
+    const commit = store.commitPendingAdjust(session.id, "q-adj", "run-1");
+    expect(commit).toEqual(expect.objectContaining({ ok: true }));
+    if (commit.ok) {
+      expect(commit.userMessage).toMatchObject({
+        id: "q-adj",
+        role: "user",
+        content: "插话：换个思路 [sticker:playful]",
+        sticker: "playful",
+      });
+      expect(commit.remainingQueue.map((item) => item.id)).toEqual(["q-next"]);
+    }
+    // 正式历史追加一条；队列少一条；没有派发状态（调整由当前运行直接消费）
+    const persisted = store.getSession(session.id);
+    expect(persisted?.messages.map((message) => message.id)).toEqual(["m0", "q-adj"]);
+    expect(persisted?.pendingMessages?.map((item) => item.id)).toEqual(["q-next"]);
+    expect(persisted?.pendingDispatch).toBeUndefined();
+    // 认领等于历史入册的口径：列表计数刷新
+    expect(store.listSessions().find((item) => item.id === session.id)?.messageCount).toBe(2);
+  });
+
+  it("提交调整的运行匹配与防重复：run-mismatch 拒绝；再提交已移出的条目 not-found", async () => {
+    const { store, sessionId } = await seedTwoMessages();
+    store.markPendingAdjust(sessionId, "q-a", "run-1");
+
+    // 其他运行无权提交本运行标记的条目
+    expect(store.commitPendingAdjust(sessionId, "q-a", "run-other")).toEqual(
+      expect.objectContaining({ ok: false, error: "run-mismatch" }),
+    );
+    // 本运行提交成功后条目已移出：再次提交（如重复轮询竞态）not-found，绝不重复注入
+    expect(store.commitPendingAdjust(sessionId, "q-a", "run-1")).toEqual(
+      expect.objectContaining({ ok: true }),
+    );
+    expect(store.commitPendingAdjust(sessionId, "q-a", "run-1")).toEqual(
+      expect.objectContaining({ ok: false, error: "not-found" }),
+    );
+    expect(store.getSession(sessionId)?.messages.filter((message) => message.id === "q-a")).toHaveLength(1);
+  });
+
+  it("提交调整写盘失败：条目保留标记在队列、历史不追加（绝不丢消息）", async () => {
+    const { store, sessionId } = await seedTwoMessages();
+    store.markPendingAdjust(sessionId, "q-a", "run-1");
+
+    const tmpPath = path.join(store.getRootDir(), "sessions", `${sessionId}.json.tmp`);
+    fs.mkdirSync(tmpPath, { recursive: true });
+    const commit = store.commitPendingAdjust(sessionId, "q-a", "run-1");
+    expect(commit).toEqual({ ok: false, error: "write-failed" });
+    fs.rmdirSync(tmpPath);
+
+    // 磁盘事实：条目仍在队列（保留标记，等下个边界重试）、历史未追加
+    const persisted = store.getSession(sessionId);
+    expect(persisted?.messages.map((message) => message.id)).toEqual(["m0"]);
+    expect(persisted?.pendingMessages?.[0]).toMatchObject({ id: "q-a", adjustRunId: "run-1" });
+  });
+
+  it("运行终态复位：清掉本运行标记回普通队列（顺序内容不变），其他运行标记不动", async () => {
+    const { store, sessionId } = await seedTwoMessages();
+    store.markPendingAdjust(sessionId, "q-a", "run-1");
+    store.markPendingAdjust(sessionId, "q-b", "run-2");
+
+    const reset = store.resetPendingAdjustByRun(sessionId, "run-1");
+    expect(reset).toEqual({ ok: true, reset: 1 });
+    const queue = store.getPendingMessages(sessionId);
+    // q-a 清标记回普通队列，q-b 的其他运行标记不受影响
+    expect(queue?.[0]).not.toHaveProperty("adjustRunId");
+    expect(queue?.[1]).toMatchObject({ id: "q-b", adjustRunId: "run-2" });
+    // 复位后的条目可被编辑、可再次标记、可正常认领
+    expect(store.editPendingMessage(sessionId, "q-a", {
+      rawContent: "复位后编辑",
+      visibleContent: "复位后编辑",
+    }).ok).toBe(true);
+    const claim = store.claimPendingMessage(sessionId);
+    expect(claim).toEqual(expect.objectContaining({ ok: true, claimed: true }));
+    if (claim.ok && claim.claimed) expect(claim.userMessage.content).toBe("复位后编辑");
+    // 无匹配标记时不写盘（reset=0）
+    expect(store.resetPendingAdjustByRun(sessionId, "run-none")).toEqual({ ok: true, reset: 0 });
+  });
+
+  it("刷新/进程重启恢复：标记已落盘，重启后由启动清扫统一清回普通队列", async () => {
+    let store = await import("./chats-store");
+    store.initialize();
+    const session = store.createSession({ mode: "work" });
+    store.enqueuePendingMessage(session.id, entry({ id: "q-1", rawContent: "插话一", visibleContent: "插话一" }));
+    store.enqueuePendingMessage(session.id, entry({ id: "q-2", rawContent: "插话二", visibleContent: "插话二" }));
+    store.markPendingAdjust(session.id, "q-1", "run-old");
+    store.markPendingAdjust(session.id, "q-2", "run-old");
+    expect(store.getPendingMessages(session.id)?.every((item) => item.adjustRunId === "run-old")).toBe(true);
+
+    // 模拟进程重启（运行全部不复存在）：重新加载后调用启动清扫
+    vi.resetModules();
+    store = await import("./chats-store");
+    store.initialize();
+    store.clearStalePendingAdjustMarks();
+
+    const restored = store.getPendingMessages(session.id);
+    expect(restored?.map((item) => item.id)).toEqual(["q-1", "q-2"]);
+    expect(restored?.every((item) => !item.adjustRunId)).toBe(true);
+    // 清扫后条目可正常认领派发（消息不丢）
+    const claim = store.claimPendingMessage(session.id);
+    expect(claim).toEqual(expect.objectContaining({ ok: true, claimed: true }));
+  });
+
+  it("编辑 IPC handler：载荷校验 + 透传冲突结果（already-claimed 附最新队列）", async () => {
+    const { registerChatsIpc } = await import("./chats-ipc");
+    const { IPC } = await import("../../shared/ipc-channels");
+    registerChatsIpc();
+
+    const create = mocks.handlers.get(IPC.CHATS_CREATE);
+    const enqueue = mocks.handlers.get(IPC.CHATS_PENDING_ENQUEUE);
+    const edit = mocks.handlers.get(IPC.CHATS_PENDING_EDIT);
+    if (!create || !enqueue || !edit) {
+      throw new Error("pending edit IPC handler was not registered");
+    }
+    const event = { sender: {} };
+    const session = await create(event, { mode: "work" }) as { id: string };
+    await enqueue(event, {
+      sessionId: session.id,
+      entry: entry({ id: "ipc-edit", rawContent: "IPC 排队", visibleContent: "IPC 排队" }),
+    });
+
+    // 载荷非法：缺会话/条目/原文
+    expect(await edit(event, null)).toEqual({ ok: false, error: "invalid-payload" });
+    expect(await edit(event, { sessionId: session.id, messageId: "ipc-edit" })).toEqual({
+      ok: false,
+      error: "invalid-payload",
+    });
+    // 编辑成功：透传权威队列
+    const ok = await edit(event, {
+      sessionId: session.id,
+      messageId: "ipc-edit",
+      rawContent: "IPC 改后",
+      visibleContent: "IPC 改后",
+      userSticker: "shy",
+    });
+    expect(ok).toEqual(expect.objectContaining({
+      ok: true,
+      queue: [expect.objectContaining({ rawContent: "IPC 改后", userSticker: "shy" })],
+    }));
+    // 认领后编辑：冲突透传且附带最新队列
+    const claim = mocks.handlers.get(IPC.CHATS_PENDING_CLAIM);
+    await claim(event, session.id);
+    const conflict = await edit(event, {
+      sessionId: session.id,
+      messageId: "ipc-edit",
+      rawContent: "迟到编辑",
+      visibleContent: "迟到编辑",
+    });
+    expect(conflict).toEqual(expect.objectContaining({ ok: false, error: "already-claimed", queue: [] }));
   });
 });
 

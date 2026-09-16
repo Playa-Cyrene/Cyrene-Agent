@@ -357,4 +357,40 @@ describe("chats store", () => {
     expect(second.id).not.toBe(first.id);
     expect(store.getSessionByPurpose("proactive-chat")?.id).toBe(second.id);
   });
+
+  it("persists a generated title without marking it as a manual rename or changing recency", async () => {
+    const store = await import("./chats-store");
+    store.initialize();
+    const created = store.createSession({
+      initialMessages: [{ id: "first-user", role: "user", content: "帮我设计一个待办应用", at: 1 }],
+      mode: "work",
+    });
+
+    expect(store.setGeneratedTitle(created.id, "first-user", "待办应用设计")).toBe(true);
+
+    expect(store.getSession(created.id)).toEqual(expect.objectContaining({
+      title: "待办应用设计",
+      updatedAt: created.updatedAt,
+    }));
+    expect(store.getSession(created.id)?.titleIsCustom).not.toBe(true);
+    expect(store.listSessions().find((item) => item.id === created.id)?.title).toBe("待办应用设计");
+  });
+
+  it("does not overwrite a manual title or a session whose first user message changed", async () => {
+    const store = await import("./chats-store");
+    store.initialize();
+    const renamed = store.createSession({
+      initialMessages: [{ id: "first-user", role: "user", content: "原问题", at: 1 }],
+    });
+    store.renameSession(renamed.id, "我的自定义标题");
+
+    expect(store.setGeneratedTitle(renamed.id, "first-user", "模型生成标题")).toBe(false);
+    expect(store.getSession(renamed.id)?.title).toBe("我的自定义标题");
+
+    const changed = store.createSession({
+      initialMessages: [{ id: "new-first-user", role: "user", content: "修改后的问题", at: 2 }],
+    });
+    expect(store.setGeneratedTitle(changed.id, "old-first-user", "过期模型标题")).toBe(false);
+    expect(store.getSession(changed.id)?.title).toBe("修改后的问题");
+  });
 });
