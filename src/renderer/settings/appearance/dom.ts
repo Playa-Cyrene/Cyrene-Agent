@@ -13,7 +13,6 @@ export const petZoomInput = document.getElementById("pet-zoom") as HTMLInputElem
 export const petZoomVal = document.getElementById("pet-zoom-val") as HTMLElement;
 export const chatLineHeightInput = document.getElementById("chat-line-height") as HTMLInputElement;
 export const chatLineHeightVal = document.getElementById("chat-line-height-val") as HTMLElement;
-export const assistantBubbleEnabledInput = document.getElementById("assistant-bubble-enabled") as HTMLInputElement;
 export const chatParaSpacingInput = document.getElementById("chat-para-spacing") as HTMLInputElement;
 export const chatParaSpacingVal = document.getElementById("chat-para-spacing-val") as HTMLElement;
 export const launchAtLoginInput = document.getElementById("launch-at-login") as HTMLInputElement;

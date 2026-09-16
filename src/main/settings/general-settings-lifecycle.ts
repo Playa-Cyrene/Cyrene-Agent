@@ -150,10 +150,7 @@ export function handleGeneralSettingsChanged(
   }
   const prevAppearance = normalizeChatAppearance(before);
   const nextAppearance = normalizeChatAppearance(after);
-  if (
-    prevAppearance.chatLineHeight !== nextAppearance.chatLineHeight
-    || prevAppearance.assistantBubbleEnabled !== nextAppearance.assistantBubbleEnabled
-  ) {
+  if (prevAppearance.chatLineHeight !== nextAppearance.chatLineHeight) {
     broadcastToAllWindows(IPC.CHAT_TYPOGRAPHY_CHANGED, nextAppearance);
   }
   if (before.uiIcon !== after.uiIcon) {

@@ -4,6 +4,7 @@ import type { ReviewSnapshot, ReviewRestoreOutcome } from "../shared/review-type
 import type { AppUpdateApi } from "../shared/app-update";
 import type { PluginManagementApi, PluginPanelApi } from "../shared/plugin-management";
 import type { MomentsApi } from "../shared/moments-types";
+import type { WorkspaceListResult, WorkspaceReadResult } from "../shared/workspace-files-types";
 
 interface SystemApi {
   openExternal: (url: string) => Promise<{ ok: boolean; error?: string }>;
@@ -15,10 +16,18 @@ interface ReviewApi {
   restore: (runId: string) => Promise<ReviewRestoreOutcome>;
 }
 
+interface WorkspaceFilesApi {
+  /** 列出工作区内某目录的条目（懒加载；隐藏文件已过滤，目录优先排序） */
+  list: (sessionId: string, relPath: string) => Promise<WorkspaceListResult>;
+  /** 读取工作区内某文件内容（预览用；1MB 上限、二进制拒绝） */
+  read: (sessionId: string, relPath: string) => Promise<WorkspaceReadResult>;
+}
+
 declare global {
   interface Window {
     system?: SystemApi;
     review?: ReviewApi;
+    workspaceFiles?: WorkspaceFilesApi;
     appUpdate?: AppUpdateApi;
     plugins?: PluginManagementApi;
     pluginPanel?: PluginPanelApi;

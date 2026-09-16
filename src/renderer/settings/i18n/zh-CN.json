@@ -261,10 +261,6 @@
             "title": "行间距",
             "desc": "调整消息气泡内文字的行高（1.2 ~ 2.0）。"
           },
-          "assistantBubble": {
-            "title": "昔涟回复气泡",
-            "desc": "关闭后以无背景文本显示昔涟的正式回答；用户消息气泡始终保留。"
-          },
           "chatParaSpacing": {
             "title": "段间距",
             "desc": "调整消息气泡内段落之间的间距（0.2 ~ 1.2em）。"
@@ -313,11 +309,6 @@
         "launchAtLogin": {
           "title": "开机自启",
           "desc": "系统启动时自动打开昔涟。"
-        },
-        "chatHistory": {
-          "title": "聊天记录管理",
-          "desc": "清空全部本地聊天会话。",
-          "clearButton": "清空记录"
         },
         "language": {
           "title": "语言",
@@ -1074,11 +1065,6 @@
       "deleteTitle": "删除导入知识",
       "deleteMessage": "确定删除导入知识？\n\n文件：\n《{{fileName}}》\n\n删除后不可恢复，如需使用请重新导入。",
       "deleteConfirm": "删除"
-    },
-    "chatHistory": {
-      "clearConfirm": "清空所有聊天会话？\\n此操作会删除全部历史对话，无法恢复。",
-      "clearOk": "所有聊天会话已清空",
-      "clearFailed": "清空失败，请查看终端日志"
     },
     "prompt": {
       "openFailed": "打开 Prompt 文件失败",

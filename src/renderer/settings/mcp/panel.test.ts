@@ -40,9 +40,6 @@ describe("MCP Server 管理 UI - 事件绑定", () => {
     expect(settingsSource).toContain('customEndpointControls?.addEventListener("click"');
   });
 
-  it("clearChatHistoryBtn 清空聊天事件绑定在 settings.ts 中", () => {
-    expect(settingsSource).toContain('clearChatHistoryBtn.addEventListener("click"');
-  });
 });
 
 describe("MCP Server 管理 UI - 添加流程", () => {

@@ -15,6 +15,18 @@ function createSettingsDocument(): JSDOM {
 }
 
 describe("settings i18n regressions", () => {
+  it("does not expose the removed chat-history wipe control", () => {
+    const dom = createSettingsDocument();
+    const document = dom.window.document;
+
+    expect(document.getElementById("clear-chat-history-btn") === null).toBe(true);
+    expect(
+      [...document.querySelectorAll("button")].some((button) =>
+        button.textContent?.includes("清空记录"),
+      ),
+    ).toBe(false);
+  });
+
   it("keeps inline GPU copy inline inside the translated description", () => {
     const dom = createSettingsDocument();
     const style = dom.window.document.createElement("style");

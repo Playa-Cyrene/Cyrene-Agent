@@ -5,13 +5,10 @@
 export interface ChatAppearanceSettings {
   /** 行高，无单位数字 */
   chatLineHeight: number;
-  /** 是否显示昔涟正式回复的气泡外观 */
-  assistantBubbleEnabled: boolean;
 }
 
 export const DEFAULT_CHAT_APPEARANCE: ChatAppearanceSettings = {
   chatLineHeight: 1.75,
-  assistantBubbleEnabled: false,
 };
 
 export const CHAT_LINE_HEIGHT_MIN = 1.0;
@@ -51,9 +48,5 @@ export function normalizeChatAppearance(
       CHAT_LINE_HEIGHT_MAX,
       DEFAULT_CHAT_APPEARANCE.chatLineHeight,
     ),
-    assistantBubbleEnabled:
-      typeof source.assistantBubbleEnabled === "boolean"
-        ? source.assistantBubbleEnabled
-        : DEFAULT_CHAT_APPEARANCE.assistantBubbleEnabled,
   };
 }

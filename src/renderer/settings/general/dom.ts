@@ -22,6 +22,5 @@ export const momentsReactionsRow = document.getElementById("moments-reactions-ro
 export const momentsCharacterRow = document.getElementById("moments-character-row") as HTMLElement;
 export const citaEnabledInput = document.getElementById("cita-enabled") as HTMLInputElement;
 export const citaEngineSelect = document.getElementById("cita-engine-select") as HTMLElement;
-export const clearChatHistoryBtn = document.getElementById("clear-chat-history-btn") as HTMLButtonElement;
 export const customStyleSamplingBtn = document.getElementById("custom-style-sampling-btn") as HTMLButtonElement | null;
 export const customStylePromptBtn = document.getElementById("custom-style-prompt-btn") as HTMLButtonElement | null;

@@ -55,13 +55,10 @@ describe("appearance settings markup", () => {
     expect(panel).not.toContain('id="disable-radius"');
   });
 
-  it("offers one global switch for Cyrene reply bubbles", () => {
+  it("no longer offers an assistant bubble switch (borderless is the only mode)", () => {
     const panel = form("appearance-form");
-    expect(panel).toContain("昔涟回复气泡");
-    expect(panel).toMatch(
-      /class="switch"[\s\S]*?id="assistant-bubble-enabled"[\s\S]*?class="switch__track"[\s\S]*?class="switch__thumb"/,
-    );
-    expect(panel).toContain("用户消息气泡始终保留");
+    expect(panel).not.toContain('id="assistant-bubble-enabled"');
+    expect(panel).not.toContain("昔涟回复气泡");
   });
 
   it("applies appearance changes without a save button", () => {

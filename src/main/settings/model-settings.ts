@@ -5,7 +5,6 @@ import { DEFAULT_CONTEXT_WINDOW_TOKENS } from "../orchestrator/model-config";
 import { foldReasoning, normalizeReasoningPreference, type ReasoningPreference } from "../../shared/reasoning";
 import type { StickerSize } from "../../shared/sticker-types";
 import { getSettingsPath } from "../settings-store";
-import type { VisionConfig } from "../orchestrator/vision-captioner";
 import { migrateLegacyMinimaxDefaults } from "../orchestrator/vendors/minimax-defaults";
 import { getCapabilityOrOpenAI } from "../orchestrator/vendors/capabilities";
 import { addModelProfile, resolveDefaultModelProfile, updateModelProfile, type SavedModelProfile } from "./model-catalog";
@@ -103,6 +102,11 @@ function migrateProviderRenames(
 
 export interface ModelSettings {
   mode: "auto" | "manual";
+  /**
+   * 配置文件 schema 版本。当前 2：multimodal 旧判定（syncWithMain / 无字段推断）已迁移落盘。
+   * 旧文件（无此字段）首次加载时执行一次性迁移并写回，之后走干净路径。
+   */
+  schemaVersion?: number;
   provider: string;
   // 用户给模型起的自定义昵称，留空时状态栏用厂商 shortName。
   displayName?: string;
@@ -159,8 +163,12 @@ export interface VisionModelConfig {
   model: string;
 }
 
+/** 当前配置文件 schema 版本。2 = multimodal 旧判定迁移完成标记。 */
+const MODEL_SETTINGS_SCHEMA_VERSION = 2;
+
 const DEFAULT_MODEL_SETTINGS: ModelSettings = {
   mode: "auto",
+  schemaVersion: MODEL_SETTINGS_SCHEMA_VERSION,
   // 默认厂商改为 MiniMax（v1 vendor adapter 第一个落地的），DeepSeek 已从 v1 清单移除。
   provider: "MiniMax（稀宇科技）",
   baseUrl: "https://api.minimaxi.com/anthropic",
@@ -277,22 +285,25 @@ export function normalizeModelSettings(input: Partial<ModelSettings> | null | un
   // 顶层镜像：用 perProvider[provider] 展开
   const profile = perProvider[provider];
 
-  // 迁移旧配置：vision.syncWithMain === true -> multimodal: true
-  // 默认 true（未持久化时）：直发判错有服务端仲裁 + caption 自动降级兜底，
+  // multimodal 判定：schemaVersion >= 2 的文件已迁移落盘，直接读字段（缺省 true）；
+  // 旧文件（无 schemaVersion）首次加载走一次性迁移，结果随 schemaVersion: 2 写盘后不再进入。
+  // 默认 true 的理由：直发判错有服务端仲裁 + caption 自动降级兜底，
   // 而默认 false 会让多模态模型的用户发图莫名降级/看不了图（比发错更迷惑）。
   let multimodal = input?.multimodal !== false;
   const rawVision = input?.vision as Partial<VisionModelConfig> & { syncWithMain?: boolean } | undefined;
-  if (rawVision && rawVision.syncWithMain === true) {
-    multimodal = true;
-  } else if (
-    // 旧版配置没有 multimodal 字段（那时只有独立视觉模型，没有直发开关）：
-    // 已配好独立视觉模型且未声明与主模型同步的用户，升级后继续走独立视觉模型，
-    // 不被默认 true 静默旁路；一旦字段持久化过就不再进这条迁移
-    typeof input?.multimodal !== "boolean"
-    && rawVision
-    && rawVision.baseUrl && rawVision.apiKey && rawVision.model
-  ) {
-    multimodal = false;
+  if ((input?.schemaVersion ?? 1) < MODEL_SETTINGS_SCHEMA_VERSION) {
+    if (rawVision && rawVision.syncWithMain === true) {
+      multimodal = true;
+    } else if (
+      // 旧版配置没有 multimodal 字段（那时只有独立视觉模型，没有直发开关）：
+      // 已配好独立视觉模型且未声明与主模型同步的用户，升级后继续走独立视觉模型，
+      // 不被默认 true 静默旁路
+      typeof input?.multimodal !== "boolean"
+      && rawVision
+      && rawVision.baseUrl && rawVision.apiKey && rawVision.model
+    ) {
+      multimodal = false;
+    }
   }
 
   const hasPersistedProfiles = Array.isArray(input?.modelProfiles);
@@ -324,6 +335,7 @@ export function normalizeModelSettings(input: Partial<ModelSettings> | null | un
 
   return {
     mode,
+    schemaVersion: MODEL_SETTINGS_SCHEMA_VERSION,
     provider,
     displayName: profile.displayName,
     baseUrl: profile.baseUrl,
@@ -437,7 +449,20 @@ function loadModelSettings0(): ModelSettings {
     const filePath = getSettingsPath();
     if (!fs.existsSync(filePath)) return { ...DEFAULT_MODEL_SETTINGS };
     const raw = fs.readFileSync(filePath, "utf8");
-    return normalizeModelSettings(JSON.parse(raw) as Partial<ModelSettings>);
+    const parsed = JSON.parse(raw) as Partial<ModelSettings>;
+    const normalized = normalizeModelSettings(parsed);
+    // 一次性迁移落盘：旧文件（无 schemaVersion）迁移后立即写回 + 备份原文件，
+    // 下次加载看到 schemaVersion >= 2 就跳过全部旧判定，走干净路径。
+    if ((parsed?.schemaVersion ?? 1) < MODEL_SETTINGS_SCHEMA_VERSION) {
+      try {
+        fs.copyFileSync(filePath, `${filePath}.bak`);
+        fs.writeFileSync(filePath, JSON.stringify(normalized, null, 2), "utf8");
+      } catch (writeErr) {
+        // 写盘失败不阻塞启动：内存里已是迁移后的配置，下次启动会再试一次
+        console.error("[Cyrene] model settings migration persist failed:", writeErr);
+      }
+    }
+    return normalized;
   } catch (err) {
     console.error("[Cyrene] load settings failed:", err);
     return { ...DEFAULT_MODEL_SETTINGS };
@@ -447,36 +472,6 @@ function loadModelSettings0(): ModelSettings {
 export function loadModelSettings(): ModelSettings {
   if (modelSettingsCache !== null) return modelSettingsCache;
   return modelSettingsCache = loadModelSettings0();
-}
-
-/**
- * 运行时解析视觉配置。
- * multimodal=true：主模型本身支持视觉，返回主模型配置（让 read_image 等工具可用）。
- * multimodal=false：返回独立视觉模型配置（三字段齐全才有效），否则 null。
- *
- * 先展开默认档案再取顶层镜像（与 channel bot / 欢迎页同策略）：顶层镜像可能指向
- * 空壳 provider（真实配置在默认档案里），直接读会把多模态主模型误判为"未启用视觉"。
- */
-export function loadVisionConfig(from: ModelSettings = loadModelSettings()): VisionConfig | null {
-  const settings = resolveModelSettingsProfile(from);
-
-  if (settings.multimodal) {
-    // 主模型走 Anthropic 协议时，视觉链路（永远按 OpenAI 兼容拼 /chat/completions）
-    // 复用主模型 baseUrl 必然 404；已配好独立视觉模型则优先用，避免发图即失败
-    if (settings.explicitTransport === "anthropic") {
-      const v = settings.vision;
-      if (v?.baseUrl && v.apiKey && v.model) {
-        return { baseUrl: v.baseUrl, apiKey: v.apiKey, model: v.model };
-      }
-    }
-    if (!settings.apiKey || !settings.model) return null;
-    return { baseUrl: settings.baseUrl, apiKey: settings.apiKey, model: settings.model };
-  }
-
-  const v = settings.vision;
-  if (!v) return null;
-  if (!v.baseUrl || !v.apiKey || !v.model) return null;
-  return { baseUrl: v.baseUrl, apiKey: v.apiKey, model: v.model };
 }
 
 /**

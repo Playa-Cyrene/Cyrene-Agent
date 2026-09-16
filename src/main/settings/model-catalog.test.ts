@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { addModelProfile, updateModelProfile, resolveDefaultModelProfile } from "./model-catalog";
-import { normalizeModelSettings, getDefaultModelProfile, getPublicModelConfig, resolveModelSettingsProfile, loadVisionConfig } from "./model-settings";
+import { normalizeModelSettings, getDefaultModelProfile, getPublicModelConfig, resolveModelSettingsProfile } from "./model-settings";
+import { resolveCaptionVisionConfig } from "../orchestrator/image-router";
 
 describe("model catalog", () => {
   it("keeps the first saved model as the default and rejects a duplicate key plus model", () => {
@@ -163,7 +164,7 @@ describe("model catalog", () => {
     const optedOut = normalizeModelSettings({ provider: "GLM（智谱）", multimodal: false });
     expect(optedOut.multimodal).toBe(false);
 
-    // loadVisionConfig 展开默认档案：顶层空壳 provider 不再把多模态主模型误判为"未启用视觉"
+    // 档案展开 + 图片路由：顶层空壳 provider 不再把多模态主模型误判为"看不了图"
     const shellSettings = normalizeModelSettings({
       provider: "MiniMax",
       baseUrl: "",
@@ -179,10 +180,13 @@ describe("model catalog", () => {
       }],
       defaultModelProfileId: "glm-default",
     });
-    expect(loadVisionConfig(shellSettings)).toEqual({
-      baseUrl: "https://open.bigmodel.cn/api/paas/v4",
-      apiKey: "sk-glm",
-      model: "glm-5.3-flash",
+    expect(resolveCaptionVisionConfig(resolveModelSettingsProfile(shellSettings))).toEqual({
+      ok: true,
+      config: {
+        baseUrl: "https://open.bigmodel.cn/api/paas/v4",
+        apiKey: "sk-glm",
+        model: "glm-5.3-flash",
+      },
     });
 
     // multimodal=false 时仍走独立视觉模型配置（档案展开不吞掉全局 vision 字段）
@@ -199,10 +203,13 @@ describe("model catalog", () => {
       defaultModelProfileId: "text-model",
       vision: { baseUrl: "https://vi.example.com/v1", apiKey: "sk-v", model: "vi-model" },
     });
-    expect(loadVisionConfig(visionSettings)).toEqual({
-      baseUrl: "https://vi.example.com/v1",
-      apiKey: "sk-v",
-      model: "vi-model",
+    expect(resolveCaptionVisionConfig(resolveModelSettingsProfile(visionSettings))).toEqual({
+      ok: true,
+      config: {
+        baseUrl: "https://vi.example.com/v1",
+        apiKey: "sk-v",
+        model: "vi-model",
+      },
     });
 
     // 未传 id → 展开默认档案（第一个建档项 p-full），不再退回顶层镜像——
