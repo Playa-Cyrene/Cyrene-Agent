@@ -4,15 +4,12 @@ import type { IpcScope } from "../application/ipc-scope";
 import { IPC } from "../../shared/ipc-channels";
 import type { PluginPromptMode, PluginTurnStatus } from "../../plugins/api";
 import { loadGeneralSettings } from "../settings/settings-facade";
-import { loadModelSettings, loadVisionConfig, resolveModelSettingsProfile } from "../settings/model-settings";
+import { loadModelSettings, resolveModelSettingsProfile } from "../settings/model-settings";
 import type { LifecyclePublisher } from "../plugin-host/lifecycle-publisher";
 import { CyreneAgent } from "../orchestrator/cyrene-agent";
 import { toolRegistry } from "../orchestrator/tools/registry/tool-registry";
-import { decideImageSendStrategy } from "../chat/image-send-strategy";
-import {
-  IMAGE_CAPTION_PROMPT,
-  validateCaptionImagePath,
-} from "../chat/image-caption";
+import { captionImageSafe, IMAGE_CAPTION_PROMPT } from "../chat/image-caption";
+import { resolveCaptionVisionConfig, resolveImageRoute } from "../orchestrator/image-router";
 import { indexConversationTurn } from "../orchestrator/tools/history-tools";
 import type { AgentRuntime } from "../orchestrator/agent-runtime";
 import type { TtsSynthesisService } from "../services/tts/tts-synthesis-service";
@@ -164,31 +161,17 @@ export function createChannelsSubsystem(
         content: m.content,
       }));
 
-    // 图片发送策略也基于解析后的配置（默认档案）——顶层镜像可能是全空的空壳
+    // 图片路由统一收口在 image-router（基于解析后的默认档案——顶层镜像可能是空壳）
     const channelModelSettings = resolveModelSettingsProfile(loadModelSettings());
-    const imageSendStrategy = decideImageSendStrategy({
-      multimodal: channelModelSettings.multimodal,
-      vision: loadVisionConfig(),
-    });
+    const channelImageRoute = resolveImageRoute("channel", channelModelSettings);
     const attachmentInputs = await buildChannelAttachmentInputs(msg, {
-      imageMode: imageSendStrategy.mode,
+      // reject 时走 caption 分支：每张图会拿到路由的人话错误并诚实告知用户
+      imageMode: channelImageRoute.mode === "direct" ? "direct" : "caption",
       captionImage: async (filePath: string) => {
-        const validated = validateCaptionImagePath(filePath);
-        if (!validated.ok) return { ok: false, error: validated.error };
-        const visionCfg = loadVisionConfig();
-        if (!visionCfg) return { ok: false, error: "未配置视觉模型，无法分析图片" };
-        try {
-          const { captionImage } = await import("../orchestrator/vision-captioner");
-          const caption = await captionImage(
-            { base64: validated.buffer.toString("base64"), mime: validated.mime },
-            IMAGE_CAPTION_PROMPT,
-            visionCfg,
-          );
-          if (caption.startsWith("[错误")) return { ok: false, error: caption };
-          return { ok: true, caption };
-        } catch (err: any) {
-          return { ok: false, error: err?.message || String(err) };
-        }
+        const settings = resolveModelSettingsProfile(loadModelSettings());
+        const vision = resolveCaptionVisionConfig(settings);
+        if (!vision.ok) return { ok: false, error: vision.error };
+        return captionImageSafe(filePath, IMAGE_CAPTION_PROMPT, vision.config);
       },
     });
     const agentUserText = formatChannelUserText(msg);

@@ -113,11 +113,7 @@ vi.mock("../settings/settings-facade", () => ({
 }));
 vi.mock("../settings/model-settings", () => ({
   loadModelSettings: () => ({}),
-  loadVisionConfig: () => undefined,
   resolveModelSettingsProfile: () => ({ multimodal: false }),
-}));
-vi.mock("../chat/image-send-strategy", () => ({
-  decideImageSendStrategy: () => ({ mode: "none" }),
 }));
 vi.mock("./agent-input", () => ({
   buildChannelAttachmentInputs: async () => ({ attachments: [], imageAttachments: [] }),

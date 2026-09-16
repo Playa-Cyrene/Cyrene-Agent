@@ -19,6 +19,7 @@ import { app } from "electron";
 import { enqueueLLMTask } from "../llm-queue";
 import { loadGeneralSettings } from "../settings/settings-facade";
 import { loadModelSettings } from "../settings/model-settings";
+import { resolveImageRoute } from "../orchestrator/image-router";
 import { loadPromptFile } from "../prompts/prompt-loader";
 import { pluginPromptRegistry } from "../../plugins/prompts";
 import type { ChatMessage, VendorConfig } from "../orchestrator/vendors";
@@ -840,8 +841,16 @@ export function buildMomentsWorldbookContext(text: string): string {
  * character_asset 是昔涟自己的配图素材，不作为视觉输入。
  */
 export function loadUserMomentPostImages(post: MomentPost): MomentPostImage[] {
-  // 与主会话同一条规矩：multimodal=false 表示用户明确不把图片字节发给主模型，此时跳过读图
-  if (loadModelSettings()?.multimodal === false) return [];
+  // 图片路由统一收口在 image-router。moments 只直发不转述：
+  // direct 照常带图；caption（纯文本主模型 + 已配独立视觉模型）维持不带图现状；
+  // reject（纯文本主模型 + 未配视觉模型）给出人话错误而非静默丢图。
+  const settings = loadModelSettings();
+  const route = settings ? resolveImageRoute("moments", settings) : { mode: "direct" as const };
+  const hasUserImage = post.media.some((media) => media.origin === "user_attachment");
+  if (route.mode === "reject") {
+    return hasUserImage ? [{ name: "动态配图", error: route.reason }] : [];
+  }
+  if (route.mode !== "direct") return [];
   const images: MomentPostImage[] = [];
   for (const media of post.media) {
     if (media.origin !== "user_attachment") continue;

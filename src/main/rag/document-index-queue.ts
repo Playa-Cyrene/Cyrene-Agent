@@ -1,25 +1,12 @@
 import { randomUUID } from "crypto";
 import * as path from "path";
+import type {
+  DocumentIndexJobStatus,
+  DocumentIndexProgress,
+} from "../../shared/document-index";
 
-export type DocumentIndexJobStatus =
-  | "queued"
-  | "reading"
-  | "chunking"
-  | "embedding"
-  | "cached"
-  | "done"
-  | "failed"
-  | "cancelled";
-
-export type DocumentIndexProgress = {
-  jobId: string;
-  filePath: string;
-  fileName: string;
-  status: DocumentIndexJobStatus;
-  completedChunks?: number;
-  totalChunks?: number;
-  reason?: string;
-};
+// 进度类型已下沉 shared（preload 跨层引用），此处 re-export 保持本模块对外类型面不变
+export type { DocumentIndexJobStatus, DocumentIndexProgress };
 
 export type DocumentIndexJobResult =
   | { kind: "indexed"; name: string; chunks: number; importId: string; cached?: boolean }

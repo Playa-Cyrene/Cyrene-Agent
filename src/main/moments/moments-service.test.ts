@@ -1709,8 +1709,23 @@ describe("moments worldbook 注入与图片读取", () => {
       expect(mocks.validateCaptionImagePath).not.toHaveBeenCalled();
     });
 
-    it("multimodal=false 时不读图（与主会话同一条开关规矩）", () => {
+    it("纯文本主模型未配视觉模型时给出人话错误而非静默丢图", () => {
       mocks.loadModelSettings.mockReturnValue({ multimodal: false });
+
+      const images = loadUserMomentPostImages(makePost({
+        media: [{ id: "m1", type: "image", origin: "user_attachment", ref: "1.jpg" }],
+      }));
+
+      expect(images).toHaveLength(1);
+      expect(images[0].error).toContain("视觉模型");
+      expect(mocks.validateCaptionImagePath).not.toHaveBeenCalled();
+    });
+
+    it("纯文本主模型已配视觉模型时不带图（moments 只直发不转述，维持现状）", () => {
+      mocks.loadModelSettings.mockReturnValue({
+        multimodal: false,
+        vision: { baseUrl: "https://api.vlm.example.com/v1", apiKey: "k", model: "vlm" },
+      });
 
       const images = loadUserMomentPostImages(makePost({
         media: [{ id: "m1", type: "image", origin: "user_attachment", ref: "1.jpg" }],
@@ -1718,6 +1733,16 @@ describe("moments worldbook 注入与图片读取", () => {
 
       expect(images).toEqual([]);
       expect(mocks.validateCaptionImagePath).not.toHaveBeenCalled();
+    });
+
+    it("reject 时无 user_attachment 配图则不产生提示噪音", () => {
+      mocks.loadModelSettings.mockReturnValue({ multimodal: false });
+
+      const images = loadUserMomentPostImages(makePost({
+        media: [{ id: "m1", type: "image", origin: "character_asset", ref: "stickers/peek.gif" }],
+      }));
+
+      expect(images).toEqual([]);
     });
   });
   it("注入链路：反应调用携带 worldbook 与图片进 prompt", async () => {

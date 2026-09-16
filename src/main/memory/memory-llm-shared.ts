@@ -88,7 +88,7 @@ export function loadMemoryModelConfig(): MemoryModelConfig {
     // 读不到/解析失败 → 继续走主模型继承
   }
 
-  // 2. 继承主模型配置：先展开默认档案再读顶层镜像（与 loadVisionConfig / channel bot 同策略）。
+  // 2. 继承主模型配置：先展开默认档案再读顶层镜像（与 channel bot 同策略）。
   // 顶层镜像可能指向空壳 provider（真实配置在默认档案里），直接读会把已配置的用户
   // 误判为"无 API key"并落到 legacy-deepseek 兜底。
   const settings = resolveModelSettingsProfile(loadModelSettings());

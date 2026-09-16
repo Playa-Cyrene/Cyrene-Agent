@@ -1,5 +1,3 @@
-import type { ChannelAdapter } from "../main/channels/adapters/base";
-import type { ToolDefinition } from "../main/orchestrator/tools/registry/tool-registry";
 import type { PluginEventBus } from "./events";
 import { qualifyPluginEvent } from "./events";
 import { createPluginStorage } from "./storage";
@@ -45,15 +43,17 @@ export interface PluginHostServiceFactory {
 }
 
 export interface PluginRuntime {
+  /** 宿主工具注册表端口；宿主实现负责把 PluginTool 适配进自己的注册体系。 */
   toolRegistry: {
-    register(tool: ToolDefinition): void;
+    register(tool: PluginTool): void;
     unregister(id: string): boolean;
     /** 供冲突告警使用；不存在时跳过 */
-    getById?(id: string): ToolDefinition | undefined;
+    getById?(id: string): { id: string } | undefined;
   };
+  /** 宿主渠道管理器端口；宿主实现负责适配 ChannelAdapter。 */
   channelManager: {
     has(id: string): boolean;
-    register(adapter: ChannelAdapter): void;
+    register(adapter: PluginChannelAdapter): void;
     unregister(id: string): Promise<boolean>;
     startOne(id: string): Promise<void>;
   };
@@ -187,7 +187,7 @@ export function createContext(
       if (existing) {
         throw new Error(`插件工具 id 已被占用: ${tool.id}`);
       }
-      runtime.toolRegistry.register(tool as ToolDefinition);
+      runtime.toolRegistry.register(tool);
       tracker.track("tool", tool.id, () => {
         runtime.toolRegistry.unregister(tool.id);
       });
@@ -243,7 +243,7 @@ export function createContext(
       if (runtime.channelManager.has(adapter.id)) {
         throw new Error(`插件渠道 id 已被占用: ${adapter.id}`);
       }
-      runtime.channelManager.register(adapter as unknown as ChannelAdapter);
+      runtime.channelManager.register(adapter);
       try {
         await runtime.channelManager.startOne(adapter.id);
       } catch (err) {
