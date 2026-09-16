@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Cyrene — Live2D Desktop Pet Agent",
+    "subtitle": "Electron + React 19 + Live2D, with AG-UI bridge to LLM providers",
+    "output": "cyrene-architecture.html",
+    "quality_profile": "showcase",
+    "locale": "en"
+  },
+  "components": [
+    { "id": "user", "type": "external", "label": "User", "sublabel": "Operator", "pos": [40, 430], "size": [150, 60] },
+
+    { "id": "pet", "type": "frontend", "label": "Live2D Pet", "sublabel": "pixi.js", "pos": [230, 220], "size": [150, 68], "tag": "React 19" },
+    { "id": "chat-ui", "type": "frontend", "label": "Chat UI", "sublabel": "Ant Design X", "pos": [230, 430], "size": [150, 60] },
+    { "id": "sidebar", "type": "frontend", "label": "Sidebar / Tasks", "sublabel": "resizable panels", "pos": [230, 590], "size": [150, 60] },
+
+    { "id": "preload", "type": "security", "label": "Preload Bridge", "sublabel": "contextBridge IPC", "pos": [460, 360], "size": [160, 60], "tag": "contextIsolation on" },
+
+    { "id": "embedding", "type": "database", "label": "Embedding Manager", "sublabel": "LanceDB", "pos": [460, 180], "size": [160, 60] },
+
+    { "id": "main", "type": "backend", "label": "Electron Main", "sublabel": "Node 24 main", "pos": [700, 360], "size": [170, 68] },
+
+    { "id": "agui", "type": "backend", "label": "AG-UI Bridge", "sublabel": "@ag-ui/client + core", "pos": [950, 220], "size": [160, 60] },
+    { "id": "chat", "type": "backend", "label": "Chat Engine", "sublabel": "stream + tools", "pos": [950, 420], "size": [160, 60] },
+    { "id": "channels", "type": "backend", "label": "Channels", "sublabel": "lark / web / local", "pos": [950, 580], "size": [160, 60] },
+
+    { "id": "plugins", "type": "backend", "label": "Plugin SDK", "sublabel": "manifest + sandbox", "pos": [460, 580], "size": [170, 60] },
+    { "id": "asr", "type": "backend", "label": "ASR / Voice", "sublabel": "Whisper", "pos": [230, 700], "size": [150, 60] },
+
+    { "id": "llm", "type": "cloud", "label": "LLM Providers", "sublabel": "Anthropic / OpenAI", "pos": [1180, 130], "size": [160, 60] },
+    { "id": "mcp", "type": "external", "label": "MCP Servers", "sublabel": "@modelcontextprotocol/sdk", "pos": [1180, 250], "size": [160, 60] },
+    { "id": "sandbox", "type": "security", "label": "Anthropic Sandbox", "sublabel": "sandbox-runtime", "pos": [1180, 380], "size": [170, 60] },
+    { "id": "tools", "type": "external", "label": "Tools", "sublabel": "playwright / ast-grep", "pos": [1180, 550], "size": [160, 60] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "Renderer process (Chromium, sandboxed)", "wraps": ["pet", "chat-ui", "sidebar"] },
+    { "kind": "region", "label": "Main process (Node 24, full FS + IPC)", "wraps": ["preload", "main", "agui", "chat", "channels", "plugins", "asr", "embedding"] },
+    { "kind": "security-group", "label": "Trust boundary: contextBridge IPC", "wraps": ["preload"] }
+  ],
+  "connections": [
+    { "id": "user-pet", "from": "user", "to": "pet", "label": "interact", "variant": "emphasis", "fromSide": "top", "toSide": "left" },
+    { "id": "user-sidebar", "from": "user", "to": "sidebar", "label": "navigate", "variant": "dashed", "fromSide": "bottom", "toSide": "left" },
+    { "id": "user-chat", "from": "user", "to": "chat-ui", "label": "type / speak", "fromSide": "right", "toSide": "left", "labelDy": -28 },
+    { "id": "chat-preload", "from": "chat-ui", "to": "preload", "label": "ipcRenderer.invoke", "fromSide": "top", "toSide": "left" },
+    { "id": "sidebar-preload", "from": "sidebar", "to": "preload", "label": "ipcRenderer", "variant": "dashed", "fromSide": "top", "toSide": "bottom" },
+    { "id": "preload-main", "from": "preload", "to": "main", "label": "ipcMain.handle", "fromSide": "right", "toSide": "left", "labelDy": 50 },
+    { "id": "main-agui", "from": "main", "to": "agui", "label": "dispatch", "fromSide": "top", "toSide": "bottom" },
+    { "id": "main-chat", "from": "main", "to": "chat", "label": "stream events", "fromSide": "right", "toSide": "top" },
+    { "id": "main-channels", "from": "main", "to": "channels", "label": "routing", "fromSide": "right", "toSide": "bottom" },
+    { "id": "main-plugins", "from": "main", "to": "plugins", "label": "load manifest", "fromSide": "bottom", "toSide": "right", "labelDy": 60 },
+    { "id": "main-asr", "from": "main", "to": "asr", "label": "transcribe", "fromSide": "bottom", "toSide": "top" },
+    { "id": "main-embedding", "from": "main", "to": "embedding", "label": "recall", "variant": "dashed", "fromSide": "top", "toSide": "bottom" },
+    { "id": "agui-llm", "from": "agui", "to": "llm", "label": "chat.completions", "fromSide": "top", "toSide": "left" },
+    { "id": "agui-mcp", "from": "agui", "to": "mcp", "label": "tool calls", "fromSide": "right", "toSide": "left" },
+    { "id": "agui-sandbox", "from": "agui", "to": "sandbox", "label": "exec code", "variant": "security", "fromSide": "bottom", "toSide": "top" },
+    { "id": "chat-tools", "from": "chat", "to": "tools", "label": "playwright / ast-grep", "fromSide": "right", "toSide": "left" }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "Renderer", "items": ["Live2D pet on pixi.js, React 19 SPA", "Ant Design X chat + resizable sidebar", "Strict contextIsolation, only preload touches Node"] },
+    { "dot": "emerald", "title": "Main process", "items": ["Electron main coordinates chat, channels, plugins", "AG-UI bridge streams events between UI and LLM", "Plugin SDK loads manifests into a sandboxed runtime"] },
+    { "dot": "rose", "title": "AI & memory", "items": ["Anthropic + OpenAI providers via @ag-ui", "LanceDB vector store for embedding recall", "MCP, Anthropic sandbox, Playwright/Ast-grep tools"] }
+  ]
+}

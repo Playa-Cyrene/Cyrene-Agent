@@ -5,6 +5,7 @@
 > **性质**:设计意图与架构取舍,不含具体实现步骤
 > **v2 变更**:① structured-output 保留 runner 并强制 legacy 后端,LangChain 6 依赖全删 ② ask_user 复用现有澄清链路,不开新 IPC ③ todo 事件定名 `cyrene.todo` ④ mid-loop compaction + 工具输出截断提前到 P0(§10.6 / §5.7)⑤ 删除清单补齐 `ask_user_choice` / `task-router` / `ask-soul` 与 task-plan 前置迁移
 > **v3 变更**:① 每轮 assistant response 必须写回 messages(§3.1)② `unknown` non-idempotent side-effect 进 `AgentState.uncertainEffects` 并阻止重复副作用/伪完成(§5.5.1 / §6.3)③ Harness 内置工具 dispatch 统一(§3.1 / §8.3)④ 同轮多 tool call 遇 fatal/unknown 中断规则(§3.1)⑤ compaction token budget 加入 tool schemas + output reserve(§10.6)⑥ 工具截断 `fullOutputRef` 语义明确(§5.7)⑦ 清三处旧文档残留(§1.2 / §13.2 / §12)⑧ `ToolCallOutcome` 扩展为四态(含 `not_executed`)(§5.5.1)⑨ `fingerprint` 拦截前置到工具执行前(§3.1)⑩ `update_todo` state 更新职责收归 `executeHarnessBuiltin`(§3.1)
+> **v4 现行补充（2026-09-15）**:运行期允许把 Model Stream 正文作为有明确“生成中”状态的临时候选预览发到 UI；Harness 仍保留原 buffer 与最终 commit 语义。工具轮归入 Progress，成功无工具轮才提交 Final，排他交互丢弃，失败或取消只保留为中断过程片段。当前实现已取消旧 Completion Guard，模型停止调用工具即进入成功结算；本稿下方相关段落只保留为历史设计。详细事件、持久化边界和动效规范见 [`2026-09-15-live-candidate-answer-construction-plan.md`](./2026-09-15-live-candidate-answer-construction-plan.md)。
 > **位置**:git 不跟踪(`docs/` 在 `.gitignore` 中)
 
 ---
@@ -903,6 +904,8 @@ Provider Adapter 内部维护这个映射表。同一段 Runtime Feedback 在不
 ## 7. 流式与事件
 
 ### 7.1 两层 Stream:Model Stream vs User-visible Stream
+
+> **现行说明（v4）**：下文“不能直接发 UI”指不能把模型增量提前当作已确认的 Progress 或 Final 提交。现在允许通过独立的 `cyrene.candidate_text` 临时通道预览正文；该内容不进入正式消息、检查点或早播语音，随后仍由本节的 flush / discard / commit 规则决定唯一权威归类。下文 Completion Guard 已不属于现行实现，参见文首 v4 补充。
 
 **关键区分:Provider -> Harness 的 token 流 和 Harness -> UI 的用户可见流是两层,不能混为一谈。**
 
