@@ -1,0 +1,1360 @@
+{
+  "meta": {
+    "generatedAt": "2026-09-18T07:58:13.335Z",
+    "smoke": true,
+    "pairedControl": false,
+    "seed": 42,
+    "durationMs": 6000,
+    "bMatrix": {
+      "datasets": [
+        "mixed"
+      ],
+      "counts": [
+        200
+      ],
+      "scrolls": [
+        "bottom"
+      ],
+      "runs": 1,
+      "streamRender": "streamdown"
+    },
+    "aMatrix": {
+      "datasets": [
+        "mixed"
+      ],
+      "counts": [
+        200
+      ],
+      "scrolls": [
+        "bottom"
+      ],
+      "runs": 1,
+      "streamRender": "streamdown"
+    },
+    "note": "frameTimesDuringStreaming/LT/eventToPaint 为流式窗口统计；cdp.* 为水合后差值；探针 delta 为流式期间历史组件执行次数"
+  },
+  "channelB": {
+    "perConfig": [
+      {
+        "params": {
+          "dataset": "mixed",
+          "count": 200,
+          "scroll": "bottom",
+          "streamRender": "streamdown"
+        },
+        "aggregated": {
+          "timings.firstBubbleMs": 1355,
+          "timings.hydratedMs": 1916,
+          "userChannel.frameTimesDuringStreaming.median": 16.8,
+          "userChannel.frameTimesDuringStreaming.p95": 34.2,
+          "userChannel.frameTimesDuringStreaming.max": 168.2,
+          "userChannel.longTasks.median": 81.5,
+          "userChannel.longTasks.max": 137,
+          "userChannel.longTasks.countOver32ms": 4,
+          "userChannel.longTasks.countOver100ms": 1,
+          "userChannel.eventToPaint.median": 2.4,
+          "userChannel.eventToPaint.p95": 31.3,
+          "userChannel.eventToPaint.max": 163.3,
+          "reactChannel.commitsDuringStreaming.commitCount": 0,
+          "reactChannel.commitsDuringStreaming.commitsPerSecond": 0,
+          "reactChannel.commitsDuringStreaming.median": 0,
+          "reactChannel.commitsDuringStreaming.p95": 0,
+          "reactChannel.probeDeltaDuringStreaming.markdownRenders": 492,
+          "reactChannel.probeDeltaDuringStreaming.listRenders": 115,
+          "reactChannel.probeDeltaDuringEventStream.navigationRenders": 0,
+          "reactChannel.probeDeltaDuringEventStream.sidebarRenders": 0,
+          "reactChannel.expectedDeltaEvents": 87,
+          "memory.heapUsedAfterHydrationBytes": 11200000,
+          "memory.heapUsedFinalBytes": 11200000,
+          "memory.domNodeCountFinal": 9916,
+          "cdp.TaskDuration": 5.281,
+          "cdp.ScriptDuration": 2.771,
+          "cdp.LayoutDuration": 0.322,
+          "cdp.RecalcStyleDuration": 0.379,
+          "cdp.LayoutCount": 395,
+          "cdp.RecalcStyleCount": 582
+        },
+        "runs": [
+          {
+            "ok": true,
+            "params": {
+              "dataset": "mixed",
+              "count": 200,
+              "seed": 42,
+              "durationMs": 6000,
+              "scrollMode": "bottom",
+              "streamRender": "streamdown"
+            },
+            "timings": {
+              "firstBubbleMs": 1355,
+              "hydratedMs": 1916,
+              "streamStartAt": 2875,
+              "streamEndAt": 11250,
+              "streamDurationMs": 8375
+            },
+            "reactChannel": {
+              "profilerActive": false,
+              "commitsDuringStreaming": {
+                "count": 0,
+                "median": 0,
+                "p95": 0,
+                "max": 0,
+                "total": 0,
+                "commitCount": 0,
+                "commitsPerSecond": 0
+              },
+              "probeAfterHydration": {
+                "markdownRenders": 400,
+                "navigationRenders": 2,
+                "sidebarRenders": 4,
+                "listRenders": 3
+              },
+              "probeDeltaDuringStreaming": {
+                "markdownRenders": 492,
+                "navigationRenders": 1,
+                "sidebarRenders": 2,
+                "listRenders": 115
+              },
+              "probeDeltaDuringEventStream": {
+                "navigationRenders": 0,
+                "sidebarRenders": 0
+              },
+              "expectedDeltaEvents": 87
+            },
+            "userChannel": {
+              "frameTimesOverall": {
+                "count": 497,
+                "median": 16.8,
+                "p95": 36.1,
+                "max": 324.5,
+                "total": 10316.7
+              },
+              "frameTimesDuringStreaming": {
+                "count": 425,
+                "median": 16.8,
+                "p95": 34.2,
+                "max": 168.2,
+                "total": 8371.7
+              },
+              "longTasks": {
+                "count": 4,
+                "median": 81.5,
+                "p95": 137,
+                "max": 137,
+                "total": 360,
+                "countOver32ms": 4,
+                "countOver100ms": 1
+              },
+              "eventToPaint": {
+                "count": 115,
+                "median": 2.4,
+                "p95": 31.3,
+                "max": 163.3,
+                "total": 1485
+              }
+            },
+            "memory": {
+              "heapUsedAfterHydrationBytes": 11200000,
+              "heapUsedFinalBytes": 11200000,
+              "heapUsedMaxBytes": 11200000,
+              "domNodeCountAfterHydration": 9185,
+              "domNodeCountFinal": 9916
+            },
+            "diagnostics": {
+              "shellProbeEvents": [
+                {
+                  "atMs": 1016.0999999046326,
+                  "sinceStreamStartMs": null,
+                  "key": "navigationRenders",
+                  "count": 1,
+                  "phase": "booting"
+                },
+                {
+                  "atMs": 1016.0999999046326,
+                  "sinceStreamStartMs": null,
+                  "key": "sidebarRenders",
+                  "count": 2,
+                  "phase": "booting"
+                },
+                {
+                  "atMs": 1340.5999999046326,
+                  "sinceStreamStartMs": null,
+                  "key": "navigationRenders",
+                  "count": 2,
+                  "phase": "booting"
+                },
+                {
+                  "atMs": 1340.5999999046326,
+                  "sinceStreamStartMs": null,
+                  "key": "sidebarRenders",
+                  "count": 4,
+                  "phase": "booting"
+                },
+                {
+                  "atMs": 2783.399999976158,
+                  "sinceStreamStartMs": null,
+                  "key": "navigationRenders",
+                  "count": 3,
+                  "phase": "hydrated"
+                },
+                {
+                  "atMs": 2783.399999976158,
+                  "sinceStreamStartMs": null,
+                  "key": "sidebarRenders",
+                  "count": 6,
+                  "phase": "hydrated"
+                },
+                {
+                  "atMs": 8734.699999928474,
+                  "sinceStreamStartMs": 5860.100000023842,
+                  "key": "navigationRenders",
+                  "count": 4,
+                  "phase": "streaming"
+                },
+                {
+                  "atMs": 8734.699999928474,
+                  "sinceStreamStartMs": 5860.100000023842,
+                  "key": "sidebarRenders",
+                  "count": 8,
+                  "phase": "streaming"
+                }
+              ],
+              "eventTimeline": [
+                {
+                  "atMs": 2792.5,
+                  "type": "RUN_STARTED"
+                },
+                {
+                  "atMs": 2948.5999999046326,
+                  "type": "REASONING_MESSAGE_START"
+                },
+                {
+                  "atMs": 3006.6999999284744,
+                  "type": "REASONING_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 3059,
+                  "type": "REASONING_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 3123.899999976158,
+                  "type": "REASONING_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 3174.399999976158,
+                  "type": "REASONING_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 3224.2999999523163,
+                  "type": "REASONING_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 3291.1999999284744,
+                  "type": "REASONING_MESSAGE_END"
+                },
+                {
+                  "atMs": 3399.399999976158,
+                  "type": "TOOL_CALL_START"
+                },
+                {
+                  "atMs": 3490.0999999046326,
+                  "type": "TOOL_CALL_ARGS"
+                },
+                {
+                  "atMs": 3539.6999999284744,
+                  "type": "TOOL_CALL_ARGS"
+                },
+                {
+                  "atMs": 3567.5,
+                  "type": "TOOL_CALL_ARGS"
+                },
+                {
+                  "atMs": 3873.2999999523163,
+                  "type": "TOOL_CALL_RESULT"
+                },
+                {
+                  "atMs": 3939.2999999523163,
+                  "type": "TOOL_CALL_END"
+                },
+                {
+                  "atMs": 4073,
+                  "type": "TOOL_CALL_START"
+                },
+                {
+                  "atMs": 4158.199999928474,
+                  "type": "TOOL_CALL_ARGS"
+                },
+                {
+                  "atMs": 4207.699999928474,
+                  "type": "TOOL_CALL_ARGS"
+                },
+                {
+                  "atMs": 4242,
+                  "type": "TOOL_CALL_ARGS"
+                },
+                {
+                  "atMs": 4540.299999952316,
+                  "type": "TOOL_CALL_RESULT"
+                },
+                {
+                  "atMs": 4606.299999952316,
+                  "type": "TOOL_CALL_END"
+                },
+                {
+                  "atMs": 4740.299999952316,
+                  "type": "TOOL_CALL_START"
+                },
+                {
+                  "atMs": 4827.5,
+                  "type": "TOOL_CALL_ARGS"
+                },
+                {
+                  "atMs": 4873.699999928474,
+                  "type": "TOOL_CALL_ARGS"
+                },
+                {
+                  "atMs": 5173.699999928474,
+                  "type": "TOOL_CALL_RESULT"
+                },
+                {
+                  "atMs": 5233.899999976158,
+                  "type": "TOOL_CALL_END"
+                },
+                {
+                  "atMs": 5489.599999904633,
+                  "type": "TEXT_MESSAGE_START"
+                },
+                {
+                  "atMs": 5529,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 5568.199999928474,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 5599.699999928474,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 5631.099999904633,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 5662.199999928474,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 5691.899999976158,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 5745.399999976158,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 5776.399999976158,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 5987,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 6024.299999952316,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 6051,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 6080.5,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 6109.299999952316,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 6143.299999952316,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 6176.399999976158,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 6203.399999976158,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 6232.599999904633,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 6262.699999928474,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 6293.199999928474,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 6327.799999952316,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 6359.5,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 6401.899999976158,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 6434.5,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 6467.899999976158,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 6502.299999952316,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 6535.599999904633,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 6571.599999904633,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 6612.699999928474,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 6649.299999952316,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 6683.599999904633,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 6731.5,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 6768.599999904633,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 6810,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 6849.299999952316,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 6888.399999976158,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 6912.799999952316,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 6935.399999976158,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 6972.299999952316,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 6995.799999952316,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 7016.899999976158,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 7041.199999928474,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 7071.899999976158,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 7095,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 7120.199999928474,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 7148.899999976158,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 7181.199999928474,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 7212.699999928474,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 7237.399999976158,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 7266.099999904633,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 7295.899999976158,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 7335.099999904633,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 7370.5,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 7401,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 7429.599999904633,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 7456.5,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 7488.199999928474,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 7522.699999928474,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 7553.299999952316,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 7581.699999928474,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 7611.599999904633,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 7645.699999928474,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 7677.5,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 7711.199999928474,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 7791.199999928474,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 7815.899999976158,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 7841.799999952316,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 7866.5,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 7889.399999976158,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 7919.299999952316,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 7941,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 7961.399999976158,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 7987.5,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 8009.5,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 8032.799999952316,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 8056,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 8085.899999976158,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 8109.199999928474,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 8134.699999928474,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 8155.799999952316,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 8176.699999928474,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 8199.5,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 8226.799999952316,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 8247.599999904633,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 8273.399999976158,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 8392.299999952316,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 8415.899999976158,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 8442,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 8466.899999976158,
+                  "type": "TEXT_MESSAGE_END"
+                },
+                {
+                  "atMs": 8625.199999928474,
+                  "type": "RUN_FINISHED"
+                }
+              ]
+            },
+            "cdp": {
+              "TaskDuration": 5.281,
+              "ScriptDuration": 2.771,
+              "LayoutDuration": 0.322,
+              "RecalcStyleDuration": 0.379,
+              "LayoutCount": 395,
+              "RecalcStyleCount": 582
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "channelA": {
+    "perConfig": [
+      {
+        "params": {
+          "dataset": "mixed",
+          "count": 200,
+          "scroll": "bottom",
+          "streamRender": "streamdown"
+        },
+        "aggregated": {
+          "timings.firstBubbleMs": 1384,
+          "timings.hydratedMs": 1866,
+          "userChannel.frameTimesDuringStreaming.median": 17,
+          "userChannel.frameTimesDuringStreaming.p95": 74.8,
+          "userChannel.frameTimesDuringStreaming.max": 275,
+          "userChannel.longTasks.median": 53,
+          "userChannel.longTasks.max": 164,
+          "userChannel.longTasks.countOver32ms": 24,
+          "userChannel.longTasks.countOver100ms": 2,
+          "userChannel.eventToPaint.median": 1.7,
+          "userChannel.eventToPaint.p95": 84.2,
+          "userChannel.eventToPaint.max": 140.8,
+          "reactChannel.commitsDuringStreaming.commitCount": 234,
+          "reactChannel.commitsDuringStreaming.commitsPerSecond": 20.099466591243576,
+          "reactChannel.commitsDuringStreaming.median": 0.6,
+          "reactChannel.commitsDuringStreaming.p95": 25.6,
+          "reactChannel.probeDeltaDuringStreaming.markdownRenders": 492,
+          "reactChannel.probeDeltaDuringStreaming.listRenders": 116,
+          "reactChannel.probeDeltaDuringEventStream.navigationRenders": 0,
+          "reactChannel.probeDeltaDuringEventStream.sidebarRenders": 0,
+          "reactChannel.expectedDeltaEvents": 87,
+          "memory.heapUsedAfterHydrationBytes": 11200000,
+          "memory.heapUsedFinalBytes": 11200000,
+          "memory.domNodeCountFinal": 9916,
+          "cdp.TaskDuration": 8.525,
+          "cdp.ScriptDuration": 5.753,
+          "cdp.LayoutDuration": 0.675,
+          "cdp.RecalcStyleDuration": 0.375,
+          "cdp.LayoutCount": 320,
+          "cdp.RecalcStyleCount": 499
+        },
+        "runs": [
+          {
+            "ok": true,
+            "params": {
+              "dataset": "mixed",
+              "count": 200,
+              "seed": 42,
+              "durationMs": 6000,
+              "scrollMode": "bottom",
+              "streamRender": "streamdown"
+            },
+            "timings": {
+              "firstBubbleMs": 1384,
+              "hydratedMs": 1866,
+              "streamStartAt": 2879,
+              "streamEndAt": 14521,
+              "streamDurationMs": 11642
+            },
+            "reactChannel": {
+              "profilerActive": true,
+              "commitsDuringStreaming": {
+                "count": 234,
+                "median": 0.6,
+                "p95": 25.6,
+                "max": 51.5,
+                "total": 2163.6,
+                "commitCount": 234,
+                "commitsPerSecond": 20.099466591243576
+              },
+              "probeAfterHydration": {
+                "markdownRenders": 400,
+                "navigationRenders": 2,
+                "sidebarRenders": 4,
+                "listRenders": 3
+              },
+              "probeDeltaDuringStreaming": {
+                "markdownRenders": 492,
+                "navigationRenders": 1,
+                "sidebarRenders": 2,
+                "listRenders": 116
+              },
+              "probeDeltaDuringEventStream": {
+                "navigationRenders": 0,
+                "sidebarRenders": 0
+              },
+              "expectedDeltaEvents": 87
+            },
+            "userChannel": {
+              "frameTimesOverall": {
+                "count": 410,
+                "median": 16.9,
+                "p95": 80.2,
+                "max": 486.8,
+                "total": 13731.1
+              },
+              "frameTimesDuringStreaming": {
+                "count": 349,
+                "median": 17,
+                "p95": 74.8,
+                "max": 275,
+                "total": 11658.2
+              },
+              "longTasks": {
+                "count": 24,
+                "median": 53,
+                "p95": 138,
+                "max": 164,
+                "total": 1535,
+                "countOver32ms": 24,
+                "countOver100ms": 2
+              },
+              "eventToPaint": {
+                "count": 115,
+                "median": 1.7,
+                "p95": 84.2,
+                "max": 140.8,
+                "total": 2918.4
+              }
+            },
+            "memory": {
+              "heapUsedAfterHydrationBytes": 11200000,
+              "heapUsedFinalBytes": 11200000,
+              "heapUsedMaxBytes": 11200000,
+              "domNodeCountAfterHydration": 9185,
+              "domNodeCountFinal": 9916
+            },
+            "diagnostics": {
+              "shellProbeEvents": [
+                {
+                  "atMs": 881.1000000238419,
+                  "sinceStreamStartMs": null,
+                  "key": "navigationRenders",
+                  "count": 1,
+                  "phase": "booting"
+                },
+                {
+                  "atMs": 881.1000000238419,
+                  "sinceStreamStartMs": null,
+                  "key": "sidebarRenders",
+                  "count": 2,
+                  "phase": "booting"
+                },
+                {
+                  "atMs": 1367.8999999761581,
+                  "sinceStreamStartMs": null,
+                  "key": "navigationRenders",
+                  "count": 2,
+                  "phase": "booting"
+                },
+                {
+                  "atMs": 1367.8999999761581,
+                  "sinceStreamStartMs": null,
+                  "key": "sidebarRenders",
+                  "count": 4,
+                  "phase": "booting"
+                },
+                {
+                  "atMs": 2859.2999999523163,
+                  "sinceStreamStartMs": null,
+                  "key": "navigationRenders",
+                  "count": 3,
+                  "phase": "hydrated"
+                },
+                {
+                  "atMs": 2859.2999999523163,
+                  "sinceStreamStartMs": null,
+                  "key": "sidebarRenders",
+                  "count": 6,
+                  "phase": "hydrated"
+                },
+                {
+                  "atMs": 11995.799999952316,
+                  "sinceStreamStartMs": 9116.699999928474,
+                  "key": "navigationRenders",
+                  "count": 4,
+                  "phase": "streaming"
+                },
+                {
+                  "atMs": 11995.799999952316,
+                  "sinceStreamStartMs": 9116.699999928474,
+                  "key": "sidebarRenders",
+                  "count": 8,
+                  "phase": "streaming"
+                }
+              ],
+              "eventTimeline": [
+                {
+                  "atMs": 2878.399999976158,
+                  "type": "RUN_STARTED"
+                },
+                {
+                  "atMs": 3031.6999999284744,
+                  "type": "REASONING_MESSAGE_START"
+                },
+                {
+                  "atMs": 3134.600000023842,
+                  "type": "REASONING_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 3243.2999999523163,
+                  "type": "REASONING_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 3307.100000023842,
+                  "type": "REASONING_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 3365.7999999523163,
+                  "type": "REASONING_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 3468.899999976158,
+                  "type": "REASONING_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 3527.399999976158,
+                  "type": "REASONING_MESSAGE_END"
+                },
+                {
+                  "atMs": 3585.7999999523163,
+                  "type": "TOOL_CALL_START"
+                },
+                {
+                  "atMs": 3694.399999976158,
+                  "type": "TOOL_CALL_ARGS"
+                },
+                {
+                  "atMs": 3795.1999999284744,
+                  "type": "TOOL_CALL_ARGS"
+                },
+                {
+                  "atMs": 3852.7999999523163,
+                  "type": "TOOL_CALL_ARGS"
+                },
+                {
+                  "atMs": 3914.600000023842,
+                  "type": "TOOL_CALL_RESULT"
+                },
+                {
+                  "atMs": 4013.399999976158,
+                  "type": "TOOL_CALL_END"
+                },
+                {
+                  "atMs": 4077.7999999523163,
+                  "type": "TOOL_CALL_START"
+                },
+                {
+                  "atMs": 4140.299999952316,
+                  "type": "TOOL_CALL_ARGS"
+                },
+                {
+                  "atMs": 4245.600000023842,
+                  "type": "TOOL_CALL_ARGS"
+                },
+                {
+                  "atMs": 4303.100000023842,
+                  "type": "TOOL_CALL_ARGS"
+                },
+                {
+                  "atMs": 4514.5,
+                  "type": "TOOL_CALL_RESULT"
+                },
+                {
+                  "atMs": 4579.199999928474,
+                  "type": "TOOL_CALL_END"
+                },
+                {
+                  "atMs": 4716.100000023842,
+                  "type": "TOOL_CALL_START"
+                },
+                {
+                  "atMs": 4806.799999952316,
+                  "type": "TOOL_CALL_ARGS"
+                },
+                {
+                  "atMs": 4865.699999928474,
+                  "type": "TOOL_CALL_ARGS"
+                },
+                {
+                  "atMs": 5148.199999928474,
+                  "type": "TOOL_CALL_RESULT"
+                },
+                {
+                  "atMs": 5212.199999928474,
+                  "type": "TOOL_CALL_END"
+                },
+                {
+                  "atMs": 5472.5,
+                  "type": "TEXT_MESSAGE_START"
+                },
+                {
+                  "atMs": 5535.799999952316,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 5610.299999952316,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 5672.399999976158,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 5738.600000023842,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 5803.5,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 5863.199999928474,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 5931.399999976158,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 6055.799999952316,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 6120.100000023842,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 6333.299999952316,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 6406.799999952316,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 6472.799999952316,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 6534.399999976158,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 6602.100000023842,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 6676.299999952316,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 6743.299999952316,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 6804.5,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 6877.199999928474,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 6949.299999952316,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 7013.699999928474,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 7088.600000023842,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 7152.299999952316,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 7220.299999952316,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 7287,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 7370.199999928474,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 7436.5,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 7506.299999952316,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 7583.699999928474,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 7649.799999952316,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 7718,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 7798,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 7871.600000023842,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 7940.899999976158,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 8028.799999952316,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 8088.799999952316,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 8145.699999928474,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 8205.399999976158,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 8272.899999976158,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 8334.799999952316,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 8394.100000023842,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 8461,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 8522.600000023842,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 8577.600000023842,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 8634.199999928474,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 8702.199999928474,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 8805.199999928474,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 8870.699999928474,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 8941.299999952316,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 9000.5,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 9063.100000023842,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 9123.799999952316,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 9192.299999952316,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 9255.5,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 9325.100000023842,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 9400,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 9467.600000023842,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 9531.899999976158,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 9615,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 9685.5,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 9749.899999976158,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 9826,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 9890.899999976158,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 9958.299999952316,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 10027.299999952316,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 10095.100000023842,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 10162.299999952316,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 10219.5,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 10286.199999928474,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 10349.299999952316,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 10439.5,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 10496,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 10562.299999952316,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 10629.199999928474,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 10691.600000023842,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 10759.899999976158,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 10820.100000023842,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 10877.699999928474,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 10944.199999928474,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 11001.399999976158,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 11062.600000023842,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 11130.299999952316,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 11187.5,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 11245.799999952316,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 11327.5,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 11391.899999976158,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 11457.399999976158,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 11514.699999928474,
+                  "type": "TEXT_MESSAGE_CONTENT"
+                },
+                {
+                  "atMs": 11586.600000023842,
+                  "type": "TEXT_MESSAGE_END"
+                },
+                {
+                  "atMs": 11718.699999928474,
+                  "type": "RUN_FINISHED"
+                }
+              ]
+            },
+            "cdp": {
+              "TaskDuration": 8.525,
+              "ScriptDuration": 5.753,
+              "LayoutDuration": 0.675,
+              "RecalcStyleDuration": 0.375,
+              "LayoutCount": 320,
+              "RecalcStyleCount": 499
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

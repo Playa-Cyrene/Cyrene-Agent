@@ -111,15 +111,17 @@ const markdownConfig = { extensions: Latex() };
 const cyreneAvatarUrl = resolveAsset("avatars/cyrene-avatar.png");
 
 // 消息是否正在流式输出。code 渲染器收不到 MarkdownContent 的 props，用 context 传下去，
-// mermaid 块靠它在流式期间显示占位而不是渲染半截语法
-const MessageStreamingContext = createContext(false);
+// mermaid 块靠它在流式期间显示占位而不是渲染半截语法。
+// A1-S spike：perf harness 的 streamdown 渲染器也消费此 context（占位语义一致），故导出
+export const MessageStreamingContext = createContext(false);
 
-/** 文件链接环境：工作区根 + 点击回调，由 ChatMessageList 提供，anchor 渲染器消费 */
-interface FileLinkEnv {
+/** 文件链接环境：工作区根 + 点击回调，由 ChatMessageList 提供，anchor 渲染器消费。
+ * A1-S spike：perf harness 的 streamdown 渲染器复用同一环境判断界内/越界文件链接，故导出 */
+export interface FileLinkEnv {
   workspaceRoot?: string;
   openFile?: (relPath: string, line?: number) => void;
 }
-const FileLinkContext = createContext<FileLinkEnv>({});
+export const FileLinkContext = createContext<FileLinkEnv>({});
 
 /**
  * 最后一轮可修订消息的 ID。footer 动作组件经 context 读取，不进 roles 闭包——
@@ -266,6 +268,8 @@ const streamingMarkdownStaticOptions = {
 /**
  * A0 对照实验开关（perf harness 页面注入，正式构建恒为 animated，零行为差异）：
  * static=流式渲染关动画；plain=流式消息绕过 XMarkdown 渲染为转义纯文本（历史消息不受影响）。
+ * A1-S 对照组不在此判断：perf harness 按需注册 __cyreneChatPerfMarkdownRenderer，
+ * 注册与否是唯一开关，正式产物因此不含任何 spike 模式名。
  * 见 issue 文档"阶段 2 后终验"的 A0 限时归因实验设计。
  */
 function perfStreamRenderMode(): "animated" | "static" | "plain" {
@@ -296,6 +300,9 @@ class MarkdownRenderBoundary extends Component<{
   }
 }
 
+/** A1-S spike：perf harness 挂载前注册的流式正文渲染器（仅 streamRender=streamdown 时消费） */
+type PerfHarnessMarkdownRenderer = (props: { content: string }) => ReactNode;
+
 export function MarkdownContent({
   content,
   streaming,
@@ -308,10 +315,26 @@ export function MarkdownContent({
   // 模型偶尔输出畸形 Markdown（# 后缺空格、标题粘正文、围栏粘句子），
   // 渲染前先做机械归一化；归一化与 XMarkdown 解析都在同一 memo 周期内完成
   const normalized = useMemo(() => normalizeModelMarkdown(content), [content]);
+  const streamMode = streaming ? perfStreamRenderMode() : "animated";
   // A0 对照组三：流式消息绕过 XMarkdown，渲染为转义纯文本（pre 内文本节点自动转义），
   // 隔离"流式全文重解析"成本；历史消息（streaming=false）不受影响
-  if (streaming && perfStreamRenderMode() === "plain") {
+  if (streamMode === "plain") {
     return <pre className="cy-message-markdown-fallback">{content}</pre>;
+  }
+  // A1-S 对照组：perf harness 注册了流式渲染器时接管流式消息（react-perf/main.tsx 按
+  // streamRender 参数决定是否注册；正式构建不注册，本分支零执行且不产生任何 spike 依赖）
+  if (streaming && typeof window !== "undefined") {
+    const harnessRenderer = (window as typeof window & { __cyreneChatPerfMarkdownRenderer?: PerfHarnessMarkdownRenderer })
+      .__cyreneChatPerfMarkdownRenderer;
+    if (harnessRenderer) {
+      return (
+        <MarkdownRenderBoundary content={normalized}>
+          <MessageStreamingContext.Provider value>
+            {harnessRenderer({ content: normalized })}
+          </MessageStreamingContext.Provider>
+        </MarkdownRenderBoundary>
+      );
+    }
   }
   return (
     <MarkdownRenderBoundary content={normalized}>
@@ -324,7 +347,7 @@ export function MarkdownContent({
           escapeRawHtml
           rootClassName="cy-message-markdown"
           streaming={streaming
-            ? (perfStreamRenderMode() === "static" ? streamingMarkdownStaticOptions : streamingMarkdownOptions)
+            ? (streamMode === "static" ? streamingMarkdownStaticOptions : streamingMarkdownOptions)
             : completedMarkdownOptions}
         />
       </MessageStreamingContext.Provider>

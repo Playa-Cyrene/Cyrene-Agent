@@ -343,6 +343,58 @@ interface MessageItemCacheState {
 
 ---
 
+## A0 归因实验 → A1-S 替代库 spike（2026-09-18 完成，只汇报不迁移）
+
+### A0 结论（三对照组：animated / static / plain，报告 `perf/a0-*-report.json`、`perf/a0-*-tail-report.json`）
+
+关闭 XMarkdown 动画（static）对帧指标无实质改善；绕过 Markdown 渲染（plain 纯文本）帧 p95 大幅下降且与历史条数基本无关——剩余瓶颈定位为**流式消息的 XMarkdown 全量重解析**：`useStreaming` 增量是 O(delta)，但每次仍触发全文 `parser.parse`（marked O(N)）+ `renderer.render`（DOMPurify + html-react-parser O(N)）+ React reconcile O(N)；`hasNextChunk` 只防语法抖动，不解决重复解析。按门控规则进入"流式渲染策略"分支；按工程规范，在证明成熟库不适配前禁止自研分块器，因此先做 A1-S 限时替代库 spike。
+
+### A1-S 范围与隔离（分支 `codex/a1-s-streamdown-spike`）
+
+- 对照组：Streamdown 2.6.0（按 block 分割 + 逐块 React.memo + remend 补全未闭合语法）+ `@streamdown/math` 1.0.2（传递依赖 katex ^0.16.27，CSS/字体由 spike 显式引入）。
+- 隔离：spike 代码只存在于 `src/renderer/react-perf/`，由 harness `main.tsx` 静态导入并注册 `window.__cyreneChatPerfMarkdownRenderer`；正式代码（`ChatMessageList` 的 `MarkdownContent`）只读取该可选渲染器，零直接/动态 import。Tailwind（`tailwindcss` + `@tailwindcss/vite`）仅挂载于 perf harness 构建链，产品 CSS 构建不变。
+- 首日三项验证均通过：① components API（`a`/`pre` 覆盖生效，`Block` 为 MemoExoticComponent）；② 样式真实生效（Tailwind v4 无 preflight 引入，工具类构建层 259.3KB CSS + 运行层 computed style 双确认，截图 `perf/a1-s-spike-page.png`）；③ 正式构建零泄漏（最终代码重验：`dist/renderer` 全部 js/css/html/json 扫描无 `streamdown`/`@streamdown` 字样；hash 未要求一致）。
+- 组件复用：文件链接/代码块分流复用现有 `parseFileLinkHref`、`relativePathInsideWorkspace`、`MermaidBlock`、`SvgCardBlock`、`CodeHighlighter`，经显式导出的 `FileLinkContext` / `MessageStreamingContext` 传入，不复制业务判断。
+
+### 成对对照数据（同构建、同 seed、同浏览器、交替先跑顺序；报告 `perf/a1-s-streamdown-report.json`，逐轮明细 `perf/a1-s-paired-rounds.json`）
+
+两臂中位数（B 通道，6 配置 × 3 轮）与逐轮配对降幅中位数：
+
+| 配置 | 帧 p95 anim→sd (ms) | 帧逐轮降幅中位数 | evtP95 anim→sd (ms) | scriptS anim→sd (s) | script 逐轮降幅中位数 |
+| --- | --- | --- | --- | --- | --- |
+| markdown/0 | 122.0 → 23.6 | 80.8% | 86.7 → 17.3 | 29.4 → 3.3 | 89.3% |
+| markdown/200 | 139.4 → 26.3 | 81.1% | 132.9 → 15.2 | 34.4 → 12.8 | 64.6% |
+| markdown/500 | 159.4 → 49.6 | 68.9% | 148.8 → 36.0 | 43.6 → 16.4 | 62.3% |
+| mixed/0 | 98.7 → 20.7 | 79.0% | 77.3 → 17.0 | 19.5 → 2.5 | 87.1% |
+| mixed/200 | 125.2 → 31.7 | 74.8% | 118.5 → 25.7 | 26.0 → 8.0 | 69.1% |
+| mixed/500 | 160.8 → 69.0 | 57.0% | 147.8 → 55.4 | 36.3 → 18.3 | 49.5% |
+
+- 配对质量：逐轮降幅与中位数偏差 < 2pct，顺序与负载漂移影响可忽略。
+- 帧 p95 斜率（0→500 endpoint，ms/百条）：markdown 7.5 → 5.2；mixed 12.4 → 9.7。两臂斜率同量级——500 条场景残余成本主要不在 Markdown 渲染器，指向列表外壳每 delta 的 O(n) 重建（门控①②③范畴）。
+- 对照锁定验收线：帧 p95 重配置 ≤ 40ms——streamdown 0/200 条全部过线（20.7–31.7ms），markdown/500 = 49.6、mixed/500 = 69.0 **未过线**；evtP95 ≤ 40ms——除 mixed/500（55.4）外全过；mdDelta ≤ 5×delta 两臂均满足（947 ≤ 2,220、1,370 ≤ 1,825，两臂相同：渲染器替换不改变外壳行为）。
+- 附带发现（记录待查，与本 spike 无关）：animated 臂 markdown/500 的 domFinal 三轮为 [67,449 / 35,366 / 67,449]，偶发约 2 倍历史消息 DOM；streamdown 臂三轮稳定 35,366。
+
+### 语义清单（已执行并记录差异；第 4/5 项为行为记录，非通过标准）
+
+node SSR + 真实 Streamdown（非 mock）：未闭合围栏 remend 补全、GFM 表格、列表连续性、块级 LaTeX（KaTeX）、Mermaid 流式占位、SVG 分流、危险 HTML/URL 剥离（sanitize 白名单承担）均通过；jsdom 有状态重置补充验证：同一挂载实例 A → B → 空串 → C 每步旧内容消失、新内容完整出现，key 变化（messageId/roundId 切换）重挂载亦干净——库内 block 缓存的非前缀重置成立（浏览器内多轮切换由 paired 矩阵 mixed 数据集实测覆盖）。
+
+行为差异三条（转正时需对齐或决策）：
+1. 后置链接定义跨 block 不生效（`[text][ref]` 与 `[ref]: url` 分属不同块时渲染为纯文本）；
+2. 行内单美元 `$...$` 不渲染 KaTeX（`@streamdown/math` 默认 `singleDollarTextMath=false`），块级 `$$...$$` 正常；
+3. spike 链移除了 `rehype-harden`（其内置协议黑名单硬拦 `file:` 且无配置项可放行），危险链接不再有 `[blocked]` 占位而是被 sanitize 静默去 href。**此链仅限 spike，不等价于 Streamdown 默认安全能力，不得原样迁入产品**；产品迁移首选路径：解析前把内部 file 链接编码成受控占位链接，由 anchor 适配器解码并做工作区边界检查，保留默认 harden 链。
+
+### bundle 成本（chat-perf 入口，spike 分支 vs master 同口径 harness 构建）
+
+JS +476.4KB raw / +145.9KB gzip（Streamdown + math + remark/rehype 链 + KaTeX JS，tree-shaken）；CSS +40.9KB raw / +10.7KB gzip（Tailwind 工具类 + KaTeX CSS）；合计 +517.3KB raw / +156.6KB gzip；另 KaTeX 字体全量约 1.1MB（woff2 按需子集加载，仅公式场景产生实际流量）。
+
+### 门控判定（spike 只汇报，未修改正式聊天渲染路径）
+
+- **渲染器替换收益确认**：帧 p95 降幅 57–81%、ScriptDuration 降幅 50–89%，0/200 条配置全部过 40ms 验收线；Streamdown 的 block 分割 + 逐块 memo 假设成立，**复用优先于自研分块器**。
+- **500 条未过线的残余瓶颈不在渲染器**（两臂斜率同量级，指向列表外壳 O(n) 重建），完整过线需叠加后续门控（行级订阅/分页/虚拟化）。
+- 进入产品迁移设计前需确认：bundle 增量（+157KB gzip）是否可接受、file 链接安全方案（占位链接）、Tailwind 引入方式（当前仅 perf 链）、三条行为差异的对齐策略。以上待用户决策后启动，本 spike 不自动迁移。
+
+---
+
 ## 独立工作项（单独排期，不混入性能假设）
 
 | 项 | 内容 | 备注 |
@@ -372,3 +424,4 @@ interface MessageItemCacheState {
 
 - 2026-09-17 初版：静态走读结论（问题总览 + 修复优先级建议）。
 - 2026-09-17 设计评审（两轮）：修正 `lastTurn` 失效场景（流式期间返回稳定 null；完成态每次渲染新对象）、确认 `Bubble.List` 库内 memo 边界及其打穿机制、`createMessageItems` 复杂度修正为 O(n + Σchanged)、方案从"memo 化 + LRU"演进为"阶段 0→1A→1B→2 + 独立工作项"、删除会话与容量淘汰严格分离、阶段 0 交付物包含锁定验收线。未经 profiling 证明的性能结论均已降级为"待运行时验证"。
+- 2026-09-18 A1-S 评审（用户有条件批准 + 终验前三点修正）：动态 import 改为 harness 注册隔离、样式真实性首日验证、测量改同场成对对照；语义清单表述修正为"已执行并记录差异"（SSR 纯函数性不等于有状态重置验证，补 jsdom 同实例 A→B→空串→C 与 key 重挂载测试）；spike 移除 rehype-harden 仅限实验链，产品迁移需占位链接方案保留默认安全链；报告增加逐轮配对差值。

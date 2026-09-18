@@ -12,6 +12,8 @@
 //   npm run perf:chat-baseline -- --out <file>    # 指定报告输出路径
 //   # A0 归因实验：覆盖矩阵 + 流式渲染形态对照组（animated=现状 / static=关动画 / plain=纯文本绕过 XMarkdown）
 //   npm run perf:chat-baseline -- --skip-build --only-b --runs 3 --datasets markdown,mixed --counts 0,200,500 --scrolls bottom --stream-render static --out docs/internal-issue/perf/a0-static-report.json
+//   # A1-S 成对对照：animated 与 streamdown 交替同场各 3 次（先跑顺序逐轮互换），只跑通道 B
+//   npm run perf:chat-baseline -- --paired-control --out docs/internal-issue/perf/a1-s-streamdown-report.json
 
 import { spawnSync } from "node:child_process";
 import { createServer } from "node:http";
@@ -46,11 +48,16 @@ const countsOverride = countsIndex >= 0
   : undefined;
 const streamRenderIndex = args.indexOf("--stream-render");
 const streamRenderOverride = streamRenderIndex >= 0 ? args[streamRenderIndex + 1] : undefined;
-const STREAM_RENDER_MODES = new Set(["animated", "static", "plain"]);
+const STREAM_RENDER_MODES = new Set(["animated", "static", "plain", "streamdown"]);
 if (streamRenderOverride !== undefined && !STREAM_RENDER_MODES.has(streamRenderOverride)) {
-  throw new Error(`--stream-render 仅支持 animated/static/plain，收到: ${streamRenderOverride}`);
+  throw new Error(`--stream-render 仅支持 animated/static/plain/streamdown，收到: ${streamRenderOverride}`);
 }
 const STREAM_RENDER = streamRenderOverride ?? "animated";
+
+// A1-S 成对对照：同一 (dataset,count) 内 animated 与 streamdown 交替同场跑（每轮先跑的渲染器互换），
+// 抵制后台负载与时间漂移污染——A0 已证明顺序执行跨数小时的对比不可靠
+const pairedControl = args.includes("--paired-control");
+const PAIRED_MODES = ["animated", "streamdown"];
 
 // ── 矩阵 ──
 
@@ -58,16 +65,26 @@ const SEED = 42;
 // 流式脚本时长：完整基线 15s（几百个 delta，接近真实长回复）；冒烟 6s 只验证链路
 const DURATION_MS = smoke ? 6_000 : 15_000;
 
-const B_MATRIX = smoke
-  ? { datasets: ["mixed"], counts: [200], scrolls: ["bottom"], runs: 1, streamRender: STREAM_RENDER }
-  : {
-      // A0 归因实验经 --datasets/--counts/--scrolls 覆盖（例：markdown,mixed × 0,200,500 × bottom）
-      datasets: datasetsOverride ?? ["plain", "markdown", "mixed"],
-      counts: countsOverride ?? [200, 500],
-      scrolls: scrollsOverride ?? ["bottom", "top"],
-      runs: Number.isFinite(runsOverride) && runsOverride > 0 ? runsOverride : 5,
-      streamRender: STREAM_RENDER,
-    };
+// A1-S 成对对照矩阵：markdown/mixed × 0/200/500 × bottom × 3 轮交替（--datasets/--counts 可覆盖）。
+// 只跑通道 B（profiling 构建的开销会污染对照；帧/CDP/探针指标 B 通道齐全）
+const B_MATRIX = pairedControl
+  ? {
+      datasets: datasetsOverride ?? ["markdown", "mixed"],
+      counts: countsOverride ?? [0, 200, 500],
+      scrolls: ["bottom"],
+      runs: 3,
+      pairedControl: true,
+    }
+  : smoke
+    ? { datasets: ["mixed"], counts: [200], scrolls: ["bottom"], runs: 1, streamRender: STREAM_RENDER }
+    : {
+        // A0 归因实验经 --datasets/--counts/--scrolls 覆盖（例：markdown,mixed × 0,200,500 × bottom）
+        datasets: datasetsOverride ?? ["plain", "markdown", "mixed"],
+        counts: countsOverride ?? [200, 500],
+        scrolls: scrollsOverride ?? ["bottom", "top"],
+        runs: Number.isFinite(runsOverride) && runsOverride > 0 ? runsOverride : 5,
+        streamRender: STREAM_RENDER,
+      };
 
 // A 通道（profiling 构建）有额外开销，绝对时长偏慢，只用于 React 侧指标（commit 频率/时长、探针计数），
 // 矩阵缩减到最重配置
@@ -263,8 +280,39 @@ async function runMatrix(browser, baseUrl, matrix, channelLabel) {
   for (const dataset of matrix.datasets) {
     for (const count of matrix.counts) {
       for (const scroll of matrix.scrolls) {
-        const config = { dataset, count, scroll, streamRender: matrix.streamRender ?? "animated" };
         const configLabel = `${dataset}/${count}/${scroll}`;
+        if (matrix.pairedControl) {
+          // A1-S 成对对照：每轮内两个渲染器先后各跑一次，奇偶轮互换先跑顺序，
+          // 两组各自凑满 matrix.runs 次后取中位数——同构建/同 seed/同浏览器的同场对比
+          const runsByMode = { animated: [], streamdown: [] };
+          for (let round = 0; round < matrix.runs; round++) {
+            const order = round % 2 === 0 ? PAIRED_MODES : [...PAIRED_MODES].reverse();
+            for (const mode of order) {
+              const context = await browser.newContext();
+              const pairedConfig = { dataset, count, scroll, streamRender: mode };
+              try {
+                try {
+                  runsByMode[mode].push(await runCase(context, baseUrl, pairedConfig));
+                } catch (error) {
+                  console.log(`  [${channelLabel}] ${configLabel} ${mode} 轮 ${round + 1} 失败，重试: ${error.message}`);
+                  runsByMode[mode].push(await runCase(context, baseUrl, pairedConfig));
+                }
+                console.log(`  [${channelLabel}] ${configLabel} ${mode} 轮 ${round + 1}/${matrix.runs} 完成`);
+              } finally {
+                await context.close();
+              }
+            }
+          }
+          for (const mode of PAIRED_MODES) {
+            perConfig.push({
+              params: { dataset, count, scroll, streamRender: mode },
+              aggregated: aggregateRuns(runsByMode[mode]),
+              runs: runsByMode[mode],
+            });
+          }
+          continue;
+        }
+        const config = { dataset, count, scroll, streamRender: matrix.streamRender ?? "animated" };
         const runs = [];
         for (let i = 0; i < matrix.runs; i++) {
           const context = await browser.newContext();
@@ -286,6 +334,62 @@ async function runMatrix(browser, baseUrl, matrix, channelLabel) {
     }
   }
   return perConfig;
+}
+
+/** A1-S 成对对照汇总：每配置输出 animated/streamdown 关键指标中位数与相对降幅 */
+function buildPairedComparisons(perConfig) {
+  const byConfig = new Map();
+  for (const entry of perConfig) {
+    const key = `${entry.params.dataset}/${entry.params.count}/${entry.params.scroll}`;
+    if (!byConfig.has(key)) byConfig.set(key, {});
+    byConfig.get(key)[entry.params.streamRender ?? "animated"] = entry.aggregated;
+  }
+  const metrics = [
+    ["frameP95ms", "userChannel.frameTimesDuringStreaming.p95"],
+    ["evtP95ms", "userChannel.eventToPaint.p95"],
+    ["scriptS", "cdp.ScriptDuration"],
+    ["mdDelta", "reactChannel.probeDeltaDuringStreaming.markdownRenders"],
+    ["domFinal", "memory.domNodeCountFinal"],
+  ];
+  const comparisons = [];
+  for (const [key, agg] of byConfig) {
+    const animated = agg.animated;
+    const streamdown = agg.streamdown;
+    if (!animated || !streamdown) continue;
+    const entry = { config: key };
+    for (const [label, path] of metrics) {
+      const a = animated[path];
+      const s = streamdown[path];
+      entry[label] = { animated: a, streamdown: s };
+      if (typeof a === "number" && typeof s === "number" && a > 0) {
+        entry[label].reductionPct = Math.round(((a - s) / a) * 1000) / 10;
+      }
+    }
+    comparisons.push(entry);
+  }
+  return comparisons;
+}
+
+function printPairedSummary(report, outPath) {
+  console.log("\n================ A1-S 成对对照摘要（animated vs streamdown，各 3 次中位数） ================");
+  const header = ["config", "frameP95 anim", "frameP95 sd", "frame降幅%", "evtP95 anim", "evtP95 sd", "scriptS anim", "scriptS sd", "script降幅%"];
+  const widths = [18, 13, 12, 10, 12, 11, 13, 12, 11];
+  console.log(header.map((h, i) => h.padEnd(widths[i])).join(" "));
+  for (const c of report.pairedComparisons ?? []) {
+    const cells = [
+      c.config,
+      fmt(c.frameP95ms?.animated, 1),
+      fmt(c.frameP95ms?.streamdown, 1),
+      fmt(c.frameP95ms?.reductionPct, 1),
+      fmt(c.evtP95ms?.animated, 1),
+      fmt(c.evtP95ms?.streamdown, 1),
+      fmt(c.scriptS?.animated, 2),
+      fmt(c.scriptS?.streamdown, 2),
+      fmt(c.scriptS?.reductionPct, 1),
+    ];
+    console.log(cells.map((v, i) => String(v ?? "-").padEnd(widths[i])).join(" "));
+  }
+  console.log(`\n报告已写入: ${outPath}`);
 }
 
 // ── 摘要输出 ──
@@ -335,25 +439,32 @@ function printSummary(report, outPath) {
 
 async function main() {
   const outPath = resolve(ROOT, outOverride ?? "docs/internal-issue/perf/baseline-report.json");
-  console.log(`[perf] 模式: ${smoke ? "冒烟" : "完整基线"}，seed=${SEED}，流式时长 ${DURATION_MS}ms`);
+  console.log(
+    `[perf] 模式: ${pairedControl ? "A1-S 成对对照" : smoke ? "冒烟" : "完整基线"}，seed=${SEED}，流式时长 ${DURATION_MS}ms`,
+  );
 
+  // 成对对照只跑通道 B；A 通道（profiling 构建）的额外开销会污染同场对照
+  const effectiveOnlyB = onlyB || pairedControl;
   if (!skipBuild) {
     buildChannel(B_OUT_DIR, false);
-    if (!onlyB) buildChannel(A_OUT_DIR, true);
+    if (!effectiveOnlyB) buildChannel(A_OUT_DIR, true);
   }
 
   const serverB = await startStaticServer(resolve(ROOT, B_OUT_DIR), PORT_B);
-  const serverA = onlyB ? null : await startStaticServer(resolve(ROOT, A_OUT_DIR), PORT_A);
+  const serverA = effectiveOnlyB ? null : await startStaticServer(resolve(ROOT, A_OUT_DIR), PORT_A);
   let browser;
   const report = {
     meta: {
       generatedAt: new Date().toISOString(),
       smoke,
+      pairedControl,
       seed: SEED,
       durationMs: DURATION_MS,
       bMatrix: B_MATRIX,
       aMatrix: A_MATRIX,
-      note: "frameTimesDuringStreaming/LT/eventToPaint 为流式窗口统计；cdp.* 为水合后差值；探针 delta 为流式期间历史组件执行次数",
+      note: pairedControl
+        ? "A1-S 成对对照：同一 (dataset,count) 内 animated/streamdown 交替同场各 3 次，先跑顺序逐轮互换；帧/事件/CDP/探针指标取各自中位数，reductionPct 为相对降幅"
+        : "frameTimesDuringStreaming/LT/eventToPaint 为流式窗口统计；cdp.* 为水合后差值；探针 delta 为流式期间历史组件执行次数",
     },
     channelB: { perConfig: [] },
     channelA: { perConfig: [] },
@@ -365,11 +476,15 @@ async function main() {
     console.log(`\n[perf] 通道 B：${countConfigs(B_MATRIX)} 配置 × ${B_MATRIX.runs} 次`);
     report.channelB.perConfig = await runMatrix(browser, `http://127.0.0.1:${PORT_B}`, B_MATRIX, "B");
 
-    if (!onlyB) {
+    if (!effectiveOnlyB) {
       console.log(`\n[perf] 通道 A：${countConfigs(A_MATRIX)} 配置 × ${A_MATRIX.runs} 次`);
       report.channelA.perConfig = await runMatrix(browser, `http://127.0.0.1:${PORT_A}`, A_MATRIX, "A");
     } else {
-      console.log("\n[perf] --only-b：跳过通道 A（profiling 构建）");
+      console.log("\n[perf] 跳过通道 A（profiling 构建）");
+    }
+
+    if (pairedControl) {
+      report.pairedComparisons = buildPairedComparisons(report.channelB.perConfig);
     }
   } finally {
     if (browser) await browser.close().catch(() => {});
@@ -379,7 +494,11 @@ async function main() {
 
   mkdirSync(dirname(outPath), { recursive: true });
   writeFileSync(outPath, JSON.stringify(report, null, 2), "utf8");
-  printSummary(report, outPath);
+  if (pairedControl) {
+    printPairedSummary(report, outPath);
+  } else {
+    printSummary(report, outPath);
+  }
 }
 
 function countConfigs(matrix) {
