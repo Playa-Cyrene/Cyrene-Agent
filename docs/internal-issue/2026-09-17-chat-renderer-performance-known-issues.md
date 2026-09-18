@@ -389,18 +389,32 @@ JS +476.4KB raw / +145.9KB gzip（Streamdown + math + remark/rehype 链 + KaTeX 
 
 ### 门控判定与产品决策（spike 只汇报，未修改正式聊天渲染路径；2026-09-18 用户验收通过并决策）
 
-- **渲染器替换收益确认**：帧 p95 降幅 57–81%、ScriptDuration 降幅 50–89%，0/200 条配置全部过 40ms 验收线；Streamdown 的 block 分割 + 逐块 memo 假设成立，**复用优先于自研分块器**。
+- **渲染器替换收益确认（仅限 A1-S spike 结论）**：帧 p95 降幅 57–81%、ScriptDuration 降幅 50–89%，0/200 条配置全部过 40ms 验收线；Streamdown 的 block 分割 + 逐块 memo 假设成立（普通 Markdown 流式性能）。
 - **500 条未过线仍存在显著的历史数量相关成本**：Streamdown 已消除大部分流式全文解析开销，但剩余成本中列表拼装、React 协调、大 DOM 树及流式尾块渲染各占多少尚未区分；转 A2 归因实验后再选型，**不直接进入虚拟化**。
 
-**A1-P 产品迁移设计（用户已同意进入设计阶段，不直接迁移）**，约束如下：
-1. 接受约 +157KB gzip——对桌面应用而言，与 57–81% 的实测收益相比合理；
-2. Streamdown 仅接管流式阶段，生成完成后回到现有 XMarkdown——历史消息、后置引用、现有 LaTeX 与最终展示语义不变；
-3. 文件链接采用"安全占位链接 → anchor 解码 → 工作区边界检查"方案，保留 rehype-harden 默认安全链；
-4. 不引入全局 Tailwind 使用习惯：仅在渲染构建中扫描 Streamdown 依赖、关闭 preflight、限定样式作用域；
-5. 行内单美元公式与跨 block 引用只允许在流式阶段暂时近似，完成后由 XMarkdown 恢复最终语义；
-6. 先输出正式迁移设计与回退方案，不立即改产品代码。
+**A1-P 产品迁移：暂停 / 不实施（2026-09-18 用户决策）**
 
-**A2 列表规模成本归因（独立实验，先于选型）**——三段成本测量：① `assembleMessageItems` 拼装时间；② `Bubble.List` / React 协调时间；③ 浏览器样式/布局/绘制时间。现有数据 LayoutDuration 仅约 0.3–1ms 而 ScriptDuration 随历史数量明显增长，**优先怀疑 JavaScript 拼装/协调而非纯布局**。归因后决策：拼装主导 → 增量 item 索引或行级更新边界；协调主导 → 分页或虚拟化；两者均有 → 先分页限制上界，再评估虚拟化。
+A1-S 已完成、实验结论保留；但 A1-S 只证明 Streamdown 的普通 Markdown 流式性能收益，**不构成产品迁移批准**。暂停原因：
+
+- 当前 XMarkdown 可在流式期间正常渲染公式，用户体验较好；
+- Streamdown 2.6.0 + `@streamdown/math` 存在尚未解决的高频流式公式 DOM 错乱问题（[vercel/streamdown#601](https://github.com/vercel/streamdown/issues/601)，open）；
+- "流式显示 LaTeX 原文、完成后才启用 KaTeX"虽然安全，但属于明显体验退步，暂不接受。
+
+暂停期约束：
+
+1. 正式产品继续使用 XMarkdown；
+2. 不引入 Streamdown、Tailwind、`@streamdown/math` 或 KaTeX 新依赖；
+3. 不采用双 Markdown 引擎（流式 Streamdown + 完成态 XMarkdown 的架构不做）；
+4. 不采用"完成后才渲染公式"的降级方案；
+5. spike 结论与实验分支 `codex/a1-s-streamdown-spike` 保留作参考，不合入产品。
+
+**恢复 A1-P 的条件（满足其一即可）**：
+
+- Streamdown 上游修复 #601，且在 Cyrene 高频流式公式矩阵中验证通过；
+- 能证明"公式块闭合后只渲染一次"既不会错乱，也不会出现明显视觉降级；
+- 出现其他成熟渲染器，同时通过流式性能、实时公式、安全语义和维护性验收。
+
+**A2 列表规模成本归因（独立实验，可独立进行，不依赖渲染器迁移）**——三段成本测量：① `assembleMessageItems` 拼装时间；② `Bubble.List` / React 协调时间；③ 浏览器样式/布局/绘制时间。现有数据 LayoutDuration 仅约 0.3–1ms 而 ScriptDuration 随历史数量明显增长，**优先怀疑 JavaScript 拼装/协调而非纯布局**。归因后决策：拼装主导 → 增量 item 索引或行级更新边界；协调主导 → 分页或虚拟化；两者均有 → 先分页限制上界，再评估虚拟化。
 
 ---
 
