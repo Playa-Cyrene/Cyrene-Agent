@@ -8,8 +8,6 @@
 
 **Primary repo**: [GitHub](https://github.com/Playa-0v0/Cyrene-Agent) ・ **Mirror for China**: [Gitee](https://gitee.com/playa0/cyrene-agent)
 
-> ⚠️ **Temporary notice (2026-09-13)**: Our GitHub account is temporarily suspended and under appeal, so the GitHub repository is currently inaccessible. Please clone from the Gitee mirror in the meantime; GitHub will be re-synced once restored.
-
 </div>
 
 
