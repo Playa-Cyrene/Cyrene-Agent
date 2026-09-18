@@ -418,19 +418,4 @@ export function getEmbeddingDiagnostics(): {
   };
 }
 
-// ── 场景识别专用 provider（固定 bge-m3，不受 RAG 模型切换影响）──
-let sceneProvider: EmbeddingProvider | null = null;
-
-/**
- * 获取场景识别专用的 embedding provider（固定 bge-m3）。
- * 和文档/记忆的 provider 独立——RAG 切换模型不影响场景识别。
- * 模型不存在时返回 null。
- */
-export function getSceneEmbeddingProvider(): EmbeddingProvider | null {
-  if (!sceneProvider) {
-    sceneProvider = createLocalEmbeddingProvider("bgem3");
-  }
-  return sceneProvider;
-}
-
 export { checkEmbeddingModelInstalled };

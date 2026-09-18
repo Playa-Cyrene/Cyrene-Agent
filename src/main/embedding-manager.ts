@@ -38,10 +38,16 @@ export function getEmbeddingStatus(): Record<string, { installed: boolean; sizeB
 
 // --- Download ---
 
+/**
+ * 下载并装配 embedding 模型。
+ *
+ * 曾经带一个 onProgress 回调，把进度经 IPC.EMBEDDING_PROGRESS 推给渲染端；但该通道
+ * 从来没有接收端（preload 与渲染端都未监听），属于未接线的残留，已连同常量一起删除。
+ * 若将来要做下载进度 UI，重新引入时应同时补上 preload 监听与设置页展示。
+ */
 export async function downloadEmbeddingModel(
   modelKey: string,
   mirror: string,
-  onProgress: (info: { model: string; file: string; progress: number; status: string }) => void
 ): Promise<void> {
   const model = MODELS.find((m) => m.key === modelKey);
   if (!model) throw new Error("Unknown model: " + modelKey);
@@ -56,16 +62,7 @@ export async function downloadEmbeddingModel(
   env.cacheDir = getCacheDir();
   env.allowLocalModels = false;
 
-  await pipeline("feature-extraction", model.name, {
-    progress_callback: (p: any) => {
-      onProgress({
-        model: modelKey,
-        file: p.file || "",
-        progress: p.progress || 0,
-        status: p.status || "downloading",
-      });
-    },
-  });
+  await pipeline("feature-extraction", model.name);
 }
 
 // --- Delete ---
