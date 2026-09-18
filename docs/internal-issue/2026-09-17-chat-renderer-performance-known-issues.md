@@ -414,6 +414,29 @@ A1-S 已完成、实验结论保留；但 A1-S 只证明 Streamdown 的普通 Ma
 - 能证明"公式块闭合后只渲染一次"既不会错乱，也不会出现明显视觉降级；
 - 出现其他成熟渲染器，同时通过流式性能、实时公式、安全语义和维护性验收。
 
+### A1-D 候选：DSH 增量块引擎 + XMarkdown 稳定块渲染（2026-09-18 源码级可行性分析，未实施）
+
+来源：DeepSeek Harness 仓库（`E:\deepseek-harness`）`packages/client/ui-primitives/src/markdown/`，MIT 许可。以下分析基于其源码与测试（64 项全过，已实际运行核实），**不表示 DeepSeek 网页端正在使用该实现**。其公开包为预发布且捆绑自家 CSS/高亮/KaTeX/组件体系，不整体安装，只评估算法层复用。
+
+**组合方案**：DSH 块边界/冻结算法（`incremental.ts`，约 360 行，单文件、仅依赖 mdast 类型 + 调用方注入的 parse 函数）+ XMarkdown 渲染稳定块与活动尾块。目标：稳定块只过一次 XMarkdown 并缓存；每 chunk 只有尾块经 XMarkdown（保留实时公式）；完成时整篇 XMarkdown 做一次最终校正；不引入 Streamdown，不自研渲染器。
+
+**已核实的引擎能力**（`incremental.ts` + `markdown-incremental.client.spec.tsx`）：末尾 2 块不稳定、更早块冻结；块 key 为绝对源码偏移（跨 chunk 稳定，React 按 key reconcile 不重挂载，测试以 DOM 实例追踪验证）；非前缀更新 generation+1 清空全部冻结状态；未闭合顶层围栏有逐行增量路径（已完成行不重复解析）；`update()` 幂等缓存；position-less 语法安全退化（全留 tail 不冻结）；设计文档自述的已知偏差——引用链接/脚注定义跨冻结边界时流式期间字面渲染、settle 全量解析自愈（测试锁定该行为指纹）。上层 `MarkdownText` 流式用 `parseGfm`、完成后用 `parseGfmWithMath`，即 DSH 现状同样是"公式完成后才渲染"——但这是其上层产品决策，`IncrementalMarkdownParser` 只接收注入语法，不限制数学。
+
+**八个问题的结论**：
+
+1. **能否为 XMarkdown 提供可靠边界（不复制 DSH 渲染器）**——能。引擎与渲染层完全解耦（`constructor(parse)` 注入）。但 DSH 注入的是 micromark/mdast 语法，XMarkdown 基于 marked：**跨家族双解析器**是 A1-D 特有风险（DSH 自己流式/完成两臂同为 micromark，无此问题）。边界不一致不影响正确性（XMarkdown 全权解析切片，切片在段落/块边界处取），最坏情况是冻结单位偏粗（如 `$$` 块在无 math 的 mdast 里并入段落，整段冻结）与流式期间片段渲染与全文渲染的可见差异（settle 校正兜底）。
+2. **PositionedBlock 需补绝对源码范围**——现状 `key` 已是绝对 start，但 `node.position` 相对解析切片、冻结时的 base（tailStart）未保留，无法还原原始字符串。需补 `range: { start, end }` 绝对偏移（冻结时刻可得，约 20 行改动，不动算法）。另注意切点取冻结末块 end offset、块间空行留在 tail：多块拼接渲染需在片段间补块级分隔（`\n\n`）。
+3. **多 XMarkdown 实例回归**——真实风险项，spike 必测：N 个 XMarkdown 根容器堆叠（DSH 渲染器块间是平级 `'\n'` 文本，我们是多容器）——块级 margin 不跨容器折叠（段间距变化，可用 `display: contents` 或负 margin 缓解，但需验证容器自身样式依赖）；冻结瞬间尾块→冻结区迁移 = 容器变化导致一次重挂载（动画重放/CodeHighlighter 重高亮闪烁）；`.cy-message-markdown` 现有 CSS 与 nth-child 类选择器需审计；滚动锚点与 React key（key=绝对偏移，容器列表 keyed）预计无碍但需实测。
+4. **尾块实时公式**——能。尾块每 chunk 经 XMarkdown（含 Latex 插件），`$...$`、`$$...$$`、`\(...\)`、`\[...\]` 全按现状渲染；未闭合公式在尾块的重复渲染即现状行为（现状是全文重复，A1-D 范围缩小到尾块）；公式随所在块闭合冻结后只渲染一次——**天然规避 Streamdown #601 类问题（无 ProcessorCache、无块内 KaTeX 状态复用），且不牺牲实时公式**。
+5. **非前缀/轮次/来源切换重置**——引擎内建：`!text.startsWith(prevText)` → generation+1 全清（含 openFence）；适配层以 generation 为 key 清块级元素缓存；message/round 切换按消息 key 重建 parser 实例（每消息一个实例，DSH 的 StreamingRenderer ref 模式，其测试覆盖 streaming→settled→streaming 翻转重建）。
+6. **退化路径**——长单段/长列表/长表格：整块留尾，每 chunk 重解析重渲染该块——退化为"不劣于现状"（现状是全部历史每 chunk 重渲染；A1-D 最坏=活动消息尾块重渲染）。未闭合围栏：解析增量有专门路径，但 XMarkdown/CodeHighlighter 仍全量渲染尾块围栏。所有形态下最坏=现状，不劣化。
+7. **spike 还是不可行**——**适合隔离 spike，无结构性障碍**。引擎单文件可 vendor（MIT）+ 约 20 行 range 补丁；主要不确定性全部是集成质量问题（重挂载闪烁、margin、双解析器一致性），可隔离验证。
+8. **相对 Streamdown 的优先级**——**值得成为下一优先实验**。理由：直接解决 A1-P 暂停的两个原因（实时公式保留、无 #601 类风险）；复用 XMarkdown 全部生态（组件、样式、file link、语义）零迁移成本；无需 Tailwind/KaTeX 新依赖（KaTeX 已在链上）。预期收益低于 A1-S 上限（尾块仍 XMarkdown，长列表/长段退化），区间取决于内容形态，harness 可量化。
+
+**主要风险（spike 必须量化）**：双解析器块边界一致性（marked vs micromark）；冻结迁移重挂载闪烁；多容器 margin/样式回归；长列表/表格/段落收益归零（仅保持现状）；引用/脚注跨边界流式期间字面渲染（DSH 已知偏差，settle 自愈，需产品确认可接受）。
+
+**若实施，隔离 spike 设计（不写代码，待批准）**：分支 `codex/a1-d-incremental-xmarkdown-spike`，vendor `incremental.ts`（含 range 补丁）至 react-perf，注入 remark-gfm 语法（是否加 math 语法由边界一致性测试定），块级 XMarkdown 实例（冻结块 `streaming=false` 一次性渲染缓存、尾块 `streaming=true`），完成时整篇 XMarkdown 校正，复用 A1-S 的 harness/注册/paired 模式。验收矩阵：markdown/mixed × 0/200/500 与 XMarkdown animated 同构建 paired 对照（帧 P95、evtP95、ScriptDuration、DOM 数量）；字符级追加的实时公式正确性（尾块 `$`/`$$`/`\(`/`\[` 逐 chunk 渲染断言）；冻结块 DOM 身份不变（按块 key 追踪实例）；非前缀替换完整清缓存；长段落/列表/表格/未闭合围栏退化路径各有专项；引用链接与脚注跨边界行为（fingerprint 记录 + settle 自愈断言）；Mermaid/SVG/代码高亮/文件链接及完成态语义全项；**外加 marked vs micromark 边界一致性 fuzz（逐 prefix 片段渲染 vs 全文渲染对照，DSH 测试 61 行同款方法）**。
+
 **A2 列表规模成本归因（独立实验，可独立进行，不依赖渲染器迁移）**——三段成本测量：① `assembleMessageItems` 拼装时间；② `Bubble.List` / React 协调时间；③ 浏览器样式/布局/绘制时间。现有数据 LayoutDuration 仅约 0.3–1ms 而 ScriptDuration 随历史数量明显增长，**优先怀疑 JavaScript 拼装/协调而非纯布局**。归因后决策：拼装主导 → 增量 item 索引或行级更新边界；协调主导 → 分页或虚拟化；两者均有 → 先分页限制上界，再评估虚拟化。
 
 ---
