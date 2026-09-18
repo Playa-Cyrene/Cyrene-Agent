@@ -113,6 +113,20 @@ describe("session runtime presentation state", () => {
     expect(next["session-b"]).toBe(state["session-b"]);
   });
 
+  it("patch 只替换目标消息对象：被改消息引用必变、同会话兄弟消息引用不变（阶段 2 派生缓存的前提）", () => {
+    const user: ChatMessageItem = { id: "user-a", role: "user", content: "请求" };
+    const assistant: ChatMessageItem = { id: "assistant-a", role: "assistant", content: "" };
+    const state = { "session-a": [user, assistant] };
+
+    const next = patchSessionMessage(state, "session-a", "assistant-a", { content: "delta" });
+
+    // 数组与被改消息必换新引用（缓存自动 miss 重算），兄弟消息保持原引用（缓存命中）
+    expect(next["session-a"]).not.toBe(state["session-a"]);
+    expect(next["session-a"][0]).toBe(user);
+    expect(next["session-a"][1]).not.toBe(assistant);
+    expect(next["session-a"][1].content).toBe("delta");
+  });
+
   it("does not replace a live run placeholder when the session is reopened", () => {
     const live = [{ id: "assistant-a", role: "assistant" as const, content: "streaming", streaming: true }];
     const stored = [{ id: "user-a", role: "user" as const, content: "request" }];

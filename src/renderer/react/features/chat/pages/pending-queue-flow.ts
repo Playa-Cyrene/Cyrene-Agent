@@ -39,7 +39,9 @@ export interface PendingQueueFlowHost {
 
 export interface PendingQueueFlow {
   /**
-   * 把一条消息入队到主进程权威队列：成功时刷新投影并返回 true；
+   * 把一条消息入队到主进程权威队列：会话忙时刷新投影显示队列并返回 true；
+   * 空闲时消息随即被认领转正，跳过投影刷新以免队列 Dock 闪现几帧（认领
+   * 结果会以权威剩余队列刷新投影，认领失败路径在 consume 里有兜底同步）。
    * 失败/异常保留草稿（由调用方控制）并按 notifyError 提示，返回 false。
    * 同模式同内容重试复用原稳定标识——入队回执丢失时靠主进程幂等去重，不产生重复消息。
    */
@@ -172,8 +174,12 @@ export function createPendingQueueFlow(getHost: () => PendingQueueFlowHost): Pen
       return false;
     }
     failedEnqueueIds.delete(cacheKey);
-    // 直接采用返回的权威队列刷新投影（按稳定标识对账；CHATS_CHANGED 广播作兜底）
-    host.replaceProjection(sessionId, result.queue.map((item) => ({ ...item })));
+    // 会话忙（消息会留队等待）才立即刷新投影；空闲会话的消息马上会被
+    // consume 认领转正，此刻刷投影会让队列 Dock 闪现几帧。
+    // 认领成功会以权威剩余队列刷新投影，认领失败/异常路径在 consume 里有兜底同步
+    if (host.isSessionBusy(sessionId)) {
+      host.replaceProjection(sessionId, result.queue.map((item) => ({ ...item })));
+    }
     return true;
   }
 
@@ -190,6 +196,8 @@ export function createPendingQueueFlow(getHost: () => PendingQueueFlowHost): Pen
       session = await store.get(sessionId);
     } catch (error) {
       console.warn("[pending-queue-flow] 读取会话失败，保留队首待下个触发点:", sessionId, error);
+      // 入队时跳过了投影刷新，这里兜底同步让仍在队列的消息可见
+      await syncProjection(sessionId);
       return;
     }
     if (!session) {
@@ -207,10 +215,16 @@ export function createPendingQueueFlow(getHost: () => PendingQueueFlowHost): Pen
       claim = await store.pendingClaim(sessionId);
     } catch (error) {
       console.warn("[pending-queue-flow] 认领请求异常，保留队首待下个触发点:", sessionId, error);
+      await syncProjection(sessionId);
       return;
     }
     // 写盘失败保留队首；already-dispatching 说明另一窗口刚认领（它会派发），本窗口退出
-    if (!claim.ok || !claim.claimed) return;
+    if (!claim.ok || !claim.claimed) {
+      // 消息未被本窗口认领（写盘失败/他窗已认领/队列已空）：
+      // 兜底同步投影，保证入队时跳过刷新的队列消息在页面上可见
+      await syncProjection(sessionId);
+      return;
+    }
     // 认领成功即持有权威剩余队列：按稳定标识替换投影
     host.replaceProjection(sessionId, claim.remainingQueue.map((item) => ({ ...item })));
     await startClaimedRun(mode, sessionId, claim);
@@ -260,6 +274,9 @@ export function createPendingQueueFlow(getHost: () => PendingQueueFlowHost): Pen
       visibleContent: userMessage.content,
       session,
     });
+    // 恢复的 run 进行期间队列里可能还有未认领消息（空闲入队时跳过了投影
+    // 刷新）：补一次同步让它们可见，等 run 结束再被消费
+    await syncProjection(sessionId);
   }
 
   /**

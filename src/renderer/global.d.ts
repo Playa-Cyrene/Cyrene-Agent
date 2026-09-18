@@ -5,6 +5,7 @@ import type { AppUpdateApi } from "../shared/app-update";
 import type { PluginManagementApi, PluginPanelApi } from "../shared/plugin-management";
 import type { MomentsApi } from "../shared/moments-types";
 import type { WorkspaceListResult, WorkspaceReadResult } from "../shared/workspace-files-types";
+import type { OpenInAppListResult, OpenInAppOpenResult } from "../shared/open-in-app-types";
 
 interface SystemApi {
   openExternal: (url: string) => Promise<{ ok: boolean; error?: string }>;
@@ -23,11 +24,19 @@ interface WorkspaceFilesApi {
   read: (sessionId: string, relPath: string) => Promise<WorkspaceReadResult>;
 }
 
+interface OpenInAppApi {
+  /** 探测本机可打开工作区的应用（主进程进程内缓存；不含固定的资源管理器项） */
+  listApps: (sessionId: string) => Promise<OpenInAppListResult>;
+  /** 执行打开动作：explorer 固定项 + 探测到的应用 id */
+  open: (sessionId: string, appId: string) => Promise<OpenInAppOpenResult>;
+}
+
 declare global {
   interface Window {
     system?: SystemApi;
     review?: ReviewApi;
     workspaceFiles?: WorkspaceFilesApi;
+    openInApp?: OpenInAppApi;
     appUpdate?: AppUpdateApi;
     plugins?: PluginManagementApi;
     pluginPanel?: PluginPanelApi;

@@ -9,6 +9,7 @@ import {
 } from "../../../../shared/moments-types";
 import { resolveAsset } from "../../../../shared/renderer-base";
 import { useTranslation } from "../../i18n";
+import { useFeedback } from "../../components/feedback/FeedbackProvider";
 import { formatMomentTime } from "./moments-utils";
 
 const CYRENE_AVATAR_URL = resolveAsset("avatars/cyrene-avatar.png");
@@ -69,6 +70,8 @@ export function MomentPostCard({
   onComment,
 }: MomentPostCardProps) {
   const { t } = useTranslation();
+  // 统一反馈入口：删除动态走危险确认
+  const feedback = useFeedback();
   const { post, comments, likes } = item;
   const [commenting, setCommenting] = useState(false);
   const [draft, setDraft] = useState("");
@@ -156,8 +159,16 @@ export function MomentPostCard({
           <button
             type="button"
             className="moment-card__delete"
-            onClick={() => {
-              if (window.confirm(t("moments.confirmDelete"))) onDelete(post.id);
+            onClick={async () => {
+              // 删除动态不可恢复：危险确认，默认聚焦取消，确认后才触发删除
+              const confirmed = await feedback.confirm({
+                title: t("moments.delete"),
+                message: t("moments.confirmDelete"),
+                confirmText: t("moments.delete"),
+                cancelText: t("moments.cancel"),
+                dangerous: true,
+              });
+              if (confirmed) onDelete(post.id);
             }}
           >
             <DeleteOutlined />

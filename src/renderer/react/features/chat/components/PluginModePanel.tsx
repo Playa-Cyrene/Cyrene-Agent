@@ -10,6 +10,7 @@ import type {
 } from "../../../../../shared/plugin-management";
 import { isNewerVersion } from "../../../../../shared/version";
 import { useTranslation } from "../../../i18n";
+import { useFeedback } from "../../../components/feedback/FeedbackProvider";
 import pluginIconUrl from "../../../assets/plugin.png?url";
 import "./PluginModePanel.css";
 
@@ -86,6 +87,8 @@ export function resolveMarketAction(
 
 export function PluginModePanel({ api: providedApi }: PluginModePanelProps) {
   const { t } = useTranslation();
+  // 统一反馈入口：删除插件走危险确认
+  const feedback = useFeedback();
   const api = providedApi ?? window.plugins;
   const [overview, setOverview] = useState<PluginOverview>({ plugins: [], issues: [] });
   const [filter, setFilter] = useState("");
@@ -247,7 +250,15 @@ export function PluginModePanel({ api: providedApi }: PluginModePanelProps) {
 
   const deletePlugin = useCallback(async (plugin: PluginListEntry) => {
     if (!api || plugin.source !== "user") return;
-    if (!window.confirm(t("pluginPanel.deleteConfirm", { name: plugin.name }))) return;
+    // 删除插件程序目录：危险确认，默认聚焦取消
+    const confirmed = await feedback.confirm({
+      title: t("pluginPanel.delete"),
+      message: t("pluginPanel.deleteConfirm", { name: plugin.name }),
+      confirmText: t("pluginPanel.delete"),
+      cancelText: t("common.cancel"),
+      dangerous: true,
+    });
+    if (!confirmed) return;
     const action = `${plugin.id}:delete`;
     setBusyAction(action);
     setError(null);
@@ -265,7 +276,7 @@ export function PluginModePanel({ api: providedApi }: PluginModePanelProps) {
     } finally {
       setBusyAction(null);
     }
-  }, [api, reload, t]);
+  }, [api, feedback, reload, t]);
 
   const inMarket = view === "market";
   const marketToggleLabel = inMarket ? t("pluginPanel.market.back") : t("pluginPanel.market.toggle");

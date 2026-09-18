@@ -143,8 +143,8 @@ describe("页面待发队列流程", () => {
     const ok = await flow.enqueue("s1", "chat", { id: "u-1", rawContent: "你好", visibleContent: "你好" });
     expect(ok).toBe(true);
     expect(store.pendingEnqueue).toHaveBeenCalledWith("s1", expect.objectContaining({ id: "u-1", rawContent: "你好" }));
-    // 投影直接采用返回的权威队列
-    expect(calls.projectionReplaces.at(-1)?.queue?.map((item) => item.id)).toEqual(["q-2", "q-3"]);
+    // 空闲会话入队不刷投影：消息马上会被认领转正，避免队列 Dock 闪现
+    expect(calls.projectionReplaces).toHaveLength(0);
 
     // 空闲会话立即认领派发
     store.get.mockResolvedValue(makeSession());
@@ -169,6 +169,44 @@ describe("页面待发队列流程", () => {
       resumeFromRunId: "run-old",
     });
     expect(calls.refreshedModes).toContain("chat");
+  });
+
+  it("空闲会话发送首条消息：入队不刷投影，认领往返期间队列 Dock 不再闪现", async () => {
+    const { flow, store, calls } = createHarness();
+    // 复现 ChatPage.sendMessage 在空闲会话上的真实时序：入队成功后立即消费。
+    // 认领是一次 IPC 往返且要写盘：用挂起的 Promise 卡住它，观察认领返回前的投影状态
+    store.pendingEnqueue.mockResolvedValue({ ok: true, queue: [makeQueueEntry("u-1")] });
+    store.get.mockResolvedValue(makeSession());
+    let resolveClaim!: (value: PendingClaimResult) => void;
+    store.pendingClaim.mockImplementation(
+      () => new Promise<PendingClaimResult>((resolve) => { resolveClaim = resolve; }),
+    );
+
+    // 第一步：入队确认成功——空闲会话不刷新投影，队列 Dock 不渲染这条消息
+    const enqueued = await flow.enqueue("s1", "chat", { id: "u-1", rawContent: "你好", visibleContent: "你好" });
+    expect(enqueued).toBe(true);
+    expect(calls.projectionReplaces).toHaveLength(0);
+
+    // 第二步：消费进行中（真实场景里是 IPC 往返 + 写盘的耗时窗口）：
+    // 投影始终未带上这条消息，Dock 全程不出现——这就是修复后的行为
+    const consuming = flow.consume("chat", "s1");
+    await flushAsync();
+    expect(calls.projectionReplaces).toHaveLength(0);
+
+    // 认领完成后以权威剩余队列（空）替换投影：无需经过"显示再清空"的中间态
+    resolveClaim(makeClaimed({ remainingQueue: [] }));
+    await consuming;
+    expect(calls.projectionReplaces).toEqual([{ sessionId: "s1", queue: [] }]);
+  });
+
+  it("会话忙时入队：立即刷新投影显示队列（消息会留队等待）", async () => {
+    const { flow, store, calls, busySessions } = createHarness();
+    busySessions.add("s1");
+    store.pendingEnqueue.mockResolvedValue({ ok: true, queue: [makeQueueEntry("u-1")] });
+
+    const ok = await flow.enqueue("s1", "chat", { id: "u-1", rawContent: "排队", visibleContent: "排队" });
+    expect(ok).toBe(true);
+    expect(calls.projectionReplaces.at(-1)?.queue?.map((item) => item.id)).toEqual(["u-1"]);
   });
 
   it("入队失败：报错保留草稿（返回 false）；同内容重试复用原稳定标识，成功后缓存清除", async () => {
@@ -326,14 +364,16 @@ describe("页面待发队列流程", () => {
     expect(store.get).toHaveBeenCalledWith("s2");
   });
 
-  it("认领写盘失败：保留队首不派发、投影不动；恢复后重试认领成功", async () => {
+  it("认领写盘失败：保留队首不派发；兜底同步投影让队列消息可见，恢复后重试认领成功", async () => {
     const { flow, store, calls } = createHarness();
     store.get.mockResolvedValue(makeSession());
     store.pendingClaim.mockResolvedValueOnce({ ok: false, error: "write-failed" });
 
     await flow.consume("chat", "s1");
     expect(calls.runs).toHaveLength(0);
-    expect(calls.projectionReplaces).toHaveLength(0);
+    // 认领失败：入队时跳过刷新的消息仍在权威队列里，兜底同步让页面可见
+    expect(store.pendingList).toHaveBeenCalledWith("s1");
+    expect(calls.projectionReplaces).toEqual([{ sessionId: "s1", queue: [] }]);
 
     // 下一个触发点重试：认领成功，正常派发
     store.get.mockResolvedValueOnce(makeSession());

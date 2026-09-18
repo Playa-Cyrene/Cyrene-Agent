@@ -84,7 +84,7 @@ describe("assistantRenderStages", () => {
       fileURLToPath(new URL("./ChatMessageList.tsx", import.meta.url)),
       "utf8",
     );
-    expect(source).toContain("const markdownComponents = { code: MarkdownCode };");
+    expect(source).toContain("const markdownComponents = { code: MarkdownCode, a: MarkdownAnchor };");
     expect(source).toContain("components={markdownComponents}");
     expect(source).not.toContain("componentDidUpdate(previousProps");
     expect(source).toContain("prismLightMode={false}");

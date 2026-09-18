@@ -58,12 +58,15 @@
     "errorChatStoreUnavailable": "The chat session service isn't ready yet",
     "newTaskTitle": "New task",
     "newChatTitle": "New chat",
+    "learnStructureConfirmTitle": "Add learning structure",
     "learnStructureConfirm": "Add the Cyrene learning structure to this Obsidian vault? Only missing files will be created — existing content won't be touched.",
+    "learnStructureFailedTitle": "Failed to add learning structure",
     "learnStructureFailed": "Failed to add learning structure: {{error}}",
     "learnStructureCreated": "Created {{created}} files/folders.",
     "learnStructureCreatedWithSkipped": "Created {{created}} files/folders, skipped {{skipped}} existing ones.",
     "emptyDirLearnStructureConfirm": "This is an empty directory. Cyrene can set up a learning workspace here (materials/, notes/, exercises/, templates/, learn/progress.md) so you can study together.\n\nCreate it?",
     "defaultWorkspaceName": "Project folder",
+    "setWorkspaceFailedTitle": "Failed to set workspace",
     "setWorkspaceFailed": "Failed to set workspace: {{error}}",
     "ingestFilesFailed": "Failed to ingest files: {{error}}",
     "pastedImageTooLargeSkipped": "The pasted image is over 20MB, so it was skipped.",
@@ -236,6 +239,13 @@
   "rightInspector": {
     "panelAria": "Inspector panel",
     "toggle": "Toggle right panel"
+  },
+  "openWorkspace": {
+    "tooltip": "Open workspace with {{app}}",
+    "menuToggle": "Choose open target",
+    "appExplorer": "File Explorer",
+    "detecting": "Detecting local apps…",
+    "openError": "Failed to open, please retry"
   },
   "fileTree": {
     "viewPreview": "Preview",

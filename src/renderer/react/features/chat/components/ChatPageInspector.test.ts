@@ -22,6 +22,7 @@ describe("ChatPageInspector", () => {
       sessionId: undefined,
       workspaceRoot: undefined,
       filesTabOpen: false,
+      filesTabPinned: false,
       fileTabs: [],
       diffTabs: [],
       activePlan: null,

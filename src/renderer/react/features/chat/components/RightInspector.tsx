@@ -14,6 +14,8 @@ export interface InspectorTab {
   label: string;
   /** 阶段色点 class（如 is-review / is-executing / is-completed），不传则不显示 */
   dotClass?: string;
+  /** 是否允许关闭（chip 上的 × 和右上角按钮都受它控制）；不传默认可关 */
+  closable?: boolean;
   content: ReactNode;
 }
 
@@ -47,6 +49,7 @@ export function RightInspector({
         }}
         items={tabs.map((tab) => ({
           key: tab.id,
+          closable: tab.closable !== false,
           label: (
             <>
               {tab.dotClass && (
@@ -59,16 +62,18 @@ export function RightInspector({
         }))}
         tabBarExtraContent={{
           right: (
-            <button
-              type="button"
-              className="cy-right-inspector__close"
-              onClick={() => onCloseTab(active.id)}
-              aria-label={t("common.close")}
-            >
-              <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-                <path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="1.75" />
-              </svg>
-            </button>
+            active.closable !== false && (
+              <button
+                type="button"
+                className="cy-right-inspector__close"
+                onClick={() => onCloseTab(active.id)}
+                aria-label={t("common.close")}
+              >
+                <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+                  <path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="1.75" />
+                </svg>
+              </button>
+            )
           ),
         }}
       />

@@ -23,6 +23,10 @@ export interface ChatPageInspectorDiffTab {
 export interface ChatPageInspectorFileTab {
   id: string;
   relPath: string;
+  /** 从消息链接跳转过来时携带的定位行（1 起） */
+  line?: number;
+  /** 定位序号：同一标签重复点击不同行号时靠它触发重新滚动 */
+  lineSeq?: number;
 }
 
 export interface ChatPageInspectorProps {
@@ -30,6 +34,8 @@ export interface ChatPageInspectorProps {
   /** 工作区根路径（未绑定时为空，文件树显示引导态） */
   workspaceRoot?: string;
   filesTabOpen: boolean;
+  /** 文件树标签被钉住（面板里还有其它标签时不可关） */
+  filesTabPinned: boolean;
   fileTabs: ChatPageInspectorFileTab[];
   diffTabs: ChatPageInspectorDiffTab[];
   activePlan: { content: string; phase: PlanReviewPhase } | null;
@@ -47,6 +53,7 @@ export function ChatPageInspector({
   sessionId,
   workspaceRoot,
   filesTabOpen,
+  filesTabPinned,
   fileTabs,
   diffTabs,
   activePlan,
@@ -64,6 +71,8 @@ export function ChatPageInspector({
     tabs.push({
       id: "files",
       label: t("fileTree.title"),
+      // 被钉住的文件树标签隐藏 chip 上的 ×，右上角关闭按钮也对它无效
+      closable: !filesTabPinned,
       content: (
         <FileTreePanel
           sessionId={sessionId}
@@ -77,7 +86,9 @@ export function ChatPageInspector({
     tabs.push({
       id: tab.id,
       label: fileBaseName(tab.relPath),
-      content: sessionId ? <FilePreviewContent sessionId={sessionId} relPath={tab.relPath} /> : null,
+      content: sessionId
+        ? <FilePreviewContent sessionId={sessionId} relPath={tab.relPath} scrollToLine={tab.line} lineSeq={tab.lineSeq} />
+        : null,
     });
   }
   for (const tab of diffTabs) {

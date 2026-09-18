@@ -1,0 +1,70 @@
+/* React 反馈适配层样式：作用域限定在 .cy-feedback-modal / .cy-feedback-notice，
+   复用与设置页一致的 --rb-feedback-* 设计 Token（轻盈品牌化视觉） */
+
+/* ── 轻提示 ── */
+.cy-feedback-notice {
+  border-radius: 12px;
+  background: var(--rb-feedback-surface);
+  color: var(--rb-feedback-fg);
+  box-shadow: var(--rb-feedback-shadow);
+}
+
+/* ── 模态框 ── */
+.cy-feedback-modal .ant-modal-content {
+  border-radius: 18px;
+  background: var(--rb-feedback-surface);
+  border: 1px solid var(--rb-feedback-border);
+  box-shadow: var(--rb-feedback-shadow);
+  padding: 22px;
+}
+
+.cy-feedback-modal .ant-modal-header {
+  background: transparent;
+}
+
+.cy-feedback-modal .ant-modal-title {
+  color: var(--rb-feedback-fg);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.cy-feedback-modal .ant-modal-body {
+  color: var(--rb-feedback-muted);
+}
+
+.cy-feedback-modal .ant-modal-footer {
+  margin-top: 18px;
+}
+
+.cy-feedback-modal .ant-modal-footer .ant-btn {
+  border-radius: 10px;
+}
+
+/* 错误信息弹窗的折叠详情 */
+.cy-feedback-alert__content p {
+  margin: 0;
+}
+
+.cy-feedback-alert__content details {
+  margin-top: 10px;
+}
+
+.cy-feedback-alert__content summary {
+  cursor: pointer;
+  color: var(--rb-feedback-muted);
+  user-select: none;
+}
+
+.cy-feedback-alert__content pre {
+  margin-top: 8px;
+  padding: 10px 12px;
+  max-height: 220px;
+  overflow: auto;
+  border-radius: 10px;
+  background: var(--rb-feedback-details-bg);
+  color: var(--rb-feedback-fg);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-all;
+}

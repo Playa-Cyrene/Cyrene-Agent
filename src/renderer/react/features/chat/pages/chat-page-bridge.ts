@@ -138,21 +138,14 @@ export interface ChoiceApi {
   resolve: (id: string, value: unknown) => Promise<{ ok: boolean }>;
 }
 
-export interface PermissionApprovalRequest {
-  id: string;
-  runId?: string;
-  toolId: string;
-  toolName: string;
-  toolDescription: string;
-  args: Record<string, unknown>;
-  risk: string;
-}
-
-export interface PermissionApprovalSettled {
-  id: string;
-  runId?: string;
-  reason: "answered" | "cancelled" | "unavailable";
-}
+/**
+ * 审批载荷类型的唯一声明在 shared（主进程 / preload / 渲染端共用同一份）。
+ * 这里用别名保留渲染端既有名字，避免大面积改 import。
+ */
+export type {
+  ApprovalRequest as PermissionApprovalRequest,
+  ApprovalSettledPayload as PermissionApprovalSettled,
+} from "../../../../../shared/permission-approval";
 
 export interface SettingsApprovalApi {
   onPermissionApprovalRequest: (callback: (request: PermissionApprovalRequest) => void) => () => void;

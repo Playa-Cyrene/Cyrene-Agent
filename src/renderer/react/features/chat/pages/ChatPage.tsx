@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "../../../i18n";
 import { DownOutlined } from "@ant-design/icons";
 import { Group, Panel, Separator, useDefaultLayout } from "react-resizable-panels";
@@ -64,6 +64,7 @@ import { useComposerAttachments } from "../hooks/useComposerAttachments";
 import { useSessionMessages } from "../hooks/useSessionMessages";
 import { useSchedulerEvents } from "../hooks/useSchedulerEvents";
 import { useChannelMirrorEvents } from "../hooks/useChannelMirrorEvents";
+import { useFeedback } from "../../../components/feedback/FeedbackProvider";
 import { AgentRunController, type AgentRunInput } from "./run/AgentRunController";
 import {
   clearSessionInteraction,
@@ -83,6 +84,7 @@ import {
 } from "./pending-queue-flow";
 import "../../../components/ui/SidebarToggle.css";
 import { InspectorToggle } from "../../../components/ui/InspectorToggle";
+import { OpenWorkspaceMenu } from "../components/OpenWorkspaceMenu";
 import "../../../components/ui/ModeSwitch.css";
 import "../../../components/ui/WindowControls.css";
 import "../../../components/ui/SettingsButton.css";
@@ -107,8 +109,47 @@ export {
   type OpenSessionArgs,
 };
 
+// 空列表固定引用：sessionsByMode[mode] 未加载时避免每次渲染产生新数组穿透导航 memo
+const EMPTY_SESSIONS: ChatSessionMeta[] = [];
+
+// 会话列表内容浅比较：run 结束等触发的重复刷新内容未变时保持原引用，
+// 避免无谓的 sessionsByMode 新引用穿透导航/侧栏 memo（阶段 1A）
+function sessionMetaListEqual(a: ChatSessionMeta[], b: ChatSessionMeta[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    const x = a[i]!;
+    const y = b[i]!;
+    if (
+      x.id !== y.id
+      || x.title !== y.title
+      || x.identityId !== y.identityId
+      || x.createdAt !== y.createdAt
+      || x.updatedAt !== y.updatedAt
+      || x.messageCount !== y.messageCount
+      || x.purpose !== y.purpose
+      || x.mode !== y.mode
+      || x.workspaceRoot !== y.workspaceRoot
+      || x.workspaceDisplayName !== y.workspaceDisplayName
+      || x.pinned !== y.pinned
+    ) return false;
+  }
+  return true;
+}
+
+/** 导航动作函数的最小签名（供 navActionsRef 转发，见组件内注释） */
+interface NavActions {
+  createNewTask: () => Promise<void>;
+  selectSession: (sessionId: string, targetMode?: ConversationMode) => Promise<void>;
+  handleRenameSession: (sessionId: string, newTitle: string) => Promise<void>;
+  handleDeleteSession: (sessionId: string) => Promise<void>;
+  handleTogglePinSession: (sessionId: string, pinned: boolean) => Promise<void>;
+  openProject: (workspaceRoot: string) => void;
+}
+
 export function ChatPage() {
   const { t } = useTranslation();
+  // 统一反馈入口：错误轻提示 / 需阅读的错误弹窗 / 危险确认
+  const feedback = useFeedback();
   const preferredAddress = useUserCallPreference();
   const [collapsed, setCollapsed] = useState(false);
   const [activePanel, setActivePanel] = useState<ChatPagePanel | null>(null);
@@ -117,7 +158,7 @@ export function ChatPage() {
     { id: string; runId: string; fileIndex: number; filePath: string }[]
   >([]);
   /** 右侧面板已打开的文件预览标签，ID 规范 file:<相对路径> */
-  const [fileTabs, setFileTabs] = useState<{ id: string; relPath: string }[]>([]);
+  const [fileTabs, setFileTabs] = useState<{ id: string; relPath: string; line?: number; lineSeq?: number }[]>([]);
   /** 工作区文件树标签是否打开（ID 固定为 files） */
   const [filesTabOpen, setFilesTabOpen] = useState(false);
   /** 右侧面板当前激活的标签 ID（files / file:... / diff:... / plan:...），null 时面板取第一个标签 */
@@ -182,6 +223,10 @@ export function ChatPage() {
   // 滚动到底部按钮状态
   const [scrollToBottomVisible, setScrollToBottomVisible] = useState(false);
   const scrollToBottomRef = useRef<() => void>(() => {});
+  // 阶段 1B：注册回调稳定化——ChatMessageList 的注册 effect 依赖该引用，避免每次渲染反复注销/重注册
+  const registerScrollToBottom = useCallback((scroll: () => void) => {
+    scrollToBottomRef.current = scroll;
+  }, []);
 
   // 消息域：渲染态消息按会话存储；补丁通道供 run 事件流、TTS、取消与附件预处理共用
   const {
@@ -379,14 +424,14 @@ export function ChatPage() {
       void refreshSessions(targetMode, false);
     },
     startRun: runModel,
-    reportError: (message) => window.alert(message),
+    reportError: (message) => feedback.notice({ tone: "error", message }),
   };
   const queueFlowRef = useRef<PendingQueueFlow | null>(null);
   if (!queueFlowRef.current) {
     queueFlowRef.current = createPendingQueueFlow(() => queueFlowHostRef.current!);
   }
   const queueFlow = queueFlowRef.current;
-  const sessions = sessionsByMode[mode] ?? [];
+  const sessions = sessionsByMode[mode] ?? EMPTY_SESSIONS;
   const [activeSession, setActiveSession] = useState<ChatSession | null>(null);
   // 会话级最新上下文快照（环形图优先读取点）：run 事件实时写入；
   // 手动压缩后随会话重载从 session.currentContextUsage 初始化（known-issues 问题 3）。
@@ -632,6 +677,16 @@ export function ChatPage() {
     void chatStore()?.setMessageTtsCacheKey(sessionId, messageId, cacheKey, converterVersion);
   }
 
+  // 阶段 1B：TTS 缓存回调稳定化——roles 依赖该引用，仅会话切换时换新；
+  // 内部 updateMessage 走函数式 setState，捕获旧闭包安全
+  const handleTtsCacheKeyForActiveSession = useCallback(
+    (messageId: string, cacheKey: string, converterVersion: string) => {
+      if (!activeSessionId) return;
+      handleTtsCacheKey(activeSessionId, messageId, cacheKey, converterVersion);
+    },
+    [activeSessionId],
+  );
+
   function createEarlyTtsQueue(
     targetMode: ConversationMode,
     sessionId: string,
@@ -758,7 +813,12 @@ export function ChatPage() {
     const store = chatStore();
     if (!store) return;
     const listed = await store.list({ mode: targetMode });
-    setSessionsByMode((current) => ({ ...current, [targetMode]: listed }));
+    // 内容未变时返回原引用：React 对同引用 state 会 bailout，导航/侧栏 memo 不再被重复刷新穿透
+    setSessionsByMode((current) => {
+      const existing = current[targetMode];
+      if (existing && sessionMetaListEqual(existing, listed)) return current;
+      return { ...current, [targetMode]: listed };
+    });
     if (!selectCurrent) return;
     const currentId = activeSessionIdsRef.current[targetMode];
     const nextId = listed.some((session) => session.id === currentId) ? currentId : listed[0]?.id;
@@ -918,19 +978,40 @@ export function ChatPage() {
     }
   }
 
-  async function editLastChatUserMessage(messageId: string, content: string): Promise<boolean> {
+  async function editLastChatUserMessageImpl(messageId: string, content: string): Promise<boolean> {
     const sessionId = activeSessionIdsRef.current.chat;
-    const lastTurn = resolveRevisableLastTurn(sessionId ? (messagesBySession[sessionId] ?? []) : [], "chat");
+    const lastTurn = resolveRevisableLastTurn(sessionId ? (messagesBySessionRef.current[sessionId] ?? []) : [], "chat");
     if (!lastTurn || lastTurn.userMessageId !== messageId) return false;
     return restartLastChatTurn(lastTurn.userMessageId, lastTurn.assistantMessageId, content);
   }
 
-  async function regenerateLastChatResponse(
+  async function regenerateLastChatResponseImpl(
     userMessageId: string,
     assistantMessageId: string,
   ): Promise<boolean> {
     return restartLastChatTurn(userMessageId, assistantMessageId);
   }
+
+  // 阶段 1B：编辑/重新生成回调稳定化（同 navActionsRef 模式）——ChatMessageList 的 roles
+  // 依赖这两个引用，每次渲染新建会连锁重建 roles（全部气泡重渲染）。实现走 ref 取最新闭包。
+  const lastTurnActionsRef = useRef({
+    editLastChatUserMessage: editLastChatUserMessageImpl,
+    regenerateLastChatResponse: regenerateLastChatResponseImpl,
+  });
+  lastTurnActionsRef.current = {
+    editLastChatUserMessage: editLastChatUserMessageImpl,
+    regenerateLastChatResponse: regenerateLastChatResponseImpl,
+  };
+  const editLastChatUserMessage = useCallback(
+    async (messageId: string, content: string): Promise<boolean> =>
+      lastTurnActionsRef.current.editLastChatUserMessage(messageId, content),
+    [],
+  );
+  const regenerateLastChatResponse = useCallback(
+    async (userMessageId: string, assistantMessageId: string): Promise<boolean> =>
+      lastTurnActionsRef.current.regenerateLastChatResponse(userMessageId, assistantMessageId),
+    [],
+  );
 
   async function ensureSession(targetMode: ConversationMode): Promise<string> {
     const existing = activeSessionIdsRef.current[targetMode];
@@ -966,19 +1047,31 @@ export function ChatPage() {
   async function initVaultStructure(sessionId: string, options?: { confirm?: boolean }) {
     const store = chatStore();
     if (!store) return;
-    const confirmed = options?.confirm === false || window.confirm(
-      t("chatPage.learnStructureConfirm")
-    );
+    // 结构学习会在工作区写入文件：覆盖性选择，需确认后执行
+    const confirmed = options?.confirm === false || await feedback.confirm({
+      title: t("chatPage.learnStructureConfirmTitle"),
+      message: t("chatPage.learnStructureConfirm"),
+      confirmText: t("common.confirm"),
+    });
     if (!confirmed) return;
     const result = await store.initLearnWorkspace(sessionId);
     if (!result.ok) {
-      window.alert(t("chatPage.learnStructureFailed", { error: result.error ?? t("chatPage.unknownError") }));
+      // 长操作失败：错误详情需阅读，用单按钮错误弹窗
+      await feedback.alert({
+        tone: "error",
+        title: t("chatPage.learnStructureFailedTitle"),
+        message: t("chatPage.learnStructureFailed", { error: result.error ?? t("chatPage.unknownError") }),
+      });
     } else {
       const created = result.created?.length ?? 0;
       const skipped = result.skipped?.length ?? 0;
-      window.alert(skipped > 0
-        ? t("chatPage.learnStructureCreatedWithSkipped", { created, skipped })
-        : t("chatPage.learnStructureCreated", { created }));
+      // 普通成功反馈：非阻塞轻提示
+      feedback.notice({
+        tone: "success",
+        message: skipped > 0
+          ? t("chatPage.learnStructureCreatedWithSkipped", { created, skipped })
+          : t("chatPage.learnStructureCreated", { created }),
+      });
     }
   }
 
@@ -997,14 +1090,21 @@ export function ChatPage() {
     if (activeId) {
       const result = await store.setWorkspace(activeId, workspace.path);
       if (!result.ok) {
-        window.alert(t("chatPage.setWorkspaceFailed", { error: result.error ?? t("chatPage.unknownError") }));
+        // 长操作失败：错误详情需阅读，用单按钮错误弹窗
+        await feedback.alert({
+          tone: "error",
+          title: t("chatPage.setWorkspaceFailedTitle"),
+          message: t("chatPage.setWorkspaceFailed", { error: result.error ?? t("chatPage.unknownError") }),
+        });
         return;
       }
       // Learn 模式：空目录询问是否初始化通用学习结构
       if (targetMode === "learn" && result.isEmpty) {
-        const confirmed = window.confirm(
-          t("chatPage.emptyDirLearnStructureConfirm")
-        );
+        const confirmed = await feedback.confirm({
+          title: t("chatPage.learnStructureConfirmTitle"),
+          message: t("chatPage.emptyDirLearnStructureConfirm"),
+          confirmText: t("common.confirm"),
+        });
         if (confirmed) {
           await initVaultStructure(activeId, { confirm: false });
         }
@@ -1114,9 +1214,11 @@ export function ChatPage() {
         ));
       }
       if (workspaceResult?.ok && targetMode === "learn" && workspaceResult.isEmpty) {
-        const confirmed = window.confirm(
-          t("chatPage.emptyDirLearnStructureConfirm")
-        );
+        const confirmed = await feedback.confirm({
+          title: t("chatPage.learnStructureConfirmTitle"),
+          message: t("chatPage.emptyDirLearnStructureConfirm"),
+          confirmText: t("common.confirm"),
+        });
         if (confirmed) {
           await initVaultStructure(sessionId, { confirm: false });
         }
@@ -1224,7 +1326,8 @@ export function ChatPage() {
     if (!store) return;
     const result = await store.pendingRemove(sessionId, id);
     if (!result.ok) {
-      window.alert(t("chatPage.errorQueueRemoveFailed", { error: result.error ?? t("chatPage.unknownError") }));
+      // 简短失败反馈：非阻塞错误轻提示
+      feedback.notice({ tone: "error", message: t("chatPage.errorQueueRemoveFailed", { error: result.error ?? t("chatPage.unknownError") }) });
       return;
     }
     await queueFlow.syncProjection(sessionId);
@@ -1294,13 +1397,16 @@ export function ChatPage() {
   }, [activeSessionId]);
 
   /** 打开/激活一个 diff 标签：同 runId + 文件路径已存在则仅激活，不重复开 */
-  const openDiffTab = (runId: string, fileIndex: number, filePath: string) => {
+  // 阶段 1B：useCallback 稳定引用——作为 onOpenReviewInspector 进 roles 依赖，每次渲染新建会连锁重建 roles
+  const openDiffTab = useCallback((runId: string, fileIndex: number, filePath: string) => {
     const id = `diff:${runId}:${filePath || `#${fileIndex}`}`;
     setDiffTabs((tabs) =>
       tabs.some((tab) => tab.id === id) ? tabs : [...tabs, { id, runId, fileIndex, filePath }],
     );
+    // 点开 diff 时自动带出文件树标签（会话已绑定工作区才有意义）
+    if (activeSession?.workspaceBinding) setFilesTabOpen(true);
     setActiveTabId(id);
-  };
+  }, [activeSession?.workspaceBinding]);
 
   /** 打开/激活文件树标签 */
   const openFilesTab = () => {
@@ -1317,12 +1423,29 @@ export function ChatPage() {
     setActiveTabId(null);
   };
 
-  /** 打开/激活一个文件预览标签：同路径只激活不重开 */
-  const openFileTab = (relPath: string) => {
+  /** 打开/激活一个文件预览标签：同路径只激活不重开；带行号时更新定位并触发滚动 */
+  const fileLineSeqRef = useRef(0);
+  // 阶段 1B：useCallback 稳定引用——进 fileLinkEnv 依赖，防止 FileLink 消费者全量更新
+  const openFileTab = useCallback((relPath: string, line?: number) => {
     const id = `file:${relPath}`;
-    setFileTabs((tabs) => (tabs.some((tab) => tab.id === id) ? tabs : [...tabs, { id, relPath }]));
+    setFileTabs((tabs) => {
+      const existing = tabs.some((tab) => tab.id === id);
+      if (!existing) {
+        return [...tabs, line === undefined ? { id, relPath } : { id, relPath, line, lineSeq: ++fileLineSeqRef.current }];
+      }
+      // 已打开：带行号则更新定位（lineSeq 变化触发预览重新滚动），不带则清除定位
+      return tabs.map((tab) =>
+        tab.id === id
+          ? line === undefined
+            ? { ...tab, line: undefined, lineSeq: undefined }
+            : { ...tab, line, lineSeq: ++fileLineSeqRef.current }
+          : tab,
+      );
+    });
+    // 文件预览与 diff 一样：打开时自动带出文件树标签
+    if (activeSession?.workspaceBinding) setFilesTabOpen(true);
     setActiveTabId(id);
-  };
+  }, [activeSession?.workspaceBinding]);
 
   /** 计划标签 ID：会话内唯一（计划内容始终跟随当前会话） */
   const planTabId = `plan:${activeSessionId ?? "session"}`;
@@ -1335,10 +1458,23 @@ export function ChatPage() {
     ...((activePlan !== null && planDrawerOpen) ? [planTabId] : []),
   ];
 
+  /**
+   * 文件树标签是否被钉住：面板里还有 diff / 文件预览 / 计划标签时，
+   * 文件树不可关闭（chip 无 ×、右上角关闭按钮对它无效），
+   * 只剩它一个时恢复可关——关掉即收起整个面板。
+   */
+  const filesTabPinned = filesTabOpen
+    && (fileTabs.length > 0 || diffTabs.length > 0 || (activePlan !== null && planDrawerOpen));
+
   /** 关闭右侧面板标签：活动标签关闭后回退到相邻标签（优先左侧） */
   const closeInspectorTab = (id: string) => {
     const index = inspectorTabIds.indexOf(id);
     if (index < 0) return;
+    // 钉住的文件树标签：关闭请求降级为激活它
+    if (id === "files" && filesTabPinned) {
+      setActiveTabId("files");
+      return;
+    }
     const remaining = inspectorTabIds.filter((tabId) => tabId !== id);
     if (id === "files") {
       setFilesTabOpen(false);
@@ -1354,6 +1490,64 @@ export function ChatPage() {
     }
   };
 
+  // ── 阶段 1A：导航 props 引用稳定化 ──
+  // 下方 6 个动作函数读取大量页面状态、内部调用链每次渲染都产生新引用，
+  // 属"需读最新状态且引用不能变"的场景：用 ref 转发当次渲染的最新实现，
+  // 外层回调引用恒定，配合 React.memo 让导航/侧栏子树在流式期间保持命中。
+  const navActionsRef = useRef<NavActions>({
+    createNewTask: () => Promise.resolve(),
+    selectSession: () => Promise.resolve(),
+    handleRenameSession: () => Promise.resolve(),
+    handleDeleteSession: () => Promise.resolve(),
+    handleTogglePinSession: () => Promise.resolve(),
+    openProject: () => undefined,
+  });
+  // 渲染期同步最新实现（函数声明在组件体内提升，此处可安全引用）
+  navActionsRef.current = {
+    createNewTask,
+    selectSession,
+    handleRenameSession,
+    handleDeleteSession,
+    handleTogglePinSession,
+    openProject: (workspaceRoot) => {
+      void chatStore()?.openWorkspace(workspaceRoot).then((result) => {
+        // 简短失败反馈：非阻塞错误轻提示
+        if (!result.ok) feedback.notice({ tone: "error", message: t("chatPage.openProjectFolderFailed", { error: result.error ?? t("chatPage.unknownError") }) });
+      });
+    },
+  };
+
+  const navToggleCollapsed = useCallback(() => setCollapsed((value) => !value), []);
+  const navModeChange = useCallback((nextMode: string) => {
+    if (isConversationMode(nextMode)) setMode(nextMode);
+  }, []);
+  const navNewTask = useCallback(() => {
+    void navActionsRef.current.createNewTask();
+  }, []);
+  const navTogglePanel = useCallback((panel: ChatPagePanel) => {
+    setActivePanel((current) => current === panel ? null : panel);
+  }, []);
+  const navSelectSession = useCallback((sessionId: string) => {
+    setActivePanel(null);
+    void navActionsRef.current.selectSession(sessionId);
+  }, []);
+  const navOpenProject = useCallback((workspaceRoot: string) => {
+    navActionsRef.current.openProject(workspaceRoot);
+  }, []);
+  const navRenameSession = useCallback((sessionId: string, newTitle: string) => {
+    void navActionsRef.current.handleRenameSession(sessionId, newTitle);
+  }, []);
+  const navDeleteSession = useCallback((sessionId: string) => {
+    void navActionsRef.current.handleDeleteSession(sessionId);
+  }, []);
+  const navTogglePinSession = useCallback((sessionId: string, pinned: boolean) => {
+    void navActionsRef.current.handleTogglePinSession(sessionId, pinned);
+  }, []);
+  const navMinimize = useCallback(() => window.chat?.minimize(), []);
+  const navMaximize = useCallback(() => window.chat?.toggleMaximize(), []);
+  const navCloseWindow = useCallback(() => window.chat?.close(), []);
+  const navOpenSettings = useCallback(() => sidebarApi()?.openSettings("appearance"), []);
+
   return (
     <div className={`cy-page ${collapsed ? "is-collapsed" : ""}`}>
       <ChatPageNavigation
@@ -1362,30 +1556,19 @@ export function ChatPage() {
         mode={mode}
         sessions={sessions}
         activeSessionId={activeSessionId}
-        onToggleCollapsed={() => setCollapsed((value) => !value)}
-        onModeChange={(nextMode) => {
-          if (isConversationMode(nextMode)) setMode(nextMode);
-        }}
-        onNewTask={() => void createNewTask()}
-        onTogglePanel={(panel: ChatPagePanel) => {
-          setActivePanel((current) => current === panel ? null : panel);
-        }}
-        onSelectSession={(sessionId) => {
-          setActivePanel(null);
-          void selectSession(sessionId);
-        }}
-        onOpenProject={(workspaceRoot) => {
-          void chatStore()?.openWorkspace(workspaceRoot).then((result) => {
-            if (!result.ok) window.alert(t("chatPage.openProjectFolderFailed", { error: result.error ?? t("chatPage.unknownError") }));
-          });
-        }}
-        onRenameSession={(sessionId, newTitle) => void handleRenameSession(sessionId, newTitle)}
-        onDeleteSession={(sessionId) => void handleDeleteSession(sessionId)}
-        onTogglePinSession={(sessionId, pinned) => void handleTogglePinSession(sessionId, pinned)}
-        onMinimize={() => window.chat?.minimize()}
-        onMaximize={() => window.chat?.toggleMaximize()}
-        onCloseWindow={() => window.chat?.close()}
-        onOpenSettings={() => sidebarApi()?.openSettings("appearance")}
+        onToggleCollapsed={navToggleCollapsed}
+        onModeChange={navModeChange}
+        onNewTask={navNewTask}
+        onTogglePanel={navTogglePanel}
+        onSelectSession={navSelectSession}
+        onOpenProject={navOpenProject}
+        onRenameSession={navRenameSession}
+        onDeleteSession={navDeleteSession}
+        onTogglePinSession={navTogglePinSession}
+        onMinimize={navMinimize}
+        onMaximize={navMaximize}
+        onCloseWindow={navCloseWindow}
+        onOpenSettings={navOpenSettings}
       />
       {/* 右栏可拖宽布局：聊天区 Panel 常驻（保证内容不重挂载），右侧面板按需挂载 */}
       <Group
@@ -1405,9 +1588,15 @@ export function ChatPage() {
         onDrop={dragHandlers.onDrop}
       >
         <FileDropOverlay visible={isDraggingFiles} />
-        {/* 白色工作区右上角：右侧面板展开/收起开关（左上角 SidebarToggle 的镜像同款动画） */}
+        {/* 白色工作区右上角：打开菜单 + 分割线 + 右侧面板展开/收起开关（左上角 SidebarToggle 的镜像同款动画） */}
         {(activeSession?.workspaceBinding || inspectorTabIds.length > 0) && (
           <span className="cy-inspector-toggle-float">
+            {activeSession?.workspaceBinding && activeSessionId && (
+              <>
+                <OpenWorkspaceMenu sessionId={activeSessionId} />
+                <span className="cy-inspector-toggle-divider" aria-hidden="true" />
+              </>
+            )}
             <InspectorToggle
               open={inspectorTabIds.length > 0}
               onToggle={() => (inspectorTabIds.length > 0 ? collapseInspector() : openFilesTab())}
@@ -1459,21 +1648,12 @@ export function ChatPage() {
             revisionBusy={Boolean(modelBusyByMode[mode]) || lastTurnRevisionStarting}
             onEditLastUserMessage={mode === "chat" ? editLastChatUserMessage : undefined}
             onRegenerateLastResponse={mode === "chat" ? regenerateLastChatResponse : undefined}
-            onTtsCacheKey={activeSessionId
-              ? (messageId, cacheKey, converterVersion) => handleTtsCacheKey(
-                activeSessionId,
-                messageId,
-                cacheKey,
-                converterVersion,
-              )
-              : undefined}
+            onTtsCacheKey={activeSessionId ? handleTtsCacheKeyForActiveSession : undefined}
             onScrollToBottomVisibilityChange={setScrollToBottomVisible}
-            onRegisterScrollToBottom={(scroll) => {
-              scrollToBottomRef.current = scroll;
-            }}
-            onOpenReviewInspector={(runId, fileIndex, filePath) => {
-              openDiffTab(runId, fileIndex, filePath);
-            }}
+            onRegisterScrollToBottom={registerScrollToBottom}
+            onOpenReviewInspector={openDiffTab}
+            workspaceRoot={activeSession?.workspaceBinding?.workspaceRoot}
+            onOpenFileLink={openFileTab}
           />
         )}
         <ContextCompressionNotice visible={isCompressingContext} />
@@ -1610,6 +1790,7 @@ export function ChatPage() {
                 sessionId={activeSessionId}
                 workspaceRoot={activeSession?.workspaceBinding?.workspaceRoot}
                 filesTabOpen={filesTabOpen}
+                filesTabPinned={filesTabPinned}
                 fileTabs={fileTabs}
                 diffTabs={diffTabs}
                 activePlan={activePlan}

@@ -780,6 +780,52 @@
   overflow-x: auto;
 }
 
+/* 正文里的文件引用 chip：file:/// 链接指向工作区内文件时渲染成可点行内按钮，
+   点击打开右侧预览并定位行号；越界链接渲染 is-plain 纯文本（无任何可点暗示） */
+.cy-file-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0 1px;
+  padding: 1px 6px 1px 5px;
+  border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+  border-radius: 5px;
+  background: color-mix(in srgb, currentColor 6%, transparent);
+  color: inherit;
+  font: inherit;
+  font-size: 0.93em;
+  line-height: 1.45;
+  cursor: pointer;
+  vertical-align: baseline;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.cy-file-link:hover {
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  border-color: color-mix(in srgb, currentColor 30%, transparent);
+}
+
+.cy-file-link__icon {
+  flex-shrink: 0;
+  opacity: 0.65;
+}
+
+.cy-file-link__text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 260px;
+}
+
+.cy-file-link.is-plain {
+  display: inline;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: auto;
+}
+
 /* Mermaid 图卡片：自适应宽度、横向滚动兜底 */
 .cy-mermaid {
   max-width: 100%;

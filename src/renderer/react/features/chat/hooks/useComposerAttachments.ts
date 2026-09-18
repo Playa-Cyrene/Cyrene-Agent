@@ -3,6 +3,7 @@ import type { ComposerAttachment } from "../components/ChatComposer";
 import { t } from "../../../i18n";
 import type { ScreenshotInsertPayload } from "../../../../../shared/ipc-channels";
 import { arrayBufferToBase64, containsFiles, PASTE_IMAGE_MAX_BYTES } from "../pages/attachment-utils";
+import { useFeedback } from "../../../components/feedback/FeedbackProvider";
 
 /** window.chat 中附件链路用到的子集（桥模式：显式 cast，不依赖全局 Window 声明）。 */
 interface ComposerChatApi {
@@ -63,6 +64,8 @@ export function useComposerAttachments(input: {
   ) => void;
 }): ComposerAttachmentsApi {
   const { scopeKey, getActiveScope, patchMessageAttachments } = input;
+  // 统一反馈入口：附件链路的失败/提示走非阻塞轻提示
+  const feedback = useFeedback();
   const [attachmentsByScope, setAttachmentsByScope] = useState<Record<string, ComposerAttachment[]>>({});
   const [attachmentBusy, setAttachmentBusy] = useState(false);
   const [isDraggingFiles, setIsDraggingFiles] = useState(false);
@@ -120,7 +123,8 @@ export function useComposerAttachments(input: {
         }));
       }
     } catch (error) {
-      window.alert(t("chatPage.ingestFilesFailed", { error: error instanceof Error ? error.message : String(error) }));
+      // 导入失败：简短失败反馈，非阻塞错误轻提示
+      feedback.notice({ tone: "error", message: t("chatPage.ingestFilesFailed", { error: error instanceof Error ? error.message : String(error) }) });
     } finally {
       setAttachmentBusy(false);
     }
@@ -135,7 +139,8 @@ export function useComposerAttachments(input: {
     const chat = composerChatApi();
     if (!chat?.saveScreenshotTemp) return;
     if (file.size > PASTE_IMAGE_MAX_BYTES) {
-      window.alert(t("chatPage.pastedImageTooLargeSkipped"));
+      // 超大图片已跳过：提示性反馈，非阻塞警告轻提示
+      feedback.notice({ tone: "warning", message: t("chatPage.pastedImageTooLargeSkipped") });
       return;
     }
     setAttachmentBusy(true);
@@ -162,7 +167,8 @@ export function useComposerAttachments(input: {
         : raw === "INVALID_SCREENSHOT_IMAGE"
           ? t("chatPage.pastedImageInvalid")
           : t("chatPage.pastedImageFailed", { error: raw });
-      window.alert(text);
+      // 粘贴失败：简短失败反馈，非阻塞错误轻提示
+      feedback.notice({ tone: "error", message: text });
     } finally {
       setAttachmentBusy(false);
     }
@@ -174,16 +180,20 @@ export function useComposerAttachments(input: {
     if (!result || result.ok) return;
     const reason = typeof result.reason === "string" ? result.reason : "";
     let text: string;
+    let tone: "info" | "error" = "error";
     if (reason.startsWith("HELPER_")) {
       text = t("chatPage.screenshotHelperNotReady");
     } else if (reason.startsWith("SCREENSHOT_CANCELLED")) {
       text = t("chatPage.screenshotCancelled");
+      // 用户主动取消：信息性反馈而非错误
+      tone = "info";
     } else if (reason === "SCREENSHOT_FILE_PATH_REQUIRED") {
       text = t("chatPage.screenshotFileMissing");
     } else {
       text = t("chatPage.screenshotFailed", { reason: reason || t("chatPage.unknownError") });
     }
-    window.alert(text);
+    // 截图失败：非阻塞轻提示（取消为 info，其余为 error）
+    feedback.notice({ tone, message: text });
   }
 
   async function prepareImageAttachments(

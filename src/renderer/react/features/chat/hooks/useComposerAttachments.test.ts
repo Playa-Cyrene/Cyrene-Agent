@@ -7,6 +7,17 @@ import { useComposerAttachments, type ComposerAttachmentsApi } from "./useCompos
 import type { ComposerAttachment } from "../components/ChatComposer";
 import { t } from "../../../i18n";
 
+// 统一反馈入口的稳定 spy：断言附件链路的提示/失败走语义化反馈而非浏览器默认弹窗
+const feedbackSpies = vi.hoisted(() => ({
+  notice: vi.fn(),
+  alert: vi.fn(() => Promise.resolve()),
+  confirm: vi.fn(() => Promise.resolve(true)),
+}));
+
+vi.mock("../../../components/feedback/FeedbackProvider", () => ({
+  useFeedback: () => feedbackSpies,
+}));
+
 let root: Root | null = null;
 let host: HTMLElement | null = null;
 let latest: ComposerAttachmentsApi;
@@ -62,7 +73,9 @@ beforeEach(() => {
   chatMock.getImageSendStrategy.mockReset();
   chatMock.captionImage.mockReset();
   vi.stubGlobal("chat", chatMock);
-  vi.stubGlobal("alert", vi.fn());
+  feedbackSpies.notice.mockClear();
+  feedbackSpies.alert.mockClear().mockReturnValue(Promise.resolve());
+  feedbackSpies.confirm.mockClear().mockReturnValue(Promise.resolve(true));
   let blobSeq = 0;
   (URL as unknown as { createObjectURL: (o: unknown) => string }).createObjectURL = vi.fn(() => `blob:${++blobSeq}`);
   (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = vi.fn();
@@ -90,8 +103,25 @@ describe("useComposerAttachments", () => {
     await act(async () => {
       await latest.handlePastedImage(big);
     });
-    expect(window.alert).toHaveBeenCalledWith(t("chatPage.pastedImageTooLargeSkipped"));
+    // 超限走非阻塞警告轻提示，而不是浏览器默认弹窗
+    expect(feedbackSpies.notice).toHaveBeenCalledWith(expect.objectContaining({
+      tone: "warning",
+      message: t("chatPage.pastedImageTooLargeSkipped"),
+    }));
     expect(chatMock.saveScreenshotTemp).not.toHaveBeenCalled();
+    expect(latest.attachments).toHaveLength(0);
+    expect(latest.attachmentBusy).toBe(false);
+  });
+
+  it("chooseFiles 摄入失败走错误轻提示且附件不追加", async () => {
+    chatMock.ingestDroppedFiles.mockRejectedValue(new Error("boom"));
+    await act(async () => {
+      await latest.chooseFiles([new File(["x"], "a.png", { type: "image/png" })]);
+    });
+    expect(feedbackSpies.notice).toHaveBeenCalledWith(expect.objectContaining({
+      tone: "error",
+      message: expect.stringContaining("boom"),
+    }));
     expect(latest.attachments).toHaveLength(0);
     expect(latest.attachmentBusy).toBe(false);
   });

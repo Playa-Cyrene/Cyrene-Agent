@@ -44,7 +44,7 @@ vi.mock("@ant-design/x-markdown", async () => {
 vi.mock("@ant-design/x-markdown/plugins/Latex", () => ({ default: () => ({}) }));
 vi.mock("../../../../../shared/renderer-base", () => ({ resolveAsset: (path: string) => path }));
 
-import { createMessageItems, formatChannelSourceLabel, MarkdownContent, resolveChannelConversationLabel, RunActivityDetail, type ChatMessageItem } from "./ChatMessageList";
+import { assembleMessageItems, createMessageItems, formatChannelSourceLabel, MarkdownContent, resolveChannelConversationLabel, RunActivityDetail, type ChatMessageItem, type EnabledSticker } from "./ChatMessageList";
 import { extractMessageStickerId, stripMessageStickerMarkers } from "./message-sticker";
 
 describe("React chat sticker messages", () => {
@@ -431,5 +431,70 @@ describe("function-calling round presentation", () => {
     expect(html).toContain("昔涟委托了");
     expect(html).toContain("风堇");
     expect(html).toContain("检查取消链路");
+  });
+});
+
+describe("阶段 2：单消息派生缓存（assembleMessageItems）", () => {
+  it("消息对象不变时命中缓存：条目引用稳定，items 外层数组每次新建", () => {
+    const user: ChatMessageItem = { id: "user-a", role: "user", content: "请求" };
+    const assistant: ChatMessageItem = { id: "assistant-a", role: "assistant", content: "回答" };
+    // 贴纸表引用需稳定（组件内来自 useState），字面量每次新建会导致缓存永远失效
+    const stickers: EnabledSticker[] = [];
+    const first = assembleMessageItems([user, assistant], stickers, null);
+    const second = assembleMessageItems([user, assistant], stickers, first.cache);
+
+    // 外层数组每次新建（驱动列表渲染），但条目对象复用：历史气泡的 memoized content 不失效
+    expect(second.items).not.toBe(first.items);
+    expect(second.items[0]).toBe(first.items[0]);
+    expect(second.items[1]).toBe(first.items[1]);
+  });
+
+  it("patch 产生新消息对象时只重算该消息的条目，其余条目引用不变", () => {
+    const user: ChatMessageItem = { id: "user-a", role: "user", content: "请求" };
+    const assistant: ChatMessageItem = { id: "assistant-a", role: "assistant", content: "半" };
+    const stickers: EnabledSticker[] = [];
+    const first = assembleMessageItems([user, assistant], stickers, null);
+    // 模拟流式 delta：patchSessionMessage 只替换目标消息对象，其余消息引用保持
+    const patchedAssistant: ChatMessageItem = { ...assistant, content: "完整回答" };
+    const second = assembleMessageItems([user, patchedAssistant], stickers, first.cache);
+
+    expect(second.items[0]).toBe(first.items[0]);
+    expect(second.items[1]).not.toBe(first.items[1]);
+    expect(second.items[1].content).toBe("完整回答");
+  });
+
+  it("stickers 引用变化时缓存整体失效：全部消息重算并取到新贴纸地址", () => {
+    const user: ChatMessageItem = { id: "user-a", role: "user", content: "[sticker:hugtight]" };
+    const stickers = [{ id: "hugtight", src: "https://example.com/hugtight.png" }];
+    const first = assembleMessageItems([user], stickers, null);
+    // 同一 stickers 引用：命中缓存
+    const second = assembleMessageItems([user], stickers, first.cache);
+    expect(second.items[0]).toBe(first.items[0]);
+    // stickers 引用变化：整体换新 WeakMap，消息即使引用未变也重算
+    const changedStickers = [{ id: "hugtight", src: "https://example.com/v2.png" }];
+    const third = assembleMessageItems([user], changedStickers, second.cache);
+    expect(third.items[0]).not.toBe(first.items[0]);
+    expect(third.items[0].extraInfo?.stickerUrl).toBe("https://example.com/v2.png");
+  });
+
+  it("多条目顺序稳定：reasoning、正文、review 依次排列且缓存前后一致", () => {
+    const assistant: ChatMessageItem = {
+      id: "assistant-multi",
+      role: "assistant",
+      content: "最终回答",
+      reasoningBlocks: [{ id: "r1", content: "思考", streaming: false }],
+      runId: "run-a",
+    };
+    const stickers: EnabledSticker[] = [];
+    const first = assembleMessageItems([assistant], stickers, null);
+    expect(first.items.map((item) => item.key)).toEqual([
+      "assistant-multi-reasoning-r1",
+      "assistant-multi",
+      "assistant-multi-review",
+    ]);
+
+    const second = assembleMessageItems([assistant], stickers, first.cache);
+    expect(second.items.map((item) => item.key)).toEqual(first.items.map((item) => item.key));
+    expect(second.items.every((item, index) => item === first.items[index])).toBe(true);
   });
 });

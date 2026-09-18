@@ -27,7 +27,7 @@ import { CopyButton } from "./CopyButton";
 import { TtsButton } from "./TtsButton";
 import { stopTtsPlayback } from "./tts-playback";
 import { LastTurnActionButton } from "./LastTurnActionButton";
-import { resolveRevisableLastTurn, type RevisableLastTurn } from "./last-turn-actions";
+import { resolveRevisableLastTurn } from "./last-turn-actions";
 import { extractMessageStickerId, stripMessageStickerMarkers } from "./message-sticker";
 import type { WeatherData } from "./weather/weather-types";
 import { WeatherCard } from "./weather/WeatherCard";
@@ -37,6 +37,8 @@ import { extractFileChanges, FileChangeCard } from "./FileChangeCard";
 import { ReviewPanel } from "./ReviewPanel";
 import { MermaidBlock } from "./MermaidBlock";
 import { SvgCardBlock } from "./SvgCardBlock";
+import { parseFileLinkHref, relativePathInsideWorkspace } from "./file-link";
+import { reportChatPerfRender } from "./chat-perf-probe";
 
 export interface ChatMessageItem {
   id: string;
@@ -99,6 +101,10 @@ interface ChatMessageListProps {
   onRegisterScrollToBottom?: (scroll: () => void) => void;
   /** 点击 Review 文件项时打开右侧检查面板（filePath 用于标签标识与去重） */
   onOpenReviewInspector?: (runId: string, fileIndex: number, filePath: string) => void;
+  /** 工作区根路径：正文里的 file:/// 链接据此判断界内/越界 */
+  workspaceRoot?: string;
+  /** 点击界内文件链接 → 打开右侧预览标签并定位行号 */
+  onOpenFileLink?: (relPath: string, line?: number) => void;
 }
 
 const markdownConfig = { extensions: Latex() };
@@ -107,6 +113,80 @@ const cyreneAvatarUrl = resolveAsset("avatars/cyrene-avatar.png");
 // 消息是否正在流式输出。code 渲染器收不到 MarkdownContent 的 props，用 context 传下去，
 // mermaid 块靠它在流式期间显示占位而不是渲染半截语法
 const MessageStreamingContext = createContext(false);
+
+/** 文件链接环境：工作区根 + 点击回调，由 ChatMessageList 提供，anchor 渲染器消费 */
+interface FileLinkEnv {
+  workspaceRoot?: string;
+  openFile?: (relPath: string, line?: number) => void;
+}
+const FileLinkContext = createContext<FileLinkEnv>({});
+
+/**
+ * 最后一轮可修订消息的 ID。footer 动作组件经 context 读取，不进 roles 闭包——
+ * 流式阶段边界（推理结束/正文开始/运行结束）lastTurn 在 null 与非 null 间切换时
+ * 若被 footer 闭包，全部 role 的 contentRender 换引用、memoedContent 失效，历史消息全量重渲染。
+ * value 只含原始字符串 ID，值相等时 useMemo 返回同一对象，历史条目的动作组件零重渲染。
+ */
+export interface LastTurnIds {
+  userMessageId: string | null;
+  assistantMessageId: string | null;
+}
+export const LastTurnIdsContext = createContext<LastTurnIds>({ userMessageId: null, assistantMessageId: null });
+
+/** 最后一轮的编辑按钮：目标消息与 context 匹配才渲染 */
+export function LastTurnEditAction({ messageId, content, disabled, onBeginEdit }: {
+  messageId?: string;
+  content: string;
+  disabled: boolean;
+  onBeginEdit: (messageId: string, content: string) => void;
+}) {
+  const lastTurnIds = useContext(LastTurnIdsContext);
+  if (!messageId || messageId !== lastTurnIds.userMessageId) return null;
+  return <LastTurnActionButton kind="edit" disabled={disabled} onClick={() => onBeginEdit(messageId, content)} />;
+}
+
+/** 助手消息 footer：重生成目标经 context 匹配（点击时读最新值），TTS/复制与本轮无关 */
+export function AssistantMessageFooter({ content, messageId, streaming, conversationId, mode, preferredAddress, revisionBusy, onTtsCacheKey, onRegenerateLastResponse }: {
+  content: string;
+  messageId?: string;
+  streaming: boolean;
+  conversationId?: string;
+  mode: ConversationMode;
+  preferredAddress: string;
+  revisionBusy: boolean;
+  onTtsCacheKey?: (messageId: string, cacheKey: string, converterVersion: string) => void;
+  onRegenerateLastResponse?: (userMessageId: string, assistantMessageId: string) => Promise<boolean>;
+}) {
+  const lastTurnIds = useContext(LastTurnIdsContext);
+  const cleanText = content.trim();
+  const canRegenerate = Boolean(messageId && messageId === lastTurnIds.assistantMessageId);
+  if (streaming || (!cleanText && !canRegenerate)) return null;
+  return (
+    <div className="cy-message-actions">
+      {cleanText && messageId && conversationId && (
+        <TtsButton
+          conversationId={conversationId}
+          messageId={messageId}
+          text={cleanText}
+          speechMode={mode === "learn" ? "learn" : "default"}
+          preferredAddress={preferredAddress}
+          onCacheKey={(cacheKey, converterVersion) => onTtsCacheKey?.(messageId, cacheKey, converterVersion)}
+        />
+      )}
+      {cleanText && <CopyButton text={cleanText} />}
+      {canRegenerate && (
+        <LastTurnActionButton
+          kind="regenerate"
+          disabled={revisionBusy}
+          onClick={() => {
+            if (!lastTurnIds.userMessageId || !lastTurnIds.assistantMessageId) return;
+            void onRegenerateLastResponse?.(lastTurnIds.userMessageId, lastTurnIds.assistantMessageId);
+          }}
+        />
+      )}
+    </div>
+  );
+}
 
 function MarkdownCode({ children, lang, block }: ComponentProps<{ children?: ReactNode }>) {
   const streaming = useContext(MessageStreamingContext);
@@ -125,7 +205,43 @@ function MarkdownCode({ children, lang, block }: ComponentProps<{ children?: Rea
   );
 }
 
-const markdownComponents = { code: MarkdownCode };
+// 聊天正文里的 <a>：file:/// 链接指向工作区内文件时渲染成可点 chip（打开右侧预览并
+// 定位行号），越界（桌面等）或未绑定工作区时降级纯文本——渲染时就摘掉可点样式，
+// 而不是让用户点了没反应；其余链接保持默认（新窗口打开）
+function MarkdownAnchor({ children, href }: ComponentProps<{ children?: ReactNode; href?: string }>) {
+  const { workspaceRoot, openFile } = useContext(FileLinkContext);
+  const target = href ? parseFileLinkHref(href) : null;
+  if (target) {
+    const relPath = workspaceRoot ? relativePathInsideWorkspace(target.absPath, workspaceRoot) : null;
+    if (relPath && openFile) {
+      return (
+        <button
+          type="button"
+          className="cy-file-link"
+          title={target.absPath}
+          onClick={() => openFile(relPath, target.lineStart)}
+        >
+          <svg className="cy-file-link__icon" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+            <path
+              d="M4 1.5h5L12.5 5v9a.5.5 0 0 1-.5.5H4a.5.5 0 0 1-.5-.5V2a.5.5 0 0 1 .5-.5Z"
+              fill="none" stroke="currentColor" strokeLinejoin="round"
+            />
+            <path d="M9 1.5V5h3.5" fill="none" stroke="currentColor" strokeLinejoin="round" />
+          </svg>
+          <span className="cy-file-link__text">{children}</span>
+        </button>
+      );
+    }
+    return <span className="cy-file-link is-plain">{children}</span>;
+  }
+  return (
+    <a href={href} target="_blank" rel="noreferrer">
+      {children}
+    </a>
+  );
+}
+
+const markdownComponents = { code: MarkdownCode, a: MarkdownAnchor };
 const completedMarkdownOptions = {
   hasNextChunk: false,
   enableAnimation: false,
@@ -140,6 +256,23 @@ const streamingMarkdownOptions = {
   },
   tail: false,
 };
+// A0 对照组二：流式渲染但关闭动画（enableAnimation 是 XMarkdown 现有配置项，非新能力）
+const streamingMarkdownStaticOptions = {
+  hasNextChunk: true,
+  enableAnimation: false,
+  tail: false,
+};
+
+/**
+ * A0 对照实验开关（perf harness 页面注入，正式构建恒为 animated，零行为差异）：
+ * static=流式渲染关动画；plain=流式消息绕过 XMarkdown 渲染为转义纯文本（历史消息不受影响）。
+ * 见 issue 文档"阶段 2 后终验"的 A0 限时归因实验设计。
+ */
+function perfStreamRenderMode(): "animated" | "static" | "plain" {
+  if (typeof window === "undefined") return "animated";
+  const value = (window as typeof window & { __cyreneChatPerfStreamRender?: string }).__cyreneChatPerfStreamRender;
+  return value === "static" || value === "plain" ? value : "animated";
+}
 
 class MarkdownRenderBoundary extends Component<{
   content: string;
@@ -170,9 +303,16 @@ export function MarkdownContent({
   content: string;
   streaming?: boolean;
 }) {
+  // 性能探针：perf harness 注册后统计正文渲染次数（阶段 2 验收：流式期间历史消息应为 0）
+  reportChatPerfRender("markdownRenders");
   // 模型偶尔输出畸形 Markdown（# 后缺空格、标题粘正文、围栏粘句子），
   // 渲染前先做机械归一化；归一化与 XMarkdown 解析都在同一 memo 周期内完成
   const normalized = useMemo(() => normalizeModelMarkdown(content), [content]);
+  // A0 对照组三：流式消息绕过 XMarkdown，渲染为转义纯文本（pre 内文本节点自动转义），
+  // 隔离"流式全文重解析"成本；历史消息（streaming=false）不受影响
+  if (streaming && perfStreamRenderMode() === "plain") {
+    return <pre className="cy-message-markdown-fallback">{content}</pre>;
+  }
   return (
     <MarkdownRenderBoundary content={normalized}>
       <MessageStreamingContext.Provider value={Boolean(streaming)}>
@@ -183,7 +323,9 @@ export function MarkdownContent({
           openLinksInNewTab
           escapeRawHtml
           rootClassName="cy-message-markdown"
-          streaming={streaming ? streamingMarkdownOptions : completedMarkdownOptions}
+          streaming={streaming
+            ? (perfStreamRenderMode() === "static" ? streamingMarkdownStaticOptions : streamingMarkdownOptions)
+            : completedMarkdownOptions}
         />
       </MessageStreamingContext.Provider>
     </MarkdownRenderBoundary>
@@ -195,7 +337,9 @@ interface EnabledSticker {
   src: string;
 }
 
-function resolveStickerUrl(id: string, stickers: EnabledSticker[]): string | undefined {
+export type { EnabledSticker };
+
+function resolveStickerUrl(id: string, stickers: readonly EnabledSticker[]): string | undefined {
   const raw = stickers.find((sticker) => sticker.id === id)?.src;
   if (!raw) return undefined;
   return raw.startsWith("/stickers/") ? resolveAsset(raw) : raw;
@@ -835,7 +979,6 @@ function createRoles(
   conversationId: string | undefined,
   mode: ConversationMode,
   preferredAddress: string,
-  lastTurn: RevisableLastTurn | null,
   editingMessageId: string | null,
   editDraft: string,
   revisionBusy: boolean,
@@ -843,7 +986,7 @@ function createRoles(
   onEditDraftChange: (value: string) => void,
   onCancelEdit: () => void,
   onSubmitEdit: () => void,
-  onRegenerate: () => void,
+  onRegenerateLastResponse: ((userMessageId: string, assistantMessageId: string) => Promise<boolean>) | undefined,
   reasoningExpanded: Readonly<Record<string, boolean>>,
   onReasoningExpand: (id: string, expanded: boolean) => void,
   onTtsCacheKey?: (messageId: string, cacheKey: string, converterVersion: string) => void,
@@ -877,13 +1020,7 @@ function createRoles(
       if (!cleanText || messageId === editingMessageId) return null;
       return (
         <div className="cy-message-actions">
-          {messageId === lastTurn?.userMessageId && (
-            <LastTurnActionButton
-              kind="edit"
-              disabled={revisionBusy}
-              onClick={() => onBeginEdit(messageId, cleanText)}
-            />
-          )}
+          <LastTurnEditAction messageId={messageId} content={cleanText} disabled={revisionBusy} onBeginEdit={onBeginEdit} />
           <CopyButton text={cleanText} />
         </div>
       );
@@ -902,30 +1039,19 @@ function createRoles(
         channelSource={info.extraInfo?.channelSource}
       />
     ),
-    footer: (content: string, info: { extraInfo?: { messageId?: string; streaming?: boolean; ttsCacheKey?: string } }) => {
-      const cleanText = content.trim();
-      const messageId = info.extraInfo?.messageId;
-      const canRegenerate = messageId === lastTurn?.assistantMessageId;
-      if (info.extraInfo?.streaming || (!cleanText && !canRegenerate)) return null;
-      return (
-        <div className="cy-message-actions">
-          {cleanText && messageId && conversationId && (
-            <TtsButton
-              conversationId={conversationId}
-              messageId={messageId}
-              text={cleanText}
-              speechMode={mode === "learn" ? "learn" : "default"}
-              preferredAddress={preferredAddress}
-              onCacheKey={(cacheKey, converterVersion) => onTtsCacheKey?.(messageId, cacheKey, converterVersion)}
-            />
-          )}
-          {cleanText && <CopyButton text={cleanText} />}
-          {canRegenerate && (
-            <LastTurnActionButton kind="regenerate" disabled={revisionBusy} onClick={onRegenerate} />
-          )}
-        </div>
-      );
-    },
+    footer: (content: string, info: { extraInfo?: { messageId?: string; streaming?: boolean } }) => (
+      <AssistantMessageFooter
+        content={content}
+        messageId={info.extraInfo?.messageId}
+        streaming={Boolean(info.extraInfo?.streaming)}
+        conversationId={conversationId}
+        mode={mode}
+        preferredAddress={preferredAddress}
+        revisionBusy={revisionBusy}
+        onTtsCacheKey={onTtsCacheKey}
+        onRegenerateLastResponse={onRegenerateLastResponse}
+      />
+    ),
   },
   reasoning: {
     placement: "start" as const,
@@ -1026,132 +1152,170 @@ function createRoles(
   };
 }
 
-export function createMessageItems(messages: ChatMessageItem[], enabledStickers: EnabledSticker[]): BubbleItemType[] {
-  return messages.flatMap((message) => {
-    if (message.role !== "assistant") {
-      const stickerId = extractMessageStickerId(message.content, message.sticker);
-      return [{
-        key: message.id,
-        role: message.role,
-        content: stripMessageStickerMarkers(message.content),
-        extraInfo: {
-          stickerUrl: stickerId ? resolveStickerUrl(stickerId, enabledStickers) : undefined,
-          attachments: message.attachments,
-          messageId: message.id,
-          channelSource: message.channelSource,
-        },
-      }];
-    }
+/**
+ * 单消息 → 气泡条目（flatMap 语义：一条消息可产出多个条目）。
+ * 纯函数：只依赖 message 与 enabledStickers——这是阶段 2 派生缓存正确性的前提，
+ * 修改本函数时不得引入消息对象与贴纸表之外的输入。
+ */
+function convertMessage(message: ChatMessageItem, enabledStickers: readonly EnabledSticker[]): readonly BubbleItemType[] {
+  if (message.role !== "assistant") {
+    const stickerId = extractMessageStickerId(message.content, message.sticker);
+    return [{
+      key: message.id,
+      role: message.role,
+      content: stripMessageStickerMarkers(message.content),
+      extraInfo: {
+        stickerUrl: stickerId ? resolveStickerUrl(stickerId, enabledStickers) : undefined,
+        attachments: message.attachments,
+        messageId: message.id,
+        channelSource: message.channelSource,
+      },
+    }];
+  }
 
-    const assistantItems: BubbleItemType[] = [];
-    const stages = assistantRenderStages(message);
-    if (message.waitingForFirstEvent && !message.runActivity) {
+  const assistantItems: BubbleItemType[] = [];
+  const stages = assistantRenderStages(message);
+  if (message.waitingForFirstEvent && !message.runActivity) {
+    assistantItems.push({
+      key: `${message.id}-waiting`,
+      role: "waiting",
+      content: "",
+    });
+  }
+  const reasoningBlocks = message.reasoningBlocks?.length
+    ? message.reasoningBlocks
+    : (stages.includes("reasoning") ? [{ id: `${message.id}-legacy`, content: message.reasoning ?? "", streaming: message.reasoningStreaming }] : []);
+  const appendReasoning = (block: ReasoningBlock) => {
+    assistantItems.push({
+      key: `${message.id}-reasoning-${block.id}`,
+      role: "reasoning",
+      content: "",
+      extraInfo: {
+        reasoningId: block.id,
+        reasoning: block.content,
+        reasoningStreaming: block.streaming,
+      },
+    });
+  };
+  const tools = message.toolExecutions ?? [];
+  // 活动卡是否渲染：运行中始终显示；终态只在确实产生了过程内容（正文/推理/工具/委派）时保留，
+  // 首轮无工具调用的成功运行不产生空折叠头部。头像钉在活动卡头部，正文据此决定是否隐藏自己的头像。
+  const hasProcessContent = (message.processMessages ?? []).some((item) => item.content.trim())
+    || tools.length > 0
+    || (message.taskDelegations ?? []).length > 0
+    || reasoningBlocks.some((block) => block.content.trim());
+  const processing = message.runActivity?.completedAt === undefined;
+  const activityVisible = Boolean(message.runActivity) && (processing || hasProcessContent);
+  if (message.runActivity) {
+    if (activityVisible) {
       assistantItems.push({
-        key: `${message.id}-waiting`,
-        role: "waiting",
+        key: `${message.id}-activity`,
+        role: "activity",
         content: "",
-      });
-    }
-    const reasoningBlocks = message.reasoningBlocks?.length
-      ? message.reasoningBlocks
-      : (stages.includes("reasoning") ? [{ id: `${message.id}-legacy`, content: message.reasoning ?? "", streaming: message.reasoningStreaming }] : []);
-    const appendReasoning = (block: ReasoningBlock) => {
-      assistantItems.push({
-        key: `${message.id}-reasoning-${block.id}`,
-        role: "reasoning",
-        content: "",
-        extraInfo: {
-          reasoningId: block.id,
-          reasoning: block.content,
-          reasoningStreaming: block.streaming,
-        },
-      });
-    };
-    const tools = message.toolExecutions ?? [];
-    // 活动卡是否渲染：运行中始终显示；终态只在确实产生了过程内容（正文/推理/工具/委派）时保留，
-    // 首轮无工具调用的成功运行不产生空折叠头部。头像钉在活动卡头部，正文据此决定是否隐藏自己的头像。
-    const hasProcessContent = (message.processMessages ?? []).some((item) => item.content.trim())
-      || tools.length > 0
-      || (message.taskDelegations ?? []).length > 0
-      || reasoningBlocks.some((block) => block.content.trim());
-    const processing = message.runActivity?.completedAt === undefined;
-    const activityVisible = Boolean(message.runActivity) && (processing || hasProcessContent);
-    if (message.runActivity) {
-      if (activityVisible) {
-        assistantItems.push({
-          key: `${message.id}-activity`,
-          role: "activity",
-          content: "",
-          // 头像钉在运行块头部（状态行左侧）：一次运行只出现一次，不随每条消息重复。
-          // 用 createElement 而非 JSX：createMessageItems 在测试里直接执行，不经过 JSX 运行时
-          avatar: createElement(CyreneMessageAvatar),
-          extraInfo: {
-            activityId: `${message.id}-activity`,
-            activity: message.runActivity,
-            reasoningBlocks,
-            processMessages: message.processMessages ?? [],
-            agentRounds: message.agentRounds ?? [],
-            taskDelegations: message.taskDelegations ?? [],
-            tools,
-            runStage: message.runStage,
-            taskPlan: message.taskPlan,
-          },
-        });
-      }
-    } else {
-      for (let index = 0; index <= tools.length; index += 1) {
-        reasoningBlocks.filter((block) => (block.afterToolCount ?? 0) === index).forEach(appendReasoning);
-        if (index === tools.length) continue;
-        assistantItems.push({
-          key: `${message.id}-tool-${tools[index].id}`,
-          role: "tool",
-          content: "",
-          extraInfo: { tools: [tools[index]] },
-        });
-      }
-    }
-    if (message.weather) {
-      assistantItems.push({
-        key: `${message.id}-weather`,
-        role: "weather",
-        content: "",
-        extraInfo: { weather: message.weather },
-      });
-    }
-    if (stages.includes("assistant")) {
-      // 运行块内的正文不重复头像（头像已钉在活动卡头部）：
-      // 保留头像占位只做视觉隐藏，正文左边缘与活动卡时间线内容精确对齐。
-      // 活动卡未渲染时（如首轮直接回答的纯文本运行）正文保留自己的头像。
-      const hideAvatar = activityVisible;
-      assistantItems.push({
-        key: message.id,
-        role: "assistant",
-        content: message.transientText ?? message.content,
-        streaming: message.streaming,
-        ...(hideAvatar ? { rootClassName: "cy-message cy-message--assistant cy-message--assistant-run" } : {}),
-        extraInfo: {
-          messageId: message.id,
-          streaming: message.streaming,
-          ttsCacheKey: message.ttsCacheKey,
-          stickerUrl: message.sticker ? resolveStickerUrl(message.sticker, enabledStickers) : undefined,
-          channelSource: message.channelSource,
-        },
-      });
-    }
-    // Review 面板：Run 结束后（非 streaming/loading）且有 runId 时显示
-    if (message.runId && !message.streaming && !message.loading) {
-      assistantItems.push({
-        key: `${message.id}-review`,
-        role: "review",
-        content: "",
-        // Review 面板属于运行块：头像占位隐藏（头像钉在活动卡头部），面板与正文/时间线内容左对齐
+        // 头像钉在运行块头部（状态行左侧）：一次运行只出现一次，不随每条消息重复。
+        // 用 createElement 而非 JSX：convertMessage 在测试里直接执行，不经过 JSX 运行时
         avatar: createElement(CyreneMessageAvatar),
-        rootClassName: "cy-message cy-message--review cy-message--review-run",
-        extraInfo: { runId: message.runId },
+        extraInfo: {
+          activityId: `${message.id}-activity`,
+          activity: message.runActivity,
+          reasoningBlocks,
+          processMessages: message.processMessages ?? [],
+          agentRounds: message.agentRounds ?? [],
+          taskDelegations: message.taskDelegations ?? [],
+          tools,
+          runStage: message.runStage,
+          taskPlan: message.taskPlan,
+        },
       });
     }
-    return assistantItems;
-  });
+  } else {
+    for (let index = 0; index <= tools.length; index += 1) {
+      reasoningBlocks.filter((block) => (block.afterToolCount ?? 0) === index).forEach(appendReasoning);
+      if (index === tools.length) continue;
+      assistantItems.push({
+        key: `${message.id}-tool-${tools[index].id}`,
+        role: "tool",
+        content: "",
+        extraInfo: { tools: [tools[index]] },
+      });
+    }
+  }
+  if (message.weather) {
+    assistantItems.push({
+      key: `${message.id}-weather`,
+      role: "weather",
+      content: "",
+      extraInfo: { weather: message.weather },
+    });
+  }
+  if (stages.includes("assistant")) {
+    // 运行块内的正文不重复头像（头像已钉在活动卡头部）：
+    // 保留头像占位只做视觉隐藏，正文左边缘与活动卡时间线内容精确对齐。
+    // 活动卡未渲染时（如首轮直接回答的纯文本运行）正文保留自己的头像。
+    const hideAvatar = activityVisible;
+    assistantItems.push({
+      key: message.id,
+      role: "assistant",
+      content: message.transientText ?? message.content,
+      streaming: message.streaming,
+      ...(hideAvatar ? { rootClassName: "cy-message cy-message--assistant cy-message--assistant-run" } : {}),
+      extraInfo: {
+        messageId: message.id,
+        streaming: message.streaming,
+        ttsCacheKey: message.ttsCacheKey,
+        stickerUrl: message.sticker ? resolveStickerUrl(message.sticker, enabledStickers) : undefined,
+        channelSource: message.channelSource,
+      },
+    });
+  }
+  // Review 面板：Run 结束后（非 streaming/loading）且有 runId 时显示
+  if (message.runId && !message.streaming && !message.loading) {
+    assistantItems.push({
+      key: `${message.id}-review`,
+      role: "review",
+      content: "",
+      // Review 面板属于运行块：头像占位隐藏（头像钉在活动卡头部），面板与正文/时间线内容左对齐
+      avatar: createElement(CyreneMessageAvatar),
+      rootClassName: "cy-message cy-message--review cy-message--review-run",
+      extraInfo: { runId: message.runId },
+    });
+  }
+  return assistantItems;
+}
+
+export function createMessageItems(messages: ChatMessageItem[], enabledStickers: EnabledSticker[]): BubbleItemType[] {
+  return messages.flatMap((message) => convertMessage(message, enabledStickers));
+}
+
+/** 阶段 2：单消息派生缓存状态——stickers 引用变化时整体替换（新 WeakMap），不逐条维护版本号 */
+export interface MessageItemsCacheState {
+  stickers: readonly EnabledSticker[];
+  byMessage: WeakMap<ChatMessageItem, readonly BubbleItemType[]>;
+}
+
+/**
+ * 阶段 2：带缓存的条目装配——消息对象不变时直接复用上次条目（条目引用稳定，
+ * 历史气泡的 memoized content 不失效）；消息被 patch 后对象引用必变，自动 miss 重算。
+ * items 外层数组每次新建（由 messages 引用变化驱动渲染），条目对象保持稳定。
+ */
+export function assembleMessageItems(
+  messages: readonly ChatMessageItem[],
+  stickers: readonly EnabledSticker[],
+  cache: MessageItemsCacheState | null,
+): { items: BubbleItemType[]; cache: MessageItemsCacheState } {
+  const state: MessageItemsCacheState = cache && cache.stickers === stickers
+    ? cache
+    : { stickers, byMessage: new WeakMap<ChatMessageItem, readonly BubbleItemType[]>() };
+  const items: BubbleItemType[] = [];
+  for (const message of messages) {
+    let converted = state.byMessage.get(message);
+    if (converted === undefined) {
+      converted = convertMessage(message, stickers);
+      state.byMessage.set(message, converted);
+    }
+    for (const item of converted) items.push(item);
+  }
+  return { items, cache: state };
 }
 
 export function ChatMessageList({
@@ -1167,13 +1331,24 @@ export function ChatMessageList({
   onScrollToBottomVisibilityChange,
   onRegisterScrollToBottom,
   onOpenReviewInspector,
+  workspaceRoot,
+  onOpenFileLink,
 }: ChatMessageListProps) {
+  // 性能探针：列表外壳执行次数（A0 实验补 markdownRenders 覆盖不到的 Bubble 外壳/footer 路径）
+  reportChatPerfRender("listRenders");
   const userAvatarUrl = useUserAvatar();
   const [enabledStickers, setEnabledStickers] = useState<EnabledSticker[]>([]);
   const [reasoningExpanded, setReasoningExpanded] = useState<Record<string, boolean>>({});
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState("");
-  const lastTurn = resolveRevisableLastTurn(messages, mode);
+  // 完成态最后一轮：流式期间恒为 null，完成态随 messages 重算。
+  // 不做引用稳定化 hack（渲染期写 ref 属于 React 反模式）：footer 动作组件经
+  // LastTurnIdsContext 消费原始 ID，值相等时下方 lastTurnIds 派生对象引用天然稳定。
+  const lastTurn = useMemo(() => resolveRevisableLastTurn(messages, mode), [messages, mode]);
+  const lastTurnIds = useMemo<LastTurnIds>(
+    () => ({ userMessageId: lastTurn?.userMessageId ?? null, assistantMessageId: lastTurn?.assistantMessageId ?? null }),
+    [lastTurn?.userMessageId, lastTurn?.assistantMessageId],
+  );
   const onReasoningExpand = useCallback((id: string, expanded: boolean) => {
     setReasoningExpanded((current) => updateReasoningExpanded(current, id, expanded));
   }, []);
@@ -1194,11 +1369,6 @@ export function ChatMessageList({
       setEditDraft("");
     });
   }, [editDraft, editingMessageId, onEditLastUserMessage, revisionBusy]);
-  const regenerate = useCallback(() => {
-    if (!lastTurn || !onRegenerateLastResponse || revisionBusy) return;
-    void onRegenerateLastResponse(lastTurn.userMessageId, lastTurn.assistantMessageId);
-  }, [lastTurn, onRegenerateLastResponse, revisionBusy]);
-
   const containerRef = useRef<HTMLDivElement>(null);
   const isNearBottomRef = useRef(true);
 
@@ -1232,13 +1402,15 @@ export function ChatMessageList({
     return () => window.clearTimeout(timer);
   }, [conversationId, onScrollToBottomVisibilityChange, scrollToBottom]);
 
+  // roles 不闭包 lastTurn（footer 动作组件经 LastTurnIdsContext 读取）：流式阶段边界
+  // （推理结束/正文开始/运行结束）lastTurn 在 null 与非 null 间切换是真实值变化，若进入
+  // 依赖会让全部条目的 contentRender 换引用、memoedContent 失效，历史消息被全量重渲染。
   const roles = useMemo(
     () => createRoles(
       userAvatarUrl,
       conversationId,
       mode,
       preferredAddress,
-      lastTurn,
       editingMessageId,
       editDraft,
       revisionBusy,
@@ -1246,13 +1418,13 @@ export function ChatMessageList({
       setEditDraft,
       cancelEdit,
       submitEdit,
-      regenerate,
+      onRegenerateLastResponse,
       reasoningExpanded,
       onReasoningExpand,
       onTtsCacheKey,
       onOpenReviewInspector,
     ),
-    [beginEdit, cancelEdit, conversationId, editDraft, editingMessageId, lastTurn, mode, onOpenReviewInspector, onReasoningExpand, onTtsCacheKey, preferredAddress, reasoningExpanded, regenerate, revisionBusy, submitEdit, userAvatarUrl],
+    [beginEdit, cancelEdit, conversationId, editDraft, editingMessageId, mode, onOpenReviewInspector, onReasoningExpand, onRegenerateLastResponse, onTtsCacheKey, preferredAddress, reasoningExpanded, revisionBusy, submitEdit, userAvatarUrl],
   );
 
   useEffect(() => {
@@ -1276,23 +1448,39 @@ export function ChatMessageList({
     };
   }, []);
 
-  const items = createMessageItems(messages, enabledStickers);
+  // 阶段 2：实例级单消息派生缓存（组件无 key、单实例常驻；会话切换仅换 messages 数组不卸载，
+  // 切回旧会话若消息对象复用可自然命中，卸载时 WeakMap 随之释放，不跨窗口共享）。
+  // 流式 delta 只重算被 patch 的消息（patch 必产生新对象引用 → 自动 miss），历史条目引用稳定。
+  const messageItemsCacheRef = useRef<MessageItemsCacheState | null>(null);
+  const items = useMemo(() => {
+    const assembled = assembleMessageItems(messages, enabledStickers, messageItemsCacheRef.current);
+    messageItemsCacheRef.current = assembled.cache;
+    return assembled.items;
+  }, [messages, enabledStickers]);
   const channelConversationLabel = resolveChannelConversationLabel(messages);
+  const fileLinkEnv = useMemo<FileLinkEnv>(
+    () => ({ workspaceRoot, openFile: onOpenFileLink }),
+    [workspaceRoot, onOpenFileLink],
+  );
 
   return (
-    <div
-      ref={containerRef}
-      className={`cy-message-list cy-message-list--stickers-${stickerSize}`}
-      aria-live="polite"
-      onScroll={updateScrollState}
-    >
-      {channelConversationLabel && (
-        <div className="cy-message-list__channel-context" role="note" aria-label={channelConversationLabel}>
-          <span className="cy-message-list__channel-dot" aria-hidden="true" />
-          <span>{channelConversationLabel}</span>
+    <FileLinkContext.Provider value={fileLinkEnv}>
+      <LastTurnIdsContext.Provider value={lastTurnIds}>
+        <div
+          ref={containerRef}
+          className={`cy-message-list cy-message-list--stickers-${stickerSize}`}
+          aria-live="polite"
+          onScroll={updateScrollState}
+        >
+          {channelConversationLabel && (
+            <div className="cy-message-list__channel-context" role="note" aria-label={channelConversationLabel}>
+              <span className="cy-message-list__channel-dot" aria-hidden="true" />
+              <span>{channelConversationLabel}</span>
+            </div>
+          )}
+          <Bubble.List items={items} role={roles} autoScroll />
         </div>
-      )}
-      <Bubble.List items={items} role={roles} autoScroll />
-    </div>
+      </LastTurnIdsContext.Provider>
+    </FileLinkContext.Provider>
   );
 }

@@ -58,12 +58,15 @@
     "errorChatStoreUnavailable": "聊天会话服务尚未就绪",
     "newTaskTitle": "新任务",
     "newChatTitle": "新对话",
+    "learnStructureConfirmTitle": "添加学习结构",
     "learnStructureConfirm": "要在当前 Obsidian Vault 中添加 Cyrene 通用学习结构吗？只会创建缺失的文件，不会覆盖已有内容。",
+    "learnStructureFailedTitle": "添加学习结构失败",
     "learnStructureFailed": "添加学习结构失败：{{error}}",
     "learnStructureCreated": "已创建 {{created}} 个文件/目录。",
     "learnStructureCreatedWithSkipped": "已创建 {{created}} 个文件/目录，跳过 {{skipped}} 个已存在项。",
     "emptyDirLearnStructureConfirm": "这是一个空目录。Cyrene 可以在这里创建通用学习工作区结构（materials/、notes/、exercises/、templates/、learn/progress.md），方便你之后和 Cyrene 一起学习。\n\n是否创建？",
     "defaultWorkspaceName": "工作文件夹",
+    "setWorkspaceFailedTitle": "设置工作区失败",
     "setWorkspaceFailed": "设置工作区失败：{{error}}",
     "ingestFilesFailed": "文件摄入失败：{{error}}",
     "pastedImageTooLargeSkipped": "粘贴的图片超过 20MB，已跳过。",
@@ -236,6 +239,13 @@
   "rightInspector": {
     "panelAria": "右侧检查面板",
     "toggle": "展开/收起右侧面板"
+  },
+  "openWorkspace": {
+    "tooltip": "用 {{app}} 打开工作区",
+    "menuToggle": "选择打开方式",
+    "appExplorer": "资源管理器",
+    "detecting": "正在检测本机应用…",
+    "openError": "打开失败，请重试"
   },
   "fileTree": {
     "viewPreview": "预览",

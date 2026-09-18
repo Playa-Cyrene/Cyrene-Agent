@@ -149,6 +149,17 @@ html, body {
   top: 10px;
   right: 10px;
   z-index: 30;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* "打开"按钮与面板开关之间的竖分割线 */
+.cy-inspector-toggle-divider {
+  width: 1px;
+  height: 16px;
+  flex-shrink: 0;
+  background: var(--cy-border, #f0ebee);
 }
 
 /* 全局文字选中：用应用粉色强调色替代浏览器默认蓝 */

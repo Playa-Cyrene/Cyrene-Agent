@@ -6,7 +6,7 @@
 // 高亮：shiki 单例 + github-light 主题，按扩展名选语言；渐进式渲染（先纯文本后上色），
 // 高亮失败或语言不支持时保持纯文本，不阻塞阅读。
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Tree } from "antd";
 import type { DataNode, EventDataNode } from "antd/es/tree";
 import { FileText } from "lucide-react";
@@ -14,6 +14,7 @@ import { createHighlighter, type Highlighter, type ThemedToken } from "shiki";
 import { useTranslation } from "../../../i18n";
 import type { WorkspaceFileEntry, WorkspaceFileErrorCode } from "../../../../../shared/workspace-files-types";
 import { MarkdownContent } from "./ChatMessageList";
+import { releaseFocusedDescendant } from "./focus-handoff";
 import { vscodeIconForFile } from "./vscodeFileIcon";
 import "./FileTreePanel.css";
 
@@ -150,6 +151,8 @@ export function FileTreePanel({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<WorkspaceFileErrorCode | null>(null);
   const [truncated, setTruncated] = useState(false);
+  // 文件树根容器引用：切标签前用它释放焦点，避免 aria-hidden 区域持有 activeElement
+  const treeRootRef = useRef<HTMLDivElement>(null);
 
   const listDirectory = useCallback(
     async (relPath: string): Promise<TreeItem[]> => {
@@ -211,7 +214,7 @@ export function FileTreePanel({
   }
 
   return (
-    <div className="cy-file-tree">
+    <div className="cy-file-tree" ref={treeRootRef}>
       {/* antd v6 的目录树挂在 Tree.DirectoryTree 上：点击目录名即展开/收起（expandAction 默认 click） */}
       <Tree.DirectoryTree
         treeData={treeData}
@@ -220,7 +223,11 @@ export function FileTreePanel({
         blockNode
         onSelect={(_keys, info) => {
           const item = info.node as unknown as TreeItem;
-          if (!item.isDir) onOpenFile(item.key);
+          if (!item.isDir) {
+            // 切标签前释放文件树焦点，避免 aria-hidden 面板持有 activeElement
+            releaseFocusedDescendant(treeRootRef.current);
+            onOpenFile(item.key);
+          }
         }}
       />
       {truncated && <div className="cy-file-tree__truncated">{t("fileTree.truncated", { count: 1000 })}</div>}
@@ -231,9 +238,15 @@ export function FileTreePanel({
 export function FilePreviewContent({
   sessionId,
   relPath,
+  scrollToLine,
+  lineSeq,
 }: {
   sessionId: string;
   relPath: string;
+  /** 从消息文件链接跳转过来时定位到该行（居中滚动）；缺省不做定位 */
+  scrollToLine?: number;
+  /** 定位序号：同标签换行号时靠它变化触发重新滚动 */
+  lineSeq?: number;
 }) {
   const { t } = useTranslation();
   const [state, setState] = useState<
@@ -243,16 +256,18 @@ export function FilePreviewContent({
   >({ phase: "loading" });
   // shiki 高亮结果（null = 未高亮/不支持，先按纯文本渲染）
   const [tokens, setTokens] = useState<ThemedToken[][] | null>(null);
-  // Markdown 文件的查看方式：渲染预览 / 源码（非 md 文件不用）
+  // Markdown 文件的查看方式：渲染预览 / 源码（非 md 文件不用）；
+  // 带行号定位跳转过来时直接进源码视图（预览视图没有行号概念）
   const isMarkdown = isMarkdownPath(relPath);
-  const [mdView, setMdView] = useState<"preview" | "source">("preview");
+  const [mdView, setMdView] = useState<"preview" | "source">(scrollToLine === undefined ? "preview" : "source");
+  const scrollHostRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let cancelled = false;
     setState({ phase: "loading" });
     setTokens(null);
-    // 切换文件时回到默认的渲染预览
-    setMdView("preview");
+    // 切换文件时回到默认视图；带行号定位的打开方式下回源码视图
+    setMdView(scrollToLine === undefined ? "preview" : "source");
     const api = window.workspaceFiles;
     if (!api) {
       setState({ phase: "error", code: "READ_FAILED" });
@@ -286,6 +301,15 @@ export function FilePreviewContent({
     };
   }, [sessionId, relPath]);
 
+  // 行号定位：文件内容就绪后把目标行滚到视口中间；lineSeq 变化（同标签换行号）时重滚
+  useEffect(() => {
+    if (state.phase !== "ok" || scrollToLine === undefined) return;
+    const host = scrollHostRef.current;
+    if (!host) return;
+    const row = host.querySelector<HTMLElement>(`[data-line="${scrollToLine}"]`);
+    row?.scrollIntoView({ block: "center", behavior: "auto" });
+  }, [state.phase, scrollToLine, lineSeq, mdView]);
+
   if (state.phase === "loading") {
     return <div className="cy-file-preview is-state">{t("fileTree.previewLoading")}</div>;
   }
@@ -304,7 +328,7 @@ export function FilePreviewContent({
     : state.content;
 
   return (
-    <div className="cy-file-preview">
+    <div className="cy-file-preview" ref={scrollHostRef}>
       <div className="cy-file-preview__header">
         <span className="cy-file-preview__path" title={relPath}>{relPath}</span>
         <span className="cy-file-preview__size">{(state.size / 1024).toFixed(1)} KB</span>
@@ -338,7 +362,7 @@ export function FilePreviewContent({
       ) : (
         <pre className="cy-file-preview__code">
           {lines.map((line, index) => (
-            <div className="cy-file-preview__line" key={index}>
+            <div className="cy-file-preview__line" key={index} data-line={index + 1}>
               <span className="cy-file-preview__lineno">{index + 1}</span>
               <span className="cy-file-preview__text">
                 {line.map((token, tokenIndex) =>

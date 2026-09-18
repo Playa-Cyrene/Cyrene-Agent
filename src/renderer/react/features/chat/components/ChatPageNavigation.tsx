@@ -13,6 +13,7 @@ import { UserAvatar } from "../../../components/ui/UserAvatar";
 import { WindowControls } from "../../../components/ui/WindowControls";
 import { AppUpdateEntry } from "./AppUpdateEntry";
 import { ConversationSidebar } from "./ConversationSidebar";
+import { reportChatPerfRender } from "./chat-perf-probe";
 
 export type ChatPagePanel = "tool" | "skill" | "model" | "plugin" | "moments";
 
@@ -37,7 +38,9 @@ export interface ChatPageNavigationProps {
   onOpenSettings: () => void;
 }
 
-export function ChatPageNavigation({
+// 阶段 1A：memo 隔离——ChatPage 流式重渲染时，只要 props 引用稳定（sessions/回调由父级保证），
+// 导航子树（含内嵌的 ConversationSidebar）整体跳过执行，流式期间执行次数应为 0（探针验收）。
+export const ChatPageNavigation = React.memo(function ChatPageNavigation({
   collapsed,
   activePanel,
   mode,
@@ -57,6 +60,8 @@ export function ChatPageNavigation({
   onCloseWindow,
   onOpenSettings,
 }: ChatPageNavigationProps) {
+  // 性能探针：perf harness 注册后统计导航子树执行次数（阶段 1A 验收：流式期间应为 0）
+  reportChatPerfRender("navigationRenders");
   const hasOpenPanel = activePanel !== null;
 
   return (
@@ -99,4 +104,4 @@ export function ChatPageNavigation({
       </div>
     </>
   );
-}
+});
