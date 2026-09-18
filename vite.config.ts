@@ -30,25 +30,98 @@ function appVersionPlugin(): Plugin {
   };
 }
 
+/**
+ * 生成 React 渲染页的 Content-Security-Policy。
+ * - script-src 只允许 'self'，明确不含 'unsafe-eval'
+ * - style-src 保留 'unsafe-inline'，兼容 Ant Design 的 CSS-in-JS 运行时样式；
+ *   放行 fonts.googleapis.com（ui/fonts.css 的 Google Fonts 样式表）
+ * - font-src 放行 fonts.gstatic.com（Google Fonts 字体文件本体）
+ * - frame-ancestors 只在 HTTP 响应头中生效，经 <meta> 传递会被浏览器忽略，故不写入
+ * - 开发环境额外放行 Vite 热更新所需的 localhost 连接源
+ */
+function reactRendererCsp(isDev: boolean): string {
+  const connectSrc = isDev
+    ? "'self' http://localhost:* ws://localhost:* https: wss:"
+    : "'self' https: wss:";
+  return [
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "img-src 'self' data: blob: https:",
+    "font-src 'self' data: https://fonts.gstatic.com",
+    `connect-src ${connectSrc}`,
+    "media-src 'self' data: blob: https:",
+    "worker-src 'self' blob:",
+    "object-src 'none'",
+    "base-uri 'self'",
+  ].join("; ");
+}
+
+/** 只对 React 渲染页注入 CSP meta 标签的 Vite 插件 */
+function reactRendererCspPlugin(): Plugin {
+  return {
+    name: "cyrene-react-renderer-csp",
+    transformIndexHtml: {
+      order: "pre",
+      handler(html, ctx) {
+        const isReactPage = ctx.path === "/react/" || ctx.path.endsWith("/react/index.html");
+        if (!isReactPage) return html;
+        const content = reactRendererCsp(Boolean(ctx.server));
+        return html.replace(
+          '<meta charset="UTF-8" />',
+          `<meta charset="UTF-8" />\n  <meta http-equiv="Content-Security-Policy" content="${content}" />`,
+        );
+      },
+    },
+  };
+}
+
+/**
+ * 性能基线 harness 的专用构建开关（普通构建完全不受影响）：
+ * - CYRENE_PERF_HARNESS=1：入口只保留 react-perf 页（构建快、产物独立）；
+ * - CYRENE_PERF_PROFILE=1：把 react-dom/client 替换为 react-dom/profiling，
+ *   生产构建下 <Profiler onRender> 才会产出数据（通道 A 专用）；
+ * - CYRENE_PERF_OUT_DIR：runner 指定产物目录（相对项目根），默认 dist/renderer。
+ *   注意：只 alias react-dom/client，不能动裸 "react-dom"——React 19.2 的
+ *   react-dom-profiling.profiling.js 内部 require("react-dom") 获取共享
+ *   internals 单例，把主入口也指向 profiling 会造成循环 require，
+ *   internals 变 undefined 后页面直接崩溃（Cannot read properties of
+ *   undefined (reading 'd')）。
+ */
+const isPerfHarnessBuild = process.env.CYRENE_PERF_HARNESS === "1";
+const isPerfProfileBuild = process.env.CYRENE_PERF_PROFILE === "1";
+const perfOutDir = process.env.CYRENE_PERF_OUT_DIR;
+
 export default defineConfig({
-  plugins: [react(), appVersionPlugin()],
+  plugins: [react(), appVersionPlugin(), reactRendererCspPlugin()],
   root: resolve(__dirname, "src/renderer"),
   base: "./",
+  ...(isPerfProfileBuild
+    ? {
+        resolve: {
+          alias: [{ find: /^react-dom\/client$/, replacement: "react-dom/profiling" }],
+        },
+      }
+    : {}),
   build: {
-    outDir: resolve(__dirname, "dist/renderer"),
+    outDir: perfOutDir ? resolve(__dirname, perfOutDir) : resolve(__dirname, "dist/renderer"),
     emptyOutDir: true,
     rollupOptions: {
-      input: {
-        renderer: resolve(__dirname, "src/renderer/index.html"),
-        sidebar: resolve(__dirname, "src/renderer/sidebar/index.html"),
-        tasks: resolve(__dirname, "src/renderer/tasks/index.html"),
-        settings: resolve(__dirname, "src/renderer/settings/index.html"),
-        stickers: resolve(__dirname, "src/renderer/sticker-manager/index.html"),
-        call: resolve(__dirname, "src/renderer/call/index.html"),
-        "chat-react": resolve(__dirname, "src/renderer/react/index.html"),
-        music: resolve(__dirname, "src/renderer/music/index.html"),
-        toast: resolve(__dirname, "src/renderer/toast/index.html"),
-      },
+      input: isPerfHarnessBuild
+        ? {
+            "chat-perf": resolve(__dirname, "src/renderer/react-perf/index.html"),
+          }
+        : {
+            renderer: resolve(__dirname, "src/renderer/index.html"),
+            sidebar: resolve(__dirname, "src/renderer/sidebar/index.html"),
+            tasks: resolve(__dirname, "src/renderer/tasks/index.html"),
+            settings: resolve(__dirname, "src/renderer/settings/index.html"),
+            stickers: resolve(__dirname, "src/renderer/sticker-manager/index.html"),
+            call: resolve(__dirname, "src/renderer/call/index.html"),
+            "chat-react": resolve(__dirname, "src/renderer/react/index.html"),
+            music: resolve(__dirname, "src/renderer/music/index.html"),
+            toast: resolve(__dirname, "src/renderer/toast/index.html"),
+          },
     },
   },
   server: {

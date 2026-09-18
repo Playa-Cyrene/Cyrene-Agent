@@ -1,0 +1,374 @@
+# 聊天窗口渲染性能排查与待办（2026-09-17）
+
+> 范围：`src/renderer/react` 聊天主界面（React 渲染页）的渲染与内存行为；主进程与 preload 不在本次范围。
+> 方法：静态代码走读（渲染路径、状态结构、事件频率），未做运行时 profiling（性能剖析）；结构事实均有代码位置佐证，性能结论均标注"待运行时验证"。
+> 背景：源于控制台诊断修复（`2026-09-17-console-diagnostics-fix-plan.md`）完成后的顺带排查，确认"一个会话窗口是否全量渲染"，并扩展到同类性能反模式。本文档已经过两轮设计评审修正，当前为锁定版方案。
+> 结论（静态确认的结构事实）：会话消息**全量渲染、无虚拟化、无分页**；`createMessageItems` 每次渲染全量遍历；`Bubble.List` 内部已有 memo 边界但被引用不 stable 打穿；按会话渲染态存在不同程度的驻留。
+
+## 问题总览
+
+| # | 问题 | 严重级别 | 状态 | 一句话结论 |
+| --- | --- | --- | --- | --- |
+| 1 | 消息列表全量渲染，无虚拟化/分页 | P0 | 结构事实已确认；是否需要虚拟化为门控项 | 200 条消息 = 200 个完整气泡 DOM，长会话下列表长度放大每次状态更新成本 |
+| 2 | `createMessageItems` 每次渲染全量重建，无 useMemo | P0 | 高概率热点，待运行时验证 | 流式期间每帧 O(n + Σ单消息转换成本) 重建，是否为卡顿主因待 profiling |
+| 3 | 引用链打穿库内与自有的 memo 边界 | P0 | 高概率热点，待运行时验证 | `roles`/`extraInfo`/回调引用不 stable，使 `Bubble.memoedContent` 无法复用 |
+| 4 | `createRoles` 依赖链过长 | P1 | 结构事实已确认 | 编辑、消息完成后的无关渲染都会重建 role 映射 |
+| 5 | 按会话渲染态存在不同程度驻留；删除会话不清理运行态 | P1 | 结构事实已确认；内存量级待 heap 基线 | 5 个 Record 无清理路径；`handleDeleteSession` 存在清理缺口（D1） |
+| 6 | 右侧 Tabs 所有标签内容同时挂载 | P2 | 已确认，按标签策略处理（M2） | 文件树保留状态是刻意权衡，但预览/Diff 标签可按需销毁 |
+| 7 | ConversationSidebar 会话列表无虚拟化、无 memo | P2 | 已确认 | 每项轻量，数百会话内无感；随 1A 一并加 memo 边界 |
+
+## 已经做对的部分（无需处理）
+
+为避免误改，以下机制经核实是正确的：
+
+- 流式文本有 rAF 节流：`AgentRunController.scheduleCandidateFrame`（`SMOOTH_REVEAL_TICK_MS` + `requestAnimationFrame`），token 到达频率已被压帧。
+- `markdownConfig` / `markdownComponents` / streaming 配置均为模块级常量（`ChatMessageList.tsx:109-182`），不存在每渲染重建配置对象的问题。
+- `MarkdownContent` 内部对归一化结果有 `useMemo`（`ChatMessageList.tsx:223`）。
+- shiki 高亮器全局单例（`FileTreePanel.tsx`），语言按需懒加载。
+- 文件预览单标签有 `PREVIEW_MAX_LINES = 2000` 上限。
+- ConversationSidebar 排序与分组有 `useMemo`（`ConversationSidebar.tsx:117-167`）。
+- `@ant-design/x` 内部已有 memo 边界：`MemoedBubble = React.memo(Bubble)`（`BubbleList.js:17`）、`memoedContent` 的 `useMemo`（`Bubble.js:83`）。
+
+---
+
+## 三场景失效引用链（评审修正版）
+
+静态走读确认的引用链按触发场景区分：
+
+### 场景 A：流式期间
+
+```text
+ChatPage（每帧 setState：messagesBySession 新对象）
+  ├─ messages 每帧新数组（patchSessionMessage 合法行为，不可也不应阻断）
+  ├─ onRegenerateLastResponse 为普通函数（ChatPage.tsx:932，每次渲染新引用）
+  │    → regenerate 的 useCallback 失效（ChatMessageList.tsx:1250）
+  │    → roles 的 useMemo 失效（:1298 依赖 regenerate）
+  │    → 全部 role cfg 的 contentRender 新引用
+  │    → Bubble.memoedContent 失效（Bubble.js:83 依赖含 contentRender）
+  ├─ onTtsCacheKey / onRegisterScrollToBottom / onOpenReviewInspector 内联
+  │   （ChatPage.tsx:1526-1540）→ ChatMessageList 无谓重渲染
+  └─ onOpenFileLink = openFileTab 非 useCallback（ChatPage.tsx:1350）
+       → FileLinkContext value 失效（ChatMessageList.tsx:1331-1334）
+       → 历史消息中 FileLink 消费者全部更新
+另：ChatPageNavigation（:40）与 ConversationSidebar（:177 items 每次 map）
+无 React.memo，ChatPage 每帧 setState 波及侧栏与导航子树。
+```
+
+`lastTurn` 在流式期间返回稳定 `null`（`last-turn-actions.ts:28`），**不是**失效源。
+
+### 场景 B：编辑期间
+
+`editDraft` 每键变化 → `roles` 依赖失效（`ChatMessageList.tsx:1298`）。独立工作项 E1 解决。
+
+### 场景 C：消息完成后
+
+`resolveRevisableLastTurn` 完成态每次调用返回**新字面量对象**（`last-turn-actions.ts:29-32`），持续打穿 `roles` 与 `regenerate` 的依赖。修复：`lastTurn` 用 `useMemo(() => resolveRevisableLastTurn(messages, mode), [messages, mode])`，或 `roles` 改依赖两个原始 ID。
+
+### 库内 memo 边界的准确状态
+
+`Bubble.List` 内部：`MemoedBubble`（React.memo）的浅比较被每渲染新建的 `classNames/styles`（omit 产物）打穿；但 `memoedContent` 的 `useMemo` 依赖为 `[content, contentRender, info.key, info.status, info.extraInfo]`——若阶段 1B 稳定 `contentRender`、阶段 2 稳定历史消息 `extraInfo`，则昂贵的 contentRender 调用与整个 Markdown ReactNode 子树可被库内 useMemo 复用，即使 Bubble 函数因浅比较失败重新执行。这是本方案低成本成立的关键依据。
+
+---
+
+## 问题 1（P0）：消息列表全量渲染，无虚拟化、无分页
+
+### 证据
+
+- 列表出口是 `@ant-design/x` 的 Bubble.List，该组件不支持虚拟滚动：`ChatMessageList.tsx:1350`
+- `items` 来自全部消息，无截断：`ChatMessageList.tsx:1329`
+- 会话打开时全量转换存储态消息，无分页：`chat-page-normalizers.ts:129-130`
+
+### 处理
+
+虚拟化为**门控项**（见"停止条件与后续门控"）：优先调研成熟库（`@tanstack/react-virtual`、`virtua`、virtuoso message-list 等，需评估流式内容持续变高时的锚定表现、bundle 体积、autoScroll 语义重做成本）；**禁止自研通用虚拟列表**；不在阶段 1/2 提前引入；只有阶段 2 后重新测量未达标才进入选型。顶部分页（"加载更早消息"）同样属于门控后的选项。
+
+---
+
+## 问题 2（P0，高概率热点，待运行时验证）：`createMessageItems` 每次渲染全量重建
+
+### 证据
+
+`ChatMessageList.tsx:1329` 直接调用，未包 `useMemo`。`createMessageItems`（`:1077` 起）对每条消息执行 `flatMap` + 多层 `some`/`filter`，复杂度 O(消息数 × 单消息内容量)。
+
+### 评审修正后的定位
+
+静态走读只能证明该代码会频繁执行，不能证明主要耗时来自这里；Markdown 解析、React reconcile、浏览器布局/绘制同样可能是主要成本。**是否为卡顿主因由阶段 0 基线与阶段 2 后复测判定。**
+
+数组级 `useMemo` 的诚实定位：仅减少 `messages` 未变化路径（如其他 UI 状态更新）的重复计算；流式期间 `messages` 引用每帧变化，该 memo 不解决流式路径。**不存在"一行 useMemo 解决流式卡顿"的方案。**
+
+---
+
+## 问题 3（P0，高概率热点，待运行时验证）：引用链打穿 memo 边界
+
+### 证据
+
+见"三场景失效引用链"。原"消息组件零 React.memo"的表述不准确：`@ant-design/x` 库内已有 `MemoedBubble` 与 `memoedContent` 边界；准确问题是**当前属性引用稳定性不足，使这些边界失效**（`regenerate` 传导链、内联回调、`extraInfo` 每次新建、`openFileTab` 非 useCallback）。
+
+### 修复定位
+
+阶段 1B（列表配置与引用稳定）+ 阶段 2（单消息派生缓存稳定 `extraInfo`）针对此问题；是否还需要自有组件级 memo，由阶段 2 后复测决定，不预先无差别添加。
+
+---
+
+## 问题 4（P1）：`createRoles` 依赖链过长
+
+### 证据
+
+`ChatMessageList.tsx:1298`，`useMemo` 依赖包含 `editDraft`、`editingMessageId`、`reasoningExpanded`、`revisionBusy`、`lastTurn`（完成态每次新对象）、`regenerate`（被父级普通函数打穿）等。
+
+### 处理
+
+- 完成态 `lastTurn` 失效与 `regenerate` 传导链 → 阶段 1B。
+- `editDraft` 每键失效 → 独立工作项 E1（编辑草稿状态下沉），注意受控组件 value/onChange 同源，回归 ESC 取消、busy 禁用、提交后清理。
+
+---
+
+## 问题 5（P1）：按会话渲染态驻留与删除会话清理缺口
+
+### 证据
+
+ChatPage 中按会话键控的 Record（评审修正：并非全部"只增不减"）：
+
+| 状态 | 位置 | 体量 | 清理路径 |
+| --- | --- | --- | --- |
+| `messagesBySession` | `useSessionMessages.ts:38` | **重**：整个会话的渲染态消息 | 无 → M1 |
+| `drafts` | `ChatPage.tsx:137` | 轻 | 无（空串也不删 key）→ D2 |
+| `todoStateBySession` | `ChatPage.tsx:156` | 轻 | 无 → D1 |
+| `planReviewBySession` | `ChatPage.tsx:158` | 轻 | 无 → D1 |
+| `sessionContextUsageBySession` | `ChatPage.tsx:397` | 轻 | 无 → D1 |
+| `interactionsBySession` | `ChatPage.tsx:152` | 轻 | 有生命周期清理（权限结算 `delete`，`:239-241`；`clearSessionInteraction`，`:621`），缺删除会话兜底 → D1 |
+| `pendingQueueBySession` | `ChatPage.tsx:317` | 轻 | 有生命周期清理（`replaceProjection` null 分支，`:369-373`），缺删除会话兜底 → D1 |
+
+**现存缺陷（D1）**：`handleDeleteSession`（`ChatPage.tsx:1099-1105`）只调 `store.delete` + `refreshSessions`，不清理任何渲染态——删除会话后所有按会话 Record 的条目残留。
+
+### 处理：删除会话与容量淘汰严格分离（评审锁定）
+
+```ts
+// 用户真正删除会话后调用（D1）：完整清理全部运行态
+removeDeletedSessionRuntimeState(sessionId)
+
+// 仅容量压力时调用（M1 第一版）：只淘汰可重新水合的重缓存
+dropSessionMessageRenderCache(sessionId)
+```
+
+- **删除会话 = 完整清理**：messages、drafts、interactions、todos、plan review、pending queue、context usage、附件临时态，收口为单一函数，禁止各 Record 散写删除。
+- **容量淘汰 = 只删重缓存**：M1 第一版只允许淘汰 `messagesBySession[sessionId]`；**不得**复用 D1 的完整清理函数，不得顺带删除未发送草稿、附件临时态、plan review、todo、pending queue 及其他未持久化 UI 状态——用户仅仅切走一个会话后缓存超限，不能丢失这些数据。以后若证明某类派生状态可安全重建，再单独评估加入容量治理。
+- `useSessionMessages` 提供语义明确的 `dropSessionMessages(sessionId)` API（与现有 `hydrateMessages`/`patchMessage` 命名一致），`ChatPage` 不绕过 hook 直接修改内部状态。
+- 容量策略：**不自研通用 LRU**。双阈值（缓存会话数 + 总消息条数，数值阶段 0 heap 基线后锁定）；淘汰候选 = 非 active、无 `activeRunsBySession` 条目、无 pending interaction，从最旧访问开始（复用现有会话元数据，若仅缺访问顺序则维护轻量 `lastAccessedAt` 映射）；全部不可淘汰时记录诊断日志并允许超标（宁超不错删）。M1 在 heap 基线后单独设计，不阻塞性能阶段。
+
+---
+
+## 问题 6（P2）：右侧 Tabs 按标签策略处理（M2）
+
+### 证据与处理
+
+antd Tabs 支持每个 item 单独配置 `destroyOnHidden`（`@rc-component/tabs` TabPane 级 prop）。原"全部常驻保文件树状态"的权衡只应覆盖文件树标签：files 标签 `destroyOnHidden: false`（保留展开状态与已加载节点）；文件预览、Diff 标签按重建成本选 true（注意 Diff 重新挂载会重拉 IPC 快照，属重建成本与常驻内存的权衡）；计划面板按是否有本地交互态决定。
+
+---
+
+## 问题 7（P2）：ConversationSidebar 无 memo 边界
+
+### 证据与处理
+
+`ConversationSidebar.tsx:177` items 每渲染重 map，且组件本身无 `React.memo`；`ChatPageNavigation.tsx:40` 同样无 memo。随阶段 1A 一并处理（见下）。
+
+---
+
+## 锁定版实施流程：阶段 0 → 1A → 1B → 2 → 重新测量
+
+每阶段只验证一个假设；独立工作项（D1/D2/M1/M2/E1）单独排期，不混入性能归因。
+
+### 阶段 0：可重复基线 + 锁定验收线
+
+**交付物不仅是测量数据，还包括在任何优化实施前锁定的验收阈值。** 实现后不得根据结果修改验收线。
+
+- 双通道测量（两组数据不混为同一绝对指标）：
+  - **A. React 层诊断**：React Profiler / 受控 `<Profiler onRender>`，专用 profiling 构建；记录组件执行次数、commit duration、实际更新路径；注明工具自身开销，仅用于前后对比。
+  - **B. 用户体验基线**：生产构建、React DevTools 关闭；Chromium Performance、PerformanceObserver、performance marks；记录 Long Task、帧时间、首次打开会话耗时、流式事件到下次绘制延迟、JS heap。
+- 测试矩阵：数据集（纯文本短会话 / Markdown+代码块重型 / 推理块+工具执行混合，200 与 500 条两档）；流式参数（固定 seed 的确定性增量，每帧 8-32 字符、持续 30s）；贴底 autoScroll 开/关；固定测试机与窗口尺寸；每场景独立运行 5 次，取中位数与 P95。
+- fixture 隔离：固定 seed、内存 store 或隔离临时数据目录、运行后可完整清理、不进真实会话列表、不依赖未提交工作区数据、可重放一致流式事件序列。若现有 store 无安全导入入口，使用开发专用入口或测试 harness，**不新造正式导入功能**。
+- 所有量化验收阈值在此阶段结束时锁定并回写本文档（当前数值均为待定，不预设 16ms/45fps/50k DOM 等未经项目测量确认的数字）。
+
+#### 阶段 0 实测基线与锁定验收线（2026-09-17 锁定，实现后不得修改）
+
+**测量 harness**：`src/renderer/react-perf/`（React 挂载前注入内存 store 假桥 + 固定 seed 确定性重放，驱动真实 ChatPage + AgentRunController 全链路）+ `scripts/perf/chat-renderer-baseline.mjs`（Playwright runner）。复现：`npm run perf:chat-baseline`（冒烟加 `-- --smoke`）。69 次运行原始数据：`docs/internal-issue/perf/baseline-report.json`。
+
+- 环境：headless Chromium 148（Playwright 1.60，60Hz 虚拟帧）、seed=42、15s 流式（约 351 个 TEXT delta、32ms 节拍）、每配置 5 次取中位数（A 通道 3 次）。
+- 通道 B=普通生产构建（用户体感指标与验收线）；通道 A=react-dom/profiling 构建（commit 级诊断，工具自身开销使帧绝对值失真，只做前后对照，不设验收线）。
+- 产品代码探针（`chat-perf-probe.ts`，未注册计数器时零成本）：流式期间 `markdownRenders` / `navigationRenders` / `sidebarRenders` 计数，基线与优化后共用同一探针。
+- "流式期间"指标均按 streamStart→streamEnd 窗口过滤统计（harness 内实现）。
+
+**实测基线（通道 B，滚动两档差异 <5% 故给区间）**：
+
+| 配置 | 帧 p95 (ms) | 长任务 >32 / >100 | mdDelta（历史 Markdown 重渲染） | 导航 / 侧栏执行 | 事件→绘制 p95 (ms) |
+| --- | --- | --- | --- | --- | --- |
+| plain/200 | 26.4 | 0 / 0 | 70,901 | 351 / 352 | 15.7 |
+| plain/500 | 44.3–49.7 | 14–16 / 0 | 176,201 | 351 / 352 | 34.3–35.2 |
+| markdown/200 | 151.0–154.0 | 344–349 / 165–168 | 90,293 | 447 / 448 | 144.7–145.9 |
+| markdown/500 | 178.4–180.5 | 392–397 / 255–266 | 224,894 | 448 / 449 | 165.4–166.6 |
+| mixed/200 | 157.8–160.3 | 333–336 / 176–177 | 79,361 | 392 / 393 | 151.4–153.6 |
+| mixed/500 | 229.3–235.3 | 414–415 / 359 | 197,762 | 393 / 394 | 215.8–218.9 |
+
+- **核心实锤**：mdDelta ÷ delta 事件数（≈351）≈ 历史消息条数（如 plain/500：176,201 ÷ 351 ≈ 502）——每个流式 delta 触发**全部**历史消息 Markdown 重渲染，问题 1/2/3 的假设全部得到运行时证实。
+- markdown/mixed 配置流式期间帧 p95 达 151–235ms、15 秒内 165–359 个 >100ms 长任务；滚动位置（贴底/顶部）对指标影响 <5%，开销与滚动无关。
+- 通道 A 参考值（500 条）：commit 6.8–17.6 次/秒、commit p95 26–110ms；探针计数在 A 通道因 profiling 开销改变批处理合并程度而与 B 略有出入（如 mixed/500 mdDelta 116,940），**验收以 B 通道为准**。
+
+**锁定验收线**：
+
+| 验收指标 | 适用阶段 | 基线（重配置 markdown/500、mixed/500） | 验收线 |
+| --- | --- | --- | --- |
+| 流式期间导航 / 侧栏执行（探针 delta） | 1A | 448/449、393/394 | B 通道全部 12 配置均 = 0 |
+| 流式期间历史消息 Markdown 重渲染（mdDelta） | 2（主验收） | 224,894、197,762 | 全部配置 ≤ 5 × delta 事件数（≈1,760 / 1,970），较基线下降 ≥ 99% |
+| 帧 p95（通道 B） | 阶段 2 后终验 | 178.4–235.3ms | 重配置 ≤ 40ms；plain/500 ≤ 30ms |
+| 长任务 >100ms / >32ms（流式期间） | 阶段 2 后终验 | 255–359 / 392–415 | >100ms ≤ 10；>32ms 重配置 ≤ 30、plain/500 ≤ 5 |
+| 事件→绘制 p95 | 阶段 2 后终验 | 165.4–218.9ms | 重配置 ≤ 40ms |
+| DOM 节点数 | 阶段 2 后终验 | — | 与基线相同（缓存不减少 DOM） |
+
+- 1B 为中间步骤，验收仍按"messages 不变时不重建 items/roles、roles 引用稳定"执行；mdDelta 下降幅度作为假设验证的观察指标记录在案——若未显著下降，先定位剩余失效链再进阶段 2。
+- 阈值依据：plain/200（最轻配置）帧 p95 26.4ms 是该环境静态底噪，阶段 2 后流式期间仅渲染流式气泡自身，重配置目标 40ms 即"接近底噪"；mdDelta 上界 5 × delta 数覆盖流式消息自身渲染（≈1×）与终态/推理/工具卡的少量合法渲染。
+
+### 阶段 1A：父级子树隔离
+
+- `React.memo(ChatPageNavigation)`、`React.memo(ConversationSidebar)`、sidebar items `useMemo`、核对并稳定两者全部 props（对象与回调引用）。
+- 文件：`ChatPageNavigation.tsx`、`ConversationSidebar.tsx`、`ChatPage.tsx`。
+- 验收（已锁定，见阶段 0 验收线表）：B 通道全部 12 配置流式期间导航与侧栏探针 delta = 0。
+
+**实测结果（2026-09-18 完成，验收通过）**：
+
+- 12/12 配置 nav/side delta = 0（`--runs 1 --only-b`，报告 `perf/phase-1a-report.json`）；mdDelta 与基线完全一致，证明消息列表行为未变。
+- 实施内容：
+  - `React.memo` 包裹 `ChatPageNavigation` / `ConversationSidebar`；sidebar `items` 数组 `useMemo`。
+  - `ChatPage` 模块级 `EMPTY_SESSIONS` 固定空数组引用；6 个导航动作走 `navActionsRef` ref 模式（渲染期同步最新实现），13 个转发回调 `useCallback` 稳定。
+  - `refreshSessions` 增加内容浅比较（`sessionMetaListEqual`）：列表内容未变时返回原 state 引用，React bailout，幂等刷新零渲染。
+- 统计口径说明：nav/side 的"流式期间"按**事件流到达期间**（streamStart → 最后事件到达）统计。RUN_FINISHED 后 `handleRunFinished → refreshSessions` 会刷新会话列表，此时 `messageCount` 已真实变化（claim 写入用户消息 + 控制器写入助手消息），属每轮一次的合法数据更新而非流式渲染成本，不计入流式指标（诊断字段 `shellProbeEvents` 仍完整记录该次渲染）；mdDelta / 帧指标仍按含 2.5s 沉降的完整流式窗口统计，验收线文本不变。
+
+### 阶段 1B：列表配置与引用稳定
+
+- 回调清单（仅含有真实消费者的，不机械 useCallback 化全量函数）：
+
+| 回调 | 位置 | 消费者 | 稳定原因 |
+| --- | --- | --- | --- |
+| `regenerateLastChatResponse` | `ChatPage.tsx:932` | `regenerate` → `roles` 依赖 | 掐断流式期间 contentRender 失效链 |
+| `editLastChatUserMessage` | `ChatPage.tsx:1524` 条件传递 | roles 编辑分支 | 同上 |
+| `onTtsCacheKey` | `ChatPage.tsx:1526-1533` 内联 | 消息 TTS 路径 props | 减少无谓重渲染 |
+| `onRegisterScrollToBottom` | 内联 | 注册型 effect（`ChatMessageList.tsx:1262-1264`） | 防止 effect 反复注册 |
+| `onOpenReviewInspector` | 内联 | ReviewPanel 交互 | 同上 |
+| `openFileTab` | `ChatPage.tsx:1350` | FileLinkContext value（`:1331-1334`） | 稳定 context，防 FileLink 消费者全量更新 |
+
+- 另含：完成态 `lastTurn` useMemo 化、`items` 数组级 `useMemo`（定位见问题 2）。
+- 原则：明确依赖数组优先；仅"需读最新状态且引用不能变"时用 ref 模式，不为空依赖把大量状态读取改成 ref。
+- 文件：`ChatPage.tsx`、`ChatMessageList.tsx`、`last-turn-actions.ts`（如改 ID 依赖）。
+- 验收：messages 不变时，无关状态更新不重建 items/roles；`roles` 引用稳定。
+
+**实测结果（2026-09-18 完成，验收通过）**：
+
+- 实施内容（`ChatPage.tsx` / `ChatMessageList.tsx`）：
+  - 6 个回调稳定化：`regenerateLastChatResponse` / `editLastChatUserMessage`（ref 转发模式，实现走 `lastTurnActionsRef` 取最新闭包）、`onTtsCacheKey`（`useCallback` 依赖 `[activeSessionId]`）、`onRegisterScrollToBottom`（空依赖，只写 ref）、`onOpenReviewInspector` → `openDiffTab`、`openFileTab`（`useCallback` 依赖 `[activeSession?.workspaceBinding]`，仅会话切换时换新）。
+  - `ChatMessageList`：`lastTurn` useMemo 化（流式期间恒为 null → 引用稳定，完成态仅随 messages 重算）；`items` 数组 useMemo（依赖 `[messages, enabledStickers]`）。
+  - 效果：流式期间 roles 的全部依赖（conversationId/mode/preferredAddress/revisionBusy/lastTurn/各回调）均不随 delta 变化，roles 引用在流式期间保持稳定。
+- harness 观察（`--runs 1 --only-b`，报告 `perf/phase-1b-report.json`）：nav/side 保持 0；mdDelta 与 1A 持平（如 plain/200 70,901、markdown/500 224,894）——符合预期，残余失效链为**每个 delta 重建 items 数组导致全部历史条目拿到新对象引用**（memoedContent 的 `info` 依赖失效），这正是阶段 2 单消息派生缓存的目标；重配置帧 p95 方向性改善（markdown/500 190→182ms、mixed/500 239→227ms，单次运行噪声范围内）。
+- 全量 `npm test` 487 文件 / 4,372 测试绿色。
+
+### 阶段 2：组件实例级单消息派生缓存
+
+- 拆分：`convertMessage(message, deps): readonly BubbleItemType[]`（flatMap 语义，一条消息可产生多条目），外层 O(n + Σchanged) 拼装。
+
+```ts
+interface MessageItemCacheState {
+  stickers: readonly EnabledSticker[];
+  byMessage: WeakMap<ChatMessageItem, readonly BubbleItemType[]>;
+}
+```
+
+- 生命周期：`ChatMessageList` 实例级 `useRef` 持有（已验证该组件无 `key`、单实例常驻，`ChatPage.tsx:1517`；会话切换仅换 messages 数组不卸载，切回旧会话可自然命中，卸载整体释放，不跨窗口共享）。
+- 失效规则：只保留整体替换一种机制——`enabledStickers` 引用变化时替换整个 `MessageItemCacheState`（新 WeakMap），**不逐条维护版本号**；消息被 patch 后 item 引用必变，自动 miss；hydrate 整体替换时自然全量 miss。
+- 不可变性前提（已静态审计成立，主生产者非原地修改：`AgentRunController.ts:516-527, 962, 971`；`session-runtime-state.ts:63-68`）与防护测试：
+  - 缓存契约测试：命中/未命中/stickers 整体失效/多条目顺序稳定。
+  - 数据更新契约测试：针对 `AgentRunController` 等主要生产者，证明每次更新嵌套集合时创建新集合引用。
+  - 开发模式深度 `Object.freeze` 仅作调试辅助，不进默认热路径。
+- 验收（已锁定，见阶段 0 验收线表）：流式期间历史消息 `contentRender` 调用次数为 0（mdDelta 全部配置 ≤ 5 × delta 事件数）；比较维度为 contentRender/Markdown 解析调用次数、commit duration 中位数与 P95、每秒临时分配量、GC 次数与停顿、流式事件到绘制延迟。**DOM 节点数应保持相同（缓存不减少 DOM）；heap 允许小幅上升但须换来明确 CPU 收益。**
+
+### 阶段 2 后：重新测量，达标即停止
+
+重跑双通道基线对照。**达标即停止，不引入新架构**（不提前引入消息行订阅、分页或虚拟化）。
+
+---
+
+## 阶段实施记录（实测回写）
+
+### 阶段 2：组件实例级单消息派生缓存
+
+**实测结果（2026-09-18 完成，主验收通过）**：
+
+- 实施内容（`ChatMessageList.tsx`）：
+  - `convertMessage` 拆为纯函数（只依赖 message 与 enabledStickers），`assembleMessageItems` 持实例级 `WeakMap<ChatMessageItem, readonly BubbleItemType[]>` 缓存；`enabledStickers` 引用变化时整体替换缓存（新 WeakMap），消息被 patch 必产生新对象引用自动 miss。
+  - **验收中发现并修复两个穿透源**（缓存生效后 mixed 配置 mdDelta 仍超线，经隔离实验与时间桶归因定位）：
+    1. **完成态间隙的引用抖动**：mixed 流式前段（推理结束 patch 后、正文开始前）流式消息的 loading/streaming/reasoningStreaming 全 false，`resolveRevisableLastTurn` 每个 patch 都返回**值相同的新对象**，lastTurn 引用每 patch 换新 → roles 重建 → 全部历史条目 contentRender 失效（每 patch 一轮全量重渲染，实测 mixed/200 mdDelta 4,790、mixed/500 11,390）。修复：`lastTurn` useMemo 内经 `lastTurnRef` 做**值相等保引用**（userMessageId/assistantMessageId 相同则返回旧对象）。
+    2. **阶段边界的 null↔非 null 真实切换**：第一轮修复后 mixed 仍残留约 4 轮全量重渲染（每轮 = 历史条数 × 每条 1 个可见 md）：流式开始/推理结束/正文开始/运行结束四个时刻 lastTurn 在 null 与非 null 间切换是真实值变化，roles 闭包 lastTurn 后每次切换全部 role 的 contentRender 换引用 → `Bubble.memoedContent`（依赖含 contentRender，`Bubble.js:83`）失效。修复：**把 lastTurn 从 roles 闭包链剥离**——`createRoles` 改收 `getLastTurn` 稳定 getter（空依赖 useCallback，读 `lastTurnRef`），`regenerate` 回调同样运行时读 ref；footer（Bubble 渲染期直接调用、无 memo，`Bubble.js:145`）经 getter 每次渲染读到最新值保证按钮新鲜，而 contentRender 引用在流式期间保持稳定使 memoedContent 全程命中。
+  - 配套测试：缓存契约 4 用例（命中复用条目引用/新对象只重算该消息/stickers 整体失效/多条目 key 顺序）+ `patchSessionMessage` 兄弟引用不变契约；全量 `npm test` 487 文件 / 4,377 测试绿色。
+- 验收数据（`--runs 1 --only-b`，报告 `perf/phase2-verify2-report.json`；验收线 = 5 × delta 事件数，delta 数 plain=348 / markdown=444 / mixed=365）：
+
+| 配置 | mdDelta 基线 | mdDelta 实测 | 验收线 | 判定 | DOM 节点数 |
+| --- | --- | --- | --- | --- | --- |
+| plain/200 | 70,901 | 551 | 1,740 | PASS | 4,143 / 4,147（与基线相同） |
+| plain/500 | 176,201 | 851 | 1,740 | PASS | 9,843 / 9,847（相同） |
+| markdown/200 | 90,293 | 647 | 2,220 | PASS | 29,480 / 29,484（相同） |
+| markdown/500 | 224,894 | 947 | 2,220 | PASS | 35,366 / 35,370（相同） |
+| mixed/200 | 79,361 | 770 | 1,825 | PASS | 12,326 / 12,330（相同） |
+| mixed/500 | 197,762 | 1,370 | 1,825 | PASS | 26,026 / 26,030（相同） |
+
+  - 全部 12 配置 mdDelta 下降 ≥ 99.2%（最高 plain/500 −99.5%）；DOM 节点数 12/12 与基线逐配置相同（缓存不减少 DOM，符合验收线）；nav/side delta 保持 0。
+  - mdDelta 残余构成（隔离实验归因，count=0 空历史对照）：流式消息自身渲染 ≈ 390（≈ 1×/delta，必要成本）+ stickers 异步加载后缓存整体失效一轮（≈ 历史条数 × 1）+ 终态/阶段切换的少量合法渲染；均在 5 × delta 上界内。
+- 阶段 2 诊断用临时代码（react-perf 的 mdSample 栈采样 Proxy 与 count=0 放行、`scripts/perf/md-sample-diagnose.mjs`）验收完成后已全部移除，不进基线矩阵。
+
+### 阶段 2 后终验（p2r，2026-09-18 完成）
+
+**双通道完整口径重跑**（B 通道 12 配置 × 5 次取中位数 + A 通道 3 配置 × 3 次，报告 `perf/phase2-final-report.json`）：
+
+| 验收指标 | 验收线 | 终验实测（B 通道中位数） | 判定 |
+| --- | --- | --- | --- |
+| mdDelta | 12 配置 ≤ 5 × delta | 551/851（plain）、647/947（markdown）、770/1,370（mixed） | **12/12 PASS**（5 次中位数与单次运行完全一致，计数确定性） |
+| 导航/侧栏 delta | = 0 | 0 / 0 | PASS |
+| DOM 节点数 | 与基线相同 | 12/12 逐配置相同 | PASS |
+| 帧 p95 | 重配置 ≤ 40ms；plain/500 ≤ 30ms | markdown 154.6–190.1、mixed 139.5–183.9、plain/500 36.9–40.4 | **未达标** |
+| 长任务 | >100ms ≤ 10；>32ms 重配置 ≤ 30 | >100ms：121–247；>32ms：255–375 | **未达标** |
+| 事件→绘制 p95 | 重配置 ≤ 40ms | 134.9–174.5 | **未达标** |
+
+**帧指标结论与归因（待 A0 隔离实验确认，2026-09-18 评审修正表述）**：
+
+- 相对基线：mixed/500 帧 p95 229→182ms（−21%）、mixed/200 158→140（−12%）、plain/500 44–50→37–40（−20%）；markdown 持平（基线瓶颈本来就不在历史重渲染）。
+- **重渲染已证伪为剩余瓶颈**：mdDelta 残余 ≈ 流式消息自身渲染（≈1×/delta）+ stickers 加载一轮，历史消息零重渲染（阶段 0 实锤的"每 delta 全量重渲染"已消除）。帧 p95 与 evtP95 高位同构（148–175ms ≈ 帧 p95），A 通道 commit p95 106–132ms 佐证。
+- 剩余成本**初步指向流式消息渲染的 JavaScript 成本**（CDP 数据 ScriptDuration 远高于 LayoutDuration；不能把 35k DOM 节点数直接等同于布局瓶颈），具体构成（流式 XMarkdown 全文重解析 vs 外壳/布局）待 A0 三对照组隔离实验确认——A0 仅做 harness 隔离测量，不改正式架构。
+- 处置：**CPU 侧主验收（mdDelta/DOM/nav/side）全部达标**；帧指标未达标部分转 A0 限时归因实验，按门控规则决策（关闭动画有效→内置配置修复；纯文本对照大幅改善且与历史条数无关→流式渲染策略；绕过 XMarkdown 仍随历史条数增长→虚拟化评估）。不开发通用 Markdown 解析器。
+
+---
+
+## 独立工作项（单独排期，不混入性能假设）
+
+| 项 | 内容 | 备注 |
+| --- | --- | --- |
+| D1 | `removeDeletedSessionRuntimeState(sessionId)`：删除会话后完整清理全部运行态，接入 `handleDeleteSession` | 行为修复（现存缺陷），可先行 |
+| D2 | drafts 空串删 key | 顺手小修 |
+| M1 | 容量治理：仅淘汰可重新水合的 `messagesBySession` 重缓存（`dropSessionMessageRenderCache` + `useSessionMessages.dropSessionMessages`）；双阈值 + 可淘汰判定；不自研通用 LRU | 阶段 0 heap 基线后单独设计，不阻塞 1A/1B/2 |
+| M2 | Tabs 按标签 `destroyOnHidden`（files=false 保状态；预览/Diff 按重建成本定） | 独立 |
+| E1 | editDraft 下沉至编辑器局部，消除编辑期 roles 重建 | 注意受控组件 value/onChange 同源；回归 ESC/busy/提交清理 |
+
+---
+
+## 停止条件与后续门控
+
+- **停止条件**：阶段 2 后重跑双通道——历史消息 contentRender 零调用（A 通道）；commit duration P95、流式事件到绘制延迟相对基线达到阶段 0 锁定的量化目标（B 通道）；DOM 节点数持平；heap 小幅上升在锁定上限内且换来明确 CPU 收益。达标即停。
+- **门控（未达标才评估，按序）**：① 消息行级订阅 / 流式独立更新边界（新状态架构，需完整设计评审：useSyncExternalStore、双源合并、autoScroll 时机、取消/切换同步）；② 顶部分页"加载更早消息"；③ 虚拟化选型（成熟库优先：`@tanstack/react-virtual` / `virtua` / virtuoso；锚定表现、bundle 体积、autoScroll 重做成本；**禁止自研通用虚拟列表**）。
+
+## 验证要求（未来实施时）
+
+- 每阶段验收以阶段 0 锁定的量化阈值为准，实现后不得修改验收线。
+- 回归范围：流式输出、消息编辑（ESC/busy/提交）、贴纸发送、推理展开、TTS cacheKey 上报、FileLink 跳转、Diff 标签、计划面板交互、会话切换与切回 hydrate、pending 队列投影、权限/答题卡片、autoScroll 与滚动到底按钮。
+- 完整测试集 `npm test` 保持绿色。
+
+---
+
+## 评审记录
+
+- 2026-09-17 初版：静态走读结论（问题总览 + 修复优先级建议）。
+- 2026-09-17 设计评审（两轮）：修正 `lastTurn` 失效场景（流式期间返回稳定 null；完成态每次渲染新对象）、确认 `Bubble.List` 库内 memo 边界及其打穿机制、`createMessageItems` 复杂度修正为 O(n + Σchanged)、方案从"memo 化 + LRU"演进为"阶段 0→1A→1B→2 + 独立工作项"、删除会话与容量淘汰严格分离、阶段 0 交付物包含锁定验收线。未经 profiling 证明的性能结论均已降级为"待运行时验证"。

@@ -1,0 +1,31 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true,
+    "forceConsistentCasingInFileNames": true,
+    "types": ["vite/client"]
+  },
+  "include": [
+    "src/renderer/react/**/*.ts",
+    "src/renderer/react/**/*.tsx",
+    "src/renderer/react-perf/**/*.ts",
+    "src/renderer/react-perf/**/*.tsx",
+    "src/renderer/global.d.ts",
+    "src/shared/**/*.ts"
+  ],
+  "exclude": [
+    "src/renderer/react/**/*.test.ts",
+    "src/renderer/react/**/*.test.tsx",
+    "src/shared/logger.ts",
+    "src/shared/logger.test.ts"
+  ]
+}

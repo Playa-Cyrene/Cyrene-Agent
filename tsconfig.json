@@ -1,0 +1,16 @@
+{
+  // 根配置只做项目路由，不含任何源文件：
+  // 编辑器的 TS 服务只自动发现名为 tsconfig.json 的配置，
+  // 通过 references 把各目录的文件归入对应的子配置项目
+  // （例如 renderer 文件 → tsconfig.renderer.json，vite/client 的
+  // *.css / *.png 等静态资源声明随之生效），否则文件会落入
+  // 无类型声明的"推断项目"，产生 TS2882 误报。
+  // 注意：命令行构建不受影响，始终用 tsc -p <子配置> 显式指定。
+  "files": [],
+  "references": [
+    { "path": "./tsconfig.main.json" },
+    { "path": "./tsconfig.preload.json" },
+    { "path": "./tsconfig.renderer.json" },
+    { "path": "./tsconfig.sim.json" }
+  ]
+}
