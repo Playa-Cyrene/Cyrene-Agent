@@ -52,7 +52,7 @@ import {
   initRAG,
   isUserMemoryVectorStoreReady,
 } from "../rag";
-import { getEmbeddingProvider, getSceneEmbeddingProvider } from "../rag/embedding";
+import { getEmbeddingProvider } from "../rag/embedding";
 import { toolRegistry } from "../orchestrator/tools/registry/tool-registry";
 import { pluginPromptRegistry } from "../../plugins/prompts";
 import type { PluginManager } from "../../plugins/manager";
@@ -81,6 +81,7 @@ import { memoryStore } from "../memory/memory-store";
 import { backupMemoryRagFiles, reconcileMemoryRag } from "../memory/memory-rag-reconciliation";
 import { registerChatsIpc } from "../chats/chats-ipc";
 import { registerWorkspaceFilesIpc } from "../chats/workspace-files-ipc";
+import { registerOpenInAppIpc } from "../chats/open-in-app";
 import { registerMomentsIpc } from "../moments/moments-ipc";
 import { registerChatUiIpc, getActiveChatSessionId } from "../chats/chat-ui-ipc";
 import { createToastWindowController } from "../toast/toast-window";
@@ -239,7 +240,8 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
       createChatShell: (windowManager) => windowManager.createReactChatWindowShell(),
       registerProtocolHandlers,
       registerShellIpc: ({ ipc, windowManager, live2dWindowLifecycle }) => {
-        registerWindowSystemIpc({ ipc, windowManager });
+        // quit 由组合根注入：窗口系统 IPC 不直接依赖 electron app，且退出仍走受控链路。
+        registerWindowSystemIpc({ ipc, windowManager, quit: () => app.quit() });
         registerChatUiIpc({ ipc, live2dWindowLifecycle, windowManager });
       },
       createTray: (input) => createTray({
@@ -292,10 +294,9 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
 
         // 应用图标 getter 已在工厂体开头注入（早于 shell 阶段的窗口壳/托盘创建）。
 
-        // 内置工具配置 getter（场景向量索引等）
+        // 内置工具配置 getter
         bootstrapConfigGetters({
           loadGeneralSettings,
-          getSceneEmbeddingIndex: () => embeddingIndexService.getSceneEmbeddingIndex(),
         });
 
         // Locale Context（从 GeneralSettings 的语言配置同步）
@@ -401,10 +402,8 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
         loadUserProfile,
         toolRegistry,
         skillRegistry,
-        getSceneEmbeddingIndex: () => services.embedding.getSceneEmbeddingIndex(),
         getStickerEmbeddingIndex: () => services.embedding.getStickerEmbeddingIndex(),
         getEmbeddingProvider,
-        getSceneEmbeddingProvider,
         broadcastRuntimeStateChanged: () => {
           broadcastToAuxWindows(IPC.RUNTIME_STATE_CHANGED, services.runtimeState.getState());
         },
@@ -497,6 +496,8 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
         registerCodeGitIpc({ ipc, service: services.git });
         // 会话工作区只读文件（右侧面板文件树 / 预览）
         registerWorkspaceFilesIpc(ipc);
+        // 工作区右上角"打开"菜单：本机应用探测 + 打开执行
+        registerOpenInAppIpc(ipc);
 
         // AG-UI 事件流桥：渲染进程 invoke(AGUI_RUN) → CyreneAgent 跑 Agent 循环 → 事件透传
         registerAgUiIpc(

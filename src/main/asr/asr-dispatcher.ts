@@ -1,6 +1,6 @@
 import type { AsrConfig } from "./asr-config";
 import { MosslandAsrStream } from "./mossland-asr-engine";
-import { VolcanoAsrStream } from "./volcano-asr-engine";
+import { AliyunAsrStream } from "./aliyun-asr-engine";
 
 export interface AsrStreamSession {
   start(): Promise<void>;
@@ -17,7 +17,7 @@ export function createAsrStream(
     return new MosslandAsrStream(config.apiKey, onFinal);
   }
 
-  const stream = new VolcanoAsrStream(onPartial, onFinal);
+  const stream = new AliyunAsrStream(onPartial, onFinal);
   return {
     start: () => stream.start(
       config.appKey,
