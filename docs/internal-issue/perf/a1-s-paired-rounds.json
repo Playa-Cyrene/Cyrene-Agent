@@ -1,0 +1,584 @@
+[
+ {
+  "dataset": "markdown",
+  "count": 0,
+  "perRound": {
+   "frameP95": {
+    "rounds": [
+     {
+      "round": 1,
+      "anim": 130.8,
+      "sd": 24.1,
+      "diff": 106.7,
+      "reductionPct": 81.6
+     },
+     {
+      "round": 2,
+      "anim": 120.2,
+      "sd": 23.6,
+      "diff": 96.6,
+      "reductionPct": 80.4
+     },
+     {
+      "round": 3,
+      "anim": 122,
+      "sd": 23.4,
+      "diff": 98.6,
+      "reductionPct": 80.8
+     }
+    ],
+    "medianReductionPct": 80.8
+   },
+   "evtP95": {
+    "rounds": [
+     {
+      "round": 1,
+      "anim": 108.8,
+      "sd": 17.4,
+      "diff": 91.4,
+      "reductionPct": 84
+     },
+     {
+      "round": 2,
+      "anim": 69.4,
+      "sd": 17.3,
+      "diff": 52.1,
+      "reductionPct": 75.1
+     },
+     {
+      "round": 3,
+      "anim": 86.7,
+      "sd": 17.1,
+      "diff": 69.6,
+      "reductionPct": 80.3
+     }
+    ],
+    "medianReductionPct": 80.3
+   },
+   "scriptS": {
+    "rounds": [
+     {
+      "round": 1,
+      "anim": 31.24,
+      "sd": 3.354,
+      "diff": 27.89,
+      "reductionPct": 89.3
+     },
+     {
+      "round": 2,
+      "anim": 29.21,
+      "sd": 3.269,
+      "diff": 25.94,
+      "reductionPct": 88.8
+     },
+     {
+      "round": 3,
+      "anim": 29.394,
+      "sd": 3.118,
+      "diff": 26.28,
+      "reductionPct": 89.4
+     }
+    ],
+    "medianReductionPct": 89.3
+   }
+  },
+  "expectedDeltaEvents": 444,
+  "domFinalRounds": {
+   "anim": [
+    3228,
+    3228,
+    3228
+   ],
+   "sd": [
+    3228,
+    3228,
+    3228
+   ]
+  }
+ },
+ {
+  "dataset": "markdown",
+  "count": 200,
+  "perRound": {
+   "frameP95": {
+    "rounds": [
+     {
+      "round": 1,
+      "anim": 140.2,
+      "sd": 25.6,
+      "diff": 114.6,
+      "reductionPct": 81.7
+     },
+     {
+      "round": 2,
+      "anim": 139.4,
+      "sd": 26.3,
+      "diff": 113.1,
+      "reductionPct": 81.1
+     },
+     {
+      "round": 3,
+      "anim": 138.7,
+      "sd": 28.9,
+      "diff": 109.8,
+      "reductionPct": 79.2
+     }
+    ],
+    "medianReductionPct": 81.1
+   },
+   "evtP95": {
+    "rounds": [
+     {
+      "round": 1,
+      "anim": 132.9,
+      "sd": 13.4,
+      "diff": 119.5,
+      "reductionPct": 89.9
+     },
+     {
+      "round": 2,
+      "anim": 131.9,
+      "sd": 15.2,
+      "diff": 116.7,
+      "reductionPct": 88.5
+     },
+     {
+      "round": 3,
+      "anim": 133,
+      "sd": 24.1,
+      "diff": 108.9,
+      "reductionPct": 81.9
+     }
+    ],
+    "medianReductionPct": 88.5
+   },
+   "scriptS": {
+    "rounds": [
+     {
+      "round": 1,
+      "anim": 34.392,
+      "sd": 13.037,
+      "diff": 21.36,
+      "reductionPct": 62.1
+     },
+     {
+      "round": 2,
+      "anim": 36.14,
+      "sd": 12.799,
+      "diff": 23.34,
+      "reductionPct": 64.6
+     },
+     {
+      "round": 3,
+      "anim": 34.221,
+      "sd": 7.321,
+      "diff": 26.9,
+      "reductionPct": 78.6
+     }
+    ],
+    "medianReductionPct": 64.6
+   }
+  },
+  "expectedDeltaEvents": 444,
+  "domFinalRounds": {
+   "anim": [
+    29480,
+    29480,
+    29480
+   ],
+   "sd": [
+    29480,
+    29480,
+    29480
+   ]
+  }
+ },
+ {
+  "dataset": "markdown",
+  "count": 500,
+  "perRound": {
+   "frameP95": {
+    "rounds": [
+     {
+      "round": 1,
+      "anim": 159.4,
+      "sd": 49.6,
+      "diff": 109.8,
+      "reductionPct": 68.9
+     },
+     {
+      "round": 2,
+      "anim": 159.6,
+      "sd": 49.9,
+      "diff": 109.7,
+      "reductionPct": 68.7
+     },
+     {
+      "round": 3,
+      "anim": 159.1,
+      "sd": 48.8,
+      "diff": 110.3,
+      "reductionPct": 69.3
+     }
+    ],
+    "medianReductionPct": 68.9
+   },
+   "evtP95": {
+    "rounds": [
+     {
+      "round": 1,
+      "anim": 148.7,
+      "sd": 34.9,
+      "diff": 113.8,
+      "reductionPct": 76.5
+     },
+     {
+      "round": 2,
+      "anim": 150.4,
+      "sd": 36,
+      "diff": 114.4,
+      "reductionPct": 76.1
+     },
+     {
+      "round": 3,
+      "anim": 148.8,
+      "sd": 36.9,
+      "diff": 111.9,
+      "reductionPct": 75.2
+     }
+    ],
+    "medianReductionPct": 76.1
+   },
+   "scriptS": {
+    "rounds": [
+     {
+      "round": 1,
+      "anim": 43.483,
+      "sd": 16.405,
+      "diff": 27.08,
+      "reductionPct": 62.3
+     },
+     {
+      "round": 2,
+      "anim": 43.558,
+      "sd": 16.223,
+      "diff": 27.34,
+      "reductionPct": 62.8
+     },
+     {
+      "round": 3,
+      "anim": 43.825,
+      "sd": 16.692,
+      "diff": 27.13,
+      "reductionPct": 61.9
+     }
+    ],
+    "medianReductionPct": 62.3
+   }
+  },
+  "expectedDeltaEvents": 444,
+  "domFinalRounds": {
+   "anim": [
+    67449,
+    35366,
+    67449
+   ],
+   "sd": [
+    35366,
+    35366,
+    35366
+   ]
+  }
+ },
+ {
+  "dataset": "mixed",
+  "count": 0,
+  "perRound": {
+   "frameP95": {
+    "rounds": [
+     {
+      "round": 1,
+      "anim": 98.7,
+      "sd": 20.7,
+      "diff": 78,
+      "reductionPct": 79
+     },
+     {
+      "round": 2,
+      "anim": 98.6,
+      "sd": 21.3,
+      "diff": 77.3,
+      "reductionPct": 78.4
+     },
+     {
+      "round": 3,
+      "anim": 101.5,
+      "sd": 20.6,
+      "diff": 80.9,
+      "reductionPct": 79.7
+     }
+    ],
+    "medianReductionPct": 79
+   },
+   "evtP95": {
+    "rounds": [
+     {
+      "round": 1,
+      "anim": 76.1,
+      "sd": 17,
+      "diff": 59.1,
+      "reductionPct": 77.7
+     },
+     {
+      "round": 2,
+      "anim": 77.3,
+      "sd": 17,
+      "diff": 60.3,
+      "reductionPct": 78
+     },
+     {
+      "round": 3,
+      "anim": 79.1,
+      "sd": 16.8,
+      "diff": 62.3,
+      "reductionPct": 78.8
+     }
+    ],
+    "medianReductionPct": 78
+   },
+   "scriptS": {
+    "rounds": [
+     {
+      "round": 1,
+      "anim": 19.511,
+      "sd": 2.513,
+      "diff": 17,
+      "reductionPct": 87.1
+     },
+     {
+      "round": 2,
+      "anim": 19.469,
+      "sd": 2.537,
+      "diff": 16.93,
+      "reductionPct": 87
+     },
+     {
+      "round": 3,
+      "anim": 19.65,
+      "sd": 2.501,
+      "diff": 17.15,
+      "reductionPct": 87.3
+     }
+    ],
+    "medianReductionPct": 87.1
+   }
+  },
+  "expectedDeltaEvents": 365,
+  "domFinalRounds": {
+   "anim": [
+    3344,
+    3344,
+    3344
+   ],
+   "sd": [
+    3344,
+    3344,
+    3344
+   ]
+  }
+ },
+ {
+  "dataset": "mixed",
+  "count": 200,
+  "perRound": {
+   "frameP95": {
+    "rounds": [
+     {
+      "round": 1,
+      "anim": 125.8,
+      "sd": 31.7,
+      "diff": 94.1,
+      "reductionPct": 74.8
+     },
+     {
+      "round": 2,
+      "anim": 125,
+      "sd": 31.2,
+      "diff": 93.8,
+      "reductionPct": 75
+     },
+     {
+      "round": 3,
+      "anim": 125.2,
+      "sd": 31.7,
+      "diff": 93.5,
+      "reductionPct": 74.7
+     }
+    ],
+    "medianReductionPct": 74.8
+   },
+   "evtP95": {
+    "rounds": [
+     {
+      "round": 1,
+      "anim": 117.3,
+      "sd": 26.9,
+      "diff": 90.4,
+      "reductionPct": 77.1
+     },
+     {
+      "round": 2,
+      "anim": 118.7,
+      "sd": 25.6,
+      "diff": 93.1,
+      "reductionPct": 78.4
+     },
+     {
+      "round": 3,
+      "anim": 118.5,
+      "sd": 25.7,
+      "diff": 92.8,
+      "reductionPct": 78.3
+     }
+    ],
+    "medianReductionPct": 78.3
+   },
+   "scriptS": {
+    "rounds": [
+     {
+      "round": 1,
+      "anim": 25.986,
+      "sd": 8.102,
+      "diff": 17.88,
+      "reductionPct": 68.8
+     },
+     {
+      "round": 2,
+      "anim": 26.08,
+      "sd": 7.97,
+      "diff": 18.11,
+      "reductionPct": 69.4
+     },
+     {
+      "round": 3,
+      "anim": 25.781,
+      "sd": 7.975,
+      "diff": 17.81,
+      "reductionPct": 69.1
+     }
+    ],
+    "medianReductionPct": 69.1
+   }
+  },
+  "expectedDeltaEvents": 365,
+  "domFinalRounds": {
+   "anim": [
+    12326,
+    12326,
+    12326
+   ],
+   "sd": [
+    12326,
+    12326,
+    12326
+   ]
+  }
+ },
+ {
+  "dataset": "mixed",
+  "count": 500,
+  "perRound": {
+   "frameP95": {
+    "rounds": [
+     {
+      "round": 1,
+      "anim": 159.4,
+      "sd": 69,
+      "diff": 90.4,
+      "reductionPct": 56.7
+     },
+     {
+      "round": 2,
+      "anim": 160.8,
+      "sd": 69,
+      "diff": 91.8,
+      "reductionPct": 57.1
+     },
+     {
+      "round": 3,
+      "anim": 162.1,
+      "sd": 69.7,
+      "diff": 92.4,
+      "reductionPct": 57
+     }
+    ],
+    "medianReductionPct": 57
+   },
+   "evtP95": {
+    "rounds": [
+     {
+      "round": 1,
+      "anim": 147.1,
+      "sd": 54.8,
+      "diff": 92.3,
+      "reductionPct": 62.7
+     },
+     {
+      "round": 2,
+      "anim": 149.3,
+      "sd": 55.4,
+      "diff": 93.9,
+      "reductionPct": 62.9
+     },
+     {
+      "round": 3,
+      "anim": 147.8,
+      "sd": 56.4,
+      "diff": 91.4,
+      "reductionPct": 61.8
+     }
+    ],
+    "medianReductionPct": 62.7
+   },
+   "scriptS": {
+    "rounds": [
+     {
+      "round": 1,
+      "anim": 36.208,
+      "sd": 18.294,
+      "diff": 17.91,
+      "reductionPct": 49.5
+     },
+     {
+      "round": 2,
+      "anim": 36.502,
+      "sd": 18.276,
+      "diff": 18.23,
+      "reductionPct": 49.9
+     },
+     {
+      "round": 3,
+      "anim": 36.273,
+      "sd": 18.342,
+      "diff": 17.93,
+      "reductionPct": 49.4
+     }
+    ],
+    "medianReductionPct": 49.5
+   }
+  },
+  "expectedDeltaEvents": 365,
+  "domFinalRounds": {
+   "anim": [
+    26026,
+    26026,
+    26026
+   ],
+   "sd": [
+    26026,
+    26026,
+    26026
+   ]
+  }
+ }
+]
