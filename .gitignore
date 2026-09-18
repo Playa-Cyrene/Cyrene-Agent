@@ -18,6 +18,9 @@ dist/renderer/react/index.html
 dist/renderer/live2dcubismcore.min.js
 dist/sim/
 dist/skills/
+# 聊天渲染性能基线 harness 的两版构建产物（runner 按需重建）
+dist/perf-normal/
+dist/perf-profiling/
 release/
 release-*/
 .build-temp/
@@ -68,6 +71,9 @@ dist/renderer/context-usage/
 dist/renderer-old-*/
 # music 播放器是本地构建产物（hash 文件名每次构建变化），不进 git
 dist/renderer/music/
+# toast 提醒窗口的 index.html 是 Vite 构建产物（引用 hash 文件名，每次构建变化），不进 git。
+# 注：该窗口曾是唯一漏掉 ignore 的空窗，其他窗口的 index.html 均已在 lines 10-17 忽略。
+dist/renderer/toast/index.html
 
 # build/installer/ui/src/ 下的同名源图（setup/setup-loading/succeed/failed/ch）被安装 UI 引用，
 # 打包时由 vite/webpack 复制到 src/renderer/react/assets/ 作为产物副本。
@@ -211,6 +217,8 @@ docs/
 !docs/
 # superpowers/ 是 superpowers agent 生成的设计/计划草稿，不发布
 docs/superpowers/
+# 聊天渲染性能基线的本地运行报告（跑指标生成的 JSON，随代码变化易失真，不进 git）
+docs/internal-issue/perf/
 !docs/local-models.md
 !docs/opener-pack.md
 !docs/electron-33-to-43-upgrade-assessment.md
