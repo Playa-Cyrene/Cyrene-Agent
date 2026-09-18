@@ -11,7 +11,7 @@
 // 字段依赖梳理（按 index.ts:3175-3281）：
 //   loadModelSettings / loadUserProfile / buildEnvironmentContext
 //   buildSkillCatalog / skillRegistry / resolveSlashActivation
-//   buildToneInjection / sceneEmbeddingIndex / getSceneEmbeddingProvider
+//   buildToneInjection
 //   buildSystemPrompt / CHAT_REQUEST_TIMEOUT_MS
 //   normalizeChatMessages / buildAlwaysOnContext / ToolDefinition
 //   scheduleMemoryWrite / inferRuntimeState / runtimeState / feelingToExpression
@@ -88,14 +88,7 @@ export interface BuildOptionsDeps {
     mode?: import("../skills/types").SkillMode,
     overrides?: SkillModeOverrides,
   ) => string;
-  buildToneInjection: (
-    userText: string,
-    messages: ReadonlyArray<{ role: string; content?: string }>,
-    provider: unknown,
-    index: unknown,
-  ) => Promise<string>;
-  sceneEmbeddingIndex: unknown;
-  getSceneEmbeddingProvider: () => unknown;
+  buildToneInjection: () => string;
   buildAlwaysOnContext: (
     userText: string,
     messages: ReadonlyArray<{ role: string; content?: string }>,
@@ -641,18 +634,12 @@ export async function buildAgentRunOptions(
     }
   }
 
+  // 语气注入（通用语气规则；场景匹配已移除）
   let toneInjection = "";
-  if (deps.sceneEmbeddingIndex) {
-    try {
-      toneInjection = await perf.track("build_tone_injection", () => deps.buildToneInjection(
-        latestUserText,
-        slimLlmMessages,
-        deps.getSceneEmbeddingProvider(),
-        deps.sceneEmbeddingIndex,
-      ));
-    } catch (err) {
-      console.warn("[Cyrene] tone injection failed:", err);
-    }
+  try {
+    toneInjection = deps.buildToneInjection();
+  } catch (err) {
+    console.warn("[Cyrene] tone injection failed:", err);
   }
 
   let attachmentContext = "";

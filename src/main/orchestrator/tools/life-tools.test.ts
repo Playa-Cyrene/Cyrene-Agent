@@ -31,7 +31,7 @@ vi.mock("electron", () => ({
 // 生活工具其余依赖：纯函数直接放行，翻译工具的 fetch 打桩
 vi.mock("./built-in-tools", () => ({ currentUserTimezone: () => "Asia/Shanghai" }));
 
-import { registerLifeTools } from "./life-tools";
+import { clearExchangeRateCache, registerLifeTools } from "./life-tools";
 
 registerLifeTools();
 
@@ -45,6 +45,7 @@ function getTool(id: string) {
 
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "life-tools-test-"));
+  clearExchangeRateCache();
 });
 
 afterEach(() => {
@@ -214,5 +215,58 @@ describe("str_replace 接线：edits 批量", () => {
     expect(tool.inputSchema.required).toEqual(["file_path"]);
     expect(tool.inputSchema.properties.edits).toBeDefined();
     expect(tool.inputSchema.properties.old_string).toBeDefined();
+  });
+});
+
+describe("exchange_rate 结果缓存", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /** frankfurter 桩 */
+  function makeResp(json: unknown, ok = true, status = 200): Response {
+    return {
+      ok, status, statusText: ok ? "OK" : "Error",
+      json: async () => json,
+    } as unknown as Response;
+  }
+
+  it("同币种对两次只请求一次，第二次带 [缓存] 标注", async () => {
+    const fetchMock = vi.fn(async () => makeResp({ rates: { CNY: 7.12 } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const first = await getTool("exchange_rate").execute({ from: "USD", to: "CNY", amount: 100 });
+    expect(first).toContain("712.00");
+    expect(first.startsWith("[缓存]")).toBe(false);
+
+    const second = await getTool("exchange_rate").execute({ from: "USD", to: "CNY", amount: 50 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(second.startsWith("[缓存]")).toBe(true);
+    expect(second).toContain("356.00");
+  });
+
+  it("不同币种对各自请求", async () => {
+    const fetchMock = vi.fn(async () => makeResp({ rates: { CNY: 7.12, JPY: 150 } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await getTool("exchange_rate").execute({ from: "USD", to: "CNY" });
+    await getTool("exchange_rate").execute({ from: "USD", to: "JPY" });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("请求失败的 [错误] 结果不进缓存", async () => {
+    let fail = true;
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      if (fail) return makeResp(null, false, 500);
+      return makeResp({ rates: { CNY: 7.12 } });
+    }));
+
+    const first = await getTool("exchange_rate").execute({ from: "USD", to: "CNY" });
+    expect(first.startsWith("[错误]")).toBe(true);
+
+    fail = false;
+    const second = await getTool("exchange_rate").execute({ from: "USD", to: "CNY" });
+    expect(second).toContain("7.12");
+    expect(second.startsWith("[缓存]")).toBe(false);
   });
 });

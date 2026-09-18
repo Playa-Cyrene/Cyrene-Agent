@@ -13,11 +13,23 @@
 import TurndownService from "turndown";
 import type { ToolDefinition } from "../registry/tool-registry";
 import type { ToolContext } from "../registry/tool-context";
+import { TtlResultCache } from "./ttl-result-cache";
 
 const LOG_PREFIX = "[BuiltinTools]";
 
 const FETCH_TIMEOUT_MS = 20_000;
 const FETCH_MAX_BYTES = 512 * 1024; // 单次最多 512KB，防止 LLM 上下文爆炸
+
+// ── 抓取结果缓存 ─────────────────────────────────────────
+// 模型常在同一会话里对同一链接反复 fetch（web_search 结果里挑链接来回看），
+// 30 分钟内同 URL 同格式直接复用。固定 TTL 不续期，到期重抓。
+const FETCH_CACHE_TTL_MS = 30 * 60_000;
+const fetchCache = new TtlResultCache<string>(FETCH_CACHE_TTL_MS);
+
+/** 清空抓取缓存（测试隔离用） */
+export function clearFetchUrlCache(): void {
+  fetchCache.clear();
+}
 
 // 正文区域的最小文字量：article/main 剥掉标签后至少要有这么多字，才认定找对了容器；
 // 否则视为空壳（比如只剩个挂件），回退用整页
@@ -196,6 +208,14 @@ async function executeFetchUrl(args: Record<string, unknown>, ctx?: ToolContext)
   const asMarkdown = args.format === "markdown" || args.format === undefined;
   console.log(LOG_PREFIX, "fetch_url:", url, "format=" + (asMarkdown ? "markdown" : "raw"));
 
+  // 缓存命中：直接复用并标注抓取时间，让模型自知内容的新鲜度
+  const cacheKey = url + "|" + (asMarkdown ? "markdown" : "raw");
+  const hit = fetchCache.get(cacheKey);
+  if (hit) {
+    const fetchedAt = new Date(hit.at).toLocaleString("zh-CN", { hour12: false });
+    return "[缓存] 摄取于 " + fetchedAt + "，30 分钟内直接复用\n\n" + hit.value;
+  }
+
   // GitHub 仓库主页特化：官方 API 直取 README + 元信息。
   // format=raw 表示用户明确要原始 HTML，不做特化
   if (asMarkdown) {
@@ -203,7 +223,10 @@ async function executeFetchUrl(args: Record<string, unknown>, ctx?: ToolContext)
     if (ghRepo) {
       console.log(LOG_PREFIX, "fetch_url: GitHub 仓库主页，走官方 API:", url);
       const summary = await fetchGithubRepoSummary(ghRepo, url, ctx);
-      if (summary !== null) return summary;
+      if (summary !== null) {
+        fetchCache.set(cacheKey, summary);
+        return summary;
+      }
       console.log(LOG_PREFIX, "fetch_url: GitHub API 不可用，回退普通抓取:", url);
     }
   }
@@ -233,7 +256,10 @@ async function executeFetchUrl(args: Record<string, unknown>, ctx?: ToolContext)
       text = stripHtml(text);
     }
     const meta = "URL: " + url + "\nContent-Type: " + ctype + (truncated ? "\n[已截断到 " + FETCH_MAX_BYTES + " 字节]" : "") + "\n\n";
-    return meta + text;
+    const result = meta + text;
+    // 只有成功抓到内容才写缓存；上面的 [错误] 分支直接 return，不会进缓存
+    fetchCache.set(cacheKey, result);
+    return result;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return "[错误] fetch 失败: " + msg;

@@ -7,7 +7,7 @@ import type { GeneralSettings } from "../settings/general-settings";
 import type { UserProfile } from "../settings-store";
 import { resolveCaptionVisionConfig } from "./image-router";
 import { getTimeoutSettings } from "../timeout-manager";
-import { loadModelSettings, resolveModelSettingsProfile } from "../settings/model-settings";
+import { resolveModelSettingsProfile } from "../settings/model-settings";
 import { normalizeChatMessages } from "../chat-api-utils";
 import { parseObserverFeeling } from "../chat-stream-utils";
 import { captionImageSafe, IMAGE_CAPTION_PROMPT } from "../chat/image-caption";
@@ -79,10 +79,8 @@ export interface AgentRuntimeDeps {
     getEnabledToolsForMode: (mode: ConversationMode, overrides?: ToolModeOverrides) => ToolDefinition[];
   };
   skillRegistry: typeof skillRegistry;
-  getSceneEmbeddingIndex: () => unknown;
   getStickerEmbeddingIndex: () => unknown;
   getEmbeddingProvider: () => unknown;
-  getSceneEmbeddingProvider: () => unknown;
   broadcastRuntimeStateChanged: () => void;
   citaService: CitaService;
   socialContextScheduler: { schedule: (input: SocialExtractionInput) => void };
@@ -180,11 +178,7 @@ export function createAgentRuntime(rawDeps: AgentRuntimeDeps): AgentRuntime {
       },
       resolveSlashActivation: ((messages, mode, overrides) =>
         resolveSlashActivation(messages as any, mode, overrides)) as BuildOptionsDeps["resolveSlashActivation"],
-      buildToneInjection: ((userText, messages, provider, index) =>
-        buildToneInjection(userText, messages as any, provider as any, index as any)) as BuildOptionsDeps["buildToneInjection"],
-      sceneEmbeddingIndex: rawDeps.getSceneEmbeddingIndex(),
-      getSceneEmbeddingProvider: (() =>
-        rawDeps.getSceneEmbeddingProvider() as unknown) as BuildOptionsDeps["getSceneEmbeddingProvider"],
+      buildToneInjection: (() => buildToneInjection()) as BuildOptionsDeps["buildToneInjection"],
       buildAlwaysOnContext: ((userText, messages) =>
         buildAlwaysOnContext(userText, messages as any)) as BuildOptionsDeps["buildAlwaysOnContext"],
       buildRelationshipContext,
@@ -208,7 +202,8 @@ export function createAgentRuntime(rawDeps: AgentRuntimeDeps): AgentRuntime {
         normalizeChatMessages(raw as any)) as BuildOptionsDeps["normalizeChatMessages"],
       chatRequestTimeoutMs: getTimeoutSettings().chatRequestTimeout,
       captionImageForFallback: async (filePath: string) => {
-        const settings = resolveModelSettingsProfile(loadModelSettings());
+        // 走注入的设置加载（与 buildSchedulerOptions 同策略），保证可测且不绕过依赖装配
+        const settings = resolveModelSettingsProfile(rawDeps.loadModelSettings());
         const vision = resolveCaptionVisionConfig(settings);
         if (!vision.ok) return { ok: false, error: vision.error };
         return captionImageSafe(filePath, IMAGE_CAPTION_PROMPT, vision.config);

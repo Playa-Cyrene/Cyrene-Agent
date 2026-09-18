@@ -1,6 +1,4 @@
-import type { SceneIndex } from "../scene-embedder";
 import { buildAlwaysOnContext, buildMemoryInjection } from "../orchestrator";
-import { getSceneEmbeddingProvider } from "../rag/embedding";
 import { buildToneInjection } from "../orchestrator/tone-injector";
 import { buildSkillCatalog, skillRegistry } from "../skills";
 import { resolveSlashActivation } from "../skills/slash-activation";
@@ -13,18 +11,12 @@ import { searchMemoryEntries } from "../rag";
 import { memoryStore } from "../memory/memory-store";
 import { l2DmaeManager } from "../memory/l2-dmae-manager";
 
-export interface CallPromptBuilderContext {
-  /** 场景嵌入索引，由主进程在后台刷新，可能为 null。 */
-  sceneEmbeddingIndex: SceneIndex | null;
-}
-
 /**
  * 构建通话（Call）模式专用 system prompt。
  * 包含时间日期、常驻上下文、记忆注入、phone 人设文件、skill 约束、语气注入。
  * 注意：本函数会修改传入的 messages 数组以处理 /命令命中但未启用的情况。
  */
 export async function buildCallSystemPrompt(
-  ctx: CallPromptBuilderContext,
   userText: string,
   messages: Array<{ role: "user" | "assistant"; content: string }>,
 ): Promise<string> {
@@ -78,14 +70,8 @@ export async function buildCallSystemPrompt(
   );
   const skillActivation = resolveSlashActivation(messages, "work", loadGeneralSettings().skillModeOverrides);
 
-  // ⑥ 语气注入
-  let toneInjection = "";
-  const sceneProvider = getSceneEmbeddingProvider();
-  if (sceneProvider && ctx.sceneEmbeddingIndex) {
-    try {
-      toneInjection = await buildToneInjection(userText, messages, sceneProvider, ctx.sceneEmbeddingIndex);
-    } catch { /* ignore */ }
-  }
+  // ⑥ 语气注入（通用语气规则）
+  const toneInjection = buildToneInjection();
 
   return timeStr + "\n\n" +
     (alwaysOnContext ? alwaysOnContext + "\n\n" : "") +

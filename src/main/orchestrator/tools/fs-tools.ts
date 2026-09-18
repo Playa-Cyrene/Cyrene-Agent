@@ -285,13 +285,31 @@ toolRegistry.register({
 
 // ── 工具 3：write_file ────────────────────────────────────
 
+/**
+ * 解析写入路径：绝对路径照旧；相对路径收编自原 write_markdown——
+ * 根目录固定为可信工作区（未绑定时回退桌面），禁止 .. 穿越和前缀碰撞绕过。
+ * 返回绝对路径，或 null 表示校验失败。
+ */
+function resolveWritePath(rawPath: string, workspaceRoot?: string): string | null {
+  if (path.isAbsolute(rawPath)) return path.normalize(rawPath);
+  const normalized = path.normalize(rawPath).replace(/\\/g, "/");
+  // 相对路径禁止目录穿越
+  if (normalized.includes("..")) return null;
+  const outputRoot = path.resolve(workspaceRoot || app.getPath("desktop"));
+  const fullPath = path.resolve(outputRoot, normalized);
+  const relative = path.relative(outputRoot, fullPath);
+  // 最终校验：必须仍在根目录下，不能靠前缀碰撞绕过
+  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) return null;
+  return fullPath;
+}
+
 async function executeWriteFile(args: Record<string, unknown>, ctx?: ToolContext): Promise<string> {
   const raw = String(args.path || "").trim();
-  const filePath = ensureAbsolute(raw);
+  const filePath = resolveWritePath(raw, ctx?.resolvedWorkspaceRoot);
   if (!filePath) {
     throw new ToolExecutionError(
       "E_PATH_NOT_ABSOLUTE",
-      "path 必须是绝对路径",
+      "path 必须是绝对路径，或不含 .. 的相对文件名（相对路径以工作区/桌面为根）",
       "invalid_arguments",
     );
   }
@@ -301,11 +319,11 @@ async function executeWriteFile(args: Record<string, unknown>, ctx?: ToolContext
   const createDirs = args.createDirs !== false; // 默认创建父目录
   const existedBefore = fs.existsSync(filePath);
 
-  // 覆盖写防护：写前现读当前文件，同一份内容同时用于骤降检查（软截断检测）
-  // 与行级 diff 生成。不走 review 基线——基线是本 run 第一次修改前的状态，
-  // 本轮早前可能已改过该文件，用基线会把骤降口径和 diff 都算错。
+  // 写前现读当前文件，同一份内容用于三处：骤降检查（软截断检测，仅覆盖写）、
+  // 行级 diff 生成、追加写补换行。不走 review 基线——基线是本 run 第一次修改
+  // 前的状态，本轮早前可能已改过该文件，用基线会把骤降口径和 diff 都算错。
   let existingContent: string | null = null;
-  if (!append && existedBefore) {
+  if (existedBefore) {
     try {
       existingContent = fs.readFileSync(filePath, "utf8");
     } catch (err) {
@@ -316,16 +334,18 @@ async function executeWriteFile(args: Record<string, unknown>, ctx?: ToolContext
         "permission_denied",
       );
     }
-    const drop = checkOverwriteDrop(existingContent, content);
-    if (drop.blocked) {
-      // 拒绝发生在落盘之前，文件保持原样
-      throw new ToolExecutionError(
-        "E_OVERWRITE_DROP_BLOCKED",
-        overwriteDropMessage(drop),
-        "runtime_safety",
-        false,
-        "not_applied",
-      );
+    if (!append) {
+      const drop = checkOverwriteDrop(existingContent, content);
+      if (drop.blocked) {
+        // 拒绝发生在落盘之前，文件保持原样
+        throw new ToolExecutionError(
+          "E_OVERWRITE_DROP_BLOCKED",
+          overwriteDropMessage(drop),
+          "runtime_safety",
+          false,
+          "not_applied",
+        );
+      }
     }
   }
 
@@ -352,7 +372,9 @@ async function executeWriteFile(args: Record<string, unknown>, ctx?: ToolContext
 
   try {
     if (append) {
-      fs.appendFileSync(filePath, content, "utf8");
+      // 追加写：原文件末尾缺换行时补一个，避免两段内容粘在同一行
+      const needsNewline = existingContent !== null && existingContent.length > 0 && !existingContent.endsWith("\n");
+      fs.appendFileSync(filePath, (needsNewline ? "\n" : "") + content, "utf8");
     } else {
       fs.writeFileSync(filePath, content, "utf8");
     }
@@ -454,25 +476,29 @@ toolRegistry.register({
   name: "写入文件",
   description:
     "把文本内容写入本地文件，覆盖或追加。会自动创建父目录。\n" +
-    "覆盖已有大文件时若新内容行数骤降过半会被拒绝（防输出截断毁文件），此时改用 str_replace 做局部修改。\n\n" +
+    "覆盖已有大文件时若新内容行数骤降过半会被拒绝（防输出截断毁文件），此时改用 str_replace 做局部修改。\n" +
+    "笔记很长时不要一次性写入：先写前半部分，再用 append=true 续写后半部分。\n\n" +
     "何时用：\n" +
     "- 用户要保存生成的笔记、改写后的文本、配置\n" +
+    "- 用户要写笔记 / 纯文本文件（.md / .txt）\n" +
     "- 用户要新建文件\n" +
     "- 需要持久化一段内容到磁盘\n\n" +
     "不要用于：\n" +
     "- 修改已有文件的局部内容（用 str_replace/apply_patch 更安全）\n" +
-    "- 生成 Excel/Word/PDF/Markdown 文档（用对应专用工具）\n" +
+    "- 生成 Excel/Word/PDF 文档（用对应专用工具）\n" +
     "- 写入危险系统路径\n\n" +
-    "参数：path (绝对路径)，content (要写的字符串)，append (可选，true=追加，默认 false=覆盖)，createDirs (可选，默认 true)。",
+    "path 两种给法：绝对路径；或相对文件名（可含子目录，如 '笔记.md'、'test/report.md'）——" +
+    "绑定项目时落到项目根目录，未绑定时落到桌面。\n" +
+    "参数：path，content (要写的字符串)，append (可选，true=追加，默认 false=覆盖)，createDirs (可选，默认 true)。",
   enabled: true,
   risk: "fs-write",
-  modes: ["code", "work"],
+  modes: ["learn", "code", "work"],
   effectKind: "mutation" as const,
   verificationPolicyResolver: resolveWriteFilePolicy,
   inputSchema: {
     type: "object",
     properties: {
-      path: { type: "string", description: "目标文件绝对路径" },
+      path: { type: "string", description: "目标文件绝对路径，或相对文件名（可含子目录，如 '笔记.md'；绑定项目时落到项目根目录，未绑定时落到桌面）" },
       content: { type: "string", description: "要写入的文本内容（UTF-8）" },
       append: { type: "boolean", description: "true=追加，false=覆盖（默认）" },
       createDirs: { type: "boolean", description: "是否自动创建父目录，默认 true" },

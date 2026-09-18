@@ -1,27 +1,12 @@
-// 语气注入器 —— 硬约束：embedding 匹配场景，强制注入语气规则到 system prompt。
-// 不依赖 LLM 主动调用 invoke_skill，不需要模型判断是否需要查风格。
-// 注入的语气规则以「必须遵守」的指令形式出现在 system prompt 末尾。
-// 场景样本仅作参考，模型按昔涟的语气表达相同意思。
+// 语气注入器 —— 把通用语气规则注入 system prompt。
+// 场景匹配（embedding 分类 + 场景台词注入）已整体移除：
+// 阈值贴边导致超短输入频繁误判（如"去掉它"命中告别场景），误触发的硬指令
+// 比不注入更糟。人格表达由人设 prompt + 通用语气规则承载。
 
 import * as fs from "fs";
-import { matchScene, type SceneId, type SceneIndex } from "../scene-embedder";
-import { type EmbeddingProvider } from "../rag/embedding";
-import { findPromptPath, findSkillPath } from "../external-content-paths";
+import { findPromptPath } from "../external-content-paths";
 
-/** 场景匹配阈值——贴着 farewell 最低分 0.722 收紧，所有正确命中都能过。 */
-const SCENE_MATCH_THRESHOLD = 0.72;
-
-/** 每个场景的展示名（注入 prompt 时用）。 */
-const SCENE_NAMES: Record<string, string> = {
-  greeting: "打招呼/相遇",
-  comfort: "安慰/陪伴",
-  praised: "被夸奖/被喜欢",
-  playful: "轻松俏皮",
-  farewell: "告别/道别",
-  concern: "表达关心",
-};
-
-// 通用语气规则（无论哪个场景都注入）—— 从 prompts/tone-rules.md 读取
+// 通用语气规则的内置默认值（prompts/tone-rules.md 缺失时的兜底）
 const DEFAULT_RULES = `## 句式禁止
 
 - 不可以使用「不是……而是……」结构。想表达同样意思时，直接说你想说的那一半就行，不需要先否定再肯定
@@ -67,64 +52,10 @@ function loadToneRules(): string {
   return "## 语气规则\n\n" + DEFAULT_RULES;
 }
 
-/** 加载场景样本文件中的台词。 */
-function loadSceneSamples(scene: SceneId): string {
-  if (!scene) return "";
-  try {
-    const filePath = findSkillPath("cyrene-original-voice", `references/${scene}.md`);
-    if (!filePath) return "";
-    return fs.readFileSync(filePath, "utf8");
-  } catch {
-    return "";
-  }
-}
-
-/** 把样本台词加工成参考指令（非强制引用，而是参照语气）。 */
-function buildSampleInstruction(samples: string, scene: SceneId): string {
-  if (!samples) return "";
-  const lines = samples
-    .split("\n")
-    .filter((l) => l.startsWith("> 「"))
-    .map((l) => l.replace(/^> 「/, "").replace(/」$/, ""))
-    .filter(Boolean);
-  if (lines.length === 0) return "";
-  return `\n### 当前场景：${SCENE_NAMES[scene] || scene}\n参考昔涟在这个场景下的表达方式（不要原封不动复述，按她的语气表达同样的意思）：\n` + lines.map((l) => `- ${l}`).join("\n");
-}
-
 /**
- * 主入口：构建语气注入段。
- *
- * @param userInput 用户本轮输入
- * @param recentMessages 最近几轮消息（{ role, content }[]），用于拼上下文（方案 A）
- * @param provider embedding provider
- * @param sceneIndex 启动时建好的场景索引
- * @returns 注入 system prompt 末尾的不可选指令段（空串表示无匹配场景）
+ * 主入口：构建语气注入段（通用语气规则）。
+ * @returns 注入 system prompt 末尾的指令段
  */
-export async function buildToneInjection(
-  userInput: string,
-  recentMessages: Array<{ role: string; content: string }>,
-  provider: EmbeddingProvider,
-  sceneIndex: SceneIndex,
-): Promise<string> {
-  // embedding 匹配场景（拼最近 3 轮上下文）
-  const match = await matchScene(
-    userInput,
-    provider,
-    sceneIndex,
-    SCENE_MATCH_THRESHOLD,
-    recentMessages,
-  );
-  const scene: SceneId = match?.scene ?? "";
-  if (!scene) {
-    // 没命中任何场景，只注入通用语气规则
-    return loadToneRules();
-  }
-
-  console.log("[ToneInjector] 场景命中: " + scene + " (score=" + (match?.score.toFixed(3) ?? "?") + ")");
-
-  const samples = loadSceneSamples(scene);
-  const sampleInstruction = buildSampleInstruction(samples, scene);
-  const toneRules = loadToneRules();
-
-  return toneRules + sampleInstruction;
+export function buildToneInjection(): string {
+  return loadToneRules();
 }

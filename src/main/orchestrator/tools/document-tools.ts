@@ -1,4 +1,5 @@
-// 文档生成工具 —— 让昔涟能产出可交付物（Excel/Word/PDF/Markdown）。
+// 文档生成工具 —— 让昔涟能产出可交付物（Excel/Word/PDF）。
+// Markdown/纯文本笔记统一走 write_file（见 fs-tools.ts）。
 //
 // 设计要点：
 // - 绑定项目时文档存到该项目根目录；未绑定时才回退到桌面
@@ -12,10 +13,6 @@ import * as path from "path";
 import { app } from "electron";
 import { toolRegistry } from "./registry/tool-registry";
 import type { ToolContext } from "./registry/tool-context";
-import { ToolExecutionError } from "./registry/tool-execution-error";
-import { buildFullFileDiff, buildReplacedDiff, countLines, finalizeFileChanges } from "./registry/tool-evidence";
-import { checkOverwriteDrop, overwriteDropMessage } from "./overwrite-guard";
-import type { ToolFileChange } from "../../../shared/chat-types";
 import { findSkillPath } from "../../external-content-paths";
 import { getRunReviewTracker } from "../review/run-review-tracker";
 
@@ -72,52 +69,6 @@ function resolveOutputPath(filename: string, workspaceRoot?: string): string | n
   // 最终校验：必须仍在可信工作区/桌面根目录下，不能靠前缀碰撞绕过。
   if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) return null;
   return fullPath;
-}
-
-/** 桌面路径（旧接口，保持兼容）。 */
-function desktopPath(filename: string): string {
-  return path.join(app.getPath("desktop"), filename);
-}
-
-/**
- * write_markdown 的 JSON 返回体：带 changes 字段让 Diff Review 卡片能渲染
- * 本次写入的文件级证据（extractFileChangesFromOutput 解析该结构）。
- * 追加/新建 = added，覆盖已有 = modified（旧全文 remove + 新全文 add）。
- * diff 展示统一按 LF 拆行，避免 CRLF 残留到卡片渲染。
- */
-function buildWriteMarkdownResult(
-  outputPath: string,
-  append: boolean,
-  content: string,
-  existingContent: string | null,
-): string {
-  const insertions = countLines(content);
-  const change: ToolFileChange = append || existingContent === null
-    ? {
-        file: outputPath,
-        kind: "added",
-        insertions,
-        deletions: 0,
-        diff: buildFullFileDiff(insertions === 0 ? [] : content.split("\n").slice(0, insertions), "add"),
-      }
-    : {
-        file: outputPath,
-        kind: "modified",
-        insertions,
-        deletions: countLines(existingContent),
-        // 覆盖写 = 整文件替换，行级上限由 finalizeFileChanges 控制
-        diff: buildReplacedDiff(
-          existingContent.replace(/\r\n/g, "\n").split("\n"),
-          content.replace(/\r\n/g, "\n").split("\n"),
-        ),
-      };
-  return JSON.stringify({
-    success: true,
-    tool: "write_markdown",
-    path: outputPath,
-    append,
-    changes: finalizeFileChanges([change]),
-  });
 }
 
 // ── 样式加载器（Excel + Word 共用）──
@@ -441,7 +392,7 @@ export function registerDocumentTools(): void {
       "- 用户通过 ask_user_choice 选择了风格 → 用对应 style 参数直接生成\n\n" +
       "不要用于：\n" +
       "- 表格数据（用 write_excel）\n" +
-      "- 轻量笔记（用 write_markdown）\n" +
+      "- 轻量笔记（用 write_file）\n" +
       "- 需要复杂排版（页眉页脚/目录/图片/表格）→ 才考虑 invoke_skill(docx)\n\n" +
       "style 可选值（见 skills/docx/styles/catalog.md）：default(商务) / academic(学术) / clean(极简) / elegant(优雅) / formal(公文)。\n" +
       "参数：filename（只传文件名，如 AI新闻汇总.docx，不要传绝对路径；输出目录由系统固定为桌面），title（标题），paragraphs（段落数组），style（可选预设风格）。",
@@ -591,100 +542,6 @@ export function registerDocumentTools(): void {
       });
       console.log(LOG_PREFIX, "PDF 已生成:", outputPath);
       return `[write_pdf] 已生成：${outputPath}`;
-    },
-  });
-
-  // ── write_markdown ───────────────────────────────────
-  toolRegistry.register({
-    id: "write_markdown",
-    name: "写 Markdown",
-    description:
-      "生成或追加一个笔记文件（.md 或 .txt）。绑定项目时保存到该项目目录；未绑定时保存到桌面。\n" +
-      "覆盖已有大文件时若新内容行数骤降过半会被拒绝（防输出截断毁文件），此时改用 str_replace 做局部修改。\n" +
-      "笔记很长时不要一次性写入：先写前半部分，再用 append=true 续写后半部分（软截断防护，" +
-      "也避免超长参数被截断后整文件覆盖）。\n\n" +
-      "何时用：\n" +
-      "- 用户要写笔记/文档\n" +
-      "- 用户要写纯文本文件（.txt）\n" +
-      "- 需要轻量级文档输出\n" +
-      "- 比 Word/PDF 更轻量的场景\n\n" +
-      "不要用于：\n" +
-      "- 正式文档（用 write_word / write_pdf）\n" +
-      "- 表格数据（用 write_excel）\n" +
-      "- 修改已有文件的局部内容（用 str_replace）\n\n" +
-      "参数：filename（.md 或 .txt 结尾），content（文本内容），append（可选，默认 false 覆盖写；" +
-      "true 时在文件末尾追加，文件不存在则新建）。",
-    enabled: true,
-    risk: "fs-write",
-    modes: ["learn", "code", "work"],
-    needsContext: true,
-    effectKind: "mutation" as const,
-    verificationPolicy: "artifact" as const,
-    inputSchema: {
-      type: "object",
-      properties: {
-        filename: { type: "string", description: "文件名（.md 或 .txt 结尾）" },
-        content:  { type: "string", description: "文本内容" },
-        append:   { type: "boolean", description: "默认 false 覆盖写。true 时追加到文件末尾（文件不存在则新建）；长笔记分多次写入时用 true 续写" },
-      },
-      required: ["filename", "content"],
-    },
-    execute: async (args, context?: ToolContext) => {
-      const filename = validateFilename(String(args.filename || ""), [".md", ".txt"]);
-      if (!filename) return filenameError(".md 或 .txt", args);
-      const outputPath = resolveOutputPath(filename, context?.resolvedWorkspaceRoot);
-      if (!outputPath) return "[错误] 路径不合法（禁止目录穿越或绝对路径）: " + filename;
-
-      const appendMode = args.append === true;
-      const content = String(args.content ?? "");
-      const dir = path.dirname(outputPath);
-      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-
-      // 写前现读当前文件：覆盖写时同一份内容用于骤降检查（软截断检测）与行级 diff，
-      // 追加写时用于补换行。不走 review 基线——基线是本 run 第一次修改前的状态，
-      // 本轮早前可能已改过该文件，用基线会把骤降口径和 diff 都算错。
-      const existedBefore = fs.existsSync(outputPath);
-      let existingContent: string | null = null;
-      if (existedBefore) {
-        try {
-          existingContent = fs.readFileSync(outputPath, "utf8");
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          throw new ToolExecutionError(
-            "E_READ_BEFORE_OVERWRITE_FAILED",
-            "写前读取原文件失败，已拒绝写入: " + msg,
-            "permission_denied",
-          );
-        }
-        if (!appendMode) {
-          const drop = checkOverwriteDrop(existingContent, content);
-          if (drop.blocked) {
-            // 拒绝发生在落盘之前，文件保持原样
-            throw new ToolExecutionError(
-              "E_OVERWRITE_DROP_BLOCKED",
-              overwriteDropMessage(drop),
-              "runtime_safety",
-              false,
-              "not_applied",
-            );
-          }
-        }
-      }
-
-      captureBaseline(context, outputPath);
-
-      if (appendMode && existingContent !== null) {
-        // 追加写：原文件末尾缺换行时补一个，避免两段内容粘在同一行
-        const needsNewline = existingContent.length > 0 && !existingContent.endsWith("\n");
-        fs.writeFileSync(outputPath, existingContent + (needsNewline ? "\n" : "") + content, "utf8");
-        console.log(LOG_PREFIX, "Markdown 已追加:", outputPath);
-        return buildWriteMarkdownResult(outputPath, true, content, null);
-      }
-
-      fs.writeFileSync(outputPath, content, "utf8");
-      console.log(LOG_PREFIX, "Markdown 已生成:", outputPath);
-      // append 目标不存在时等同新建：append 标志回传调用方请求值（口径与 write_file 一致）
-      return buildWriteMarkdownResult(outputPath, appendMode, content, existingContent);
     },
   });
 }

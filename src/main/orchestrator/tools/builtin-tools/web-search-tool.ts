@@ -9,6 +9,7 @@
 
 import type { ToolDefinition } from "../registry/tool-registry";
 import type { ToolContext } from "../registry/tool-context";
+import { TtlResultCache } from "./ttl-result-cache";
 
 // ── 工具 5：web_search（博查搜索）─────────────────────────
 // 联网搜索：给关键词，返回搜索结果（标题/链接/摘要）。博查 API 返回 AI 友好的结构化数据。
@@ -65,14 +66,26 @@ interface WebSearchOutput {
 /** snippet 最大长度 */
 const MAX_SNIPPET_LEN = 500;
 
+// ── 搜索结果缓存 ─────────────────────────────────────────
+// 模型经常在同一会话里反复搜同一关键词（每轮 17~19 个工具调用中就有重复），
+// 30 分钟内同引擎同关键词直接复用上次结果。固定 TTL 不续期：新闻/股价类
+// 查询的结果不会因频繁访问而保持新鲜，到期必须重搜。
+const SEARCH_CACHE_TTL_MS = 30 * 60_000;
+const searchCache = new TtlResultCache<WebSearchOutput>(SEARCH_CACHE_TTL_MS);
+
+/** 清空搜索缓存（测试隔离用） */
+export function clearWebSearchCache(): void {
+  searchCache.clear();
+}
+
 /** 截断 snippet */
 function truncateSnippet(text: string): string {
   const clean = text.replace(/\s+/g, " ").trim();
   return clean.length > MAX_SNIPPET_LEN ? clean.slice(0, MAX_SNIPPET_LEN) + "..." : clean;
 }
 
-/** 博查搜索：调 /v1/web-search，返回结构化 JSON。 */
-async function bochaSearch(query: string, key: string, signal?: AbortSignal): Promise<string> {
+/** 博查搜索：调 /v1/web-search，返回结构化结果。 */
+async function bochaSearch(query: string, key: string, signal?: AbortSignal): Promise<WebSearchOutput> {
   const url = "https://api.bochaai.com/v1/web-search";
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), SEARCH_TIMEOUT_MS);
@@ -112,7 +125,7 @@ async function bochaSearch(query: string, key: string, signal?: AbortSignal): Pr
       resultCount: results.length,
       results,
     };
-    return JSON.stringify(output);
+    return output;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     throw new Error(`搜索失败：${msg}`);
@@ -121,8 +134,8 @@ async function bochaSearch(query: string, key: string, signal?: AbortSignal): Pr
   }
 }
 
-/** Tavily 搜索：调 /search，返回结构化 JSON。 */
-async function tavilySearch(query: string, key: string, signal?: AbortSignal): Promise<string> {
+/** Tavily 搜索：调 /search，返回结构化结果。 */
+async function tavilySearch(query: string, key: string, signal?: AbortSignal): Promise<WebSearchOutput> {
   const url = "https://api.tavily.com/search";
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), SEARCH_TIMEOUT_MS);
@@ -159,7 +172,7 @@ async function tavilySearch(query: string, key: string, signal?: AbortSignal): P
       resultCount: results.length,
       results,
     };
-    return JSON.stringify(output);
+    return output;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     throw new Error(`搜索失败：${msg}`);
@@ -168,8 +181,8 @@ async function tavilySearch(query: string, key: string, signal?: AbortSignal): P
   }
 }
 
-/** AnySearch 搜索：调 /v1/search，返回结构化 JSON。 */
-async function anySearchSearch(query: string, key: string, signal?: AbortSignal): Promise<string> {
+/** AnySearch 搜索：调 /v1/search，返回结构化结果。 */
+async function anySearchSearch(query: string, key: string, signal?: AbortSignal): Promise<WebSearchOutput> {
   const url = "https://api.anysearch.com/v1/search";
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), SEARCH_TIMEOUT_MS);
@@ -205,7 +218,7 @@ async function anySearchSearch(query: string, key: string, signal?: AbortSignal)
       resultCount: results.length,
       results,
     };
-    return JSON.stringify(output);
+    return output;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     throw new Error(`搜索失败：${msg}`);
@@ -225,27 +238,41 @@ async function executeWebSearch(args: Record<string, unknown>, ctx?: ToolContext
     throw new Error("E_SEARCH_QUERY_EMPTY");
   }
 
+  // 缓存命中：标注 cached/cachedAt，让模型自知结果的新鲜度，
+  // 回答时效类问题时会带"截至 xx 时间"而不是拿旧缓存当最新
+  const cacheKey = engine + "|" + query.replace(/\s+/g, " ");
+  const hit = searchCache.get(cacheKey);
+  if (hit) {
+    return JSON.stringify({
+      ...hit.value,
+      cached: true,
+      cachedAt: new Date(hit.at).toISOString(),
+    });
+  }
+
+  let output: WebSearchOutput;
   if (engine === "bocha") {
     const key = searchBochaKeyGetter?.() ?? "";
     if (!key) {
       throw new Error("E_SEARCH_KEY_MISSING");
     }
-    return bochaSearch(query, key, ctx?.signal);
-  }
-
-  if (engine === "tavily") {
+    output = await bochaSearch(query, key, ctx?.signal);
+  } else if (engine === "tavily") {
     const key = searchTavilyKeyGetter?.() ?? "";
     if (!key) {
       throw new Error("E_SEARCH_KEY_MISSING");
     }
-    return tavilySearch(query, key, ctx?.signal);
+    output = await tavilySearch(query, key, ctx?.signal);
+  } else if (engine === "anySearch") {
+    const key = searchAnySearchKeyGetter?.() ?? "";
+    output = await anySearchSearch(query, key, ctx?.signal);
+  } else {
+    throw new Error(`E_SEARCH_ENGINE_NOT_SUPPORTED:${engine}`);
   }
 
-  if (engine === "anySearch") {
-    const key = searchAnySearchKeyGetter?.() ?? "";
-    return anySearchSearch(query, key, ctx?.signal);
-  }
-  throw new Error(`E_SEARCH_ENGINE_NOT_SUPPORTED:${engine}`);
+  // 只有成功走到这里才写缓存；上面的搜索函数失败时会 throw，不会污染缓存
+  searchCache.set(cacheKey, output);
+  return JSON.stringify(output);
 }
 
 export const webSearchTool: ToolDefinition = {

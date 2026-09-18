@@ -1,8 +1,8 @@
 // fetch_url 工具行为测试：正文提取 + GitHub 仓库主页特化。
 // 全部用 stub 的 fetch 桩，不发真实网络请求。
 
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { fetchUrlTool } from "./fetch-url-tool";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { clearFetchUrlCache, fetchUrlTool } from "./fetch-url-tool";
 
 /** 构造 fetch Response 形状的桩（工具只用到 ok/status/statusText/headers/arrayBuffer/json） */
 function makeResp(opts: {
@@ -28,6 +28,11 @@ function makeResp(opts: {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+});
+
+// 每个用例清空抓取缓存：多个用例复用同一 URL 但期望不同的桩响应
+beforeEach(() => {
+  clearFetchUrlCache();
 });
 
 describe("GitHub 仓库主页特化", () => {
@@ -218,5 +223,52 @@ describe("普通网页正文提取", () => {
 
     const out = await fetchUrlTool.execute({ url: "https://example.com/a.txt" });
     expect(out).toContain("plain text body");
+  });
+});
+
+describe("fetch_url 结果缓存", () => {
+  it("同一 URL 两次只抓一次，第二次带 [缓存] 标注直接复用", async () => {
+    const fetchMock = vi.fn(async () => makeResp({
+      contentType: "text/plain",
+      body: "cached page body",
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const first = await fetchUrlTool.execute({ url: "https://cache-test.example.com/page" });
+    expect(first).toContain("cached page body");
+    expect(first.startsWith("[缓存]")).toBe(false);
+
+    const second = await fetchUrlTool.execute({ url: "https://cache-test.example.com/page" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(second.startsWith("[缓存]")).toBe(true);
+    expect(second).toContain("cached page body");
+  });
+
+  it("同 URL 不同 format 分开缓存", async () => {
+    const fetchMock = vi.fn(async () => makeResp({
+      contentType: "text/plain",
+      body: "raw or md body",
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await fetchUrlTool.execute({ url: "https://cache-test.example.com/dual" });
+    await fetchUrlTool.execute({ url: "https://cache-test.example.com/dual", format: "raw" });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("抓取失败的 [错误] 结果不进缓存", async () => {
+    let fail = true;
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      if (fail) return makeResp({ ok: false, status: 500, statusText: "Server Error" });
+      return makeResp({ contentType: "text/plain", body: "recovered body" });
+    }));
+
+    const first = await fetchUrlTool.execute({ url: "https://cache-test.example.com/flaky" });
+    expect(first.startsWith("[错误]")).toBe(true);
+
+    fail = false;
+    const second = await fetchUrlTool.execute({ url: "https://cache-test.example.com/flaky" });
+    expect(second).toContain("recovered body");
+    expect(second.startsWith("[缓存]")).toBe(false);
   });
 });

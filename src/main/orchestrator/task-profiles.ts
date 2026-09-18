@@ -46,7 +46,6 @@ const profiles: Record<TaskSubagentType, TaskAgentProfile> = {
       "write_word",
       "write_excel",
       "write_pdf",
-      "write_markdown",
       "write_file",
       "read_file",
       "list_dir",

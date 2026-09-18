@@ -48,6 +48,13 @@ vi.mock("./registry/tool-registry", () => ({
   },
 }));
 
+// electron mock：desktop / userData 都指向临时目录（write_file 相对路径解析与基线落盘依赖）
+vi.mock("electron", () => ({
+  app: {
+    getPath: (_name: string) => tmpDir,
+  },
+}));
+
 // Mock vision-captioner
 vi.mock("../vision-captioner", () => ({
   captionImage: vi.fn(),
@@ -204,14 +211,39 @@ describe("write_file truthful contract", () => {
     )?.[0];
   }
 
-  it("rejects a relative path with a typed error", async () => {
-    await expect(writeTool()!.execute({ path: "relative.txt", content: "x" }))
+  it("相对文件名落到桌面根目录（learn 模式笔记场景，收编自 write_markdown）", async () => {
+    const result = JSON.parse(await writeTool()!.execute({ path: "笔记.md", content: "# 标题" }));
+    expect(result.success).toBe(true);
+    expect(result.path).toBe(path.join(tmpDir, "笔记.md"));
+    expect(fs.readFileSync(path.join(tmpDir, "笔记.md"), "utf8")).toBe("# 标题");
+  });
+
+  it("相对文件名带子目录时自动创建父目录", async () => {
+    const result = JSON.parse(await writeTool()!.execute({ path: "test/report.md", content: "x" }));
+    expect(result.success).toBe(true);
+    expect(fs.existsSync(path.join(tmpDir, "test", "report.md"))).toBe(true);
+  });
+
+  it("绑定工作区时相对文件名落到工作区根目录", async () => {
+    const wsRoot = path.join(tmpDir, "my-project");
+    fs.mkdirSync(wsRoot);
+    const result = JSON.parse(await writeTool()!.execute(
+      { path: "notes/todo.txt", content: "x" },
+      { resolvedWorkspaceRoot: wsRoot },
+    ));
+    expect(result.success).toBe(true);
+    expect(result.path).toBe(path.join(wsRoot, "notes", "todo.txt"));
+  });
+
+  it("相对路径含 .. 穿越时报错拒绝", async () => {
+    await expect(writeTool()!.execute({ path: "../escape.txt", content: "x" }))
       .rejects.toMatchObject({
         name: "ToolExecutionError",
         code: "E_PATH_NOT_ABSOLUTE",
         category: "invalid_arguments",
         effectState: "not_applied",
       } satisfies Partial<ToolExecutionError>);
+    expect(fs.existsSync(path.join(path.dirname(tmpDir), "escape.txt"))).toBe(false);
   });
 
   it("returns stat-backed evidence and allows a zero-byte file", async () => {
@@ -300,13 +332,78 @@ describe("write_file 覆盖写骤降防护", () => {
     expect(addTexts).toEqual(["新一", "新二", "新三"]);
   });
 
-  it("append 不做骤降检查（追加只增不减）", async () => {
+  it("append 不做骤降检查（追加只增不减），原文件末尾无换行时补一个", async () => {
     const target = path.join(tmpDir, "append.txt");
     const original = lines(60);
     fs.writeFileSync(target, original);
 
     const result = JSON.parse(await writeTool()!.execute({ path: target, content: "尾巴", append: true }));
     expect(result.success).toBe(true);
-    expect(fs.readFileSync(target, "utf8")).toBe(original + "尾巴");
+    expect(fs.readFileSync(target, "utf8")).toBe(original + "\n尾巴");
+  });
+
+  it("原文件以换行结尾时追加不重复换行", async () => {
+    const target = path.join(tmpDir, "append-nl.txt");
+    fs.writeFileSync(target, "第一段\n");
+
+    await writeTool()!.execute({ path: target, content: "第二段", append: true });
+    expect(fs.readFileSync(target, "utf8")).toBe("第一段\n第二段");
+  });
+
+  it("append 目标不存在时等同新建", async () => {
+    const target = path.join(tmpDir, "fresh-append.txt");
+
+    const result = JSON.parse(await writeTool()!.execute({ path: target, content: "初始内容", append: true }));
+    expect(result.success).toBe(true);
+    expect(result.changes[0].kind).toBe("added");
+    expect(fs.readFileSync(target, "utf8")).toBe("初始内容");
+  });
+});
+
+describe("write_file Review 基线捕获（写盘前）", () => {
+  function writeTool() {
+    return vi.mocked(toolRegistry.register).mock.calls.find(
+      (call) => call[0].id === "write_file",
+    )?.[0];
+  }
+
+  /** 列出某 run 的 before/ 基线文件（含 .absent 后缀）。 */
+  function listBaselines(runId: string): string[] {
+    const dir = path.join(tmpDir, "cyrene-runs", "reviews", runId, "before");
+    return fs.existsSync(dir) ? fs.readdirSync(dir) : [];
+  }
+
+  it("覆盖已有文件时保存 text 基线", async () => {
+    const target = path.join(tmpDir, "note.md");
+    fs.writeFileSync(target, "旧内容\n第二行\n");
+
+    const result = JSON.parse(await writeTool()!.execute(
+      { path: target, content: "新内容" },
+      { runId: "run-wf-1" },
+    ));
+    expect(result.success).toBe(true);
+
+    const baselines = listBaselines("run-wf-1");
+    expect(baselines).toHaveLength(1);
+    expect(fs.readFileSync(path.join(tmpDir, "cyrene-runs", "reviews", "run-wf-1", "before", baselines[0]), "utf8"))
+      .toBe("旧内容\n第二行\n");
+  });
+
+  it("新建文件时写 absent 标记，同一 run 不重复捕获", async () => {
+    const target = path.join(tmpDir, "new-note.md");
+    await writeTool()!.execute({ path: target, content: "内容" }, { runId: "run-wf-2" });
+
+    const baselines = listBaselines("run-wf-2");
+    expect(baselines).toHaveLength(1);
+    expect(baselines[0]).toMatch(/\.absent$/);
+    // 惰性快照：同一 run 再次修改同一文件不重复捕获
+    await writeTool()!.execute({ path: target, content: "再改" }, { runId: "run-wf-2" });
+    expect(listBaselines("run-wf-2")).toHaveLength(1);
+  });
+
+  it("无 runId 时不写基线", async () => {
+    const target = path.join(tmpDir, "plain.md");
+    await writeTool()!.execute({ path: target, content: "x" });
+    expect(fs.existsSync(path.join(tmpDir, "cyrene-runs"))).toBe(false);
   });
 });

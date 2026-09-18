@@ -12,8 +12,20 @@
 
 import type { ToolDefinition } from "../registry/tool-registry";
 import type { ToolContext } from "../registry/tool-context";
+import { TtlResultCache } from "./ttl-result-cache";
 
 const LOG_PREFIX = "[BuiltinTools]";
+
+// ── 视觉描述缓存 ─────────────────────────────────────────
+// 每次调用都是真金白银的视觉模型请求。模型对同一张图反复看（"再看下那个图…"）
+// 时直接复用 30 分钟内的描述。key 必须带 userQuery：同一个图不同问题的描述不同。
+const CAPTION_CACHE_TTL_MS = 30 * 60_000;
+const captionCache = new TtlResultCache<string>(CAPTION_CACHE_TTL_MS);
+
+/** 清空视觉描述缓存（测试隔离用） */
+export function clearImageCaptionCache(): void {
+  captionCache.clear();
+}
 
 /** 懒加载图片转述视觉配置：动态 import，规避注册期副作用。路由判定收口在 image-router。 */
 async function loadCaptionVisionConfigLazy(): Promise<import("../../image-router").CaptionVisionConfig> {
@@ -32,6 +44,15 @@ async function executeReadImageUrl(
     return "[错误] url 必须以 http:// 或 https:// 开头";
   }
 
+  // 缓存命中：直接复用并标注生成时间（命中时连视觉模型配置都不用加载）
+  const userQuery = ctx?.userQuery ?? "";
+  const cacheKey = url + "||" + userQuery;
+  const hit = captionCache.get(cacheKey);
+  if (hit) {
+    const generatedAt = new Date(hit.at).toLocaleString("zh-CN", { hour12: false });
+    return "[缓存] 此描述生成于 " + generatedAt + "，30 分钟内复用\n\n" + hit.value;
+  }
+
   const captionVision = await loadCaptionVisionConfigLazy();
   if (!captionVision.ok) {
     return "[错误·配置] " + captionVision.error;
@@ -41,8 +62,12 @@ async function executeReadImageUrl(
 
   // URL 直传：厂商服务器自行拉图，本机不下载
   const { captionImage } = await import("../../vision-captioner");
-  const userQuery = ctx?.userQuery ?? "";
-  return captionImage({ url }, userQuery, captionVision.config);
+  const result = await captionImage({ url }, userQuery, captionVision.config);
+  // 只有成功描述才写缓存；错误描述（[错误 开头）不缓存，下次重试
+  if (!result.startsWith("[错误")) {
+    captionCache.set(cacheKey, result);
+  }
+  return result;
 }
 
 export const readImageUrlTool: ToolDefinition = {
