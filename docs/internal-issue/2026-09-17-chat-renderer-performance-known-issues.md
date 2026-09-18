@@ -370,9 +370,9 @@ interface MessageItemCacheState {
 | mixed/500 | 160.8 → 69.0 | 57.0% | 147.8 → 55.4 | 36.3 → 18.3 | 49.5% |
 
 - 配对质量：逐轮降幅与中位数偏差 < 2pct，顺序与负载漂移影响可忽略。
-- 帧 p95 斜率（0→500 endpoint，ms/百条）：markdown 7.5 → 5.2；mixed 12.4 → 9.7。两臂斜率同量级——500 条场景残余成本主要不在 Markdown 渲染器，指向列表外壳每 delta 的 O(n) 重建（门控①②③范畴）。
+- 帧 p95 斜率（0→500 endpoint，ms/百条）：markdown 7.5 → 5.2；mixed 12.4 → 9.7。两臂斜率同量级——Markdown 渲染器替换后仍存在显著的历史数量相关成本，当前证据指向 Markdown 全文解析之外的列表拼装/协调路径；**尚未区分 O(n) item 拼装、Bubble.List 协调和大 DOM 树影响，需后续归因实验（A2）后再决定行级订阅、分页或虚拟化**。
 - 对照锁定验收线：帧 p95 重配置 ≤ 40ms——streamdown 0/200 条全部过线（20.7–31.7ms），markdown/500 = 49.6、mixed/500 = 69.0 **未过线**；evtP95 ≤ 40ms——除 mixed/500（55.4）外全过；mdDelta ≤ 5×delta 两臂均满足（947 ≤ 2,220、1,370 ≤ 1,825，两臂相同：渲染器替换不改变外壳行为）。
-- 附带发现（记录待查，与本 spike 无关）：animated 臂 markdown/500 的 domFinal 三轮为 [67,449 / 35,366 / 67,449]，偶发约 2 倍历史消息 DOM；streamdown 臂三轮稳定 35,366。
+- DOM 非确定性（记录待查，与本 spike 无关）：animated 臂 markdown/500 的 domFinal 三轮为 [67,449 / 35,366 / 67,449]，偶发约 2 倍历史消息 DOM 且未解释，streamdown 臂三轮稳定 35,366——该配置**不能用于"两臂相同 DOM 下的 0→500 斜率"论证**。Streamdown 收益本身不依赖该论证：markdown/500 第 2 轮两臂 DOM 均为 35,366 时帧 p95 仍为 159.6 → 49.9ms；mixed/500 三轮 DOM 完全一致，结果稳定 160.8 → 69.0ms。animated 臂偶发 DOM 翻倍转 A2 一并排查。
 
 ### 语义清单（已执行并记录差异；第 4/5 项为行为记录，非通过标准）
 
@@ -387,11 +387,20 @@ node SSR + 真实 Streamdown（非 mock）：未闭合围栏 remend 补全、GFM
 
 JS +476.4KB raw / +145.9KB gzip（Streamdown + math + remark/rehype 链 + KaTeX JS，tree-shaken）；CSS +40.9KB raw / +10.7KB gzip（Tailwind 工具类 + KaTeX CSS）；合计 +517.3KB raw / +156.6KB gzip；另 KaTeX 字体全量约 1.1MB（woff2 按需子集加载，仅公式场景产生实际流量）。
 
-### 门控判定（spike 只汇报，未修改正式聊天渲染路径）
+### 门控判定与产品决策（spike 只汇报，未修改正式聊天渲染路径；2026-09-18 用户验收通过并决策）
 
 - **渲染器替换收益确认**：帧 p95 降幅 57–81%、ScriptDuration 降幅 50–89%，0/200 条配置全部过 40ms 验收线；Streamdown 的 block 分割 + 逐块 memo 假设成立，**复用优先于自研分块器**。
-- **500 条未过线的残余瓶颈不在渲染器**（两臂斜率同量级，指向列表外壳 O(n) 重建），完整过线需叠加后续门控（行级订阅/分页/虚拟化）。
-- 进入产品迁移设计前需确认：bundle 增量（+157KB gzip）是否可接受、file 链接安全方案（占位链接）、Tailwind 引入方式（当前仅 perf 链）、三条行为差异的对齐策略。以上待用户决策后启动，本 spike 不自动迁移。
+- **500 条未过线的残余成本不在 Markdown 渲染器**（两臂斜率同量级），但具体构成（列表拼装 / React 协调 / 大 DOM 树）尚未区分，转 A2 归因实验后再选型，**不直接进入虚拟化**。
+
+**A1-P 产品迁移设计（用户已同意进入设计阶段，不直接迁移）**，约束如下：
+1. 接受约 +157KB gzip——对桌面应用而言，与 57–81% 的实测收益相比合理；
+2. Streamdown 仅接管流式阶段，生成完成后回到现有 XMarkdown——历史消息、后置引用、现有 LaTeX 与最终展示语义不变；
+3. 文件链接采用"安全占位链接 → anchor 解码 → 工作区边界检查"方案，保留 rehype-harden 默认安全链；
+4. 不引入全局 Tailwind 使用习惯：仅在渲染构建中扫描 Streamdown 依赖、关闭 preflight、限定样式作用域；
+5. 行内单美元公式与跨 block 引用只允许在流式阶段暂时近似，完成后由 XMarkdown 恢复最终语义；
+6. 先输出正式迁移设计与回退方案，不立即改产品代码。
+
+**A2 列表规模成本归因（独立实验，先于选型）**——三段成本测量：① `assembleMessageItems` 拼装时间；② `Bubble.List` / React 协调时间；③ 浏览器样式/布局/绘制时间。现有数据 LayoutDuration 仅约 0.3–1ms 而 ScriptDuration 随历史数量明显增长，**优先怀疑 JavaScript 拼装/协调而非纯布局**。归因后决策：拼装主导 → 增量 item 索引或行级更新边界；协调主导 → 分页或虚拟化；两者均有 → 先分页限制上界，再评估虚拟化。
 
 ---
 
