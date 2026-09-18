@@ -18,9 +18,9 @@ export const MARKET_REGISTRY_URLS = [
   "https://gitee.com/playa0/cyrene-plugins/raw/main/registry.json",
 ] as const;
 
-/** 插件包只允许来自官方仓库 zips/ 目录的直链（GitHub + Gitee 双前缀），防止索引被篡改后下载任意来源的包 */
+/** 插件包只允许来自官方仓库的直链（GitHub Releases + Gitee raw zips/ 双前缀），防止索引被篡改后下载任意来源的包 */
 export const MARKET_ZIP_URL_PREFIXES: readonly string[] = [
-  "https://raw.githubusercontent.com/Playa-0v0/Cyrene-Plugins/main/zips/",
+  "https://github.com/Playa-0v0/Cyrene-Plugins/releases/download/",
   "https://gitee.com/playa0/cyrene-plugins/raw/main/zips/",
 ];
 
