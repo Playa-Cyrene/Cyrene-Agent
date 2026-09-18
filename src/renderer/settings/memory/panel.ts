@@ -15,6 +15,7 @@ import {
 import { renderInfoList, renderEmptyState } from "../shared/render";
 import { shallowEqual } from "../shared/utils";
 import { formatDateTime, escapeHtml } from "../shared/format";
+import { showNotice } from "../shared/modal";
 
 function renderL2List(query = ""): void {
   const list = memoryState.panelCache?.l2 ?? [];
@@ -140,7 +141,8 @@ export async function saveL0(): Promise<void> {
     }
   } catch (err) {
     console.error("[settings] save L0 failed", err);
-    alert("保存失败，请重试");
+    // 保存失败属于简短失败反馈：用非阻塞轻提示
+    showNotice({ tone: "error", message: "保存失败，请重试" });
   }
 }
 
@@ -188,7 +190,8 @@ export async function saveL1(): Promise<void> {
     }
   } catch (err) {
     console.error("[settings] save L1 failed", err);
-    alert("保存失败，请重试");
+    // 保存失败属于简短失败反馈：用非阻塞轻提示
+    showNotice({ tone: "error", message: "保存失败，请重试" });
   }
 }
 

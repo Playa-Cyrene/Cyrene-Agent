@@ -7,7 +7,7 @@ import { ttsState } from "./state";
 import { TTS_FIELD_MAP, TTS_PROVIDER_FIELDS } from "./field-map";
 import { DEFAULT_MOSSLAND_TTS_MODEL, type MosslandSyncFormat } from "../../../shared/tts-types";
 import { createUniqueMiniMaxVoiceId, validateMiniMaxVoiceId } from "../../../shared/minimax-voice";
-import { showHtmlModal } from "../shared/modal";
+import { showHtmlModal, showNotice, showAlert } from "../shared/modal";
 import { safeGet } from "../shared/utils";
 
 /* ============================================================
@@ -441,9 +441,10 @@ document.getElementById("tts-gptsovits-test")?.addEventListener("click", async (
   const refAudioPath = ttsEl("tts-gptsovits-ref-audio").value.trim();
   const promptText = ttsEl("tts-gptsovits-prompt-text").value.trim();
   const format = (ttsEl("tts-gptsovits-format") as HTMLSelectElement).value as "wav" | "mp3";
-  if (!baseUrl) { window.alert("请先填写 GPT-SoVITS API 地址"); return; }
-  if (!refAudioPath) { window.alert("请先选择参考音频文件"); return; }
-  if (!promptText) { window.alert("请先填写参考音频对应的文本"); return; }
+  // 字段校验用非阻塞轻提示；文件路径为只读回填，焦点交给相邻选择按钮
+  if (!baseUrl) { showNotice({ tone: "warning", message: "请先填写 GPT-SoVITS API 地址", focusTarget: ttsEl("tts-gptsovits-url") }); return; }
+  if (!refAudioPath) { showNotice({ tone: "warning", message: "请先选择参考音频文件" }); return; }
+  if (!promptText) { showNotice({ tone: "warning", message: "请先填写参考音频对应的文本", focusTarget: ttsEl("tts-gptsovits-prompt-text") }); return; }
 
   const btn = document.getElementById("tts-gptsovits-test") as HTMLButtonElement;
   btn.disabled = true;
@@ -454,7 +455,13 @@ document.getElementById("tts-gptsovits-test")?.addEventListener("click", async (
     });
     playTtsAudio(result.base64, result.format);
   } catch (err) {
-    window.alert("测试失败: " + (err instanceof Error ? err.message : String(err)));
+    // 异常详情可能需要阅读：单按钮错误模态框
+    await showAlert({
+      tone: "error",
+      title: "测试失败",
+      message: "合成请求未能完成，请检查配置后重试。",
+      details: err instanceof Error ? err.message : String(err),
+    });
   } finally {
     btn.disabled = false;
     btn.textContent = "🔊 测试发音";
@@ -479,7 +486,7 @@ document.getElementById("tts-custom-cloud-test")?.addEventListener("click", asyn
   const voiceId = ttsEl("tts-custom-cloud-voice").value.trim();
   const format = (ttsEl("tts-custom-cloud-format") as HTMLSelectElement).value as "wav" | "mp3";
   const timeoutMs = Number(ttsEl("tts-custom-cloud-timeout").value) || 30000;
-  if (!endpointUrl) { window.alert("请先填写自定义云端 Endpoint URL"); return; }
+  if (!endpointUrl) { showNotice({ tone: "warning", message: "请先填写自定义云端 Endpoint URL", focusTarget: ttsEl("tts-custom-cloud-url") }); return; }
 
   const btn = document.getElementById("tts-custom-cloud-test") as HTMLButtonElement;
   btn.disabled = true;
@@ -494,7 +501,13 @@ document.getElementById("tts-custom-cloud-test")?.addEventListener("click", asyn
     });
     playTtsAudio(result.base64, result.format);
   } catch (err) {
-    window.alert("测试失败: " + (err instanceof Error ? err.message : String(err)));
+    // 异常详情可能需要阅读：单按钮错误模态框
+    await showAlert({
+      tone: "error",
+      title: "测试失败",
+      message: "自定义云端合成请求未能完成，请检查配置后重试。",
+      details: err instanceof Error ? err.message : String(err),
+    });
   } finally {
     btn.disabled = false;
     btn.textContent = "🔊 测试发音";
@@ -507,8 +520,9 @@ document.getElementById("tts-mimo-test")?.addEventListener("click", async () => 
   const apiKey = ttsEl("tts-mimo-key").value.trim();
   const voiceAudioPath = ttsEl("tts-mimo-voice-audio").value.trim();
   const stylePrompt = ttsEl("tts-mimo-style").value.trim();
-  if (!apiKey) { window.alert("请先填写小米 MiMo API Key"); return; }
-  if (!voiceAudioPath) { window.alert("请先选择昔涟克隆参考音频"); return; }
+  if (!apiKey) { showNotice({ tone: "warning", message: "请先填写小米 MiMo API Key", focusTarget: ttsEl("tts-mimo-key") }); return; }
+  // 音频路径为只读回填，焦点交给相邻选择按钮
+  if (!voiceAudioPath) { showNotice({ tone: "warning", message: "请先选择昔涟克隆参考音频" }); return; }
 
   const btn = document.getElementById("tts-mimo-test") as HTMLButtonElement;
   btn.disabled = true;
@@ -519,7 +533,13 @@ document.getElementById("tts-mimo-test")?.addEventListener("click", async () => 
     });
     playTtsAudio(result.base64, result.format);
   } catch (err) {
-    window.alert("测试失败: " + (err instanceof Error ? err.message : String(err)));
+    // 异常详情可能需要阅读：单按钮错误模态框
+    await showAlert({
+      tone: "error",
+      title: "测试失败",
+      message: "小米 MiMo 合成请求未能完成，请检查配置后重试。",
+      details: err instanceof Error ? err.message : String(err),
+    });
   } finally {
     btn.disabled = false;
     btn.textContent = "🔊 测试发音";
@@ -577,9 +597,9 @@ document.getElementById("tts-mossland-test")?.addEventListener("click", async ()
   const text = ttsEl("tts-mossland-text").value.trim();
   const model = (ttsEl("tts-mossland-model") as HTMLSelectElement).value;
   const format = (ttsEl("tts-mossland-format") as HTMLSelectElement).value as MosslandSyncFormat;
-  if (!apiKey) { window.alert("请先填写 Mossland API Key"); return; }
-  if (!voiceId) { window.alert("请先填写音色 ID（可从下方拉取列表）"); return; }
-  if (!text) { window.alert("请先填写试听文本"); return; }
+  if (!apiKey) { showNotice({ tone: "warning", message: "请先填写 Mossland API Key", focusTarget: ttsEl("tts-mossland-key") }); return; }
+  if (!voiceId) { showNotice({ tone: "warning", message: "请先填写音色 ID（可从下方拉取列表）", focusTarget: ttsEl("tts-mossland-voice") }); return; }
+  if (!text) { showNotice({ tone: "warning", message: "请先填写试听文本", focusTarget: ttsEl("tts-mossland-text") }); return; }
 
   const btn = document.getElementById("tts-mossland-test") as HTMLButtonElement;
   btn.disabled = true;
@@ -599,7 +619,13 @@ document.getElementById("tts-mossland-test")?.addEventListener("click", async ()
       statusEl.textContent = "❌ " + (err instanceof Error ? err.message : String(err));
       statusEl.className = "tts-clone-status is-error";
     } else {
-      window.alert("合成失败: " + (err instanceof Error ? err.message : String(err)));
+      // 异常详情可能需要阅读：单按钮错误模态框
+      await showAlert({
+        tone: "error",
+        title: "合成失败",
+        message: "Mossland 合成请求未能完成，请检查配置后重试。",
+        details: err instanceof Error ? err.message : String(err),
+      });
     }
   } finally {
     btn.disabled = false;
@@ -622,8 +648,9 @@ document.getElementById("tts-mossland-clone-start")?.addEventListener("click", a
   const filePath = ttsEl("tts-mossland-clone-file").value.trim();
   const name = ttsEl("tts-mossland-clone-name").value.trim();
   const description = ttsEl("tts-mossland-clone-desc").value.trim();
-  if (!apiKey) { window.alert("请先填写 Mossland API Key"); return; }
-  if (!filePath) { window.alert("请先选择参考音频"); return; }
+  if (!apiKey) { showNotice({ tone: "warning", message: "请先填写 Mossland API Key", focusTarget: ttsEl("tts-mossland-key") }); return; }
+  // 音频路径为只读回填，焦点交给相邻选择按钮
+  if (!filePath) { showNotice({ tone: "warning", message: "请先选择参考音频" }); return; }
 
   setMosslandStatus("正在上传并创建音色…", "loading");
   try {
@@ -645,7 +672,7 @@ document.getElementById("tts-mossland-clone-start")?.addEventListener("click", a
 document.getElementById("tts-mossland-list-voices")?.addEventListener("click", async () => {
   if (!window.tts) return;
   const apiKey = ttsEl("tts-mossland-key").value.trim();
-  if (!apiKey) { window.alert("请先填写 Mossland API Key"); return; }
+  if (!apiKey) { showNotice({ tone: "warning", message: "请先填写 Mossland API Key", focusTarget: ttsEl("tts-mossland-key") }); return; }
 
   setMosslandListStatus("正在拉取音色列表…", "loading");
   try {
@@ -700,8 +727,8 @@ document.getElementById("tts-minimax-test")?.addEventListener("click", async () 
   const voiceId = ttsEl("tts-minimax-voice").value.trim();
   const modelSelect = ttsEl("tts-minimax-model") as HTMLSelectElement;
   const model = modelSelect.value === "speech-2.8-hd" ? "speech-2.8-hd" : "speech-2.8-turbo";
-  if (!apiKey) { window.alert("请先填写 MiniMax API Key"); return; }
-  if (!voiceId) { window.alert("请先填写音色 ID（或下方复刻训练）"); return; }
+  if (!apiKey) { showNotice({ tone: "warning", message: "请先填写 MiniMax API Key", focusTarget: ttsEl("tts-minimax-key") }); return; }
+  if (!voiceId) { showNotice({ tone: "warning", message: "请先填写音色 ID（或下方复刻训练）", focusTarget: ttsEl("tts-minimax-voice") }); return; }
 
   const btn = document.getElementById("tts-minimax-test") as HTMLButtonElement;
   btn.disabled = true;
@@ -711,7 +738,13 @@ document.getElementById("tts-minimax-test")?.addEventListener("click", async () 
     const base64 = await window.tts.synthesize({ apiKey, voiceId, text: TTS_TEST_TEXT, model, vocalEnhance });
     playTtsAudio(base64);
   } catch (err) {
-    window.alert("测试失败: " + (err instanceof Error ? err.message : String(err)));
+    // 异常详情可能需要阅读：单按钮错误模态框
+    await showAlert({
+      tone: "error",
+      title: "测试失败",
+      message: "MiniMax 合成请求未能完成，请检查配置后重试。",
+      details: err instanceof Error ? err.message : String(err),
+    });
   } finally {
     btn.disabled = false;
     btn.textContent = "🔊 测试发音";
@@ -751,10 +784,11 @@ document.getElementById("tts-clone-start")?.addEventListener("click", async () =
   const cloneText = ttsEl("tts-clone-text").value.trim();
   const voiceId = ttsEl("tts-clone-voice-id").value.trim();
 
-  if (!apiKey) { window.alert("请先填写 MiniMax API Key"); return; }
-  if (!cloneFile) { window.alert("请选择配音文件"); return; }
-  if (!cloneText) { window.alert("请填写复刻文本"); return; }
-  if (!voiceId) { window.alert("请填写音色命名"); return; }
+  if (!apiKey) { showNotice({ tone: "warning", message: "请先填写 MiniMax API Key", focusTarget: ttsEl("tts-minimax-key") }); return; }
+  // 配音文件为只读回填，焦点交给相邻选择按钮
+  if (!cloneFile) { showNotice({ tone: "warning", message: "请选择配音文件" }); return; }
+  if (!cloneText) { showNotice({ tone: "warning", message: "请填写复刻文本", focusTarget: ttsEl("tts-clone-text") }); return; }
+  if (!voiceId) { showNotice({ tone: "warning", message: "请填写音色命名", focusTarget: ttsEl("tts-clone-voice-id") }); return; }
   const voiceIdError = validateMiniMaxVoiceId(voiceId);
   if (voiceIdError) { setCloneStatus("❌ " + voiceIdError, "error"); return; }
 

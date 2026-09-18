@@ -1,3 +1,21 @@
+/* ===== 渲染层统一反馈 Token（深色安全默认值） =====
+   设置页 DOM 弹窗与 React 适配器共享同一组语义变量；
+   pearl-white 在下方按同名变量覆盖，保证两端视觉一致。 */
+:root {
+  --rb-feedback-radius: 18px;
+  --rb-feedback-surface: rgba(30, 25, 35, 0.97);
+  --rb-feedback-fg: #f3eef6;
+  --rb-feedback-muted: #c9bfd2;
+  --rb-feedback-border: rgba(255, 182, 220, 0.22);
+  --rb-feedback-shadow: 0 28px 70px rgba(0, 0, 0, 0.38);
+  --rb-feedback-details-bg: rgba(255, 255, 255, 0.06);
+  --rb-feedback-danger: #e15b70;
+  --rb-feedback-success: #43a877;
+  --rb-feedback-warning: #d09a43;
+  --rb-feedback-info: var(--rb-pink-400);
+  --rb-feedback-motion: 180ms;
+}
+
 [data-ui-theme="pearl-white"] {
   color-scheme: light;
 
@@ -1112,9 +1130,9 @@
 [data-ui-theme="pearl-white"] .scheduler-editor__card,
 [data-ui-theme="pearl-white"] .cy-modal {
   color: var(--rb-text-default);
-  background: var(--rb-card-bg);
-  border-color: var(--rb-border-strong);
-  box-shadow: var(--rb-shadow-elevated);
+  background: var(--rb-feedback-surface);
+  border-color: var(--rb-feedback-border);
+  box-shadow: var(--rb-feedback-shadow);
 }
 
 [data-ui-theme="pearl-white"] .scheduler-card {
@@ -1199,18 +1217,17 @@
 [data-ui-theme="pearl-white"] .cy-modal__icon {
   display: grid;
   place-items: center;
-  width: 26px;
-  height: 26px;
-  border: 1px solid var(--rb-pink-200);
-  border-radius: 9px;
-  background: var(--rb-pink-50);
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: 10px;
 }
 
 [data-ui-theme="pearl-white"] #cy-input-field {
-  color: var(--rb-input-text) !important;
-  background: var(--rb-input-bg) !important;
-  border-color: var(--rb-input-border) !important;
-  box-shadow: none !important;
+  color: var(--rb-input-text);
+  background: var(--rb-input-bg);
+  border-color: var(--rb-input-border);
+  box-shadow: none;
 }
 
 [data-ui-theme="pearl-white"] #cy-input-field::placeholder {
@@ -1218,8 +1235,8 @@
 }
 
 [data-ui-theme="pearl-white"] #cy-input-field:focus {
-  border-color: var(--rb-pink-500) !important;
-  box-shadow: 0 0 0 3px var(--rb-pink-100) !important;
+  border-color: var(--rb-pink-500);
+  box-shadow: 0 0 0 3px var(--rb-pink-100);
 }
 
 /* ===== Markdown render variables (light theme overrides) ===== */
@@ -1237,4 +1254,18 @@
   --md-copy-bg:           rgba(0, 0, 0, 0.03);
   --md-copy-border:       var(--rb-border-soft);
   --md-katex-text:        var(--rb-text-default);
+
+  /* 渲染层统一反馈 Token（pearl-white 覆盖：珍珠白表面、微粉边框） */
+  --rb-feedback-radius: 18px;
+  --rb-feedback-surface: rgba(255, 255, 255, 0.96);
+  --rb-feedback-fg: var(--rb-text-strong);
+  --rb-feedback-muted: var(--rb-text-muted);
+  --rb-feedback-border: rgba(220, 183, 207, 0.75);
+  --rb-feedback-shadow: 0 28px 70px rgba(67, 42, 59, 0.17);
+  --rb-feedback-details-bg: rgba(0, 0, 0, 0.04);
+  --rb-feedback-danger: #d94f61;
+  --rb-feedback-success: #43a877;
+  --rb-feedback-warning: #c58a31;
+  --rb-feedback-info: var(--rb-pink-500);
+  --rb-feedback-motion: 180ms;
 }

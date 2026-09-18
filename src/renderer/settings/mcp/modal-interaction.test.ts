@@ -7,13 +7,20 @@ import { showHtmlModal, showInputModal, showModal } from "../shared/modal";
 import { modalState } from "../shared/modal-state";
 import { CUSTOM_ENDPOINT_GUIDE_BODY } from "./panel";
 
+// 重置全部 overlay / 队列状态，避免跨用例残留
+function resetModalState(): void {
+  modalState.cyOverlay = null;
+  modalState.cyHtmlOverlay = null;
+  modalState.cyInputOverlay = null;
+  modalState.noticeContainer = null;
+  modalState.blockingQueue = [];
+  modalState.blockingActive = false;
+  document.body.innerHTML = "";
+}
+
 describe("自定义端点接入说明模态框 - 完整交互", () => {
   beforeEach(() => {
-    // 重置 overlay 缓存，避免跨用例残留
-    modalState.cyOverlay = null;
-    modalState.cyHtmlOverlay = null;
-    modalState.cyInputOverlay = null;
-    document.body.innerHTML = "";
+    resetModalState();
   });
 
   it("调用 showHtmlModal 后 overlay 创建并显示（is-hidden 被移除）", async () => {
@@ -92,9 +99,7 @@ describe("自定义端点接入说明模态框 - 完整交互", () => {
 
 describe("MCP Server 添加流程模态框 - 交互", () => {
   beforeEach(() => {
-    modalState.cyInputOverlay = null;
-    modalState.cyOverlay = null;
-    document.body.innerHTML = "";
+    resetModalState();
   });
 
   it("showInputModal 弹出输入框，点击确定返回输入值", async () => {
@@ -102,7 +107,6 @@ describe("MCP Server 添加流程模态框 - 交互", () => {
       title: "添加 MCP Server",
       message: "输入启动命令",
       placeholder: "node path\\to\\server.js",
-      icon: "🧩",
     });
 
     const overlay = document.getElementById("cy-input-overlay");
@@ -113,6 +117,7 @@ describe("MCP Server 添加流程模态框 - 交互", () => {
 
     const input = document.getElementById("cy-input-field") as HTMLInputElement;
     expect(input).toBeTruthy();
+    expect(document.activeElement).toBe(input);
     input.value = "node C:\\mcp\\index.js --port 3000";
 
     const confirmBtn = document.getElementById("cy-input-confirm") as HTMLButtonElement;
@@ -163,15 +168,18 @@ describe("MCP Server 添加流程模态框 - 交互", () => {
     expect(result).toBeNull();
   });
 
-  it("showModal 添加成功提示，点击确定返回 true", async () => {
+  it("showModal 兼容入口映射为 warning 确认弹窗，点击确定返回 true", async () => {
     const promise = showModal({
-      title: "添加成功",
+      title: "提示",
       message: '"天气工具" 已连接，发现 5 个工具。详情见终端日志。',
-      icon: "✅",
     });
 
     const overlay = document.getElementById("cy-modal-overlay");
     expect(overlay?.classList.contains("is-hidden")).toBe(false);
+    // 兼容入口默认落到 warning 色调的自绘弹窗，不再使用 emoji 图标
+    expect(overlay?.querySelector(".cy-modal")?.className).toContain("cy-modal--warning");
+    expect(overlay?.querySelector("#cy-modal-icon")?.innerHTML).toContain("<svg");
+    expect(overlay?.querySelector("#cy-modal-icon")?.className).toContain("cy-modal__icon--warning");
 
     const msg = document.getElementById("cy-modal-message");
     expect(msg?.textContent).toContain("已连接，发现 5 个工具");
@@ -184,11 +192,10 @@ describe("MCP Server 添加流程模态框 - 交互", () => {
     expect(overlay?.classList.contains("is-hidden")).toBe(true);
   });
 
-  it("showModal 添加失败提示，点击取消返回 false", async () => {
+  it("showModal 兼容入口点击取消返回 false", async () => {
     const promise = showModal({
       title: "添加失败",
       message: "启动命令无效（详情见终端日志）",
-      icon: "⚠️",
     });
 
     const cancelBtn = document.getElementById("cy-modal-cancel") as HTMLButtonElement;

@@ -5,7 +5,7 @@
 import { Chart, registerables, type ChartConfiguration } from "chart.js";
 import { tokensState } from "./state";
 import { formatCacheRate } from "./cache-statistics";
-import { showModal } from "../shared/modal";
+import { showConfirm } from "../shared/modal";
 
 Chart.register(...registerables);
 
@@ -386,11 +386,12 @@ document.querySelectorAll<HTMLButtonElement>(".token-range__btn").forEach((btn) 
 });
 
 document.getElementById("token-usage-clear")?.addEventListener("click", async () => {
-  const confirmed = await showModal({
+  // 统计清空不可恢复：危险确认，默认聚焦取消
+  const confirmed = await showConfirm({
     title: "重置 Token 统计",
     message: "这会清空全部本地 Token、请求数和缓存统计，且无法恢复。",
-    icon: "🗑️",
     confirmText: "全部清空",
+    dangerous: true,
   });
   if (!confirmed) return;
   const button = document.getElementById("token-usage-clear") as HTMLButtonElement | null;

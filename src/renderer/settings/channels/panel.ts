@@ -25,6 +25,8 @@ import {
 import { proactiveDeliverySelect } from "../general/dom";
 import { normalizeProactiveDeliveryTarget } from "../../../shared/preferences";
 import { isProactiveDeliveryTargetSelectable } from "../../../shared/proactive-delivery";
+import type { QqListenAuthRequirement } from "../../../shared/qq-listen";
+import { showConfirm } from "../shared/modal";
 
 // 通用：根据渠道状态更新"主动投递目标"选项的可选择性
 // （从 settings.ts 移过来；settings.ts 反向 import 此函数以保持其他面板调用不变）
@@ -60,15 +62,11 @@ function setFeishuFeedback(kind: "info" | "ok" | "err", msg: string): void {
   else channelsFeishuFeedbackEl.classList.add("channels-feedback--info");
 }
 
-/** 与主进程 onebot-reverse-ws 的 isLoopbackHost 保持一致的回环判断（渲染层本地副本） */
-function isLoopbackHostText(host: string): boolean {
-  const normalized = host.trim().toLowerCase().replace(/^\[/, "").replace(/\]$/, "");
-  return normalized === ""
-    || normalized === "127.0.0.1"
-    || normalized === "localhost"
-    || normalized === "::1"
-    || normalized === "::ffff:127.0.0.1";
-}
+// 这里**故意不保留**「回环判断 / 是否需要 Access Token」的本地副本。
+//
+// 该判定的输入是网络接口列表，只有主进程看得到 —— auto 模式在存在 WSL 虚拟网卡时会
+// 解析为非回环地址。任何本地副本都会与主进程漂移，症状是设置页不提示、用户直接被硬拒。
+// 渲染端统一通过 window.settings.channelsQqResolveAuthRequirement() 索取权威判定。
 
 function setQqFeedback(kind: "info" | "ok" | "err", msg: string): void {
   if (!channelsQqFeedbackEl) return;
@@ -260,6 +258,10 @@ export async function loadChannelsPanel(): Promise<void> {
     return;
   }
   channelsState.initialized = true;
+  // 必须在 try 之外声明：同函数内的保存处理器位于 try 之外，却要读它。
+  // 原先是 try 块内的 let，导致「需要补 token」这条路径抛 ReferenceError
+  // （该路径此前没有任何测试覆盖，所以一直没暴露）。
+  let hadQqToken = false;
   try {
     const cfg = await window.settings.channelsGetConfig();
     if (channelsWechatEnabledEl) channelsWechatEnabledEl.checked = !!cfg.wechat.enabled;
@@ -290,7 +292,7 @@ export async function loadChannelsPanel(): Promise<void> {
       ? "已保存（输入新值会覆盖）"
       : "留空仅允许本机 127.0.0.1 监听；WSL/跨网卡请先生成";
     // 已保存的 token 不回显；保存时若输入为空且没有已存值，非回环监听需要先补生成
-    let hadQqToken = !!cfg.qq?.hasAccessToken;
+    hadQqToken = !!cfg.qq?.hasAccessToken;
 
     // QQ 官方机器人字段填充（secret 加密存盘，UI 不回填明文）
     if (channelsQqBotEnabledEl) channelsQqBotEnabledEl.checked = !!cfg.qqbot?.enabled;
@@ -541,15 +543,35 @@ export async function loadChannelsPanel(): Promise<void> {
     // 非回环监听必须鉴权（主进程会硬校验）：输入为空且无已存 token 时，
     // 先生成并让用户复制到 NapCat，本次不落盘（token 保存后不再回显，用户就拿不到了）
     const listenMode = channelsQqListenModeEl?.value ?? "auto";
-    const needsToken = listenMode === "wsl"
-      || (listenMode === "custom" && !isLoopbackHostText(channelsQqCustomHostEl?.value ?? ""));
-    if (channelsQqTokenEl && needsToken && !channelsQqTokenEl.value && !hadQqToken) {
-      const bytes = crypto.getRandomValues(new Uint8Array(32));
-      channelsQqTokenEl.value = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
-      channelsQqTokenEl.type = "text";
-      channelsQqTokenEl.select();
-      setQqFeedback("info", "非回环监听需要 Access Token：已自动生成，请先复制到 NapCat WebSocket Client 的 Token 字段，再回来点击保存。");
-      return;
+    const customHost = channelsQqCustomHostEl?.value ?? "";
+    const qqEnabled = channelsQqEnabledEl?.checked ?? false;
+
+    // 是否需要 token 由主进程判定：渲染进程看不到网络接口（auto 在存在 WSL 网卡时会
+    // 解析为非回环地址），本地按模式名判断必然漏报。QQ 未启用时不会启动监听，
+    // 因此跳过预检 —— 否则想关掉 QQ 的用户会因地址无效而保存不了。
+    if (qqEnabled) {
+      let requirement: QqListenAuthRequirement;
+      try {
+        requirement = await window.settings.channelsQqResolveAuthRequirement({ listenMode, customHost });
+      } catch (error) {
+        setQqFeedback("err", error instanceof Error ? error.message : String(error));
+        return;
+      }
+      if (!requirement.ok) {
+        setQqFeedback("err", requirement.error ?? "无法解析监听地址，请检查监听模式与自定义地址。");
+        return;
+      }
+      if (channelsQqTokenEl && requirement.requiresAccessToken && !channelsQqTokenEl.value && !hadQqToken) {
+        const bytes = crypto.getRandomValues(new Uint8Array(32));
+        channelsQqTokenEl.value = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+        channelsQqTokenEl.type = "text";
+        channelsQqTokenEl.select();
+        setQqFeedback(
+          "info",
+          `监听地址 ${requirement.resolvedHost} 非回环，需要 Access Token：已自动生成，请先复制到 NapCat WebSocket Client 的 Token 字段，再回来点击保存。`,
+        );
+        return;
+      }
     }
     setQqFeedback("info", "正在保存并启动 QQ 监听…");
     const qq: Record<string, unknown> = {
@@ -641,7 +663,14 @@ export async function loadChannelsPanel(): Promise<void> {
   // ===== 消息日志事件绑定 =====
   channelsLogRefreshBtn?.addEventListener("click", () => void refreshChannelsLog());
   channelsLogClearBtn?.addEventListener("click", async () => {
-    if (!confirm("确认清空所有 bot 消息日志？")) return;
+    // 清空日志不可撤销：危险确认，默认聚焦取消
+    const confirmed = await showConfirm({
+      title: "清空消息日志",
+      message: "确认清空所有 bot 消息日志？",
+      confirmText: "清空",
+      dangerous: true,
+    });
+    if (!confirmed) return;
     await window.settings.channelsLogClear();
     await refreshChannelsLog();
   });

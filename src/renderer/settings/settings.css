@@ -1370,7 +1370,7 @@ body {
   box-shadow: 0 8px 18px rgba(236, 72, 153, 0.28);
 }
 
-/* �Զ��嵯���������� */
+/* 自定义模态框（自绘实现，A「轻盈品牌化」视觉：珍珠白/深色双主题 Token） */
 .cy-modal-overlay {
   position: fixed;
   inset: 0;
@@ -1379,39 +1379,73 @@ body {
   z-index: 9999;
   background: rgba(0, 0, 0, 0.38);
   backdrop-filter: blur(4px);
-  transition: opacity 180ms ease;
+  transition: opacity var(--rb-feedback-motion, 180ms) ease;
 }
 .cy-modal-overlay.is-hidden {
   opacity: 0;
   pointer-events: none;
 }
 .cy-modal {
-  width: min(320px, 84vw);
-  padding: 14px 16px 12px;
-  border-radius: 16px;
-  background: radial-gradient(circle at 20% 8%, rgba(255, 110, 199, 0.18), transparent 60%), linear-gradient(145deg, rgba(38, 28, 60, 0.96), rgba(22, 18, 40, 0.94));
-  border: 1px solid rgba(255, 182, 220, 0.18);
-  box-shadow: 0 28px 60px rgba(0, 0, 0, 0.40), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  width: min(380px, 90vw);
+  padding: 22px;
+  border-radius: var(--rb-feedback-radius, 18px);
+  background: var(--rb-feedback-surface, linear-gradient(145deg, rgba(38, 28, 60, 0.96), rgba(22, 18, 40, 0.94)));
+  border: 1px solid var(--rb-feedback-border, rgba(255, 182, 220, 0.18));
+  box-shadow: var(--rb-feedback-shadow, 0 28px 60px rgba(0, 0, 0, 0.40));
   transform: scale(1);
-  transition: transform 180ms ease;
+  transition: transform var(--rb-feedback-motion, 180ms) ease;
 }
 .cy-modal-overlay.is-hidden .cy-modal {
-  transform: scale(0.92);
+  transform: scale(0.95);
 }
 .cy-modal__head {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin-bottom: 8px;
+  gap: 10px;
+  margin-bottom: 10px;
 }
+/* 状态图标：固定色块中的统一线性 SVG，不再使用 emoji */
 .cy-modal__icon {
-  font-size: 14px;
-  line-height: 1;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border-radius: 10px;
+}
+.cy-modal__icon svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.cy-modal__icon--success {
+  color: var(--rb-feedback-success, #43a877);
+  background: rgba(67, 168, 119, 0.14);
+}
+.cy-modal__icon--info {
+  color: var(--rb-feedback-info, #f472b6);
+  background: rgba(244, 114, 182, 0.13);
+}
+.cy-modal__icon--warning {
+  color: var(--rb-feedback-warning, #d09a43);
+  background: rgba(208, 154, 67, 0.15);
+}
+.cy-modal__icon--error,
+.cy-modal__icon--danger {
+  color: var(--rb-feedback-danger, #e15b70);
+  background: rgba(225, 91, 112, 0.14);
+}
+.cy-modal--danger .cy-modal__title {
+  color: var(--rb-feedback-danger, #e15b70);
 }
 .cy-modal__title {
   margin: 0;
   color: var(--rb-text-strong);
-  font: 500 13px/1.3 var(--rb-font-sans);
+  font: 600 14px/1.35 var(--rb-font-sans);
 }
 
 .cy-modal__divider {
@@ -1421,15 +1455,145 @@ body {
   margin: 5px 0;
 }
 .cy-modal__body {
-  margin: 0 0 10px;
+  margin: 0 0 14px;
   color: var(--rb-text-muted);
-  font: 400 13px/1.45 var(--rb-font-sans);
-  line-height: 1.4;
+  font: 400 13px/1.5 var(--rb-font-sans);
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+}
+/* 技术详情：纯文本折叠区域，可选中复制 */
+.cy-modal__details-wrap {
+  margin: 0 0 14px;
+}
+.cy-modal__details-wrap[hidden] {
+  display: none;
+}
+.cy-modal__details-wrap summary {
+  cursor: pointer;
+  color: var(--rb-text-faint);
+  font: 500 12px/1.4 var(--rb-font-sans);
+  user-select: none;
+}
+.cy-modal__details-wrap summary:hover {
+  color: var(--rb-text-muted);
+}
+.cy-modal__details {
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--rb-feedback-border, rgba(255, 182, 220, 0.18));
+  background: rgba(0, 0, 0, 0.28);
+  color: var(--rb-text-muted);
+  font: 400 11px/1.55 var(--rb-font-mono, monospace);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 180px;
+  overflow: auto;
+  user-select: text;
 }
 .cy-modal__actions {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+
+/* 输入弹窗文本域（行内样式迁移到样式表） */
+#cy-input-field {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(0, 0, 0, 0.32);
+  color: var(--rb-text-strong, #fff);
+  font-family: inherit;
+  font-size: 13px;
+  outline: none;
+  margin-bottom: 12px;
+}
+
+/* 轻提示堆叠容器：右上角、最多 3 条、可覆盖弹窗层级 */
+.cy-notice-stack {
+  position: fixed;
+  top: 14px;
+  right: 14px;
+  z-index: 10000;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(300px, calc(100vw - 28px));
+  pointer-events: none;
+}
+.cy-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--rb-feedback-border, rgba(255, 182, 220, 0.22));
+  background: var(--rb-feedback-surface, rgba(30, 25, 35, 0.97));
+  box-shadow: var(--rb-feedback-shadow, 0 28px 70px rgba(0, 0, 0, 0.38));
+  color: var(--rb-text-default, #efe6f2);
+  font: 400 12px/1.45 var(--rb-font-sans);
+  pointer-events: auto;
+  animation: cy-notice-in var(--rb-feedback-motion, 180ms) ease;
+}
+.cy-notice__icon {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  flex: none;
+  margin-top: 1px;
+  border-radius: 6px;
+}
+.cy-notice__icon svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.cy-notice__message {
+  word-break: break-word;
+}
+.cy-notice--success .cy-notice__icon {
+  color: var(--rb-feedback-success, #43a877);
+  background: rgba(67, 168, 119, 0.14);
+}
+.cy-notice--info .cy-notice__icon {
+  color: var(--rb-feedback-info, #f472b6);
+  background: rgba(244, 114, 182, 0.13);
+}
+.cy-notice--warning .cy-notice__icon {
+  color: var(--rb-feedback-warning, #d09a43);
+  background: rgba(208, 154, 67, 0.15);
+}
+.cy-notice--error .cy-notice__icon {
+  color: var(--rb-feedback-danger, #e15b70);
+  background: rgba(225, 91, 112, 0.14);
+}
+@keyframes cy-notice-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* 尊重系统“减少动态效果”偏好：关闭过渡与动画 */
+@media (prefers-reduced-motion: reduce) {
+  .cy-modal-overlay,
+  .cy-modal,
+  .cy-notice {
+    transition-duration: 0s;
+    animation-duration: 0s;
+  }
 }
 
 .custom-style-modal {
@@ -1498,6 +1662,20 @@ body {
 .btn-primary:hover {
   background: linear-gradient(135deg, rgba(255, 130, 210, 0.92), rgba(180, 100, 255, 0.88));
   box-shadow: 0 8px 18px rgba(236, 72, 153, 0.28);
+}
+
+/* 危险确认按钮：克制的红色，仅用于删除/覆盖/清空等危险操作 */
+.btn-danger {
+  color: #fff;
+  background: var(--rb-feedback-danger, #e15b70);
+  border-color: transparent;
+  box-shadow: 0 6px 18px rgba(225, 91, 112, 0.26);
+}
+.btn-danger:hover {
+  color: #fff;
+  background: var(--rb-feedback-danger, #e15b70);
+  filter: brightness(0.92);
+  box-shadow: 0 8px 22px rgba(225, 91, 112, 0.32);
 }
 
 /* 记忆面板 */

@@ -19,7 +19,7 @@ import {
   formatSchedulerDate,
   describeSchedule,
 } from "./utils";
-import { showModal } from "../shared/modal";
+import { showConfirm, showNotice } from "../shared/modal";
 
 /** 插件列表最小视图：只取运行状态，供任务卡片判断"等待插件启用"。 */
 interface PluginListLike {
@@ -286,7 +286,8 @@ async function confirmPluginTaskEnable(task: ScheduledTask): Promise<boolean> {
     `会话模式：${task.mode ?? "work"}`,
     `工具：${tools}`,
   ].join(" · ");
-  return showModal({ title: "启用插件创建的定时任务", message, confirmText: "确认启用" });
+  // 授权确认属于需用户决策的警告类确认：非危险操作，警告色调
+  return showConfirm({ tone: "warning", title: "启用插件创建的定时任务", message, confirmText: "确认启用" });
 }
 
 export async function toggleSchedulerTask(task: ScheduledTask, enabled: boolean): Promise<void> {
@@ -295,7 +296,8 @@ export async function toggleSchedulerTask(task: ScheduledTask, enabled: boolean)
     if (!confirmed) return;
   }
   const result = await window.cyreneScheduler!.toggle(task.id, enabled);
-  if (!result.ok) window.alert(result.error ?? "切换失败");
+  // 切换失败属于简短失败反馈：用非阻塞轻提示
+  if (!result.ok) showNotice({ tone: "error", message: result.error ?? "切换失败" });
   await loadSchedulerPanel();
 }
 
@@ -307,15 +309,16 @@ export async function fireSchedulerTask(id: string): Promise<void> {
       : result.reason === "plugin not running"
         ? "插件已停用，等待插件启用后再运行"
         : (result.error ?? result.reason ?? "立即运行失败");
-    window.alert(message);
+    showNotice({ tone: "error", message });
   }
 }
 
 export async function deleteSchedulerTask(id: string): Promise<void> {
-  const ok = await showModal({ title: "删除定时任务", message: "确定删除这个定时任务吗？", icon: '<svg width="18" height="18" viewBox="0 0 48 48" fill="none" aria-hidden="true" style="vertical-align:-2px"><path fill-rule="evenodd" clip-rule="evenodd" d="M8 15H40L37 44H11L8 15Z" fill="none" stroke="currentColor" stroke-width="4" stroke-linejoin="round"/><path d="M20.002 25.0024V35.0026" stroke="currentColor" stroke-width="4" stroke-linecap="round"/><path d="M28.0024 24.9995V34.9972" stroke="currentColor" stroke-width="4" stroke-linecap="round"/><path d="M12 14.9999L28.3242 3L36 15" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg>', confirmText: "删除" });
+  // 删除任务不可撤销：危险确认，默认聚焦取消
+  const ok = await showConfirm({ title: "删除定时任务", message: "确定删除这个定时任务吗？", confirmText: "删除", dangerous: true });
   if (!ok) return;
   const result = await window.cyreneScheduler!.delete(id);
-  if (!result.ok) window.alert(result.error ?? "删除失败");
+  if (!result.ok) showNotice({ tone: "error", message: result.error ?? "删除失败" });
   await loadSchedulerPanel();
 }
 

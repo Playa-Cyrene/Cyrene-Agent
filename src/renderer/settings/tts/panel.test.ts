@@ -184,4 +184,77 @@ describe("TTS settings panel", () => {
     expect(splitModeButtons().every((button) => button.disabled)).toBe(true);
     expect(saveSettings).toHaveBeenCalledWith({ ttsEarlyReadSplitEnabled: false });
   });
+
+  it("shows a warning notice instead of window.alert when GPT-SoVITS fields are empty", async () => {
+    const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
+    Object.assign(window, {
+      tts: {
+        loadSettings: vi.fn(async () => ({})),
+        saveSettings: vi.fn(async () => ({})),
+        synthesizeGptsovits: vi.fn(async () => { throw new Error("不应到达"); }),
+      },
+    });
+
+    // 测试按钮不在常规输入夹具里，且事件绑定发生在模块加载时：
+    // 按钮必须在导入前存在
+    const testBtn = document.createElement("button");
+    testBtn.type = "button";
+    testBtn.id = "tts-gptsovits-test";
+    document.body.appendChild(testBtn);
+
+    await import("./panel");
+    await Promise.resolve();
+
+    // 参考音频路径默认为空（url 有默认值）：点击测试按钮应触发字段校验轻提示，而非阻塞 alert
+    testBtn.click();
+    await Promise.resolve();
+    // 模块加载时的 loadSettings 异步回填 url，等待其完成后再触发校验
+    await Promise.resolve();
+    await Promise.resolve();
+    testBtn.click();
+    await Promise.resolve();
+
+    expect(alertSpy).not.toHaveBeenCalled();
+    const notice = document.querySelector(".cy-notice--warning");
+    expect(notice).not.toBeNull();
+    expect(notice!.textContent).toContain("请先选择参考音频文件");
+    alertSpy.mockRestore();
+  });
+
+  it("shows an error alert dialog when the synthesis call throws", async () => {
+    const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
+    Object.assign(window, {
+      tts: {
+        loadSettings: vi.fn(async () => ({})),
+        saveSettings: vi.fn(async () => ({})),
+        synthesizeGptsovits: vi.fn(async () => { throw new Error("网络超时"); }),
+      },
+    });
+
+    // 测试按钮不在常规输入夹具里，且事件绑定发生在模块加载时：
+    // 按钮必须在导入前存在
+    const testBtn = document.createElement("button");
+    testBtn.type = "button";
+    testBtn.id = "tts-gptsovits-test";
+    document.body.appendChild(testBtn);
+
+    await import("./panel");
+    // 等模块加载时的 loadSettings 回填完成，再写测试值（避免被异步覆盖）
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+
+    // 三个必填字段都填上，走合成路径并抛错
+    (document.getElementById("tts-gptsovits-url") as HTMLInputElement).value = "http://127.0.0.1:9880";
+    (document.getElementById("tts-gptsovits-ref-audio") as HTMLInputElement).value = "C:\\a.wav";
+    (document.getElementById("tts-gptsovits-prompt-text") as HTMLInputElement).value = "示例文本";
+
+    testBtn.click();
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+
+    expect(alertSpy).not.toHaveBeenCalled();
+    const dialog = document.getElementById("cy-modal-overlay");
+    expect(dialog).not.toBeNull();
+    expect(dialog!.textContent).toContain("测试失败");
+    expect(dialog!.textContent).toContain("网络超时");
+    alertSpy.mockRestore();
+  });
 });

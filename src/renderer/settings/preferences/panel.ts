@@ -7,6 +7,7 @@ import { screenshotHotkeyInput } from "../appearance/dom";
 import { preferencesState } from "./state";
 import { stickerAddError, stickerAddConfirm, stickerAddCancel, stickerAddPickBtn, stickerAddFileName, stickerAddId, stickerAddDesc, stickerAddPhrases, stickerAddOverlay } from "./dom";
 import { addStickerBtn, openStickerManagerBtn } from "../shared/shell";
+import { showAlert } from "../shared/modal";
 
 // ── 截图热键捕获 ──
 // 聚焦时临时挂起全局快捷键（防止录入时触发截图），失焦恢复。
@@ -57,11 +58,22 @@ openStickerManagerBtn.addEventListener("click", async () => {
     const result = await window.settings?.openStickerManager();
     if (!result?.ok) {
       console.error("[settings] open sticker manager failed", result?.error);
-      window.alert("表情包管理窗口打开失败，请查看终端日志。" + (result?.error ? `\n${result.error}` : ""));
+      // 打开失败需要用户阅读错误详情：单按钮错误模态框
+      await showAlert({
+        tone: "error",
+        title: "表情包管理窗口打开失败",
+        message: "请查看终端日志后重试。",
+        details: result?.error || undefined,
+      });
     }
   } catch (error) {
     console.error("[settings] open sticker manager error", error);
-    window.alert("表情包管理窗口打开失败，请查看终端日志。");
+    await showAlert({
+      tone: "error",
+      title: "表情包管理窗口打开失败",
+      message: "请查看终端日志后重试。",
+      details: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+    });
   }
 });
 

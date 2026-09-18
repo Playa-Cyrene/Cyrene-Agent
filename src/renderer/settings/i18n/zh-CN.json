@@ -372,7 +372,7 @@
           "desc": "选择本地检索模型，后续用于文件导入、世界书与长期记忆召回。",
           "modelTitle": "Embedding 模型",
           "bgem3Title": "BGE-M3",
-          "bgem3Desc": "中文效果优秀，支持贴纸语义匹配和场景语气注入。",
+          "bgem3Desc": "中文效果优秀，支持贴纸语义匹配和长期记忆召回。",
           "dimTitle": "Embedding 维度",
           "dimHint": "留空 = 首次请求自动检测；填写 = 严格校验",
           "rerankTitle": "Rerank 重排序",

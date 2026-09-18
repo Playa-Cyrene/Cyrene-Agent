@@ -2,6 +2,8 @@
 // 从 settings.ts 抽离。完全自含（IIFE 闭包 + localStorage + window.settings IPC）。
 // 副作用导入：模块加载时执行事件绑定 + 状态初始化。
 
+import { showNotice, showAlert, showConfirm } from "../shared/modal";
+
 /* ===== RAG model card toggle (embedding only) ===== */
 (function () {
   const cards = document.querySelectorAll<HTMLButtonElement>(".rag-model-card:not([data-reranker])");
@@ -26,7 +28,11 @@
         if (result?.ok) {
           console.log("[settings] embedding switched to", value, "cleared:", result.clearedEntries);
           if (result.clearedEntries && result.clearedEntries > 0) {
-            window.alert("已切换至 BGE-M3。由于向量维度不同，已清除 " + result.clearedEntries + " 条旧向量记忆。");
+            // 清除旧向量属于提示性信息：非阻塞轻提示
+            showNotice({
+              tone: "info",
+              message: `已切换至 BGE-M3，并清除 ${result.clearedEntries} 条旧向量记忆。`,
+            });
           }
         } else {
           // Rollback on failure
@@ -36,7 +42,13 @@
             prevCard?.classList.add("is-active");
             localStorage.setItem(KEY, previousValue);
           }
-          window.alert("切换失败：" + (result?.error || "未知错误"));
+          // 失败原因需要用户阅读：单按钮错误模态框
+          await showAlert({
+            tone: "error",
+            title: "模型切换失败",
+            message: "已恢复此前选择。",
+            details: result?.error || "未知错误",
+          });
         }
       } catch (err) {
         // Rollback on error
@@ -136,44 +148,17 @@
   });
 
 
-  // Inline modal helper
-  function _showModal(opts: { title: string; message: string; icon?: string; confirmText?: string; cancelText?: string }): Promise<boolean> {
-    var ov = document.getElementById("cy-modal-overlay");
-    if (!ov) {
-      ov = document.createElement("div");
-      ov.id = "cy-modal-overlay";
-      ov.className = "cy-modal-overlay is-hidden";
-      ov.innerHTML = '<div class="cy-modal" role="alertdialog" aria-modal="true"><div class="cy-modal__head"><span class="cy-modal__icon" id="cy-modal-icon">📌</span><h3 class="cy-modal__title" id="cy-modal-title">提示</h3></div><hr class="cy-modal__divider"><p class="cy-modal__body" id="cy-modal-message">确认执行此操作吗？</p><div class="cy-modal__actions"><button type="button" class="ghost-btn" id="cy-modal-cancel">取消</button><button type="button" class="btn-primary" id="cy-modal-confirm">确定</button></div></div>';
-      document.body.appendChild(ov);
-    }
-    var iconEl = ov.querySelector("#cy-modal-icon") as HTMLElement;
-    var titleEl = ov.querySelector("#cy-modal-title") as HTMLElement;
-    var msgEl = ov.querySelector("#cy-modal-message") as HTMLElement;
-    var cancelBtn = ov.querySelector("#cy-modal-cancel") as HTMLButtonElement;
-    var confirmBtn = ov.querySelector("#cy-modal-confirm") as HTMLButtonElement;
-    iconEl.innerHTML = opts.icon || "📌";
-    titleEl.textContent = opts.title;
-    msgEl.textContent = opts.message;
-    cancelBtn.textContent = opts.cancelText || "取消";
-    confirmBtn.textContent = opts.confirmText || "确定";
-    ov.classList.remove("is-hidden");
-    return new Promise(function (resolve) {
-      var cleanup = function (result: boolean) {
-        ov?.classList.add("is-hidden");
-        cancelBtn.removeEventListener("click", onCancel);
-        confirmBtn.removeEventListener("click", onConfirm);
-        resolve(result);
-      };
-      var onCancel = function () { cleanup(false); };
-      var onConfirm = function () { cleanup(true); };
-      cancelBtn.addEventListener("click", onCancel);
-      confirmBtn.addEventListener("click", onConfirm);
-    });
-  }
   deleteBtn?.addEventListener("click", async () => {
     const model = getSelectedModel();
     const name = "BGE-M3";
-    var confirmed = await _showModal({ title: "删 除 模 型", message: "确 定 删 除 " + name + " 模 型 缓 存？下 次 使 用 需 重 新 下 载。", icon: "⚠️", confirmText: "删 除", cancelText: "取 消" });
+    // 删除模型缓存需重新下载：危险确认，默认聚焦取消
+    const confirmed = await showConfirm({
+      title: "删除模型",
+      message: `确定删除 ${name} 模型缓存？下次使用需重新下载。`,
+      confirmText: "删除",
+      cancelText: "取消",
+      dangerous: true,
+    });
     if (!confirmed) return;
     deleteBtn.disabled = true;
     deleteBtn.textContent = "\u5220\u9664\u4E2D\u2026";

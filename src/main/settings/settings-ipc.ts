@@ -369,10 +369,7 @@ export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
     const model = p.model || "bgem3";
     const mirror = p.mirror || "official";
     try {
-      const win = BrowserWindow.getFocusedWindow();
-      await downloadEmbeddingModel(model, mirror, (info) => {
-        win?.webContents.send(IPC.EMBEDDING_PROGRESS, info);
-      });
+      await downloadEmbeddingModel(model, mirror);
       return { ok: true };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

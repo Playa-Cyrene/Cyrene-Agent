@@ -89,7 +89,7 @@ import type {
   UserApi,
 } from "./shared/types";
 import { MODEL_PRESETS } from "./api/presets";
-import { showModal, showHtmlModal, showInputModal } from "./shared/modal";
+import { showConfirm, showHtmlModal, showInputModal } from "./shared/modal";
 import {
   setSaveStatus, setCyreneSaveStatus, setPreferencesSaveStatus, setAppearanceSaveStatus,
   setGeneralSaveStatus, setRuntimeSaveStatus,
@@ -222,6 +222,8 @@ if (!window.settings) {
     channelsSaveConfig: () => Promise.resolve({}),
     channelsRestart: () => Promise.resolve({ ok: false }),
     channelsQqTestConnection: () => Promise.resolve({ ok: false, error: "settings api unavailable" }),
+    channelsQqResolveAuthRequirement: () =>
+      Promise.resolve({ ok: false, requiresAccessToken: false, error: "settings api unavailable" }),
     channelsQqBotTestConnection: () => Promise.resolve({ ok: false, error: "settings api unavailable" }),
     channelsLogGet: () => Promise.resolve([]),
     channelsLogClear: () => Promise.resolve({ ok: true }),
@@ -1791,12 +1793,13 @@ memoryImportedList?.addEventListener("click", async (event) => {
   const importId = deleteBtn.dataset.importId || "";
   const fileName = deleteBtn.dataset.fileName || t("settings.importDoc.unnamed");
 
-  const confirmed = await showModal({
+  // 删除导入文档不可撤销：危险确认，默认聚焦取消
+  const confirmed = await showConfirm({
     title: t("settings.importDoc.deleteTitle"),
     message: t("settings.importDoc.deleteMessage", { fileName }),
-    icon: "⚠️",
     confirmText: t("settings.importDoc.deleteConfirm"),
     cancelText: t("settings.modal.customStyle.cancel"),
+    dangerous: true,
   });
 
   if (!confirmed) return;

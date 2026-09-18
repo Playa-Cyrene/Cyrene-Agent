@@ -131,13 +131,18 @@ describe("模态框 overlay 交互结构", () => {
 
   it("showInputModal 支持回车确认和 Esc 取消", () => {
     expect(modalSource).toContain('"Enter"');
-    expect(modalSource).toContain('"Escape"');
+    // Esc 取消与 Tab 循环迁移到共享焦点管理（dialog-focus）
+    expect(modalSource).toContain("activateDialogFocus");
+    const dialogFocusSource = fs.readFileSync(
+      fileURLToPath(new URL("../shared/dialog-focus.ts", import.meta.url)),
+      "utf8",
+    );
+    expect(dialogFocusSource).toContain('"Escape"');
   });
 
-  it("showModal 返回 Promise<boolean> 供确认/取消判断", () => {
-    expect(modalSource).toMatch(/showModal[\s\S]*resolve\(result\)/);
-    expect(modalSource).toContain("cleanup(false)");
-    expect(modalSource).toContain("cleanup(true)");
+  it("showModal 委托给语义化 showConfirm 并返回 Promise<boolean>", () => {
+    expect(modalSource).toMatch(/showModal[\s\S]*return showConfirm\(/);
+    expect(modalSource).toContain("request.resolve(result)");
   });
 });
 

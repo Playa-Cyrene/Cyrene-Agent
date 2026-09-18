@@ -21,6 +21,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { app, safeStorage } from "electron";
 import type { ChannelId } from "./types";
+import { normalizeQqListenMode, type QqListenMode } from "../../shared/qq-listen";
 
 /** safeStorage 加密后的前缀。读取时遇到这个前缀就解密 */
 const ENC_PREFIX = "enc:";
@@ -152,7 +153,11 @@ export interface FeishuChannelConfig extends ChannelRuntimeConfig {
   appSecret?: string;
 }
 
-export type QqListenMode = "auto" | "loopback" | "wsl" | "custom";
+/**
+ * 监听模式的唯一声明位于 shared（主进程与渲染端共用），从本模块再导出，
+ * 保持既有引用方（如 adapters/qq/onebot-reverse-ws.ts）不变。
+ */
+export type { QqListenMode };
 
 export interface QqChannelConfig extends ChannelRuntimeConfig {
   listenMode: QqListenMode;
@@ -277,8 +282,8 @@ function normalize(input: Partial<ChannelsSettings> | null | undefined): Channel
       .map((item) => String(item).trim())
       .filter((item) => /^[A-Za-z0-9_-]{8,64}$/.test(item))));
   };
-  const normalizeListenMode = (value: unknown): QqListenMode =>
-    value === "loopback" || value === "wsl" || value === "custom" ? value : "auto";
+  // 收敛规则与渲染端共用同一份实现（shared/qq-listen），不再各写一遍枚举判定
+  const normalizeListenMode = normalizeQqListenMode;
 
   return {
     wechat: {

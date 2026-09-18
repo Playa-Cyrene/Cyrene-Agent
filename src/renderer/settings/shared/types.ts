@@ -16,6 +16,7 @@ import type {
   ProactiveDeliveryTarget,
   SegmentedOutputMode,
 } from "../../../shared/preferences";
+import type { QqListenAuthRequirement } from "../../../shared/qq-listen";
 import type { CustomStyleConfig } from "../../../shared/style-sampling";
 import type { CustomEndpointMode } from "../custom-endpoint-state";
 import type { TimeoutSettings } from "../../../shared/timeout-types";
@@ -297,6 +298,11 @@ export interface SettingsApi {
   channelsSaveConfig: (patch: unknown) => Promise<any>;
   channelsRestart: () => Promise<{ ok: boolean }>;
   channelsQqTestConnection: () => Promise<{ ok: boolean; error?: string; detail?: Record<string, unknown> }>;
+  /**
+   * QQ 监听鉴权预检（renderer → main）：主进程按参数解析真实监听地址并判定是否
+   * 必须配置 Access Token。渲染端看不到网络接口，因此不得自行复制该判定。
+   */
+  channelsQqResolveAuthRequirement: (input: { listenMode: string; customHost?: string }) => Promise<QqListenAuthRequirement>;
   channelsQqBotTestConnection: () => Promise<{ ok: boolean; error?: string; detail?: Record<string, unknown> }>;
   channelsLogGet: (limit?: number) => Promise<unknown[]>;
   channelsLogClear: () => Promise<{ ok: boolean }>;
