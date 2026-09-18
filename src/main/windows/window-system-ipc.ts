@@ -14,6 +14,11 @@ export interface WindowSystemIpcDependencies {
   get windowManager(): WindowManager | null;
   /** 传入共享 scope 以便退出时统一注销；缺省时使用独立 scope。 */
   ipc?: IpcScope;
+  /**
+   * 退出应用。由组合根注入（`() => app.quit()`），使本模块不直接依赖 electron app，
+   * 同时保留 before-quit 受控退出链路。
+   */
+  quit(): void;
 }
 
 /**
@@ -38,6 +43,16 @@ export function registerWindowSystemIpc(deps: WindowSystemIpcDependencies): void
 
   ipc.on(IPC.WINDOW_SET_DRAGGING, (_event, isDragging: boolean) => {
     deps.windowManager?.setPetWindowDragging(isDragging);
+  });
+
+  // 桌宠窗口自身的最小化/隐藏入口。两者曾随 index.ts 拆分（711a40d9）被误删，
+  // preload 侧 window.cyrene.minimize()/hide() 一直保留，此处按原语义补回。
+  ipc.on(IPC.WINDOW_MINIMIZE, () => {
+    deps.windowManager?.minimizePetWindow();
+  });
+
+  ipc.on(IPC.WINDOW_CLOSE, () => {
+    deps.windowManager?.hidePetWindow();
   });
 
   ipc.handle(IPC.WINDOW_CAPTURE_FRAME, async () => deps.windowManager?.capturePetWindowFrame() ?? null);
@@ -124,5 +139,11 @@ export function registerWindowSystemIpc(deps: WindowSystemIpcDependencies): void
   });
   ipc.on(IPC.LIVE2D_MOUTH_STOP, () => {
     deps.windowManager?.sendToPetWindow(IPC.LIVE2D_MOUTH_STOP);
+  });
+
+  // 退出是应用级请求而非窗口操作：deps.quit() 最终走 app.quit()，
+  // 触发 before-quit 受控退出，由 ShutdownCoordinator 完成固定阶段清理后再退出。
+  ipc.on(IPC.APP_QUIT, () => {
+    deps.quit();
   });
 }

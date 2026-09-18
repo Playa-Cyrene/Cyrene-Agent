@@ -5,6 +5,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 import { OneBotActionClient } from "./onebot-action-client";
 import type { OneBotEvent } from "./onebot-types";
 import type { QqListenMode } from "../../settings-store";
+import { normalizeQqListenMode, type QqListenAuthRequirement } from "../../../../shared/qq-listen";
 
 export const ONEBOT_WS_PATH = "/onebot/v11/ws";
 
@@ -71,6 +72,45 @@ export function isLoopbackHost(host: string): boolean {
     || normalized === "localhost"
     || normalized === "::1"
     || normalized === "::ffff:127.0.0.1";
+}
+
+/**
+ * 权威鉴权预检：回答「按当前参数监听时是否必须配置 Access Token」。
+ *
+ * 渲染进程看不到网络接口（auto 模式在存在 WSL 虚拟网卡时会解析为非回环地址），
+ * 因此该判定只能由主进程给出。这里与 start() 里的硬校验复用同一对辅助函数
+ * （resolveOneBotListenHost + isLoopbackHost），保证预检与实际启动不会分叉。
+ */
+export function resolveQqListenAuthRequirement(
+  input: {
+    listenMode?: unknown;
+    customHost?: unknown;
+  },
+  /** 仅测试注入；缺省读真实网卡，与 start() 的路径完全一致。 */
+  interfaces: Parameters<typeof resolveOneBotListenHost>[2] = undefined,
+): QqListenAuthRequirement {
+  const customHost = typeof input.customHost === "string" ? input.customHost : undefined;
+  try {
+    const { host, resolvedMode } = resolveOneBotListenHost(
+      normalizeQqListenMode(input.listenMode),
+      customHost,
+      interfaces,
+    );
+    return {
+      ok: true,
+      requiresAccessToken: !isLoopbackHost(host),
+      resolvedHost: host,
+      resolvedMode,
+    };
+  } catch (error) {
+    // 地址本身解析不出来（wsl 模式但无 WSL 网卡 / custom 地址为空）：这不是 token
+    // 的问题，因此 requiresAccessToken 为 false，把原因原样交给渲染端展示。
+    return {
+      ok: false,
+      requiresAccessToken: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
 }
 
 export class OneBotReverseWsServer {

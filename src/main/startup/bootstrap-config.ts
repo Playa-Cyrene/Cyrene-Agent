@@ -16,13 +16,10 @@ import { setChoiceCardSender, setChoiceDismissSender } from "../user-choice";
 import { setAsrConfig } from "../asr/asr-config";
 import { setCallSettings } from "../call/call-manager";
 import { buildCallSystemPrompt } from "../call/call-prompt-builder";
-import type { SceneIndex } from "../scene-embedder";
 import { reactChatWindow } from "../windows/window-state";
 
 export interface BootstrapConfigContext {
   loadGeneralSettings: () => GeneralSettings;
-  /** 场景嵌入索引 getter，用于通话语气注入。 */
-  getSceneEmbeddingIndex: () => SceneIndex | null;
 }
 
 function getReactChatWindow(): BrowserWindow | null {
@@ -160,11 +157,7 @@ export function bootstrapConfigGetters(ctx: BootstrapConfigContext): void {
     // 通话专用 system prompt 构建器
     async (userText: string) => {
       const messages = [{ role: "user" as const, content: userText }];
-      return buildCallSystemPrompt(
-        { sceneEmbeddingIndex: ctx.getSceneEmbeddingIndex() },
-        userText,
-        messages,
-      );
+      return buildCallSystemPrompt(userText, messages);
     },
     // 天气快捷处理：正则匹配到天气关键词 → 调 weather 工具的 execute
     async (userText: string) => {

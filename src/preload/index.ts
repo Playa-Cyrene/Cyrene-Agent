@@ -1,5 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
 import { IPC } from "../shared/ipc-channels";
+import type { QqListenAuthRequirement } from "../shared/qq-listen";
+import type { ApprovalRequest, ApprovalSettledPayload } from "../shared/permission-approval";
 import type { StartTtsRequest, TtsSessionEvent, TtsStartResult } from "../shared/tts-session";
 import type { ScreenshotInsertPayload } from "../shared/ipc-channels";
 import type {
@@ -14,6 +16,7 @@ import type { DocumentIndexProgress } from "../shared/document-index";
 import type { AguiRunAck } from "../shared/run-terminal";
 import type { ReviewSnapshot, ReviewRestoreOutcome } from "../shared/review-types";
 import type { WorkspaceListResult, WorkspaceReadResult } from "../shared/workspace-files-types";
+import type { OpenInAppListResult, OpenInAppOpenResult } from "../shared/open-in-app-types";
 import { getLive2DIpcListenerCounts } from "./live2d-listener-diagnostics";
 import { exposeMusicApi } from "./music";
 import { normalizeChatAppearance, type ChatAppearanceSettings } from "../shared/chat-appearance";
@@ -429,6 +432,9 @@ const settingsApi = {
   channelsFeishuTestConnection: () => ipcRenderer.invoke(IPC.CHANNELS_FEISHU_TEST_CONNECTION),
   channelsFeishuTestWebhookReachable: () => ipcRenderer.invoke(IPC.CHANNELS_FEISHU_TEST_WEBHOOK_REACHABLE),
   channelsQqTestConnection: () => ipcRenderer.invoke(IPC.CHANNELS_QQ_TEST_CONNECTION),
+  // 权威鉴权预检：监听地址能否解析、是否必须配 token 只有主进程知道
+  channelsQqResolveAuthRequirement: (input: { listenMode: string; customHost?: string }) =>
+    ipcRenderer.invoke(IPC.CHANNELS_QQ_RESOLVE_AUTH_REQUIREMENT, input) as Promise<QqListenAuthRequirement>,
   channelsQqBotTestConnection: () => ipcRenderer.invoke(IPC.CHANNELS_QQBOT_TEST_CONNECTION),
   // 消息日志
   channelsLogGet: (limit?: number) => ipcRenderer.invoke(IPC.CHANNELS_LOG_GET, limit ?? 100),
@@ -482,7 +488,7 @@ const settingsApi = {
 
   // 审批弹窗：主进程在 per-action 档位下推过来的请求（不设超时，等用户回应或 run 取消）
   onPermissionApprovalRequest: (
-    cb: (req: { id: string; toolId: string; toolName: string; toolDescription: string; args: Record<string, unknown>; risk: string }) => void
+    cb: (req: ApprovalRequest) => void
   ): (() => void) => {
     const listener = (_e: Electron.IpcRendererEvent, req: Parameters<typeof cb>[0]) => cb(req);
     ipcRenderer.on(IPC.PERMISSION_APPROVAL_REQUEST, listener);
@@ -492,7 +498,7 @@ const settingsApi = {
     ipcRenderer.invoke(IPC.PERMISSION_APPROVAL_RESOLVE, { id, allowed }),
   // 审批结算广播：pending 已在主进程被结算（用户已答 / run 取消），渲染端据此清卡
   onPermissionApprovalSettled: (
-    cb: (settlement: { id: string; runId?: string; reason: "answered" | "cancelled" | "unavailable" }) => void
+    cb: (settlement: ApprovalSettledPayload) => void
   ): (() => void) => {
     const listener = (_e: Electron.IpcRendererEvent, settlement: Parameters<typeof cb>[0]) => cb(settlement);
     ipcRenderer.on(IPC.PERMISSION_APPROVAL_SETTLED, listener);
@@ -814,6 +820,16 @@ const workspaceFilesApi = {
 };
 
 contextBridge.exposeInMainWorld("workspaceFiles", workspaceFilesApi);
+
+// 工作区右上角"打开"菜单：本机应用探测（主进程进程内缓存）+ 打开执行
+const openInAppApi = {
+  listApps: (sessionId: string) =>
+    ipcRenderer.invoke(IPC.WORKSPACE_OPEN_IN_LIST_APPS, { sessionId }) as Promise<OpenInAppListResult>,
+  open: (sessionId: string, appId: string) =>
+    ipcRenderer.invoke(IPC.WORKSPACE_OPEN_IN, { sessionId, appId }) as Promise<OpenInAppOpenResult>,
+};
+
+contextBridge.exposeInMainWorld("openInApp", openInAppApi);
 
 const codeGitApi = {
   getStatus: (sessionId: string) => ipcRenderer.invoke(IPC.CODE_GIT_STATUS, sessionId),

@@ -238,6 +238,12 @@ export const IPC = {
   // renderer → main：读取工作区内某文件的内容（预览用，带大小/二进制限制）
   WORKSPACE_FILES_READ: "workspace-files:read",
 
+  // 工作区右上角"打开"菜单（用本机应用打开工作区根目录）
+  // renderer → main：探测本机可打开工作区的应用（VSCode / Cursor 等，进程内缓存）
+  WORKSPACE_OPEN_IN_LIST_APPS: "workspace-open-in:list-apps",
+  // renderer → main：执行打开动作（explorer 走 shell.openPath，其余走 detached spawn）
+  WORKSPACE_OPEN_IN: "workspace-open-in:open",
+
 // sticker manager window
 	  STICKERS_MINIMIZE: "stickers:minimize",
 	  STICKERS_CLOSE: "stickers:close",
@@ -266,7 +272,6 @@ export const IPC = {
   EMBEDDING_GET_STATUS: "embedding:get-status",
   EMBEDDING_DOWNLOAD: "embedding:download",
   EMBEDDING_DELETE: "embedding:delete",
-  EMBEDDING_PROGRESS: "embedding:progress",
   EMBEDDING_SET_MODEL: "embedding:set-model",
   RERANKER_SET_MODE: "reranker:set-mode",
   RERANKER_GET_STATUS: "reranker:get-status",
@@ -432,6 +437,11 @@ export const IPC = {
   CHANNELS_FEISHU_TEST_CONNECTION: "channels:feishu:test-connection",
   CHANNELS_FEISHU_TEST_WEBHOOK_REACHABLE: "channels:feishu:test-webhook-reachable",
   CHANNELS_QQ_TEST_CONNECTION: "channels:qq:test-connection",
+  /**
+   * QQ 监听鉴权预检：主进程按 listenMode/customHost 解析真实监听地址，并判定是否
+   * 必须配置 Access Token。渲染进程看不到网络接口，因此该判定只能由主进程给出。
+   */
+  CHANNELS_QQ_RESOLVE_AUTH_REQUIREMENT: "channels:qq:resolve-auth-requirement",
   // QQ 官方机器人（QQ 开放平台）专属
   CHANNELS_QQBOT_TEST_CONNECTION: "channels:qqbot:test-connection",
   // 消息日志
