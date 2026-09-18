@@ -46,6 +46,12 @@ vi.mock("../../../i18n", () => {
         "pluginPanel.market.loadFailed": "获取插件列表失败：{{error}}",
         "pluginPanel.market.installFailed": "安装失败：{{error}}",
         "pluginPanel.market.installSuccess": "{{name}} 安装成功",
+        "pluginPanel.market.sourceUsed": "数据源",
+        "pluginPanel.market.sourceStandby": "可用",
+        "pluginPanel.market.sourceDead": "已死",
+        "pluginPanel.market.sourceSection": "数据源",
+        "pluginPanel.market.sourceGitee": "Gitee",
+        "pluginPanel.market.sourceGithub": "GitHub",
       };
   const t = (key: string, values?: Record<string, string>) => {
       if (key === "pluginPanel.developer") return `开发者：${values?.author}`;
@@ -304,6 +310,34 @@ describe("PluginModePanel", () => {
     await clickMarketToggle();
 
     expect(container.textContent).toContain("获取插件列表失败：网络不可用");
+  });
+
+  it("点击数据源 chip 会以该源 url 重新拉取市场列表", async () => {
+    const gitee = "https://gitee.com/playa0/cyrene-plugins/raw/main/registry.json";
+    const github = "https://raw.githubusercontent.com/Playa-0v0/Cyrene-Plugins/main/registry.json";
+    const api = apiFor([]);
+    (api.marketList as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      plugins: [marketEntry()],
+      sources: [
+        { url: github, ok: true, used: true },
+        { url: gitee, ok: true, used: false },
+      ],
+    });
+    await renderPanel(api);
+    await clickMarketToggle();
+
+    // 首次进入自动拉取（无偏好源）
+    expect(api.marketList).toHaveBeenCalledWith(undefined);
+
+    const chips = [...container.querySelectorAll<HTMLButtonElement>(".plugin-panel__source-chip")];
+    expect(chips).toHaveLength(2);
+    const giteeChip = chips.find((chip) => chip.textContent === "Gitee");
+    expect(giteeChip).toBeDefined();
+    await act(async () => giteeChip?.click());
+
+    expect(api.marketList).toHaveBeenLastCalledWith(gitee);
+    expect(api.marketList).toHaveBeenCalledTimes(2);
   });
 
   it("安装成功后显示提示并刷新本地列表", async () => {

@@ -12,14 +12,17 @@ import type {
 } from "../shared/plugin-management";
 import type { PluginImportResult } from "../plugins/manager";
 
-/** 官方插件市场索引源：Gitee 镜像为主源，GitHub raw 为兜底；市场面板会实时探测各源死活并展示 */
+/** 官方插件市场索引源：GitHub 为主源、Gitee 兜底；市场面板会实时探测各源死活，并允许用户手动切换指定源 */
 export const MARKET_REGISTRY_URLS = [
-  "https://gitee.com/playa0/cyrene-plugins/raw/main/registry.json",
   "https://raw.githubusercontent.com/Playa-0v0/Cyrene-Plugins/main/registry.json",
+  "https://gitee.com/playa0/cyrene-plugins/raw/main/registry.json",
 ] as const;
 
-/** 插件包只允许来自官方仓库 zips/ 目录的直链，防止索引被篡改后下载任意来源的包 */
-export const MARKET_ZIP_URL_PREFIX = "https://gitee.com/playa0/cyrene-plugins/raw/main/zips/";
+/** 插件包只允许来自官方仓库 zips/ 目录的直链（GitHub + Gitee 双前缀），防止索引被篡改后下载任意来源的包 */
+export const MARKET_ZIP_URL_PREFIXES: readonly string[] = [
+  "https://raw.githubusercontent.com/Playa-0v0/Cyrene-Plugins/main/zips/",
+  "https://gitee.com/playa0/cyrene-plugins/raw/main/zips/",
+];
 
 export const MARKET_REGISTRY_TIMEOUT_MS = 10_000;
 export const MARKET_ZIP_DOWNLOAD_TIMEOUT_MS = 120_000;
@@ -40,7 +43,7 @@ export type MarketplaceFetch = (
 
 export interface PluginMarketplaceDeps {
   registryUrls: readonly string[];
-  zipUrlPrefix: string;
+  zipUrlPrefixes: readonly string[];
   /** 下载的插件 zip 临时存放目录（如 userData/plugin-market-cache） */
   cacheDir: string;
   installZip: (
@@ -87,7 +90,7 @@ function validateEntry(raw: unknown, deps: PluginMarketplaceDeps): (MarketPlugin
   if (typeof id !== "string" || !ID_PATTERN.test(id)) return null;
   if (!isNonEmptyString(name) || !isNonEmptyString(description) || !isNonEmptyString(author)) return null;
   if (typeof version !== "string" || !isValidPluginVersion(version)) return null;
-  if (typeof zip !== "string" || !zip.startsWith(deps.zipUrlPrefix)) return null;
+  if (typeof zip !== "string" || !deps.zipUrlPrefixes.some((prefix) => zip.startsWith(prefix))) return null;
   if (typeof sha256 !== "string" || !SHA256_PATTERN.test(sha256)) return null;
   if (typeof downloads !== "number" || !Number.isInteger(downloads) || downloads < 0) return null;
   if (homepage !== undefined && !isHttpsUrl(homepage)) return null;
@@ -177,11 +180,15 @@ export function createPluginMarketplaceService(deps: PluginMarketplaceDeps) {
     }
   }
 
-  async function listMarket(): Promise<MarketListResult> {
+  async function listMarket(preferred?: string): Promise<MarketListResult> {
     const seq = ++listSeq;
+    // 若调用方指定偏好源且在候选里，就把它提前到探测队首，其余保持原优先级顺序
+    const ordered = preferred && deps.registryUrls.includes(preferred)
+      ? [preferred, ...deps.registryUrls.filter((url) => url !== preferred)]
+      : [...deps.registryUrls];
     // 并发探测所有源：拿到每个源的死活状态供面板展示，数据取优先级最高的可用源
     const probes = await Promise.all(
-      deps.registryUrls.map(async (url) => {
+      ordered.map(async (url) => {
         try {
           return { url, data: await fetchRegistryJson(url) } as const;
         } catch (error) {

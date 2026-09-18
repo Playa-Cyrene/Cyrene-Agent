@@ -332,7 +332,10 @@
       "installSuccess": "\"{{name}}\" installed successfully. It's disabled by default — enable it from the plugin list.",
       "sourceUsed": "active",
       "sourceStandby": "standby",
-      "sourceDead": "dead"
+      "sourceDead": "dead",
+      "sourceSection": "Source",
+      "sourceGitee": "Gitee",
+      "sourceGithub": "GitHub"
     }
   },
   "toolPanel": {

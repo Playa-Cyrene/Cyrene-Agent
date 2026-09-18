@@ -89,7 +89,7 @@ export interface PluginManagementApi {
     overview?: PluginOverview;
   }>;
   uninstall(id: string): Promise<{ ok: boolean; error?: string; overview?: PluginOverview }>;
-  marketList(): Promise<MarketListResult>;
+  marketList(preferred?: string): Promise<MarketListResult>;
   marketInstall(id: string): Promise<MarketInstallResult>;
 }
 

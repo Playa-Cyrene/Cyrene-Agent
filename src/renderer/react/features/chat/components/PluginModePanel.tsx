@@ -18,13 +18,13 @@ interface PluginModePanelProps {
   api?: PluginManagementApi;
 }
 
-// Cyrene 官方插件收录仓库（Gitee 镜像，GitHub 账号申诉期间作为分发源），面板内展示并可在系统浏览器打开
-const PLUGIN_REGISTRY_URL = "https://gitee.com/playa0/cyrene-plugins";
+// Cyrene 官方插件收录仓库（GitHub 为主，Gitee 为国内镜像），面板内展示并可在系统浏览器打开
+const PLUGIN_REGISTRY_URL = "https://github.com/Playa-0v0/Cyrene-Plugins";
 
-/** 从索引源地址推导展示名：认识的源给友好名，其余直接显示主机名 */
-function marketSourceLabel(url: string): string {
-  if (url.includes("gitee.com")) return "Gitee 镜像";
-  if (url.includes("github")) return "GitHub";
+/** 从索引源地址推导展示名：认识的源走 i18n 友好名，其余直接显示主机名 */
+function marketSourceLabel(url: string, t: (key: string) => string): string {
+  if (url.includes("gitee.com")) return t("pluginPanel.market.sourceGitee");
+  if (url.includes("github")) return t("pluginPanel.market.sourceGithub");
   try {
     return new URL(url).host;
   } catch {
@@ -121,14 +121,14 @@ export function PluginModePanel({ api: providedApi }: PluginModePanelProps) {
     return () => { cancelled = true; };
   }, [reload]);
 
-  // 每次切入市场视图都重新拉取列表；不监听不轮询
-  const loadMarket = useCallback(async () => {
+  // 每次切入市场视图都重新拉取列表；preferred 指定偏好源时把它提到探测首位；不监听不轮询
+  const loadMarket = useCallback(async (preferred?: string) => {
     if (!api) return;
     setMarket({ phase: "loading", plugins: [] });
     setMarketError(null);
     setMarketNotice(null);
     try {
-      const result = await api.marketList();
+      const result = await api.marketList(preferred);
       if (!result.ok) {
         setMarket({ phase: "error", plugins: [], error: result.error ?? t("pluginPanel.unknownError"), sources: result.sources });
       } else {
@@ -300,26 +300,6 @@ export function PluginModePanel({ api: providedApi }: PluginModePanelProps) {
             </a>
             {t("pluginPanel.registrySuffix")}
           </p>
-          {inMarket && market.sources && market.sources.length > 0 ? (
-            <p className="plugin-panel__market-sources">
-              {market.sources.map((source) => {
-                const stateLabel = source.used
-                  ? t("pluginPanel.market.sourceUsed")
-                  : source.ok
-                    ? t("pluginPanel.market.sourceStandby")
-                    : t("pluginPanel.market.sourceDead");
-                return (
-                  <span
-                    key={source.url}
-                    className={`plugin-panel__source-badge${source.used ? " is-used" : source.ok ? " is-standby" : " is-dead"}`}
-                    title={source.url}
-                  >
-                    {`${marketSourceLabel(source.url)} · ${stateLabel}`}
-                  </span>
-                );
-              })}
-            </p>
-          ) : null}
         </div>
         <div className="plugin-panel__header-actions">
           <button
@@ -368,6 +348,30 @@ export function PluginModePanel({ api: providedApi }: PluginModePanelProps) {
 
       {inMarket ? (
         <>
+          {market.sources && market.sources.length > 0 && (
+            <div className="plugin-panel__source-switch" role="group" aria-label={t("pluginPanel.market.sourceSection")}>
+              <span className="plugin-panel__source-switch-label">{t("pluginPanel.market.sourceSection")}</span>
+              {market.sources.map((source) => {
+                const stateLabel = source.used
+                  ? t("pluginPanel.market.sourceUsed")
+                  : source.ok
+                    ? t("pluginPanel.market.sourceStandby")
+                    : t("pluginPanel.market.sourceDead");
+                return (
+                  <button
+                    type="button"
+                    key={source.url}
+                    className={`plugin-panel__source-chip${source.used ? " is-used" : source.ok ? " is-standby" : " is-dead"}`}
+                    onClick={() => void loadMarket(source.url)}
+                    disabled={!api || market.phase === "loading"}
+                    title={`${marketSourceLabel(source.url, t)} · ${stateLabel}`}
+                  >
+                    {marketSourceLabel(source.url, t)}
+                  </button>
+                );
+              })}
+            </div>
+          )}
           {(marketError || marketNotice) && (
             <div className="plugin-panel__notices" role="status">
               {marketError && <div className="plugin-panel__notice is-error">{marketError}</div>}

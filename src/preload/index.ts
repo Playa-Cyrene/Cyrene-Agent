@@ -541,7 +541,7 @@ const pluginsApi = {
   rescan: () => ipcRenderer.invoke(IPC.PLUGINS_RESCAN),
   importZip: () => ipcRenderer.invoke(IPC.PLUGINS_IMPORT_ZIP),
   uninstall: (id: string) => ipcRenderer.invoke(IPC.PLUGINS_UNINSTALL, id),
-  marketList: () => ipcRenderer.invoke(IPC.PLUGINS_MARKET_LIST),
+  marketList: (preferred?: string) => ipcRenderer.invoke(IPC.PLUGINS_MARKET_LIST, preferred),
   marketInstall: (id: string) => ipcRenderer.invoke(IPC.PLUGINS_MARKET_INSTALL, id),
 };
 

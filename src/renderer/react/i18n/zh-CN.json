@@ -332,7 +332,10 @@
       "installSuccess": "“{{name}}”安装成功，默认停用中，可返回插件列表启用。",
       "sourceUsed": "数据源",
       "sourceStandby": "可用",
-      "sourceDead": "已死"
+      "sourceDead": "已死",
+      "sourceSection": "数据源",
+      "sourceGitee": "Gitee",
+      "sourceGithub": "GitHub"
     }
   },
   "toolPanel": {

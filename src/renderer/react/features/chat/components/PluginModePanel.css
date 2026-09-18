@@ -56,34 +56,53 @@
   text-decoration: underline;
 }
 
-/* 市场数据源状态徽章：头部图标只跨 3 行，徽章行需显式落在第 2 列 */
-.plugin-panel__market-sources {
-  grid-column: 2;
+.plugin-panel__source-switch {
   display: flex;
-  flex-wrap: wrap;
+  align-items: center;
   gap: 6px;
-  margin: 8px 0 0;
+  padding: 12px 28px 0;
+  flex-shrink: 0;
 }
 
-.plugin-panel__source-badge {
+.plugin-panel__source-switch-label {
+  color: var(--cy-text-muted, #6e6e73);
+  font-size: 11px;
+  margin-right: 2px;
+}
+
+.plugin-panel__source-chip {
   display: inline-flex;
   align-items: center;
   padding: 0 8px;
   border: 1px solid var(--cy-border, #e5e5ea);
   border-radius: 999px;
   color: var(--cy-text-muted, #6e6e73);
+  background: transparent;
   font-size: 11px;
   line-height: 18px;
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease;
 }
 
-/* 数据源（当前提供列表的源）用强调色 */
-.plugin-panel__source-badge.is-used {
-  border-color: var(--cy-accent, #ff5b8a);
+.plugin-panel__source-chip:hover:not(:disabled) {
+  border-color: var(--cy-pill-border, #ff9fbd);
   color: var(--cy-accent, #ff5b8a);
 }
 
+.plugin-panel__source-chip:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* 数据源（当前提供列表的源）用强调色加粗 */
+.plugin-panel__source-chip.is-used {
+  border-color: var(--cy-accent, #ff5b8a);
+  color: var(--cy-accent, #ff5b8a);
+  font-weight: 600;
+}
+
 /* 探测失败（已死）的源标红并划线 */
-.plugin-panel__source-badge.is-dead {
+.plugin-panel__source-chip.is-dead {
   border-color: var(--cy-danger, #e5484d);
   color: var(--cy-danger, #e5484d);
   text-decoration: line-through;
