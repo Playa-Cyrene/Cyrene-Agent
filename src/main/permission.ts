@@ -16,6 +16,11 @@ import {
   type ToolRiskLevel,
 } from "./permission-policy";
 import { toastEvents } from "./toast/toast-events";
+import type {
+  ApprovalRequest,
+  ApprovalSettleReason,
+  ApprovalSettledPayload,
+} from "../shared/permission-approval";
 
 export { policyFor };
 export type { AgentFileAccessLevel, ToolRiskLevel };
@@ -108,24 +113,11 @@ interface PendingApproval {
 const pendingApprovals = new Map<string, PendingApproval>();
 let approvalCounter = 0;
 
-export type ApprovalSettleReason = "answered" | "cancelled" | "unavailable";
-
-export interface ApprovalSettledPayload {
-  id: string;
-  runId?: string;
-  reason: ApprovalSettleReason;
-}
-
-export interface ApprovalRequest {
-  id: string;
-  toolId: string;
-  toolName: string;
-  toolDescription: string;
-  args: Record<string, unknown>;
-  risk: ToolRiskLevel;
-  /** 可选 runId，用于 cancel 时按 run 清理。 */
-  runId?: string;
-}
+/**
+ * 审批载荷类型的唯一声明在 shared —— 主进程发送、preload 透传、渲染端消费三处
+ * 共用同一份定义。曾经三处各写一份，preload 那份就漏了 runId。
+ */
+export type { ApprovalRequest, ApprovalSettledPayload, ApprovalSettleReason };
 
 function broadcastToAllWindows(channel: string, payload: unknown): void {
   for (const win of BrowserWindow.getAllWindows()) {

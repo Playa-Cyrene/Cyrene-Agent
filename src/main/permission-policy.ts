@@ -4,6 +4,8 @@
  * 不依赖 Electron、磁盘或 IPC，供 VerificationRunner 等执行核心复用，
  * 避免为了判断 allow/ask/deny 就初始化整个权限宿主。
  */
+import type { ToolRiskLevel } from "../shared/permission-approval";
+
 export type AgentFileAccessLevel =
   | "project-read-only"
   | "read-only"
@@ -11,13 +13,11 @@ export type AgentFileAccessLevel =
   | "per-action"
   | "full";
 
-export type ToolRiskLevel =
-  | "safe"
-  | "fs-read"
-  | "fs-write"
-  | "shell"
-  | "network"
-  | "input-control";
+/**
+ * 工具风险等级的唯一声明在 shared（审批载荷跨进程共用），此处再导出，
+ * 保持既有引用方（permission.ts / tool-registry 等）不变。
+ */
+export type { ToolRiskLevel };
 
 export function policyFor(
   level: AgentFileAccessLevel,
