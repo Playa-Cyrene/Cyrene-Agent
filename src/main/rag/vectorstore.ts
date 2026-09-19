@@ -35,129 +35,6 @@ export function cosineSimilarity(a: number[], b: number[]): number {
   return dot;
 }
 
-// ── IVF 倒排文件索引 ──
-// 用 k-means 把向量聚成 K 个簇，搜索时只查最近的 nprobe 个簇，
-// 将 O(n) 变为 O(n / K * nprobe) ≈ O(√n)。
-interface IvfIndex {
-  /** 簇中心向量（已归一化） */
-  centroids: number[][];
-  /** 每个簇中的条目 index（指向 this.entries） */
-  clusters: number[][];
-  /** 建索引时的条目数，用于判定是否需要重建 */
-  entryCount: number;
-}
-
-function kmeansPlusPlusInit(
-  vectors: number[][],
-  K: number,
-  dim: number,
-): number[][] {
-  const centroids: number[][] = [];
-  // 1. 随机选第一个中心
-  const firstIdx = Math.floor(Math.random() * vectors.length);
-  centroids.push(vectors[firstIdx].slice());
-
-  // 2. 按距离平方加权选剩下的
-  for (let c = 1; c < K; c++) {
-    const dists = vectors.map((v) => {
-      let minDist = Infinity;
-      for (const cent of centroids) {
-        const sim = cosineSimilarity(v, cent);
-        const d = 1 - sim; // 余弦距离 = 1 - cos
-        if (d < minDist) minDist = d;
-      }
-      return minDist * minDist;
-    });
-    const totalDist = dists.reduce((a, b) => a + b, 0);
-    if (totalDist <= 0) {
-      while (centroids.length < K) {
-        centroids.push(vectors[centroids.length % vectors.length].slice());
-      }
-      break;
-    }
-    let r = Math.random() * totalDist;
-    for (let i = 0; i < dists.length; i++) {
-      r -= dists[i];
-      if (r <= 0) {
-        centroids.push(vectors[i].slice());
-        break;
-      }
-    }
-  }
-  return centroids;
-}
-
-function buildIvfIndex(
-  entries: MemoryEntry[],
-  K: number,
-  maxIter = 20,
-): IvfIndex {
-  const vectors = entries.map((e) => e.embedding);
-  const dim = vectors[0]?.length ?? 0;
-  if (dim === 0 || vectors.length === 0) {
-    return { centroids: [], clusters: [], entryCount: entries.length };
-  }
-
-  const effectiveK = Math.min(K, vectors.length);
-  const clusters: number[][] = Array.from({ length: effectiveK }, () => []);
-
-  // k-means++ 初始化
-  let centroids = kmeansPlusPlusInit(vectors, effectiveK, dim);
-
-  for (let iter = 0; iter < maxIter; iter++) {
-    // 分配
-    for (let i = 0; i < effectiveK; i++) clusters[i] = [];
-    let changed = false;
-
-    for (let i = 0; i < vectors.length; i++) {
-      let bestIdx = 0;
-      let bestSim = -Infinity;
-      for (let c = 0; c < effectiveK; c++) {
-        const sim = cosineSimilarity(vectors[i], centroids[c]);
-        if (sim > bestSim) {
-          bestSim = sim;
-          bestIdx = c;
-        }
-      }
-      clusters[bestIdx].push(i);
-    }
-
-    // 更新中心
-    const newCentroids: number[][] = [];
-    for (let c = 0; c < effectiveK; c++) {
-      const members = clusters[c];
-      if (members.length === 0) {
-        // 空簇保留原中心
-        newCentroids.push(centroids[c].slice());
-        continue;
-      }
-      const sum = new Array(dim).fill(0);
-      for (const idx of members) {
-        const v = vectors[idx];
-        for (let d = 0; d < dim; d++) sum[d] += v[d];
-      }
-      // 归一化新中心
-      let norm = 0;
-      for (let d = 0; d < dim; d++) norm += sum[d] * sum[d];
-      norm = Math.sqrt(norm);
-      if (norm > 0) {
-        for (let d = 0; d < dim; d++) sum[d] /= norm;
-      }
-      newCentroids.push(sum);
-    }
-
-    // 检查收敛
-    for (let c = 0; c < effectiveK; c++) {
-      const sim = cosineSimilarity(newCentroids[c], centroids[c]);
-      if (sim < 0.999) { changed = true; break; }
-    }
-    centroids = newCentroids;
-    if (!changed) break;
-  }
-
-  return { centroids, clusters, entryCount: entries.length };
-}
-
 // ── JSON 向量存储 ──
 export class JsonVectorStore {
   private filePath: string;
@@ -165,11 +42,6 @@ export class JsonVectorStore {
   private entries: MemoryEntry[] = [];
   private dirty = false;
   private indexMeta: EmbeddingIndexMetadata | null = null;
-
-  /** IVF 索引，null = 未构建或需要重建 */
-  private ivf: IvfIndex | null = null;
-  /** 搜索次数计数，达到阈值时惰性重建索引 */
-  private searchCount = 0;
 
   constructor(dbPath: string) {
     this.filePath = path.join(dbPath, "memory-store.json");
@@ -295,35 +167,6 @@ export class JsonVectorStore {
     return this.indexMeta;
   }
 
-  // ── IVF 索引管理 ──
-
-  /** 强制重建 IVF 索引 */
-  rebuildIndex(): void {
-    const n = this.entries.length;
-    if (n < 2) {
-      this.ivf = null;
-      return;
-    }
-    // K ≈ sqrt(n)/2，上限 512，下限 2
-    const K = Math.max(2, Math.min(512, Math.round(Math.sqrt(n) / 2)));
-    const t0 = Date.now();
-    this.ivf = buildIvfIndex(this.entries, K);
-    console.log(`[RAG] IVF index rebuilt: K=${K}, entries=${n}, took ${Date.now() - t0}ms`);
-  }
-
-  /** 检查是否需重建索引，每次数据库变化后调用 */
-  private markIndexDirty(): void {
-    this.ivf = null;
-  }
-
-  /** 搜索前确保索引可用（惰性重建） */
-  private ensureIndex(): void {
-    if (this.ivf) return;
-    if (this.entries.length >= 2) {
-      this.rebuildIndex();
-    }
-  }
-
   // ── CRUD ──
 
   // 添加记忆（自动去重）
@@ -362,7 +205,6 @@ export class JsonVectorStore {
 
     this.entries.push(entry);
     this.dirty = true;
-    this.markIndexDirty();
     this.save();
     return entry;
   }
@@ -423,12 +265,11 @@ export class JsonVectorStore {
     }
 
     this.dirty = true;
-    this.markIndexDirty();
     this.save();
     return results;
   }
 
-  // 搜索（使用 IVF 索引加速）
+  // 搜索（全量余弦扫描，实测 1 万条约 9ms，无需近似索引）
   async search(
     query: string,
     source?: string,
@@ -446,9 +287,6 @@ export class JsonVectorStore {
 
     const queryEmbedding = await embeddingProvider.embed(query);
 
-    // 确保索引已构建
-    this.ensureIndex();
-
     const now = Date.now();
     const results: SearchResult[] = [];
     const allowedImportIds = new Set(options.importIds ?? []);
@@ -457,51 +295,19 @@ export class JsonVectorStore {
       (!allowedImportIds.size || allowedImportIds.has(String(entry.metadata?.importId ?? ""))) &&
       (!allowedEntryIds || allowedEntryIds.has(entry.id));
 
-    if (this.ivf && !source) {
-      // ── IVF 加速路径（无 source 过滤时） ──
-      const K = this.ivf.centroids.length;
-      // nprobe：搜索约 1/8 的簇（至少 2 个）
-      const nprobe = Math.max(2, Math.round(K / 8));
+    // 全量扫描：实测 1 万条仅约 9ms，无需近似索引（IVF 已移除）
+    for (const entry of this.entries) {
+      if (source && entry.source !== source) continue;
+      if (!shouldKeep(entry)) continue;
 
-      // 找最近的 nprobe 个簇
-      const clusterDists: Array<{ idx: number; dist: number }> = [];
-      for (let c = 0; c < K; c++) {
-        const sim = cosineSimilarity(queryEmbedding, this.ivf.centroids[c]);
-        clusterDists.push({ idx: c, dist: 1 - sim });
-      }
-      clusterDists.sort((a, b) => a.dist - b.dist);
-      const probeClusters = new Set(clusterDists.slice(0, nprobe).map((c) => c.idx));
+      const sim = cosineSimilarity(queryEmbedding, entry.embedding);
+      // 时间衰减：24h 未提及权重 ×0.95
+      const hoursSinceRecall = (now - entry.lastRecalledAt) / (1000 * 60 * 60);
+      const decayFactor = Math.pow(0.95, hoursSinceRecall / 24);
+      const weightedScore = sim * entry.weight * decayFactor;
 
-      // 只在选中簇内搜索
-      for (const clusterIdx of probeClusters) {
-        for (const entryIdx of this.ivf.clusters[clusterIdx]) {
-          const entry = this.entries[entryIdx];
-          if (!shouldKeep(entry)) continue;
-          const sim = cosineSimilarity(queryEmbedding, entry.embedding);
-          const hoursSinceRecall = (now - entry.lastRecalledAt) / (1000 * 60 * 60);
-          const decayFactor = Math.pow(0.95, hoursSinceRecall / 24);
-          const weightedScore = sim * entry.weight * decayFactor;
-
-          if (weightedScore >= minScore) {
-            results.push({ entry, score: weightedScore });
-          }
-        }
-      }
-    } else {
-      // ── 全量搜索路径（有 source 过滤时，或索引未就绪） ──
-      for (const entry of this.entries) {
-        if (source && entry.source !== source) continue;
-        if (!shouldKeep(entry)) continue;
-
-        const sim = cosineSimilarity(queryEmbedding, entry.embedding);
-        // 时间衰减：24h 未提及权重 ×0.95
-        const hoursSinceRecall = (now - entry.lastRecalledAt) / (1000 * 60 * 60);
-        const decayFactor = Math.pow(0.95, hoursSinceRecall / 24);
-        const weightedScore = sim * entry.weight * decayFactor;
-
-        if (weightedScore >= minScore) {
-          results.push({ entry, score: weightedScore });
-        }
+      if (weightedScore >= minScore) {
+        results.push({ entry, score: weightedScore });
       }
     }
 
@@ -527,7 +333,6 @@ export class JsonVectorStore {
     const before = this.entries.length;
     this.entries = this.entries.filter((e) => e.weight >= minWeight);
     this.dirty = true;
-    this.markIndexDirty();
     this.save();
     return before - this.entries.length;
   }
@@ -540,7 +345,6 @@ export class JsonVectorStore {
     const deleted = before - this.entries.length;
     if (deleted > 0) {
       this.dirty = true;
-      this.markIndexDirty();
       this.save();
     }
     return deleted;
@@ -564,7 +368,6 @@ export class JsonVectorStore {
     const deleted = before - this.entries.length;
     if (deleted > 0) {
       this.dirty = true;
-      this.markIndexDirty();
       this.save();
     }
     return deleted;
