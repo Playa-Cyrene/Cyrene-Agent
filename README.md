@@ -108,7 +108,7 @@ rustup default stable-x86_64-pc-windows-msvc
 ### 1. 克隆项目
 
 ```bash
-git clone https://github.com/Playa-0v0/Cyrene-Agent.git
+git clone https://github.com/Playa-Cyrene/Cyrene-Agent.git
 cd Cyrene-Agent
 ```
 
