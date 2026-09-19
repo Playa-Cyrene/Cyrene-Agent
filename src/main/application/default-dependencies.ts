@@ -48,6 +48,8 @@ import { momentsService, registerMomentsMediaMatcher } from "../moments/moments-
 import {
   addL2MemoryVector,
   deleteUserMemoryVectors,
+  flushRAGStore,
+  flushRAGStoreSync,
   getEntriesBySource,
   initRAG,
   isUserMemoryVectorStoreReady,
@@ -390,6 +392,14 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
       initRag: async () => {
         const modelSettings = loadModelSettings();
         await initRAG("auto", undefined, undefined, modelSettings.embeddingModel, modelSettings.embeddingDimensions);
+        // 注册 RAG 落盘：受控退出在 flushPersistence 阶段刷盘；
+        // Windows 会话结束（断电/强制关机）走同步紧急落盘兜底
+        shutdown.register({
+          id: "rag-store",
+          phase: "flushPersistence",
+          dispose: async () => { await flushRAGStore(); },
+        });
+        shutdown.registerEmergencyFlush("rag-store", () => flushRAGStoreSync());
         logger.info(LogTag.RAG, "RAG initialized OK");
       },
 

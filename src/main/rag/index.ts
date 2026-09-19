@@ -62,6 +62,16 @@ export async function initRAG(
   );
 }
 
+/** 受控退出（before-quit 链路）时调用：把防抖中的记忆数据刷盘。 */
+export async function flushRAGStore(): Promise<void> {
+  await store?.flush();
+}
+
+/** 会话紧急结束（Windows session-end）时调用：同步落盘，不等待异步 I/O。 */
+export function flushRAGStoreSync(): void {
+  store?.flushSync();
+}
+
 // ── Switch embedding model (hot-swap) ──
 export async function switchEmbeddingModel(modelKey: string): Promise<{ ok: boolean; clearedEntries: number; error?: string }> {
   try {
@@ -107,21 +117,15 @@ export async function switchEmbeddingModel(modelKey: string): Promise<{ ok: bool
       if (entries && entries.length > 0) {
         const oldDims = entries[0].embedding.length;
         if (oldDims !== newDims) {
-          // Dimension mismatch — clear the vector store and metadata
-          const dataDir = getDataDir();
-          const storePath = path.join(dataDir, "memory-store.json");
-          const metaPath = path.join(dataDir, "memory-store-meta.json");
-          if (fs.existsSync(storePath)) {
-            clearedEntries = entries.length;
-            fs.writeFileSync(storePath, "[]", "utf8");
-            console.log("[RAG] dimension mismatch (" + oldDims + " → " + newDims + "), cleared " + clearedEntries + " entries");
-          }
+          clearedEntries = entries.length;
+          // 清空内存与磁盘（含取消防抖中的待写落盘），防止旧维度向量被写回刚清空的文件
+          store.clearForRebuild();
+          console.log("[RAG] dimension mismatch (" + oldDims + " → " + newDims + "), cleared " + clearedEntries + " entries");
           // 清除旧的索引元数据，下次写入时会自动创建新的
+          const metaPath = path.join(getDataDir(), "memory-store-meta.json");
           if (fs.existsSync(metaPath)) {
             fs.unlinkSync(metaPath);
           }
-          // Reload store from the now-empty file
-          store = new JsonVectorStore(dataDir);
         }
       }
     }
@@ -344,6 +348,8 @@ export async function importPreparedDocumentForTurn(
     : Math.random().toString(36).slice(2, 8);
   const importId = `import-${Date.now()}-${id}`;
   await appendPreparedDocumentBatch(fileName, importId, prepared);
+  // 导入是高成本操作（全部 chunk 已完成嵌入），立即落盘保证持久性
+  await store.flush();
   return { importId, chunkCount: prepared.length };
 }
 
@@ -366,6 +372,8 @@ export async function importDocumentForTurn(
     provider,
     { isCancelled: control?.isCancelled },
   );
+  // 导入是高成本操作（全部 chunk 已完成嵌入），立即落盘保证持久性
+  await store.flush();
   return { importId, chunkCount: chunks.length };
 }
 

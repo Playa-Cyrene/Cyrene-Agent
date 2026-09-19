@@ -26,6 +26,9 @@ export interface VectorSearchOptions {
   allowedEntryIds?: string[];
 }
 
+// 防抖窗口：写操作静止 5 秒后才落盘，连续写期间（如批量导入）完全不写盘
+const SAVE_DEBOUNCE_MS = 5000;
+
 // ── 余弦相似度（嵌入已归一化，等价于点积） ──
 export function cosineSimilarity(a: number[], b: number[]): number {
   let dot = 0;
@@ -41,6 +44,10 @@ export class JsonVectorStore {
   private metaFilePath: string;
   private entries: MemoryEntry[] = [];
   private dirty = false;
+  private saveTimer: NodeJS.Timeout | null = null;
+  private savePromise: Promise<void> | null = null;
+  // 清库代数：clearForRebuild 时递增，进行中的异步落盘据此作废自己
+  private writeGeneration = 0;
   private indexMeta: EmbeddingIndexMetadata | null = null;
 
   constructor(dbPath: string) {
@@ -85,14 +92,115 @@ export class JsonVectorStore {
     }
   }
 
-  private save(): void {
+  // ── 落盘：5 秒防抖合并高频写，退出/导入完成等节点显式 flush ──
+
+  /**
+   * 标记数据已修改并安排防抖落盘。
+   * 每次写操作都重置计时器，连续写（如批量导入）期间完全不写盘；
+   * 静止 5 秒后全量写一次 JSON（原子写：tmp → rename）。
+   */
+  private scheduleSave(): void {
+    this.dirty = true;
+    if (this.saveTimer) clearTimeout(this.saveTimer);
+    this.saveTimer = setTimeout(() => {
+      this.saveTimer = null;
+      this.writeToDisk().catch(() => {
+        // 失败已在 writeToDisk 内记录并保留脏标记，下次写操作会重试
+      });
+    }, SAVE_DEBOUNCE_MS);
+    this.saveTimer.unref();
+  }
+
+  /** 发起异步落盘；同一时刻只允许一个写盘任务，重复调用复用进行中的任务。 */
+  private writeToDisk(): Promise<void> {
+    if (this.savePromise) return this.savePromise;
+    const generation = this.writeGeneration;
+    const task = this.performAtomicSave(generation);
+    this.savePromise = task;
+    const clear = () => { this.savePromise = null; };
+    task.then(clear, clear);
+    return task;
+  }
+
+  /**
+   * 全量序列化 + 原子落盘。失败时恢复脏标记并向上抛出。
+   * 已知边界：条目数过大时 JSON.stringify 可能触发 V8 单字符串长度上限（约 2 万条以上），
+   * 换持久化格式是根修方案，当前规模下先注释说明。
+   */
+  private async performAtomicSave(generation: number): Promise<void> {
+    this.dirty = false;
+    try {
+      const json = JSON.stringify(this.entries, null, 2);
+      const dir = path.dirname(this.filePath);
+      await fs.promises.mkdir(dir, { recursive: true });
+      const tmp = this.filePath + ".tmp";
+      await fs.promises.writeFile(tmp, json, "utf8");
+      // 写盘期间发生过 clearForRebuild（维度切换清库）→ 本次结果作废，不覆盖新状态
+      if (generation !== this.writeGeneration) return;
+      await fs.promises.rename(tmp, this.filePath);
+    } catch (err) {
+      this.dirty = true;
+      console.warn("[RAG] failed to save vector store:", err);
+      throw err;
+    }
+  }
+
+  /**
+   * 立即落盘：取消防抖定时器，把未写数据刷到磁盘。
+   * 供受控退出和导入完成等需要持久性保证的节点调用。
+   */
+  async flush(): Promise<void> {
+    if (this.saveTimer) {
+      clearTimeout(this.saveTimer);
+      this.saveTimer = null;
+    }
+    while (this.dirty || this.savePromise !== null) {
+      try {
+        await this.writeToDisk();
+      } catch {
+        break; // 失败已记录并保留脏标记，避免无限重试
+      }
+    }
+  }
+
+  /** 同步落盘兜底：Windows 会话结束等只能同步执行的紧急路径。 */
+  flushSync(): void {
+    if (this.saveTimer) {
+      clearTimeout(this.saveTimer);
+      this.saveTimer = null;
+    }
+    if (!this.dirty) return;
     try {
       const dir = path.dirname(this.filePath);
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(this.filePath, JSON.stringify(this.entries, null, 2), "utf8");
+      const tmp = this.filePath + ".tmp";
+      fs.writeFileSync(tmp, JSON.stringify(this.entries, null, 2), "utf8");
+      fs.renameSync(tmp, this.filePath);
       this.dirty = false;
     } catch (err) {
-      console.warn("[RAG] failed to save vector store:", err);
+      console.warn("[RAG] failed to flush vector store:", err);
+    }
+  }
+
+  /**
+   * 维度切换清库：取消待写定时器、作废进行中的异步落盘、清空内存与磁盘。
+   * 不做这一步，旧维度的向量可能被防抖中的落盘写回刚清空的文件。
+   */
+  clearForRebuild(): void {
+    this.writeGeneration++;
+    if (this.saveTimer) {
+      clearTimeout(this.saveTimer);
+      this.saveTimer = null;
+    }
+    this.entries = [];
+    this.dirty = false;
+    this.indexMeta = null;
+    try {
+      const dir = path.dirname(this.filePath);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(this.filePath, "[]", "utf8");
+    } catch (err) {
+      console.warn("[RAG] failed to clear vector store file:", err);
     }
   }
 
@@ -184,8 +292,7 @@ export class JsonVectorStore {
       // 更新权重和时间
       existing[0].entry.weight = Math.min(existing[0].entry.weight + 0.1, 5.0);
       existing[0].entry.lastRecalledAt = Date.now();
-      this.dirty = true;
-      this.save();
+      this.scheduleSave();
       return existing[0].entry;
     }
 
@@ -204,8 +311,7 @@ export class JsonVectorStore {
     };
 
     this.entries.push(entry);
-    this.dirty = true;
-    this.save();
+    this.scheduleSave();
     return entry;
   }
 
@@ -264,8 +370,7 @@ export class JsonVectorStore {
       results.push(entry);
     }
 
-    this.dirty = true;
-    this.save();
+    this.scheduleSave();
     return results;
   }
 
@@ -321,8 +426,7 @@ export class JsonVectorStore {
       r.entry.weight = Math.min(r.entry.weight + 0.05, 5.0);
     }
     if (top.length > 0) {
-      this.dirty = true;
-      this.save();
+      this.scheduleSave();
     }
 
     return top;
@@ -332,8 +436,7 @@ export class JsonVectorStore {
   prune(minWeight = 0.1): number {
     const before = this.entries.length;
     this.entries = this.entries.filter((e) => e.weight >= minWeight);
-    this.dirty = true;
-    this.save();
+    this.scheduleSave();
     return before - this.entries.length;
   }
 
@@ -344,8 +447,7 @@ export class JsonVectorStore {
     this.entries = this.entries.filter((entry) => !idSet.has(entry.id) || (source !== undefined && entry.source !== source));
     const deleted = before - this.entries.length;
     if (deleted > 0) {
-      this.dirty = true;
-      this.save();
+      this.scheduleSave();
     }
     return deleted;
   }
@@ -367,8 +469,7 @@ export class JsonVectorStore {
     });
     const deleted = before - this.entries.length;
     if (deleted > 0) {
-      this.dirty = true;
-      this.save();
+      this.scheduleSave();
     }
     return deleted;
   }
