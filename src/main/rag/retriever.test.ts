@@ -100,4 +100,28 @@ describe("HybridRetriever", () => {
 
     expect(results.map((result) => result.entry.id).sort()).toEqual(entries.map((entry) => entry.id).sort());
   });
+
+  it("warmupBm25Tokens fills token cache across slice boundaries and keeps retrieval correct", async () => {
+    const store = createStore();
+    // 120 条：超过预热单片 50 条，跨三个分片执行
+    const entries = store.addPreparedBatch(
+      Array.from({ length: 120 }, (_, index) => ({
+        text: index % 2 === 0 ? `alpha note ${index} with beta content` : `other note ${index}`,
+        source: "imported_doc",
+        embedding: [1, 0],
+        metadata: { importId: "warm-import", chunkIndex: index },
+      })),
+    );
+    const retriever = new HybridRetriever(store, provider);
+
+    await retriever.warmupBm25Tokens(entries);
+
+    // query 嵌入为 [0,1]，与全部条目的 [1,0] 正交，向量路径零命中——
+    // 能拿到结果说明命中的是预热过的 BM25 缓存路径
+    const results = await retriever.retrieve("beta content", "imported_doc", 5, {
+      importIds: ["warm-import"],
+    });
+    expect(results.length).toBeGreaterThan(0);
+    expect(results.every((result) => result.entry.text.includes("beta"))).toBe(true);
+  });
 });

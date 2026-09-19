@@ -51,20 +51,24 @@ export interface RetrieveOptions {
   allowedEntryIds?: string[];
 }
 
-// ── 自定义词表（entity-graph 维护） ──
+// ── 自定义词表（entity-graph 维护）──
 // @node-rs/jieba 没有运行时 insertWord()，改用「后处理重组」方案：
 // jieba 切完后，把被切散的自定义词（如"昔涟"→"昔","涟"）重新合并。
 const customWords = new Set<string>();
+// 自定义词表版本：每次真正新增词时递增，让已缓存的文档分词作废重算
+let customWordsVersion = 0;
 
 /** 注册一个自定义词（让分词时不被切散） */
 export function registerJiebaCustomWord(word: string): void {
-  if (word.length >= 2) customWords.add(word);
+  if (word.length >= 2 && !customWords.has(word)) customWordsVersion++;
+  customWords.add(word);
 }
 
 /** 批量注册自定义词 */
 export function registerJiebaCustomWords(words: Iterable<string>): void {
   for (const w of words) {
-    if (w.length >= 2) customWords.add(w);
+    if (w.length >= 2 && !customWords.has(w)) customWordsVersion++;
+    customWords.add(w);
   }
 }
 
@@ -152,6 +156,20 @@ function tokenize(text: string): TokenInfo[] {
     }
     return tokens;
   }
+}
+
+// ── BM25 文档分词缓存 ──
+// 条目文本写入后不可变，分词结果直接挂在条目对象上：条目删除后随 GC 回收，无需失效逻辑。
+// 全库分词是 BM25 的绝对大头（3000 个 chunk 约 2.5 秒），缓存后只在首次检索付出一次成本。
+// 自定义词表更新会改变分词结果，用版本号比对决定是否重算。
+const docTokenCache = new WeakMap<object, { version: number; tokens: TokenInfo[] }>();
+
+function getDocTokens(entry: object & { text: string }): TokenInfo[] {
+  const cached = docTokenCache.get(entry);
+  if (cached && cached.version === customWordsVersion) return cached.tokens;
+  const tokens = tokenize(entry.text);
+  docTokenCache.set(entry, { version: customWordsVersion, tokens });
+  return tokens;
 }
 
 function bm25Score(
@@ -279,6 +297,42 @@ export class HybridRetriever {
     return candidates;
   }
 
+  /**
+   * 后台预热 BM25 分词缓存：把"首次检索才付全库分词成本"挪到导入完成的时刻。
+   * 分片执行（每片 50 条、片间用 setImmediate 让出事件循环），单片只占毫秒级，
+   * 不会像冷检索那样一次阻塞主线程两秒。失败静默——预热只是提前填缓存，
+   * 检索路径自身始终能补算，正确性不依赖本方法。
+   * 返回 Promise 供需要等待预热的调用方（如基准测试）使用，生产路径可不等待。
+   */
+  warmupBm25Tokens(entries: Array<{ text: string }>): Promise<void> {
+    return new Promise((resolve) => {
+      const total = entries.length;
+      if (total === 0) {
+        resolve();
+        return;
+      }
+      const BATCH = 50;
+      const warm = (start: number) => {
+        try {
+          const end = Math.min(start + BATCH, total);
+          for (let i = start; i < end; i++) {
+            getDocTokens(entries[i]);
+          }
+        } catch (err) {
+          console.warn("[HybridRetriever] BM25 warmup failed:", err);
+          resolve();
+          return;
+        }
+        if (start + BATCH < total) {
+          setImmediate(() => warm(start + BATCH));
+        } else {
+          resolve();
+        }
+      };
+      setImmediate(() => warm(0));
+    });
+  }
+
   private bm25Search(query: string, source?: string, topK = 15, options: RetrieveOptions = {}): SearchResult[] {
     const entries = this.store["entries"] as Array<{
       id: string; text: string; embedding: number[]; source: string;
@@ -294,7 +348,7 @@ export class HybridRetriever {
     if (docs.length === 0) return [];
 
     const queryTokenInfo = tokenize(query);
-    const docTokensList = docs.map((d) => tokenize(d.text));
+    const docTokensList = docs.map((d) => getDocTokens(d));
     const totalDocs = docs.length;
     const avgDocLen = docTokensList.reduce((sum, t) => sum + t.length, 0) / totalDocs;
 

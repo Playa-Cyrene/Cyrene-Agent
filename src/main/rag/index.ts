@@ -330,12 +330,14 @@ export async function appendPreparedDocumentBatch(
   prepared: PreparedDocumentEmbedding[],
 ): Promise<void> {
   if (!store) throw new Error("RAG not initialized");
-  store.addPreparedBatch(prepared.map((entry) => ({
+  const added = store.addPreparedBatch(prepared.map((entry) => ({
     text: entry.text,
     embedding: entry.embedding,
     source: "imported_doc",
     metadata: { fileName, chunkIndex: entry.chunkIndex, importId },
   })));
+  // 后台预热新条目的 BM25 分词，避免首次检索才付出冷启动成本；不阻塞导入返回
+  void retriever?.warmupBm25Tokens(added);
 }
 
 export async function importPreparedDocumentForTurn(
@@ -367,13 +369,15 @@ export async function importDocumentForTurn(
     : Math.random().toString(36).slice(2, 8);
   const importId = `import-${Date.now()}-${id}`;
   control?.onProgress?.({ status: "embedding", completedChunks: 0, totalChunks: chunks.length });
-  await store.addBatch(
+  const added = await store.addBatch(
     chunks.map((c) => ({ text: c.text, source: "imported_doc", metadata: { fileName, chunkIndex: c.index, importId } })),
     provider,
     { isCancelled: control?.isCancelled },
   );
   // 导入是高成本操作（全部 chunk 已完成嵌入），立即落盘保证持久性
   await store.flush();
+  // 后台预热新条目的 BM25 分词，避免首次检索才付出冷启动成本；不阻塞导入返回
+  void retriever?.warmupBm25Tokens(added);
   return { importId, chunkCount: chunks.length };
 }
 
