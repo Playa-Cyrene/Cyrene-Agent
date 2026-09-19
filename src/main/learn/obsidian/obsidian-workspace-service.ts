@@ -68,24 +68,30 @@ export interface ObsidianWriteResult {
   bytesWritten: number;
 }
 
+/**
+ * 写契约（本进程内部的不变量，不依赖外部文档）：
+ * - create 永不覆盖已有文件，目标存在即拒绝（PATH_ALREADY_EXISTS）；
+ * - 修改已有文件的四个操作必须携带 expectedContentHash，缺失即拒绝
+ *   （CONTENT_HASH_REQUIRED），不匹配即冲突（CONTENT_CONFLICT）。
+ * 类型层对 TS 调用方强制；工具入参来自 JSON，运行时由 edit() 二次强制。
+ */
 export type ObsidianEditRequest =
   | {
       operation: "create";
       path: string;
       content: string;
-      mustNotExist?: true;
     }
   | {
       operation: "replace_file";
       path: string;
       content: string;
-      expectedContentHash?: string;
+      expectedContentHash: string;
     }
   | {
       operation: "append";
       path: string;
       content: string;
-      expectedContentHash?: string;
+      expectedContentHash: string;
     }
   | {
       operation: "replace_section";
@@ -93,14 +99,14 @@ export type ObsidianEditRequest =
       headingPath: string[];
       content: string;
       includeChildren?: boolean;
-      expectedContentHash?: string;
+      expectedContentHash: string;
     }
   | {
       operation: "append_to_section";
       path: string;
       headingPath: string[];
       content: string;
-      expectedContentHash?: string;
+      expectedContentHash: string;
     };
 
 export type ObsidianErrorCode =
@@ -113,6 +119,7 @@ export type ObsidianErrorCode =
   | "READ_FAILED"
   | "WRITE_FAILED"
   | "CONTENT_CONFLICT"
+  | "CONTENT_HASH_REQUIRED"
   | "HEADING_NOT_FOUND"
   | "AMBIGUOUS_HEADING"
   | "MARKDOWN_PARSE_FAILED";
@@ -223,12 +230,21 @@ export class ObsidianWorkspaceService {
       if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
     }
 
-    // 禁止写入 .obsidian/ 目录
-    if (normalized.startsWith(".obsidian") || normalized.includes(path.sep + ".obsidian" + path.sep)) {
-      throw new ObsidianError(
-        "PATH_OUTSIDE_VAULT",
-        `禁止操作 .obsidian/ 目录: ${relativePath}`,
-      );
+    // 禁止读写应用内部数据目录：.obsidian/ 由 Obsidian 维护，
+    // .cyrene/ 由同进程外部的 Cyrene Notes 维护。
+    const protectedDirs = [".obsidian", ".cyrene"];
+    for (const dir of protectedDirs) {
+      if (
+        normalized === dir ||
+        normalized.startsWith(dir + "/") ||
+        normalized.startsWith(dir + path.sep) ||
+        normalized.includes(path.sep + dir + path.sep)
+      ) {
+        throw new ObsidianError(
+          "PATH_OUTSIDE_VAULT",
+          `禁止操作 ${dir}/ 目录: ${relativePath}`,
+        );
+      }
     }
 
     return resolved;
@@ -273,8 +289,8 @@ export class ObsidianWorkspaceService {
     async function walk(dir: string) {
       const entries = await fs.readdir(dir, { withFileTypes: true });
       for (const entry of entries) {
-        // 跳过 .obsidian 目录
-        if (entry.name === ".obsidian") continue;
+        // 跳过应用内部数据目录（listFiles 对外只暴露笔记扩展名文件）
+        if (entry.isDirectory() && (entry.name === ".obsidian" || entry.name === ".cyrene")) continue;
 
         const fullPath = path.join(dir, entry.name);
         if (entry.isDirectory()) {
@@ -444,15 +460,23 @@ export class ObsidianWorkspaceService {
    * 编辑操作：创建/覆盖/追加/替换章节。
    */
   async edit(input: ObsidianEditRequest): Promise<ObsidianWriteResult> {
+    if (input.operation !== "create" && !input.expectedContentHash) {
+      // 工具入参来自 JSON，会绕过 TS 类型；运行时再卡一道，确保模型不会无锁写。
+      throw new ObsidianError(
+        "CONTENT_HASH_REQUIRED",
+        `修改已有文件必须携带 expectedContentHash（先 read_file 获取），操作: ${input.operation}，文件: ${input.path}`,
+      );
+    }
+
     switch (input.operation) {
       case "create": {
         const resolved = this.resolveSafeFile(input.path);
 
-        // 检查是否已存在
-        if (input.mustNotExist && fsSync.existsSync(resolved)) {
+        // create 永不覆盖：目标已存在一律拒绝（要修改已有文件必须走 replace_file + hash）
+        if (fsSync.existsSync(resolved)) {
           throw new ObsidianError(
             "PATH_ALREADY_EXISTS",
-            `文件已存在 (mustNotExist=true): ${input.path}`,
+            `文件已存在，create 不覆盖: ${input.path}。如需修改请先 read_file 再用对应编辑操作。`,
           );
         }
 
@@ -468,10 +492,7 @@ export class ObsidianWorkspaceService {
       case "replace_file": {
         const resolved = this.resolveSafeFile(input.path);
 
-        // 冲突检查
-        if (input.expectedContentHash) {
-          await this.checkContentHash(resolved, input.expectedContentHash, input.path);
-        }
+        await this.checkContentHash(resolved, input.expectedContentHash, input.path);
 
         await this.atomicWrite(resolved, input.content);
         return {
@@ -485,10 +506,7 @@ export class ObsidianWorkspaceService {
       case "append": {
         const resolved = this.resolveSafeFile(input.path);
 
-        // 冲突检查
-        if (input.expectedContentHash) {
-          await this.checkContentHash(resolved, input.expectedContentHash, input.path);
-        }
+        await this.checkContentHash(resolved, input.expectedContentHash, input.path);
 
         const existing = await fs.readFile(resolved, "utf8");
         const separator = existing.endsWith("\n") ? "" : "\n";
@@ -506,9 +524,7 @@ export class ObsidianWorkspaceService {
       case "replace_section": {
         const resolved = this.resolveSafeFile(input.path);
 
-        if (input.expectedContentHash) {
-          await this.checkContentHash(resolved, input.expectedContentHash, input.path);
-        }
+        await this.checkContentHash(resolved, input.expectedContentHash, input.path);
 
         const existing = await fs.readFile(resolved, "utf8");
         const result = replaceSection(
@@ -543,9 +559,7 @@ export class ObsidianWorkspaceService {
       case "append_to_section": {
         const resolved = this.resolveSafeFile(input.path);
 
-        if (input.expectedContentHash) {
-          await this.checkContentHash(resolved, input.expectedContentHash, input.path);
-        }
+        await this.checkContentHash(resolved, input.expectedContentHash, input.path);
 
         const existing = await fs.readFile(resolved, "utf8");
         const result = appendToSection(existing, input.headingPath, input.content);

@@ -104,7 +104,6 @@ export async function ensureProgressFile(): Promise<boolean> {
         operation: "create",
         path: PROGRESS_FILE,
         content: defaultProgressContent(),
-        mustNotExist: true,
       });
       return true;
     } catch {
@@ -115,24 +114,27 @@ export async function ensureProgressFile(): Promise<boolean> {
 
 /**
  * 更新进度并保存。
+ * 由于 workspace.edit 修改已有文件要求携带 expectedContentHash，
+ * 写入流程固定为：先 read_file 拿 hash，再 replace_file 携带 hash。
  */
 export async function saveProgress(progress: LearnProgress): Promise<boolean> {
   try {
     const content = buildProgressFile(progress);
 
-    try {
-      // 尝试编辑已有文件
-      await obsidianWorkspace.edit({
-        operation: "replace_file",
-        path: PROGRESS_FILE,
-        content,
-      });
-    } catch {
-      // 创建新文件
+    // 文件不存在时创建；存在时携带 hash 替换（外部修改过则本轮放弃保存）
+    const existing = await obsidianWorkspace.readFile({ path: PROGRESS_FILE }).catch(() => null);
+    if (!existing) {
       await obsidianWorkspace.edit({
         operation: "create",
         path: PROGRESS_FILE,
         content,
+      });
+    } else {
+      await obsidianWorkspace.edit({
+        operation: "replace_file",
+        path: PROGRESS_FILE,
+        content,
+        expectedContentHash: existing.contentHash,
       });
     }
 

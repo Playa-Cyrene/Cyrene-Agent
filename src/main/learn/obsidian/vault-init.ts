@@ -41,10 +41,13 @@ export interface VaultInitResult {
 export async function isEmptyDirectory(dir: string): Promise<boolean> {
   try {
     const entries = await fs.readdir(dir, { withFileTypes: true });
-    const ignored = new Set([".DS_Store", "Thumbs.db"]);
+    // 忽略纯应用数据目录：只含它们时仍视为"空"，可被 Learn bootstrap 初始化。
+    // .cyrene/ 是同进程外部的 Cyrene Notes 写的内部数据目录。
+    const ignoredDirs = new Set([".obsidian", ".cyrene"]);
+    const ignoredFiles = new Set([".DS_Store", "Thumbs.db"]);
     return entries.every((entry) => {
-      if (ignored.has(entry.name)) return true;
-      if (entry.isDirectory() && entry.name === ".obsidian") return true;
+      if (ignoredFiles.has(entry.name)) return true;
+      if (entry.isDirectory() && ignoredDirs.has(entry.name)) return true;
       return false;
     });
   } catch {

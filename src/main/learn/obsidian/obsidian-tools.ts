@@ -213,13 +213,18 @@ export function registerObsidianTools(): void {
     id: "obsidian_edit",
     name: "编辑笔记",
     description:
-      "在 Obsidian Vault 中创建、修改或追加笔记内容。支持以下操作：\n\n" +
-      "- create：创建新笔记（目标已存在时拒绝）\n" +
-      "- replace_file：完整替换文件内容\n" +
-      "- append：在文件末尾追加内容\n" +
-      "- replace_section：替换某个标题章节下的内容\n" +
-      "- append_to_section：追加到某个标题章节末尾\n\n" +
-      "参数：operation（操作类型）、path（笔记路径）、content（内容）、headingPath（replace_section/append_to_section 时需要）、expectedContentHash（修改已有文件时建议提供，防冲突）、includeChildren（replace_section 时）",
+      "在 Obsidian Vault 中创建或修改笔记内容。支持以下操作：\n\n" +
+      "- create：创建新笔记（目标已存在时拒绝，永不覆盖已有文件）\n" +
+      "- replace_file：完整替换文件内容（必须先读，带 expectedContentHash）\n" +
+      "- append：在文件末尾追加内容（必须先读，带 expectedContentHash）\n" +
+      "- replace_section：替换某个标题章节下的内容（必须先读，带 expectedContentHash）\n" +
+      "- append_to_section：追加到某个标题章节末尾（必须先读，带 expectedContentHash）\n\n" +
+      "写契约（必须遵守）：\n" +
+      "1. create 永不覆盖：目标文件已存在时会被拒绝，此时应改为先读取再编辑。\n" +
+      "2. 修改已有文件必须携带 expectedContentHash：先用 obsidian_read_file 读取全文拿到 " +
+      "contentHash，再在本次编辑中提供。缺失会被直接拒绝；不匹配说明文件已被外部修改，必须重新读取。\n\n" +
+      "参数：operation（操作类型）、path（笔记路径）、content（内容）、expectedContentHash（修改已有文件时必填）、" +
+      "headingPath（replace_section/append_to_section 时需要）、includeChildren（replace_section 时）",
     enabled: true,
     modes: ["learn"],
     effectKind: "mutation",
@@ -243,19 +248,16 @@ export function registerObsidianTools(): void {
         headingPath: {
           type: "array",
           description: "目标章节的标题路径（仅 replace_section 和 append_to_section 需要）。",
-          items: { type: "string" },
+          items: { type: "string", description: "标题路径中的一层" },
         },
         expectedContentHash: {
           type: "string",
-          description: "通过 obsidian_read_file 获取的 contentHash，用于防止覆盖他人修改。修改已有文件时强烈建议提供。",
+          description:
+            "通过 obsidian_read_file 获取的 contentHash。修改已有文件（replace_file / append / replace_section / append_to_section）时必填，缺失会被拒绝。create 操作不需要。",
         },
         includeChildren: {
           type: "boolean",
           description: "replace_section 时是否同时替换子章节。默认 false。",
-        },
-        mustNotExist: {
-          type: "boolean",
-          description: "create 操作时，如果设为 true，目标已存在则拒绝。",
         },
       },
       required: ["operation", "path", "content"],
@@ -270,7 +272,6 @@ export function registerObsidianTools(): void {
         expectedContentHash:
           typeof args.expectedContentHash === "string" ? args.expectedContentHash : undefined,
         includeChildren: args.includeChildren === true ? true : undefined,
-        mustNotExist: args.mustNotExist === true ? true : undefined,
       } as any);
 
       return (

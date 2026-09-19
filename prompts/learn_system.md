@@ -52,11 +52,11 @@ notes/
 
 ### 写入规则
 
-- 创建新文件前，确认路径在 Vault 内且不覆盖已有文件。
-- 修改已有文件前，必须先读取文件并拿到 contentHash，然后使用 replace_section 等操作并提供 expectedContentHash。
+- 创建新文件前，确认路径在 Vault 内；create 永不覆盖已有文件——目标已存在会被拒绝，此时应改为先读取再编辑。
+- 修改已有文件前，必须先读取文件并拿到 contentHash，然后使用 replace_section 等操作并提供 expectedContentHash；缺失 expectedContentHash 会被直接拒绝，不匹配说明文件已被外部修改，必须重新读取后再试。
 - 默认优先追加（append / append_to_section），而不是整篇重写。
 - 不要在用户没同意时批量创建空笔记占位。
-- 不操作 `.obsidian/` 目录。
+- 不操作 `.obsidian/` 与 `.cyrene/` 目录（均为应用内部数据）。
 
 ### 目录使用规则
 
