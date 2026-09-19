@@ -269,9 +269,6 @@ export const IPC = {
   LIVE2D_PLAY_ACTION: "live2d:play-action",        // 主进程 → 桌宠窗口：执行动作（motion 或 expression）
   LIVE2D_GET_MAIN_DIAGNOSTICS: "live2d:get-main-diagnostics",
   // embedding model status
-  EMBEDDING_GET_STATUS: "embedding:get-status",
-  EMBEDDING_DOWNLOAD: "embedding:download",
-  EMBEDDING_DELETE: "embedding:delete",
   EMBEDDING_SET_MODEL: "embedding:set-model",
   RERANKER_SET_MODE: "reranker:set-mode",
   RERANKER_GET_STATUS: "reranker:get-status",

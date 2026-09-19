@@ -380,16 +380,7 @@
           "rerankBaseDesc": "精准重排，适合长文档和专业检索，约 200ms/对。",
           "rerankOff": "关闭",
           "rerankOffDesc": "不进行重排序，检索后直接使用。",
-          "rerankOffHint": "无需模型",
-          "modeTitle": "当前模式",
-          "modeAuto": "自动（优先使用已安装模型）",
-          "downloadButton": "📖 模型安装说明",
-          "deleteButton": "删除缓存",
-          "updateButton": "检查更新",
-          "mirrorTitle": "下载镜像源",
-          "mirrorOfficial": "官方源",
-          "mirrorHf": "hf-mirror",
-          "note": "按钮暂为界面预留；后续会接入安装包可选模型、模型状态检测和文档导入检索。"
+          "rerankOffHint": "无需模型"
         },
         "saveStatus": "等待保存",
         "saveButton": "保存昔涟设置"

@@ -1326,18 +1326,8 @@ body {
   font: var(--rb-text-tiny);
 }
 
-.rag-status-row {
-  margin-top: 2px;
-}
-
-.rag-actions-row {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  margin-top: 0;
-}
-
 @media (max-width: 860px) {
-  .rag-model-options,
-  .rag-actions-row {
+  .rag-model-options {
     grid-template-columns: 1fr;
   }
 }
