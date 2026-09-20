@@ -60,6 +60,11 @@ export interface AgentRunInput {
    * run ack 成功后清除会话的 pendingDispatch；失败则保留供恢复续派（不重复追加）。
    */
   claimedPendingMessageId?: string;
+  /** 桌面 edit / regenerate 的轨迹回退锚点（主进程写 turn_rewind；渲染端只传元数据）。 */
+  transcriptRewind?: {
+    anchorUserTurnId: string;
+    disposition: "keep_user" | "replace_user";
+  };
 }
 
 /**
@@ -253,7 +258,8 @@ export class AgentRunController {
         splitMode,
       );
       const ack = await api.run({
-        messages: this.input.session.messages.slice(-16).map((item) => ({
+        // 权威模型上下文已由主进程轨迹构建；此数组仅一个版本周期的渲染端回退用，发送完整历史
+        messages: this.input.session.messages.map((item) => ({
           role: item.role,
           content: item.modelContext?.trim() || item.content,
           at: item.at,
@@ -265,6 +271,7 @@ export class AgentRunController {
         recoveryContext: buildTodoRecoveryContext(this.input.session.messages, this.input.assistantId),
         ...(this.input.resumeFromRunId ? { resumeFromRunId: this.input.resumeFromRunId } : {}),
         ...(this.input.takeoverFromRunId ? { takeoverFromRunId: this.input.takeoverFromRunId } : {}),
+        ...(this.input.transcriptRewind ? { transcriptRewind: this.input.transcriptRewind } : {}),
         imageAttachments: this.input.attachments
           .filter((attachment) => attachment.kind === "image" && attachment.filePath)
           .map((attachment) => ({

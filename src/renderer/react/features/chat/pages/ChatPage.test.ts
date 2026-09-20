@@ -26,3 +26,13 @@ describe("ChatPage feedback", () => {
     expect(chatPageSource).not.toContain("window.confirm");
   });
 });
+
+describe("ChatPage 轨迹回退派发（CTA Phase 1）", () => {
+  it("edit 派发 replace_user、regenerate 派发 keep_user，锚点保留原 user 消息 ID", () => {
+    // restartLastChatTurn 接收必填 disposition：edit 传 replace_user，regenerate 传 keep_user
+    expect(chatPageSource).toMatch(/restartLastChatTurn\(\s*[\w.]+,\s*[\w.]+,\s*"replace_user"/);
+    expect(chatPageSource).toMatch(/restartLastChatTurn\(\s*[\w.]+,\s*[\w.]+,\s*"keep_user"/);
+    // 派发 input 携带轨迹回退元数据：锚点 = 通过校验的原 user 消息 ID
+    expect(chatPageSource).toMatch(/transcriptRewind:\s*\{\s*anchorUserTurnId:\s*expectedUserMessageId,\s*disposition,?\s*\}/);
+  });
+});

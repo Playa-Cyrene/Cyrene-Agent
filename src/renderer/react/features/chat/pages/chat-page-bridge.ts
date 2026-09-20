@@ -126,6 +126,11 @@ export interface AguiApi {
     recoveryContext?: string;
     resumeFromRunId?: string;
     takeoverFromRunId?: string;
+    /** 桌面 edit / regenerate 的轨迹回退锚点（主进程写 turn_rewind；渲染端只传元数据）。 */
+    transcriptRewind?: {
+      anchorUserTurnId: string;
+      disposition: "keep_user" | "replace_user";
+    };
   }) => Promise<{ success: boolean; runId: string; error?: string }>;
   onEvent: (callback: (event: AguiEvent) => void) => () => void;
   cancel: (runId?: string) => Promise<unknown>;

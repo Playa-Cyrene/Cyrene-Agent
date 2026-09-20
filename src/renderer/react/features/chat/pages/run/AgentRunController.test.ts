@@ -960,4 +960,53 @@ describe("AgentRunController", () => {
 
     expect(host.earlyTts.start).toHaveBeenCalledWith("chat", "session-1", "assistant-1", "paragraph");
   });
+
+  it("把轨迹回退元数据透传进派发请求", async () => {
+    const api = createFakeApi({ success: true, runId: "run-1" });
+    const store = createFakeStore();
+    const { host } = createRecordingHost();
+    const input = createInput({
+      transcriptRewind: { anchorUserTurnId: "user-1", disposition: "replace_user" },
+    });
+    const { promise } = launch(input, { api, store, host, registries: createRegistries() });
+    await flush();
+
+    expect(api.run).toHaveBeenCalledWith(expect.objectContaining({
+      userTurnId: "user-1",
+      transcriptRewind: { anchorUserTurnId: "user-1", disposition: "replace_user" },
+    }));
+
+    api.emit(RUN_STARTED_EVENT);
+    api.emit({ type: "RUN_FINISHED", runId: "run-1", result: { status: "success" } });
+    await promise;
+  });
+
+  it("发送完整会话历史，不再保留 16 条硬截断", async () => {
+    const api = createFakeApi({ success: true, runId: "run-1" });
+    const store = createFakeStore();
+    const { host } = createRecordingHost();
+    const messages = Array.from({ length: 20 }, (_, index) => ({
+      id: `m-${index}`,
+      role: index % 2 === 0 ? "user" as const : "model" as const,
+      content: `消息${index}`,
+      at: index + 1,
+    }));
+    const input = createInput({
+      session: { id: "session-1", messages } as unknown as ChatSession,
+    });
+    const { promise } = launch(input, { api, store, host, registries: createRegistries() });
+    await flush();
+
+    // 主进程默认忽略该数组，但一个版本周期的渲染端回退也要拿到完整 UI 文本历史
+    const runInput = (api.run as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as {
+      messages: Array<{ content: string }>;
+    };
+    expect(runInput.messages).toHaveLength(20);
+    expect(JSON.stringify(runInput.messages)).toContain("消息0");
+    expect(JSON.stringify(runInput.messages)).toContain("消息19");
+
+    api.emit(RUN_STARTED_EVENT);
+    api.emit({ type: "RUN_FINISHED", runId: "run-1", result: { status: "success" } });
+    await promise;
+  });
 });

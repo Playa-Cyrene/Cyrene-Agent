@@ -908,6 +908,7 @@ export function ChatPage() {
   async function restartLastChatTurn(
     expectedUserMessageId: string,
     expectedAssistantMessageId: string,
+    disposition: "replace_user" | "keep_user",
     editedContent?: string,
   ): Promise<boolean> {
     if (
@@ -967,6 +968,8 @@ export function ChatPage() {
         assistantId,
         session: truncatedSession,
         attachments: (nextUserMessage.attachments ?? []).map((attachment) => ({ ...attachment })),
+        // 轨迹回退锚点：主进程据此写 turn_rewind（edit=replace_user / regenerate=keep_user）
+        transcriptRewind: { anchorUserTurnId: expectedUserMessageId, disposition },
       });
       return true;
     } catch (error) {
@@ -982,14 +985,14 @@ export function ChatPage() {
     const sessionId = activeSessionIdsRef.current.chat;
     const lastTurn = resolveRevisableLastTurn(sessionId ? (messagesBySessionRef.current[sessionId] ?? []) : [], "chat");
     if (!lastTurn || lastTurn.userMessageId !== messageId) return false;
-    return restartLastChatTurn(lastTurn.userMessageId, lastTurn.assistantMessageId, content);
+    return restartLastChatTurn(lastTurn.userMessageId, lastTurn.assistantMessageId, "replace_user", content);
   }
 
   async function regenerateLastChatResponseImpl(
     userMessageId: string,
     assistantMessageId: string,
   ): Promise<boolean> {
-    return restartLastChatTurn(userMessageId, assistantMessageId);
+    return restartLastChatTurn(userMessageId, assistantMessageId, "keep_user");
   }
 
   // 阶段 1B：编辑/重新生成回调稳定化（同 navActionsRef 模式）——ChatMessageList 的 roles
