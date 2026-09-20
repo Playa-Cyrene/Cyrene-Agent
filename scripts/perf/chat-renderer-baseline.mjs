@@ -10,6 +10,7 @@
 //   npm run perf:chat-baseline -- --runs 1 --only-b  # 快速验证：B 通道 12 配置各 1 次（探针计数确定性高，阶段间验证用）
 //   npm run perf:chat-baseline -- --skip-build    # 复用已有 dist/perf-* 产物（调试 harness 用）
 //   npm run perf:chat-baseline -- --out <file>    # 指定报告输出路径
+//   npm run perf:chat-baseline -- --headed --record-video <dir>  # 将每次可见窗口回放录为 WebM
 //   # A0 归因实验：覆盖矩阵 + 流式渲染形态对照组（animated=现状 / static=关动画 / plain=纯文本绕过 XMarkdown）
 //   npm run perf:chat-baseline -- --skip-build --only-b --runs 3 --datasets markdown,mixed --counts 0,200,500 --scrolls bottom --stream-render static --out docs/internal-issue/perf/a0-static-report.json
 //   # A1-S 成对对照：animated 与 streamdown 交替同场各 3 次（先跑顺序逐轮互换），只跑通道 B
@@ -17,10 +18,11 @@
 
 import { spawnSync } from "node:child_process";
 import { createServer } from "node:http";
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { dirname, extname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
+import { createRecordingContextOptions, installLiveMessageFollow, recordingFileName } from "./chat-renderer-recording.mjs";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 
@@ -30,10 +32,17 @@ const args = process.argv.slice(2);
 const smoke = args.includes("--smoke");
 const skipBuild = args.includes("--skip-build");
 const onlyB = args.includes("--only-b");
+const headed = args.includes("--headed");
 const runsIndex = args.indexOf("--runs");
 const runsOverride = runsIndex >= 0 ? Number.parseInt(args[runsIndex + 1] ?? "", 10) : undefined;
 const outIndex = args.indexOf("--out");
 const outOverride = outIndex >= 0 ? args[outIndex + 1] : undefined;
+const recordVideoIndex = args.indexOf("--record-video");
+const recordVideoArg = recordVideoIndex >= 0 ? args[recordVideoIndex + 1] : undefined;
+if (recordVideoIndex >= 0 && !recordVideoArg) {
+  throw new Error("--record-video 后必须提供输出目录");
+}
+const recordVideoDir = recordVideoArg ? resolve(recordVideoArg) : undefined;
 
 // A0 归因实验：覆盖默认矩阵与流式渲染形态（经 URL 参数传给 harness，见 react-perf/main.tsx）
 const listArg = (flag) => {
@@ -190,8 +199,10 @@ function diffMetrics(before, after) {
 
 // ── 单页执行 ──
 
-async function runCase(context, baseUrl, { dataset, count, scroll, streamRender }) {
+async function runCase(context, baseUrl, { dataset, count, scroll, streamRender }, recordingName) {
   const page = await context.newPage();
+  const video = page.video();
+  if (recordVideoDir) await page.addInitScript(installLiveMessageFollow);
   const cdp = await context.newCDPSession(page);
   await cdp.send("Performance.enable");
   const url = `${baseUrl}/react-perf/index.html?dataset=${dataset}&count=${count}&seed=${SEED}&duration=${DURATION_MS}&scroll=${scroll}&streamRender=${streamRender ?? "animated"}`;
@@ -212,7 +223,12 @@ async function runCase(context, baseUrl, { dataset, count, scroll, streamRender 
   if (!report || report.ok !== true) {
     throw new Error(`harness 报告失败: ${report && typeof report === "object" ? report.error : "无报告"}`);
   }
-  return { ...report, cdp: diffMetrics(metricsBefore, metricsAfter) };
+  let videoPath;
+  if (video && recordingName && recordVideoDir) {
+    videoPath = join(recordVideoDir, recordingName);
+    renameSync(await video.path(), videoPath);
+  }
+  return { ...report, cdp: diffMetrics(metricsBefore, metricsAfter), ...(videoPath ? { videoPath } : {}) };
 }
 
 // ── 聚合 ──
@@ -288,14 +304,15 @@ async function runMatrix(browser, baseUrl, matrix, channelLabel) {
           for (let round = 0; round < matrix.runs; round++) {
             const order = round % 2 === 0 ? PAIRED_MODES : [...PAIRED_MODES].reverse();
             for (const mode of order) {
-              const context = await browser.newContext();
+              const context = await browser.newContext(createRecordingContextOptions(recordVideoDir));
               const pairedConfig = { dataset, count, scroll, streamRender: mode };
+              const recordingName = recordVideoDir ? recordingFileName(pairedConfig, round + 1) : undefined;
               try {
                 try {
-                  runsByMode[mode].push(await runCase(context, baseUrl, pairedConfig));
+                  runsByMode[mode].push(await runCase(context, baseUrl, pairedConfig, recordingName));
                 } catch (error) {
                   console.log(`  [${channelLabel}] ${configLabel} ${mode} 轮 ${round + 1} 失败，重试: ${error.message}`);
-                  runsByMode[mode].push(await runCase(context, baseUrl, pairedConfig));
+                  runsByMode[mode].push(await runCase(context, baseUrl, pairedConfig, recordingName));
                 }
                 console.log(`  [${channelLabel}] ${configLabel} ${mode} 轮 ${round + 1}/${matrix.runs} 完成`);
               } finally {
@@ -315,14 +332,15 @@ async function runMatrix(browser, baseUrl, matrix, channelLabel) {
         const config = { dataset, count, scroll, streamRender: matrix.streamRender ?? "animated" };
         const runs = [];
         for (let i = 0; i < matrix.runs; i++) {
-          const context = await browser.newContext();
+          const context = await browser.newContext(createRecordingContextOptions(recordVideoDir));
+          const recordingName = recordVideoDir ? recordingFileName(config, i + 1) : undefined;
           try {
             // 失败重试一次：偶发调度抖动不至于废掉整轮基线
             try {
-              runs.push(await runCase(context, baseUrl, config));
+              runs.push(await runCase(context, baseUrl, config, recordingName));
             } catch (error) {
               console.log(`  [${channelLabel}] ${configLabel} #${i + 1} 失败，重试: ${error.message}`);
-              runs.push(await runCase(context, baseUrl, config));
+              runs.push(await runCase(context, baseUrl, config, recordingName));
             }
             console.log(`  [${channelLabel}] ${configLabel} #${i + 1}/${matrix.runs} 完成`);
           } finally {
@@ -439,8 +457,9 @@ function printSummary(report, outPath) {
 
 async function main() {
   const outPath = resolve(ROOT, outOverride ?? "docs/internal-issue/perf/baseline-report.json");
+  if (recordVideoDir) mkdirSync(recordVideoDir, { recursive: true });
   console.log(
-    `[perf] 模式: ${pairedControl ? "A1-S 成对对照" : smoke ? "冒烟" : "完整基线"}，seed=${SEED}，流式时长 ${DURATION_MS}ms`,
+    `[perf] 模式: ${pairedControl ? "A1-S 成对对照" : smoke ? "冒烟" : "完整基线"}，${headed ? "可见窗口" : "headless"}，seed=${SEED}，流式时长 ${DURATION_MS}ms`,
   );
 
   // 成对对照只跑通道 B；A 通道（profiling 构建）的额外开销会污染同场对照
@@ -458,6 +477,8 @@ async function main() {
       generatedAt: new Date().toISOString(),
       smoke,
       pairedControl,
+      headed,
+      recordVideoDir,
       seed: SEED,
       durationMs: DURATION_MS,
       bMatrix: B_MATRIX,
@@ -471,7 +492,7 @@ async function main() {
   };
 
   try {
-    browser = await chromium.launch({ headless: true });
+    browser = await chromium.launch({ headless: !headed });
 
     console.log(`\n[perf] 通道 B：${countConfigs(B_MATRIX)} 配置 × ${B_MATRIX.runs} 次`);
     report.channelB.perConfig = await runMatrix(browser, `http://127.0.0.1:${PORT_B}`, B_MATRIX, "B");
