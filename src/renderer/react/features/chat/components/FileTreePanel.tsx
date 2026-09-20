@@ -10,7 +10,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Tree } from "antd";
 import type { DataNode, EventDataNode } from "antd/es/tree";
 import { FileText } from "lucide-react";
-import { createHighlighter, type Highlighter, type ThemedToken } from "shiki";
+import { createHighlighter, type BundledLanguage, type Highlighter, type ThemedToken } from "shiki";
 import { useTranslation } from "../../../i18n";
 import type { WorkspaceFileEntry, WorkspaceFileErrorCode } from "../../../../../shared/workspace-files-types";
 import { MarkdownContent } from "./ChatMessageList";
@@ -25,7 +25,7 @@ const PREVIEW_MAX_LINES = 2000;
 const HIGHLIGHT_THEME = "github-light";
 
 /** 按扩展名支持的语法（与 HIGHLIGHT_LANGS 列表保持一致） */
-const EXT_LANG: Record<string, string> = {
+const EXT_LANG: Record<string, BundledLanguage> = {
   ts: "typescript", tsx: "tsx", mts: "typescript",
   js: "javascript", jsx: "jsx", mjs: "javascript", cjs: "javascript",
   json: "json", jsonc: "jsonc",
@@ -41,7 +41,7 @@ const EXT_LANG: Record<string, string> = {
 };
 
 /** 从相对路径取语言（不认识的扩展名返回 undefined → 纯文本） */
-function langForPath(relPath: string): string | undefined {
+function langForPath(relPath: string): BundledLanguage | undefined {
   const name = relPath.slice(relPath.lastIndexOf("/") + 1);
   const dot = name.lastIndexOf(".");
   if (dot <= 0) return undefined;
@@ -103,6 +103,8 @@ interface TreeItem extends DataNode {
   isDir: boolean;
   /** 目录子级是否已拉取（懒加载标记） */
   loaded?: boolean;
+  /** 覆写 DataNode 的宽泛 children 类型，保证 attachChildren 递归参数匹配 */
+  children?: TreeItem[];
 }
 
 /** 条目 → 树节点（文件按类型显示 VS Code 官方图标，目录用 📂/📁 emoji） */
@@ -319,7 +321,7 @@ export function FilePreviewContent({
 
   // 高亮结果与纯文本统一成"每行一个 token 列表"的结构再渲染
   const totalLines = tokens ? tokens.length : state.content.split("\n").length;
-  const lineTokens: ThemedToken[][] = tokens ?? state.content.split("\n").map((line) => [{ content: line }]);
+  const lineTokens: ThemedToken[][] = tokens ?? state.content.split("\n").map((line) => [{ content: line, offset: 0 }]);
   const lines = lineTokens.slice(0, PREVIEW_MAX_LINES);
 
   // Markdown 渲染预览同样限制行数，避免超大文档一次性铺满 DOM

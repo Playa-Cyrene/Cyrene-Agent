@@ -217,6 +217,8 @@ export function resolveAgentRoundTitle(
 export interface FlatRunTimelineEntry {
   kind: "reasoning" | "process" | "tool" | "task";
   key: string;
+  /** 新记录的单调序号；缺失（旧记录/任务委派）排同组之后 */
+  seq?: number;
   reasoning?: ReasoningBlock;
   process?: ProcessMessageRecord;
   tool?: ToolExecutionRecord;

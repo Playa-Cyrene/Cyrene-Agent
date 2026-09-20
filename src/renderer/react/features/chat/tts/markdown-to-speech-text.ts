@@ -137,22 +137,33 @@ function sanitizePlainText(text: string, options: SpeechTextOptions, warnings: s
     .trim();
 }
 
+/** 从任意 token 安全取内联子 token：marked 的 Generic 变体（type 为宽 string，
+ *  带 [key: string]: any 索引）无法被 switch 判别收窄，且各变体 tokens 字段
+ *  可选性不一，统一收敛为非空列表。 */
+function childTokens(token: Token): Token[] {
+  const child = (token as { tokens?: Token[] }).tokens;
+  return Array.isArray(child) ? child : [];
+}
+
 function inlineText(tokens: Token[], options: SpeechTextOptions, warnings: string[]): string {
   return tokens.map((token) => {
     switch (token.type) {
-      case "text":
       case "escape":
-        return token.tokens?.length
-          ? inlineText(token.tokens, options, warnings)
+        return sanitizePlainText(token.text, options, warnings);
+      case "text": {
+        const inline = childTokens(token);
+        return inline.length
+          ? inlineText(inline, options, warnings)
           : sanitizePlainText(token.text, options, warnings);
+      }
       case "strong":
       case "em":
       case "del":
-        return inlineText(token.tokens, options, warnings);
+        return inlineText(childTokens(token), options, warnings);
       case "codespan":
         return token.text.length <= 48 ? spokenIdentifier(token.text) : "一段行内代码";
       case "link": {
-        const label = inlineText(token.tokens, options, warnings);
+        const label = inlineText(childTokens(token), options, warnings);
         return /^https?:\/\//i.test(token.text) || !label ? "这里有一个链接" : label;
       }
       case "image": {
@@ -163,8 +174,10 @@ function inlineText(tokens: Token[], options: SpeechTextOptions, warnings: strin
         return "，";
       case "html":
         return "";
-      default:
-        return token.tokens?.length ? inlineText(token.tokens, options, warnings) : "";
+      default: {
+        const inline = childTokens(token);
+        return inline.length ? inlineText(inline, options, warnings) : "";
+      }
     }
   }).filter(Boolean).join("");
 }
@@ -203,24 +216,29 @@ function blockText(tokens: Token[], options: SpeechTextOptions, warnings: string
     switch (token.type) {
       case "heading":
       case "paragraph":
-        blocks.push(sentence(inlineText(token.tokens, options, warnings)));
+        blocks.push(sentence(inlineText(childTokens(token), options, warnings)));
         break;
-      case "text":
-        blocks.push(sentence(token.tokens?.length
-          ? inlineText(token.tokens, options, warnings)
+      case "text": {
+        const inline = childTokens(token);
+        blocks.push(sentence(inline.length
+          ? inlineText(inline, options, warnings)
           : sanitizePlainText(token.text, options, warnings)));
         break;
+      }
       case "blockquote": {
-        const content = stripTerminalPunctuation(blockText(token.tokens, options, warnings).join(" "));
+        const content = stripTerminalPunctuation(blockText(childTokens(token), options, warnings).join(" "));
         if (content) blocks.push(`引用内容：${content}。`);
         break;
       }
-      case "list":
-        token.items.forEach((item, index) => {
+      // case 命中时联合里混有 Generic（type 为宽 string），cast 回具体类型取字段
+      case "list": {
+        const list = token as Tokens.List;
+        list.items.forEach((item, index) => {
           const content = stripTerminalPunctuation(blockText(item.tokens, options, warnings).join(" "));
           if (content) blocks.push(`${ORDINALS[index] ?? `第${index + 1}项`}，${content}。`);
         });
         break;
+      }
       case "code": {
         const language = token.lang?.trim().split(/\s+/)[0].toLowerCase() ?? "";
         const label = LANGUAGE_NAMES[language] ?? (language ? spokenIdentifier(language) : "");
@@ -228,15 +246,17 @@ function blockText(tokens: Token[], options: SpeechTextOptions, warnings: string
         break;
       }
       case "table":
-        blocks.push(tableText(token, options, warnings));
+        blocks.push(tableText(token as Tokens.Table, options, warnings));
         break;
       case "html":
       case "space":
       case "hr":
       case "def":
         break;
-      default:
-        if (token.tokens?.length) blocks.push(...blockText(token.tokens, options, warnings));
+      default: {
+        const inline = childTokens(token);
+        if (inline.length) blocks.push(...blockText(inline, options, warnings));
+      }
     }
   }
   return blocks.filter(Boolean);

@@ -1,6 +1,7 @@
 import { Conversations, type ConversationItemType } from "@ant-design/x";
 import { DeleteOutlined, EditOutlined, PushpinOutlined } from "@ant-design/icons";
 import { Input, Menu, Popover } from "antd";
+import type { InputRef } from "antd";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "../../../i18n";
 import { useFeedback } from "../../../components/feedback/FeedbackProvider";
@@ -159,7 +160,8 @@ export const ConversationSidebar = memo(function ConversationSidebar({
     value: string;
   } | null>(null);
 
-  const renameInputRef = useRef<HTMLInputElement | null>(null);
+  // antd Input 的 ref 是 InputRef（含 focus/select），不是原生元素
+  const renameInputRef = useRef<InputRef | null>(null);
 
   useEffect(() => {
     if (!editing) return;

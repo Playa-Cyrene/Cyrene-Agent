@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { useTranslation } from "../../../i18n";
-import type { TodoState } from "../../../../shared/todo-types";
+import type { TodoState } from "../../../../../shared/todo-types";
 import workTodoPngUrl from "../../../assets/status-moods/提醒.png?url";
 import learnTodoPngUrl from "../../../assets/status-moods/学习.png?url";
 import { useFloatingCard } from "./floating-card";

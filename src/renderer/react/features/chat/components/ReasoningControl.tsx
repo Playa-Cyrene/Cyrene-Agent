@@ -5,7 +5,7 @@ import {
   computeReasoningDropdown,
   type ReasoningDropdownView,
 } from "../../../../lib/reasoning-dropdown";
-import type { ReasoningPreference } from "../../../../shared/reasoning";
+import type { ReasoningPreference } from "../../../../../shared/reasoning";
 import thinkingIconUrl from "../../../assets/status-moods/思考强度.png?url";
 
 interface ReasoningState {

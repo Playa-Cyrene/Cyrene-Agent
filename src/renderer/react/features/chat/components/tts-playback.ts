@@ -48,7 +48,8 @@ interface StreamingPlayback {
   onCacheKey?: (cacheKey: string, converterVersion: string) => void;
   mediaSource: MediaSource;
   sourceBuffer: SourceBuffer | null;
-  queue: Uint8Array[];
+  // SourceBuffer.appendBuffer 要求 buffer 为 ArrayBuffer（TS 5.7 起泛型区分 ArrayBuffer/SharedArrayBuffer）
+  queue: Uint8Array<ArrayBuffer>[];
   queuedBytes: number;
   ended: boolean;
   started: boolean;
@@ -141,7 +142,7 @@ function supportsStreamingPlayback(): boolean {
   return typeof MediaSource !== "undefined" && MediaSource.isTypeSupported("audio/mpeg");
 }
 
-function decodeBase64(base64: string): Uint8Array {
+function decodeBase64(base64: string): Uint8Array<ArrayBuffer> {
   return Uint8Array.from(atob(base64), (character) => character.charCodeAt(0));
 }
 

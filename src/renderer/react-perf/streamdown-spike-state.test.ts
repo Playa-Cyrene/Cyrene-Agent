@@ -50,7 +50,7 @@ function update(content: string, key?: string) {
     root.render(
       React.createElement(
         FileLinkContext.Provider,
-        { value: { workspaceRoot: null, openFile: null } },
+        { value: { workspaceRoot: undefined, openFile: undefined } },
         React.createElement(
           MessageStreamingContext.Provider,
           { value: true },

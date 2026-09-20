@@ -31,6 +31,40 @@ interface OpenInAppApi {
   open: (sessionId: string, appId: string) => Promise<OpenInAppOpenResult>;
 }
 
+/** 聊天窗口通过 contextBridge 暴露的 window.chat（对应 preload 的 chatApi）。
+ *  只声明渲染端实际使用的方法面，完整实现见 src/preload/index.ts。 */
+interface ChatWindowApi {
+  minimize: () => void;
+  close: () => void;
+  toggleMaximize: () => void;
+  /** 已启用的贴纸列表（主进程返回 { id, src } 结构） */
+  getEnabledStickers: () => Promise<Array<{ id: string; src: string }>>;
+  /** 读取本地图片并转为 dataUrl 预览；失败返回 ok=false + error */
+  getImagePreview: (filePath: string) => Promise<{ ok: boolean; dataUrl?: string; error?: string }>;
+  /** 主进程通用设置（只声明渲染端读取的字段） */
+  getGeneralSettings: () => Promise<{
+    language?: string;
+    currentStyleId?: string;
+    ttsEarlyReadSplitEnabled?: boolean;
+    ttsEarlyReadSplitMode?: "sentence" | "paragraph";
+  }>;
+}
+
+/** 设置窗口通过 contextBridge 暴露的 window.settings（对应 preload 的 settingsApi）。
+ *  只声明聊天页技能/工具模式面板用到的子集，完整实现见 src/preload/index.ts。 */
+interface SettingsWindowApi {
+  getSkillCatalog: () => Promise<unknown>;
+  getSkillModeOverrides: () => Promise<unknown>;
+  /** 重新扫描技能目录；失败返回 ok=false + error */
+  rescanSkills: () => Promise<{ ok: boolean; error?: string }>;
+  setSkillModeOverride: (skillId: string, mode: string, next: boolean) => Promise<unknown>;
+  getToolCatalog: () => Promise<unknown>;
+  getToolModeOverrides: () => Promise<unknown>;
+  getGeneral: () => Promise<unknown>;
+  setToolModeOverride: (toolId: string, mode: string, next: boolean) => Promise<unknown>;
+  saveGeneral: (payload: Record<string, unknown>) => Promise<unknown>;
+}
+
 declare global {
   interface Window {
     system?: SystemApi;
@@ -42,6 +76,8 @@ declare global {
     pluginPanel?: PluginPanelApi;
     moments?: MomentsApi;
     toast?: ToastRendererApi;
+    chat?: ChatWindowApi;
+    settings?: SettingsWindowApi;
   }
 }
 

@@ -140,12 +140,14 @@ export interface ChoiceApi {
 
 /**
  * 审批载荷类型的唯一声明在 shared（主进程 / preload / 渲染端共用同一份）。
- * 这里用别名保留渲染端既有名字，避免大面积改 import。
+ * 先 import 再导出：纯 re-export 的别名在本文件内不可见，下方接口要用。
  */
-export type {
+import type {
   ApprovalRequest as PermissionApprovalRequest,
   ApprovalSettledPayload as PermissionApprovalSettled,
 } from "../../../../../shared/permission-approval";
+
+export type { PermissionApprovalRequest, PermissionApprovalSettled };
 
 export interface SettingsApprovalApi {
   onPermissionApprovalRequest: (callback: (request: PermissionApprovalRequest) => void) => () => void;

@@ -285,7 +285,8 @@ export function ChatComposer({
 
   const hasComposerHeader = attachments.length > 0 || selectedStickers.length > 0;
 
-  const handleSenderKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+  // Sender 的 onKeyDown 声明在 Element 层级；函数体只用基类属性，参数随组件声明放宽
+  const handleSenderKeyDown = (event: KeyboardEvent<Element>) => {
     if (!modelBusy || event.key !== "Enter" || event.shiftKey || event.ctrlKey || event.altKey || event.metaKey) return;
     const nativeEvent = event.nativeEvent as globalThis.KeyboardEvent;
     if (compositionActiveRef.current || nativeEvent.isComposing || nativeEvent.keyCode === 229) return;

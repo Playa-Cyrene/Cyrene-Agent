@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { AskUserPanel, PermissionPanel, PopQuizPanel } from "./InteractionPanel";
 import { resolveComposerSlot, type ComposerInteraction } from "./run-presentation";
-import type { PopQuizSubmission } from "../../../../../shared/pop-quiz";
+import type { PopQuizGradedQuestion, PopQuizSubmission } from "../../../../../shared/pop-quiz";
 import "./RunExperience.css";
 
 export function ComposerSlot({
@@ -20,7 +20,7 @@ export function ComposerSlot({
   onAnswer?: (interactionId: string, answer: unknown) => void;
   onIgnore?: (interactionId: string) => void;
   onPermissionDecision?: (interactionId: string, allowed: boolean) => void;
-  onQuizSubmit?: (submission: PopQuizSubmission) => Promise<{ ok: boolean; error?: string; graded?: unknown[] }>;
+  onQuizSubmit?: (submission: PopQuizSubmission) => Promise<{ ok: boolean; error?: string; graded?: PopQuizGradedQuestion[] }>;
   onQuizSkip?: (quizId: string) => Promise<{ ok: boolean; error?: string }>;
 }) {
   const slot = resolveComposerSlot(interaction);

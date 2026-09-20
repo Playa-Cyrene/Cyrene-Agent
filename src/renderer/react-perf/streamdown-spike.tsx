@@ -12,7 +12,7 @@ import {
   type Components,
   type UrlTransform,
 } from "streamdown";
-import type { PluggableList } from "unified";
+import type { PluggableList, Plugin } from "unified";
 import { math as mathPlugin } from "@streamdown/math";
 import { CodeHighlighter } from "@ant-design/x";
 import "./streamdown-spike.css";
@@ -109,7 +109,13 @@ function SpikeAnchor({ href, children }: { href?: string; children?: ReactNode }
   );
 }
 
-const spikeComponents: Components = { a: SpikeAnchor, pre: SpikePre };
+// streamdown 的 Components 除具名键外还带宽索引签名（组件需接受
+// Record<string, unknown>），具名 props 的组件直接赋值会撞索引签名；
+// 经解构转发保持组件命名与独立定义，参数类型由赋值上下文推断
+const spikeComponents: Components = {
+  a: (props) => <SpikeAnchor {...props} />,
+  pre: (props) => <SpikePre {...props} />,
+};
 
 /**
  * Streamdown 默认的 URL 安全转换会拦截 file:/// 协议（渲染为 [blocked] 文本），
@@ -138,7 +144,8 @@ const spikeUrlTransform: UrlTransform = (url, key, node) => {
  * 每次渲染新建数组会使逐块 memo 全部失效，直接摧毁 spike 的性能假设。
  */
 const [defaultSanitizePlugin, defaultSanitizeSchema] = defaultRehypePlugins.sanitize as unknown as [
-  PluggableList[number],
+  // 元组首个位置要求 Plugin 而非宽泛的 Pluggable 联合，否则 options 元组不匹配
+  Plugin,
   { protocols?: { href?: string[] } },
 ];
 const spikeRehypePlugins: PluggableList = [

@@ -254,6 +254,15 @@ function asNonEmptyString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
+/** 抽查题型白名单校验：合法值收敛为字面量联合（string 的负向 !== 检查不产生收窄） */
+function asPopQuizQuestionType(
+  value: unknown,
+): PopQuizInteraction["questions"][number]["type"] | undefined {
+  return value === "choice" || value === "multi" || value === "true_false" || value === "short_answer"
+    ? value
+    : undefined;
+}
+
 function normalizeOptions(value: unknown): AskUserQuestion["options"] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((item) => {
@@ -282,6 +291,7 @@ function normalizePublicOptions(value: unknown): AskUserQuestion["options"] {
  */
 export function normalizeChoiceInteraction(value: unknown): AskUserInteraction | undefined {
   const card = asRecord(value);
+  if (!card) return undefined;
   const interactionId = asNonEmptyString(card?.interactionId);
   const runId = asNonEmptyString(card?.runId);
   const revision = typeof card?.revision === "number" && Number.isInteger(card.revision)
@@ -290,6 +300,7 @@ export function normalizeChoiceInteraction(value: unknown): AskUserInteraction |
   if (interactionId && runId && revision !== undefined && Array.isArray(card.questions)) {
     const questions = card.questions.flatMap((item) => {
       const question = asRecord(item);
+      if (!question) return [];
       const customInput = asRecord(question?.customInput);
       const id = asNonEmptyString(question?.id);
       const prompt = asNonEmptyString(question?.prompt);
@@ -326,6 +337,7 @@ export function normalizeChoiceInteraction(value: unknown): AskUserInteraction |
 
   const structuredQuestions = Array.isArray(card.questions) ? card.questions.flatMap((item) => {
     const question = asRecord(item);
+    if (!question) return [];
     const field = asNonEmptyString(question?.field);
     const text = asNonEmptyString(question?.question);
     if (!field || !text) return [];
@@ -379,16 +391,17 @@ export function normalizeDeferredPlanChoice(
  */
 export function normalizePopQuizCard(value: unknown): PopQuizInteraction | undefined {
   const card = asRecord(value);
+  if (!card) return undefined;
   const quizId = asNonEmptyString(card?.quizId);
   const runId = asNonEmptyString(card?.runId);
   if (!quizId || !runId || !Array.isArray(card.questions)) return undefined;
   const questions = (card.questions as unknown[]).flatMap((item) => {
     const question = asRecord(item);
+    if (!question) return [];
     const id = asNonEmptyString(question?.id);
-    const type = asNonEmptyString(question?.type);
+    const type = asPopQuizQuestionType(question?.type);
     const prompt = asNonEmptyString(question?.question);
-    if (!id || !prompt) return [];
-    if (type !== "choice" && type !== "multi" && type !== "true_false" && type !== "short_answer") return [];
+    if (!id || !prompt || !type) return [];
     const options = Array.isArray(question.options)
       ? question.options.flatMap((option) => {
           const record = asRecord(option);
@@ -507,6 +520,7 @@ export function normalizeTaskPlanPresentation(value: unknown): TaskPlanPresentat
   const snapshot = asRecord(value);
   const steps = Array.isArray(snapshot?.steps) ? snapshot.steps.flatMap((item) => {
     const step = asRecord(item);
+    if (!step) return [];
     const id = asNonEmptyString(step?.stepId);
     const title = asNonEmptyString(step?.objective);
     if (!id || !title) return [];

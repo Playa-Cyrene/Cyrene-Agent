@@ -338,7 +338,7 @@ export function PopQuizPanel({
                       : t("interaction.quizGradedPending")}
                   </span>
                   <div className="cy-quiz-graded__answer">
-                    {t("interaction.quizYourAnswer")}：<MarkdownContent content={userAnswer} />
+                    {t("interaction.quizYourAnswer")}：<MarkdownContent content={userAnswer ?? ""} />
                   </div>
                   {result?.correctAnswer !== undefined && (
                     <div className="cy-quiz-graded__answer">

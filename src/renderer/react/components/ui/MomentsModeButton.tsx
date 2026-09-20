@@ -26,6 +26,8 @@ export function MomentsModeButton({ active = false, onClick }: MomentsModeButton
     let disposed = false;
     // 未读 = 水位之后的互动数，两侧输入（feed 数据、已读水位）任一变化都要重算
     async function refresh() {
+      // 函数声明内 TS 不保留外层判空，防御性再判一次
+      if (!api) return;
       try {
         const items: MomentFeedItem[] = await api.list({ limit: 50 });
         if (disposed) return;
