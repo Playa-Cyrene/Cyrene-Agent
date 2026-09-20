@@ -1,0 +1,288 @@
+/**
+ * 会话轨迹权威存储（CTA Phase 1）。
+ *
+ * 两文件模式（与 runStore 的 session JSON + events JSONL 同构）：
+ * - transcript.jsonl：逐行追加，每条目一行 JSON，追加即落盘；
+ * - snapshot.json：物化检查点，temp + rename 原子写。
+ *
+ * 不变式：
+ * - 每会话独立写队列串行化文件操作，seq 只在队列内分配；
+ * - 追加前检测末行 JSON 完整性，半行（崩溃遗留）只修剪尾行，保留此前所有合法条目；
+ * - 幂等：entryId 主键 first-write-wins；user (turnId, revision) 次级键
+ *   语义等价吸收、内容冲突抛 TRANSCRIPT_IDEMPOTENCY_CONFLICT；
+ * - 读取先等队列清空，再以快照 throughSeq 为基线重放 JSONL 增量并重建幂等索引。
+ */
+
+import fs from "node:fs";
+import path from "node:path";
+import {
+  assertValidTranscriptDraft,
+  userRevisionKey,
+  type TranscriptAppendInput,
+  type TranscriptEntry,
+  type TranscriptSnapshot,
+} from "./conversation-transcript-types";
+
+const ROOT_DIR_NAME = "transcripts";
+const JSONL_FILE_NAME = "transcript.jsonl";
+const SNAPSHOT_FILE_NAME = "snapshot.json";
+const SCHEMA_VERSION = 1;
+
+export interface ConversationTranscriptStoreOptions {
+  now?: () => number;
+}
+
+interface LoadedConversationState {
+  entries: TranscriptEntry[];
+  /** 快照基线（无快照为 0）。 */
+  throughSeq: number;
+  /** 全部条目中的最大 seq（快照条目 + 增量行）。 */
+  maxSeq: number;
+  seenEntryIds: Set<string>;
+  seenUserRevisions: Set<string>;
+}
+
+function validConversationId(conversationId: string): boolean {
+  return (
+    conversationId.length > 0 &&
+    !conversationId.includes("/") &&
+    !conversationId.includes("\\") &&
+    conversationId !== "." &&
+    conversationId !== ".."
+  );
+}
+
+/** 深度等价（键顺序无关），用于幂等语义比较。 */
+function deepEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+    return a.every((item, index) => deepEqual(item, b[index]));
+  }
+  const keysA = Object.keys(a).sort();
+  const keysB = Object.keys(b).sort();
+  if (keysA.length !== keysB.length || keysA.some((key, index) => key !== keysB[index])) return false;
+  return keysA.every((key) =>
+    deepEqual((a as Record<string, unknown>)[key], (b as Record<string, unknown>)[key]),
+  );
+}
+
+/** 幂等语义比较：忽略信封的 seq / at / id（次级键场景 id 注定不同），其余全等。 */
+function sameSemanticContent(input: TranscriptAppendInput, existing: TranscriptEntry): boolean {
+  const { seq: _seq, at: _at, id: _id, ...existingRest } = existing;
+  const { at: _inputAt, id: _inputId, ...inputRest } = input;
+  return deepEqual(inputRest, existingRest);
+}
+
+export class ConversationTranscriptStore {
+  private readonly root: string;
+  private readonly now: () => number;
+  /** 每会话写队列尾（settled promise），串行化所有文件操作。 */
+  private readonly queues = new Map<string, Promise<void>>();
+
+  constructor(userDataRoot: string, options?: ConversationTranscriptStoreOptions) {
+    this.root = path.join(userDataRoot, ROOT_DIR_NAME);
+    this.now = options?.now ?? (() => Date.now());
+  }
+
+  append(conversationId: string, input: TranscriptAppendInput): Promise<TranscriptEntry> {
+    // 入队前先做协议校验，非法草稿快速失败且不占队列
+    assertValidTranscriptDraft(input);
+    return this.enqueue(conversationId, async () => {
+      const state = await this.loadState(conversationId);
+
+      // 幂等主键：entryId 已存在，first-write-wins，返回原条目
+      const existingById = state.entries.find((entry) => entry.id === input.id);
+      if (existingById) {
+        if (existingById.kind !== input.kind) throw new Error("TRANSCRIPT_IDEMPOTENCY_CONFLICT");
+        return existingById;
+      }
+
+      // user 次级键 (turnId, revision)：同键语义等价吸收返回持有者，内容不同抛冲突
+      if (input.kind === "user" && input.turnId && input.revision) {
+        const holder = state.entries.find(
+          (entry) =>
+            entry.kind === "user" && entry.turnId === input.turnId && entry.revision === input.revision,
+        );
+        if (holder) {
+          if (sameSemanticContent(input, holder)) return holder;
+          throw new Error("TRANSCRIPT_IDEMPOTENCY_CONFLICT");
+        }
+      }
+
+      // seq 只在队列内分配：现有最大 seq + 1（快照基线 + 已重放增量）
+      const entry = { ...input, seq: state.maxSeq + 1, at: input.at ?? this.now() } as TranscriptEntry;
+      const dir = this.conversationDir(conversationId);
+      await fs.promises.mkdir(dir, { recursive: true });
+      await fs.promises.appendFile(path.join(dir, JSONL_FILE_NAME), `${JSON.stringify(entry)}\n`, "utf8");
+      return entry;
+    });
+  }
+
+  read(conversationId: string): Promise<TranscriptSnapshot> {
+    return this.enqueue(conversationId, async () => {
+      const state = await this.loadState(conversationId);
+      return {
+        schemaVersion: SCHEMA_VERSION,
+        throughSeq: state.maxSeq,
+        entries: state.entries,
+        seenEntryIds: [...state.seenEntryIds],
+        seenUserRevisions: [...state.seenUserRevisions],
+      };
+    });
+  }
+
+  checkpoint(conversationId: string): Promise<TranscriptSnapshot> {
+    return this.enqueue(conversationId, async () => {
+      const state = await this.loadState(conversationId);
+      const snapshot: TranscriptSnapshot = {
+        schemaVersion: SCHEMA_VERSION,
+        throughSeq: state.maxSeq,
+        entries: state.entries,
+        seenEntryIds: [...state.seenEntryIds],
+        seenUserRevisions: [...state.seenUserRevisions],
+      };
+      const dir = this.conversationDir(conversationId);
+      await fs.promises.mkdir(dir, { recursive: true });
+      // 原子写：temp + rename，JSONL 保持不动
+      const tempFile = path.join(dir, `${SNAPSHOT_FILE_NAME}.${process.pid}.tmp`);
+      await fs.promises.writeFile(tempFile, JSON.stringify(snapshot), "utf8");
+      await fs.promises.rename(tempFile, path.join(dir, SNAPSHOT_FILE_NAME));
+      return snapshot;
+    });
+  }
+
+  waitForIdle(conversationId: string): Promise<void> {
+    const pending = this.queues.get(conversationId);
+    return pending ? pending.then(() => undefined) : Promise.resolve();
+  }
+
+  deleteConversation(conversationId: string): Promise<void> {
+    return this.enqueue(conversationId, async () => {
+      await fs.promises.rm(this.conversationDir(conversationId), { recursive: true, force: true });
+    });
+  }
+
+  /** 会话目录（含路径穿越校验）。 */
+  private conversationDir(conversationId: string): string {
+    if (!validConversationId(conversationId)) {
+      throw new Error("TRANSCRIPT_INVALID_CONVERSATION_ID");
+    }
+    return path.join(this.root, conversationId);
+  }
+
+  /** 串行队列：同一会话的文件操作依次执行；前序失败不阻塞后续操作。 */
+  private enqueue<T>(conversationId: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.queues.get(conversationId) ?? Promise.resolve();
+    const current = previous.then(operation, operation);
+    const settled = current.then(() => undefined, () => undefined);
+    this.queues.set(conversationId, settled);
+    return current.finally(() => {
+      if (this.queues.get(conversationId) === settled) this.queues.delete(conversationId);
+    });
+  }
+
+  /** 加载会话状态：尾行修复 + 快照基线 + seq > throughSeq 的 JSONL 增量重放。 */
+  private async loadState(conversationId: string): Promise<LoadedConversationState> {
+    const dir = this.conversationDir(conversationId);
+    const jsonlFile = path.join(dir, JSONL_FILE_NAME);
+
+    let text = "";
+    try {
+      text = await fs.promises.readFile(jsonlFile, "utf8");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+
+    // 尾行容错：只修剪非空的未终止或不可解析的尾行，保留此前所有合法条目
+    const { kept, lines } = repairTruncatedTail(text);
+    if (kept !== text) {
+      await fs.promises.mkdir(dir, { recursive: true });
+      await fs.promises.truncate(jsonlFile, Buffer.byteLength(kept, "utf8"));
+    }
+
+    const snapshot = await this.readSnapshotFile(dir);
+    const throughSeq = snapshot?.throughSeq ?? 0;
+    const entries: TranscriptEntry[] = [...(snapshot?.entries ?? [])];
+    const seenEntryIds = new Set<string>(snapshot?.seenEntryIds ?? []);
+    const seenUserRevisions = new Set<string>(snapshot?.seenUserRevisions ?? []);
+
+    for (const line of lines) {
+      if (line.trim() === "") continue;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(line);
+      } catch {
+        // 中间行损坏属于数据损坏，显性失败（尾行已在修复步骤处理）
+        throw new Error("TRANSCRIPT_CORRUPT_ROW");
+      }
+      const entry = parsed as TranscriptEntry;
+      if (!entry || typeof entry !== "object" || typeof entry.id !== "string" || typeof entry.seq !== "number") {
+        throw new Error("TRANSCRIPT_CORRUPT_ROW");
+      }
+      if (entry.seq <= throughSeq) continue;
+      entries.push(entry);
+      seenEntryIds.add(entry.id);
+      if (entry.kind === "user" && entry.turnId && typeof entry.revision === "number") {
+        seenUserRevisions.add(userRevisionKey(entry.turnId, entry.revision));
+      }
+    }
+
+    const maxSeq = entries.reduce((max, entry) => Math.max(max, entry.seq), throughSeq);
+    return { entries, throughSeq, maxSeq, seenEntryIds, seenUserRevisions };
+  }
+
+  private async readSnapshotFile(dir: string): Promise<TranscriptSnapshot | null> {
+    try {
+      const raw = await fs.promises.readFile(path.join(dir, SNAPSHOT_FILE_NAME), "utf8");
+      const parsed = JSON.parse(raw) as TranscriptSnapshot;
+      return parsed?.schemaVersion === SCHEMA_VERSION ? parsed : null;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      return null;
+    }
+  }
+}
+
+/** 修剪截断尾行：返回保留文本与可用于解析的完整行。 */
+function repairTruncatedTail(text: string): { kept: string; lines: string[] } {
+  if (text === "") return { kept: "", lines: [] };
+  let kept = text;
+  if (!kept.endsWith("\n")) {
+    // 未终止尾行（半行是崩溃的合法遗留，即使凑巧可解析也不可信）：修剪到最后一个换行
+    const lastNewline = kept.lastIndexOf("\n");
+    kept = lastNewline === -1 ? "" : kept.slice(0, lastNewline + 1);
+  }
+  const lines = kept.split("\n");
+  lines.pop(); // 去掉结尾空串
+  // 尾部空行直接丢弃；最后一个非空行不可解析则修剪该行
+  while (lines.length > 0) {
+    const last = lines[lines.length - 1];
+    if (last.trim() === "") {
+      lines.pop();
+      continue;
+    }
+    try {
+      JSON.parse(last);
+      break;
+    } catch {
+      lines.pop();
+    }
+  }
+  const normalized = lines.length > 0 ? `${lines.join("\n")}\n` : "";
+  return { kept: normalized, lines };
+}
+
+const storeSingletons = new Map<string, ConversationTranscriptStore>();
+
+/** 按 userDataRoot 取单例（同一根目录共享会话写队列）。 */
+export function getConversationTranscriptStore(userDataRoot: string): ConversationTranscriptStore {
+  const key = path.resolve(userDataRoot);
+  let store = storeSingletons.get(key);
+  if (!store) {
+    store = new ConversationTranscriptStore(userDataRoot);
+    storeSingletons.set(key, store);
+  }
+  return store;
+}
