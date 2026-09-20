@@ -3,6 +3,7 @@ import type { ChatMessage } from "../vendors/types";
 import {
   compressForAgentLoop,
   findSafeCutPointForRetainedTokens,
+  isToolPairSafeBoundary,
 } from "./compaction";
 
 function message(role: ChatMessage["role"], content: string): ChatMessage {
@@ -28,6 +29,28 @@ describe("Harness context compaction v2", () => {
     expect(messages.slice(cutIndex).map((entry) => entry.role)).toEqual([
       "assistant", "tool", "user",
     ]);
+  });
+
+  it("cannot split an assistant with two tool calls and only one result", () => {
+    const messages: ChatMessage[] = [
+      message("user", "查询"),
+      {
+        role: "assistant",
+        content: "并行读取两个文件。",
+        toolCalls: [
+          { id: "call-a", name: "read_file", arguments: "{}" },
+          { id: "call-b", name: "read_file", arguments: "{}" },
+        ],
+      },
+      { role: "tool", toolCallId: "call-a", name: "read_file", content: "文件 A 内容" },
+    ];
+
+    // 声明与已有结果之间不得切开（结果在右、声明在左 → 跨界）
+    expect(isToolPairSafeBoundary(messages, 2)).toBe(false);
+    // 声明之前切开：整组（声明 + 结果）保留在右侧 → 安全
+    expect(isToolPairSafeBoundary(messages, 1)).toBe(true);
+    // 全部保留 → 安全
+    expect(isToolPairSafeBoundary(messages, 0)).toBe(true);
   });
 
   it("keeps the original transcript when summary generation fails", async () => {

@@ -104,8 +104,9 @@ export function findSafeCutPoint(
 /**
  * 判断一个 transcript 边界是否完整保留了每个 tool call / tool result 配对。
  * `cutIndex` 左边会被压缩、右边原样保留；任何一对不得跨越该边界。
+ * 会话轨迹（CTA）的模型上下文物化复用同一安全语义。
  */
-function isToolPairSafeBoundary(messages: ChatMessage[], cutIndex: number): boolean {
+export function isToolPairSafeBoundary(messages: ChatMessage[], cutIndex: number): boolean {
   const toolCallIndexes = new Map<string, number>();
   for (let index = 0; index < messages.length; index++) {
     const entry = messages[index];
