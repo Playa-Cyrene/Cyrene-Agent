@@ -62,6 +62,8 @@ import type { RunCapabilities } from "./run-capabilities";
 import { buildStickerEmbeddingQuery } from "../sticker-query";
 import { isPlanReadOnly, getPlanState } from "./plan-mode";
 import { policyFor, type ToolRiskLevel } from "../permission-policy";
+import { resolveTranscriptRetainTokens, type MaterializedTranscript } from "./conversation-transcript-context";
+import type { UncertainEffect } from "./harness/types";
 
 /** index.ts 模块级符号的最小可注入子集。
  *  类型故意用宽签名（unknown / 任意 shape）—— 因为 build-options 是纯消费者，
@@ -119,6 +121,11 @@ export interface BuildOptionsDeps {
     getEnabledToolsForMode(mode: ConversationMode, overrides?: ToolModeOverrides): ReadonlyArray<unknown>;
   };
   normalizeChatMessages: (raw: ReadonlyArray<unknown>) => ChatMessage[];
+  /** 权威轨迹上下文构建（CTA Phase 1）：桌面 useTranscriptContext 时物化模型消息。 */
+  buildModelContext?: (
+    conversationId: string,
+    retainTokens: number,
+  ) => Promise<MaterializedTranscript>;
   chatRequestTimeoutMs: number;
   captionImageForFallback?: (filePath: string) => Promise<{ ok: boolean; caption?: string; error?: string }>;
   prepareCitaTurn?: (input: {
@@ -474,6 +481,26 @@ function buildStylePromptBlock(markdown: string): string {
   ].join("\n");
 }
 
+/** 轨迹侧崩溃孤儿说明：进入 recoveryContext 提示模型先查证，不得自动重放。 */
+export function formatTranscriptUncertainEffects(effects: UncertainEffect[]): string {
+  const lines = effects.map((effect) =>
+    `- [${effect.toolName}]（调用 ${effect.toolCallId}，指纹 ${effect.fingerprint}）：${effect.message}`);
+  return [
+    "【上次运行的未确认外部副作用】",
+    ...lines,
+    "以上副作用结果未知，不得自动重放；先向用户查证实际结果后再决定下一步。",
+  ].join("\n");
+}
+
+/** fail-closed：桌面轨迹上下文开启但装配缺失时直接报错，不得静默回退渲染端消息。 */
+function requireBuildModelContext(
+  deps: BuildOptionsDeps,
+): NonNullable<BuildOptionsDeps["buildModelContext"]> {
+  const reader = deps.buildModelContext;
+  if (!reader) throw new Error("buildModelContext is not wired for transcript context");
+  return reader;
+}
+
 /**
  * 构造 CyreneAgent.runWithEvents 所需的 options + 提取 latestUserText。
  * 与 index.ts 原 AG-UI bridge 的 buildOptions 行为完全一致。
@@ -487,7 +514,13 @@ export async function buildAgentRunOptions(
   if (!settings.baseUrl) {
     throw new Error("还没有填写 API URL，请先在设置里保存 API 配置。");
   }
-  const messages = deps.normalizeChatMessages(input.messages);
+  // 权威轨迹上下文（CTA Phase 1）：桌面端 useTranscriptContext 时模型消息来自轨迹物化，
+  // 渲染端 messages 仅作回退（显式 renderer 周期或渠道/内部调用方）。
+  const retainTokens = resolveTranscriptRetainTokens(settings.contextWindowTokens ?? 256_000);
+  const transcriptContext = input.useTranscriptContext && input.sessionId
+    ? await requireBuildModelContext(deps)(input.sessionId, retainTokens)
+    : undefined;
+  const messages = transcriptContext?.messages ?? deps.normalizeChatMessages(input.messages);
   if (messages.length === 0) {
     throw new Error("没有可发送的聊天内容。");
   }
@@ -526,10 +559,9 @@ export async function buildAgentRunOptions(
     && styleSettings.chatMomentsContextEnabled === true
     && styleSettings.momentsEnabled === true
     && Boolean(deps.buildMomentsContext);
-  const messagesForSoul = socialContextEnabled ? messages.slice(-12) : messages;
   const profile = deps.loadUserProfile();
   const { cleanMessages: cleanLlm, timestampedMessages: llmMessages, timeContext: conversationTimeContext } = buildConversationTimeContext(
-    messagesForSoul as unknown as ChatContextMessage[],
+    messages as unknown as ChatContextMessage[],
     resolveChatContextTimezone(profile.timezone),
   );
   const slimLlmMessages = llmMessages as Array<{ role: string; content?: string }>;
@@ -880,6 +912,11 @@ export async function buildAgentRunOptions(
     )
     : undefined;
 
+  // 轨迹侧崩溃孤儿：并入 recoveryContext，与派发侧（渠道恢复上下文）在 bridge 合并
+  const transcriptRecoveryContext = transcriptContext?.uncertainEffects.length
+    ? formatTranscriptUncertainEffects(transcriptContext.uncertainEffects)
+    : undefined;
+
   return {
     options: {
       settings: {
@@ -922,6 +959,7 @@ export async function buildAgentRunOptions(
           now: Date.now(),
         },
       } : {}),
+      ...(transcriptRecoveryContext ? { recoveryContext: transcriptRecoveryContext } : {}),
       ...(imageCaptionFallback ? { imageCaptionFallback } : {}),
       tools: [...runTools],
       capabilities,

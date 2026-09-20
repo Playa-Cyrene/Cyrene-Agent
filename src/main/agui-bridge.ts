@@ -139,6 +139,13 @@ export type BuildOptionsFn = (input: AguiRunInput) => Promise<{
   latestUserText: string;
 }>;
 
+/** 轨迹上下文源开关：显式 "renderer" 才回退渲染端消息（仅一个版本周期的逃生舱）。 */
+export function resolveTranscriptContextSource(
+  value = process.env.CYRENE_TRANSCRIPT_CONTEXT_SOURCE,
+): "transcript" | "renderer" {
+  return value === "renderer" ? "renderer" : "transcript";
+}
+
 /** 调用方注入：agent 跑完后的副作用（记忆/sticker/表情/广播）。 */
 export interface RunFinishedEffects {
   /** 由 bridge 发给本次 AG-UI run 的发起窗口，保证不会落到旧 chatWindow。 */
@@ -480,9 +487,7 @@ export function registerAgUiIpc(
     // 桌面渲染端 dispatch 总带 userTurnId（AgentRunController 已落库锚点）；
     // 缺 userTurnId 的非标准调用按渲染端消息走，不写轨迹。
     // 回退开关：显式 CYRENE_TRANSCRIPT_CONTEXT_SOURCE=renderer 时跳过轨迹源（仅一个版本周期）。
-    const transcriptSource = process.env.CYRENE_TRANSCRIPT_CONTEXT_SOURCE === "renderer"
-      ? "renderer"
-      : "transcript";
+    const transcriptSource = resolveTranscriptContextSource();
     if (transcriptSource === "transcript" && input.userTurnId) {
       try {
         await prepareTranscriptDispatch({
@@ -525,7 +530,11 @@ export function registerAgUiIpc(
     }
     const { options, latestUserText } = built;
     options.executionMode = agentExecutionMode;
-    options.recoveryContext = input.recoveryContext;
+    // 轨迹侧崩溃孤儿提示与派发侧（渠道）恢复上下文合并，互不覆盖
+    const mergedRecoveryContext = [options.recoveryContext, input.recoveryContext]
+      .filter((value): value is string => Boolean(value?.trim()))
+      .join("\n\n");
+    if (mergedRecoveryContext) options.recoveryContext = mergedRecoveryContext;
     options.resumeFromRunId = input.resumeFromRunId;
     options.conversationMode = mode;
     // 把 bridge 创建的 canonical runId 注入 CyreneRunOptions，

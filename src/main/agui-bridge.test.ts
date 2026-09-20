@@ -1695,4 +1695,94 @@ describe("agui-bridge transcript dispatch", () => {
     expect(mocks.runCyreneAgent).not.toHaveBeenCalled();
     mocks.userDataRoot = "";
   });
+
+  it("renderer 回退开关跳过轨迹源（一个版本周期）", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-bridge-rollback-"));
+    roots.push(root);
+    mocks.userDataRoot = root;
+    mocks.getSession.mockReturnValue({
+      id: "chat-rollback",
+      mode: "chat",
+      messages: [
+        { id: "m1", role: "user", content: "旧问题", at: 1 },
+        { id: "u1", role: "user", content: "当前输入", at: 2 },
+      ],
+    });
+    const { runHandler, seenInputs } = await setupBridge();
+    const sender = makeSender();
+    const previous = process.env.CYRENE_TRANSCRIPT_CONTEXT_SOURCE;
+    process.env.CYRENE_TRANSCRIPT_CONTEXT_SOURCE = "renderer";
+    try {
+      await runHandler({ sender }, {
+        messages: [{ role: "user", content: "当前输入" }],
+        sessionId: "chat-rollback",
+        userTurnId: "u1",
+      });
+
+      // 回退周期内：不标记轨迹上下文，也不写轨迹（渲染端消息照旧）
+      expect(seenInputs[0]).not.toHaveProperty("useTranscriptContext");
+      const { getConversationTranscriptStore } = await import("./orchestrator/conversation-transcript-store");
+      const entries = (await getConversationTranscriptStore(root).read("chat-rollback")).entries;
+      expect(entries).toHaveLength(0);
+    } finally {
+      if (previous === undefined) delete process.env.CYRENE_TRANSCRIPT_CONTEXT_SOURCE;
+      else process.env.CYRENE_TRANSCRIPT_CONTEXT_SOURCE = previous;
+      mocks.userDataRoot = "";
+    }
+  });
+
+  it("合并轨迹不确定效果与派发侧 recoveryContext，不互相覆盖", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-bridge-recovery-"));
+    roots.push(root);
+    mocks.userDataRoot = root;
+    mocks.getSession.mockReturnValue({
+      id: "chat-recovery-merge",
+      mode: "chat",
+      messages: [
+        { id: "m1", role: "user", content: "旧问题", at: 1 },
+        { id: "u1", role: "user", content: "当前输入", at: 2 },
+      ],
+    });
+    const { runHandler } = await setupBridge(async (input: unknown) => ({
+      options: {
+        settings: { provider: "test", baseUrl: "", model: "", apiKey: "", contextWindowTokens: 256000 },
+        messages: [],
+        timeoutMs: 1000,
+        toolSystemContent: "TOOL",
+        soulSystemBaseContent: "SOUL",
+        recoveryContext: "轨迹侧：上次运行有未确认副作用",
+      },
+      latestUserText: "当前输入",
+    }));
+    const sender = makeSender();
+
+    await runHandler({ sender }, {
+      messages: [{ role: "user", content: "当前输入" }],
+      sessionId: "chat-recovery-merge",
+      userTurnId: "u1",
+      recoveryContext: "派发侧：渠道恢复上下文",
+    });
+
+    const agentOptions = mocks.runCyreneAgent.mock.calls[0]?.[0] as { recoveryContext?: string };
+    expect(agentOptions?.recoveryContext).toContain("轨迹侧：上次运行有未确认副作用");
+    expect(agentOptions?.recoveryContext).toContain("派发侧：渠道恢复上下文");
+    mocks.userDataRoot = "";
+  });
+});
+
+describe("resolveTranscriptContextSource", () => {
+  it("默认走权威轨迹源", async () => {
+    const { resolveTranscriptContextSource } = await import("./agui-bridge");
+    expect(resolveTranscriptContextSource(undefined)).toBe("transcript");
+  });
+
+  it("显式 renderer 回退被尊重", async () => {
+    const { resolveTranscriptContextSource } = await import("./agui-bridge");
+    expect(resolveTranscriptContextSource("renderer")).toBe("renderer");
+  });
+
+  it("未知取值安全回落到权威轨迹源", async () => {
+    const { resolveTranscriptContextSource } = await import("./agui-bridge");
+    expect(resolveTranscriptContextSource("bogus")).toBe("transcript");
+  });
 });

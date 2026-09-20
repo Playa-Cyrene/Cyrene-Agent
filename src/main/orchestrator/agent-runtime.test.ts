@@ -14,6 +14,10 @@ const mocks = vi.hoisted(() => ({
   scheduleMemoryWrite: vi.fn(),
 }));
 
+// electron 模块 mock：agent-runtime 装配的轨迹 store 根目录指向可控临时目录
+const electronMocks = vi.hoisted(() => ({ userDataRoot: "" }));
+vi.mock("electron", () => ({ app: { getPath: () => electronMocks.userDataRoot } }));
+
 let tmp = "";
 let pluginManager: PluginManager | undefined;
 
@@ -516,5 +520,42 @@ describe("AgentRuntime 心情观察器", () => {
       "[Cyrene] observe runtime failed; keeping current feeling:",
       expect.any(Error),
     );
+  });
+});
+
+describe("AgentRuntime 轨迹上下文注入（CTA Phase 1）", () => {
+  it("桌面轨迹上下文从真实 store 物化模型消息，忽略渲染端消息", async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "cyrene-runtime-transcript-"));
+    electronMocks.userDataRoot = root;
+    mocks.buildAlwaysOnContext.mockReset();
+    mocks.buildAlwaysOnContext.mockResolvedValue("[常驻上下文]");
+    try {
+      // 种子：真实轨迹里先落一条权威 user 条目
+      const { getConversationTranscriptStore } = await import("./conversation-transcript-store");
+      await getConversationTranscriptStore(root).append("conversation-authoritative", {
+        id: "seed-user-1",
+        kind: "user",
+        turnId: "turn-1",
+        revision: 1,
+        at: 1,
+        payload: { text: "权威历史消息" },
+      });
+
+      const runtime = createAgentRuntime(createFullDeps());
+      const built = await runtime.buildOptions({
+        sessionId: "conversation-authoritative",
+        useTranscriptContext: true,
+        messages: [{ role: "user", content: "stale renderer" }],
+      } as never);
+
+      // 模型消息来自轨迹物化，渲染端陈旧消息不进入模型上下文
+      expect(built.options.cleanMessages).toContainEqual(
+        expect.objectContaining({ content: "权威历史消息" }),
+      );
+      expect(JSON.stringify(built.options.messages)).not.toContain("stale renderer");
+    } finally {
+      electronMocks.userDataRoot = "";
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

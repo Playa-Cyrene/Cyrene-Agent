@@ -1,3 +1,4 @@
+import { app } from "electron";
 import { loadPromptFile } from "../prompts/prompt-loader";
 import type { AguiRunInput } from "../agui-bridge";
 import type { ScheduledTask } from "../scheduler/types";
@@ -40,6 +41,9 @@ import {
   type OnRunFinishedDeps,
   type ModelSettingsLite,
 } from "./build-options";
+import { buildModelContext } from "./conversation-transcript-context";
+import { getConversationTranscriptStore } from "./conversation-transcript-store";
+import { getHarnessRunStore } from "./harness/run-store";
 import { type CyreneRunResult, type CyreneRunOptions } from "./cyrene-agent";
 import type { HarnessToolFinishedEvent } from "./harness/types";
 import type { ToolFinishedInput } from "../plugin-host/lifecycle-publisher";
@@ -227,6 +231,13 @@ export function createAgentRuntime(rawDeps: AgentRuntimeDeps): AgentRuntime {
         return rawDeps.chatsStore.getWorkspaceBinding(conversationId);
       },
       buildPluginPromptContext: (input) => rawDeps.buildPluginPromptContext(input),
+      // 权威轨迹上下文（CTA Phase 1）：桌面端与 bridge 共用同一 userData 根下的单例 store
+      buildModelContext: (conversationId, retainTokens) => buildModelContext({
+        store: getConversationTranscriptStore(app.getPath("userData")),
+        conversationId,
+        retainTokens,
+        runReader: getHarnessRunStore(app.getPath("userData")),
+      }),
     };
   }
 

@@ -398,7 +398,8 @@ describe("build-options", () => {
       conversationId: "chat-a",
       query: "message-13",
     })
-    expect(result.options.messages).toHaveLength(12)
+    // CTA Phase 1：社交开关只影响检索块，不再截断模型历史
+    expect(result.options.messages).toHaveLength(14)
     expect(result.options.soulRuntimeContext).toContain("用户喜欢海边")
     expect(result.options.socialContext).toMatchObject({
       enabled: true,
@@ -1028,5 +1029,106 @@ describe("moments context 注入（Phase 3 Chat Awareness）", () => {
 
     expect(result.options.soulRuntimeContext).not.toContain("【近期朋友圈动态】")
     expect(result.options.soulRuntimeContext).not.toMatch(/(^|\n)---(\n|$)\s*(^|\n)---/)
+  })
+})
+
+describe("权威轨迹上下文源（CTA Phase 1）", () => {
+  it("desktop transcript context 启用时忽略渲染端消息", async () => {
+    const deps = createBuildDeps()
+    deps.buildModelContext = vi.fn(async () => ({
+      messages: [{ role: "user" as const, content: "authoritative" }],
+      uncertainEffects: [],
+      throughSeq: 3,
+    }))
+
+    const built = await buildAgentRunOptions({
+      sessionId: "c1",
+      useTranscriptContext: true,
+      messages: [{ role: "user" as const, content: "stale renderer" }],
+    } as never, deps)
+
+    expect(deps.buildModelContext).toHaveBeenCalledWith("c1", expect.any(Number))
+    expect(built.options.cleanMessages).toContainEqual(expect.objectContaining({ content: "authoritative" }))
+    expect(JSON.stringify(built.options.messages)).not.toContain("stale renderer")
+    expect(built.latestUserText).toBe("authoritative")
+  })
+
+  it("渠道与内部调用方不触发轨迹上下文，继续使用传入消息", async () => {
+    const deps = createBuildDeps()
+    deps.buildModelContext = vi.fn(async () => ({
+      messages: [],
+      uncertainEffects: [],
+      throughSeq: 0,
+    }))
+
+    const built = await buildAgentRunOptions({
+      sessionId: "channel-binding",
+      messages: [{ role: "user" as const, content: "channel text" }],
+    } as never, deps)
+
+    expect(deps.buildModelContext).not.toHaveBeenCalled()
+    expect(built.latestUserText).toBe("channel text")
+    expect(built.options.cleanMessages).toContainEqual(expect.objectContaining({ content: "channel text" }))
+  })
+
+  it("缺失 buildModelContext 注入时轨迹上下文请求 fail-closed", async () => {
+    const deps = createBuildDeps()
+    await expect(buildAgentRunOptions({
+      sessionId: "missing-dep",
+      useTranscriptContext: true,
+      messages: [{ role: "user" as const, content: "hi" }],
+    } as never, deps)).rejects.toThrow("buildModelContext")
+  })
+
+  it("崩溃孤儿不确定效果并入 recoveryContext", async () => {
+    const deps = createBuildDeps()
+    deps.buildModelContext = vi.fn(async () => ({
+      messages: [{ role: "user" as const, content: "authoritative" }],
+      uncertainEffects: [{
+        id: "run-1:call-1",
+        toolCallId: "call-1",
+        fingerprint: "send_email:abc",
+        toolName: "send_email",
+        message: "该外部副作用在应用中断时尚未确认结果",
+      }],
+      throughSeq: 5,
+    }))
+
+    const built = await buildAgentRunOptions({
+      sessionId: "uncertain",
+      useTranscriptContext: true,
+      messages: [{ role: "user" as const, content: "继续" }],
+    } as never, deps)
+
+    expect(built.options.recoveryContext).toContain("send_email")
+    expect(built.options.recoveryContext).toContain("不得自动重放")
+  })
+
+  it("开启社交上下文不再截断模型历史（slice(-12) 已废除）", async () => {
+    const deps = createBuildDeps()
+    deps.buildChatSocialContext = vi.fn(async () => ({ contextBlock: "SOCIAL", retrievedAtoms: [] }))
+    const messages = Array.from({ length: 16 }, (_, index) => ({
+      role: index % 2 === 0 ? "user" as const : "assistant" as const,
+      content: `消息${index}`,
+    }))
+
+    const built = await buildAgentRunOptions({
+      sessionId: "social-no-truncate",
+      executionMode: "chat",
+      userTurnId: "turn-8",
+      assistantTurnId: "turn-7",
+      messages,
+    } as never, {
+      ...deps,
+      loadGeneralSettings: () => ({
+        ...deps.loadGeneralSettings(),
+        chatSocialContextEnabled: true,
+      }),
+    })
+
+    // 16 条消息全部进入模型上下文，社交开关只影响检索块不再影响历史
+    expect(built.options.cleanMessages).toHaveLength(16)
+    expect(JSON.stringify(built.options.messages)).toContain("消息0")
+    expect(JSON.stringify(built.options.messages)).toContain("消息15")
   })
 })
