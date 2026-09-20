@@ -20,7 +20,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSyn
 import { dirname, extname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
-import { createRecordingContextOptions, recordingFileName } from "./chat-renderer-recording.mjs";
+import { createRecordingContextOptions, installLiveMessageFollow, recordingFileName } from "./chat-renderer-recording.mjs";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 
@@ -185,6 +185,7 @@ function diffMetrics(before, after) {
 async function runCase(context, baseUrl, { dataset, count, scroll, streamRender }, recordingName) {
   const page = await context.newPage();
   const video = page.video();
+  if (recordVideoDir) await page.addInitScript(installLiveMessageFollow);
   const cdp = await context.newCDPSession(page);
   await cdp.send("Performance.enable");
   const url = `${baseUrl}/react-perf/index.html?dataset=${dataset}&count=${count}&seed=${SEED}&duration=${DURATION_MS}&scroll=${scroll}&streamRender=${streamRender ?? "animated"}`;
