@@ -5,14 +5,13 @@
 // 通道 A（React Profiler onRender + 组件探针）只在 react-dom/profiling 构建下生效；
 // 通道 B（Long Task / 帧时间 / 事件到绘制延迟 / heap / DOM 数）在普通生产构建下同样有效。
 
-import React, { Profiler, type ProfilerOnRenderCallback, type ReactNode } from "react";
+import React, { Profiler, type ProfilerOnRenderCallback } from "react";
 import { createRoot } from "react-dom/client";
 import "../ui/theme";
 import { App } from "../react/App";
 import { AppProviders } from "../react/app/providers/AppProviders";
 import { initUiLocale } from "../react/i18n";
 import { installFakeBridges } from "./fake-bridges";
-import { StreamdownSpikeContent } from "./streamdown-spike";
 import type { PerfDataset } from "./fixture";
 import type { ChatPerfProbeCounters } from "../react/features/chat/components/chat-perf-probe";
 
@@ -24,8 +23,6 @@ interface HarnessParams {
   seed: number;
   durationMs: number;
   scrollMode: "bottom" | "top";
-  /** A0/A1-S 对照实验：流式消息渲染形态（animated=现状 / static=关动画 / plain=转义纯文本 / streamdown=Streamdown spike） */
-  streamRender: "animated" | "static" | "plain" | "streamdown";
 }
 
 function parseParams(): HarnessParams {
@@ -33,7 +30,6 @@ function parseParams(): HarnessParams {
   const dataset = params.get("dataset");
   const count = Number(params.get("count") ?? 200);
   const durationMs = Number(params.get("duration") ?? 30_000);
-  const streamRender = params.get("streamRender");
   return {
     dataset: dataset === "markdown" || dataset === "mixed" ? dataset : "plain",
     // 0 为 A0 空历史档（隔离流式消息本体成本与历史条目成本），基线矩阵只用 200/500
@@ -41,10 +37,6 @@ function parseParams(): HarnessParams {
     seed: Number(params.get("seed") ?? 42),
     durationMs: Math.min(120_000, Math.max(2_000, durationMs)),
     scrollMode: params.get("scroll") === "top" ? "top" : "bottom",
-    streamRender:
-      streamRender === "static" || streamRender === "plain" || streamRender === "streamdown"
-        ? streamRender
-        : "animated",
   };
 }
 
@@ -122,10 +114,6 @@ const perfWindow = window as typeof window & {
   __perfHydrated?: boolean;
   __perfDone?: unknown;
   __cyreneChatPerfProbe?: ChatPerfProbeCounters;
-  /** A0/A1-S 对照组开关：流式消息渲染形态（animated/static/plain/streamdown），挂载前写入 */
-  __cyreneChatPerfStreamRender?: string;
-  /** A1-S：streamdown 模式下被 MarkdownContent 消费的流式渲染器，挂载前注册（仅 perf 构建存在） */
-  __cyreneChatPerfMarkdownRenderer?: (props: { content: string }) => ReactNode;
 };
 
 perfWindow.__perfState = phase;
@@ -181,16 +169,6 @@ async function main() {
     listRenders: 0,
   };
   perfWindow.__cyreneChatPerfProbe = probe;
-  // A0 对照组开关同样必须在挂载前写入：渲染期经 perfStreamRenderMode 读取
-  perfWindow.__cyreneChatPerfStreamRender = params.streamRender;
-  // A1-S：仅在 streamdown 模式注册渲染器——注册与否是 MarkdownContent 的唯一开关，
-  // 其他模式（animated/static/plain）保持与正式路径完全一致的分支走向。
-  // 静态导入使 streamdown 只进入 perf 构建图；正式构建入口不含本文件，零依赖泄漏
-  if (params.streamRender === "streamdown") {
-    perfWindow.__cyreneChatPerfMarkdownRenderer = (props: { content: string }): ReactNode => (
-      <StreamdownSpikeContent content={props.content} />
-    );
-  }
   activeProbe = probe;
   runtime.onEmit((event) => {
     lastEventAt = performance.now();

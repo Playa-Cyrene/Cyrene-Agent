@@ -392,27 +392,15 @@ JS +476.4KB raw / +145.9KB gzip（Streamdown + math + remark/rehype 链 + KaTeX 
 - **渲染器替换收益确认（仅限 A1-S spike 结论）**：帧 p95 降幅 57–81%、ScriptDuration 降幅 50–89%，0/200 条配置全部过 40ms 验收线；Streamdown 的 block 分割 + 逐块 memo 假设成立（普通 Markdown 流式性能）。
 - **500 条未过线仍存在显著的历史数量相关成本**：Streamdown 已消除大部分流式全文解析开销，但剩余成本中列表拼装、React 协调、大 DOM 树及流式尾块渲染各占多少尚未区分；转 A2 归因实验后再选型，**不直接进入虚拟化**。
 
-**A1-P 产品迁移：暂停 / 不实施（2026-09-18 用户决策）**
+**A1-P 产品迁移：全程 Streamdown（2026-09-20 实施）**
 
-A1-S 已完成、实验结论保留；但 A1-S 只证明 Streamdown 的普通 Markdown 流式性能收益，**不构成产品迁移批准**。暂停原因：
+用户最终选择不再在完成时切回 XMarkdown：`MarkdownContent` 流式和完成态都委托给 `StreamdownMessageContent`。因此回答结束时的跨渲染器切换次数为 **0**，不再存在“长回复完成后再用另一套解析器重建整篇 DOM”的额外停顿路径。
 
-- 当前 XMarkdown 可在流式期间正常渲染公式，用户体验较好；
-- Streamdown 2.6.0 + `@streamdown/math` 存在尚未解决的高频流式公式 DOM 错乱问题（[vercel/streamdown#601](https://github.com/vercel/streamdown/issues/601)，open）；
-- "流式显示 LaTeX 原文、完成后才启用 KaTeX"虽然安全，但属于明显体验退步，暂不接受。
-
-暂停期约束：
-
-1. 正式产品继续使用 XMarkdown；
-2. 不引入 Streamdown、Tailwind、`@streamdown/math` 或 KaTeX 新依赖；
-3. 不采用双 Markdown 引擎（流式 Streamdown + 完成态 XMarkdown 的架构不做）；
-4. 不采用"完成后才渲染公式"的降级方案；
-5. spike 结论与实验分支 `codex/a1-s-streamdown-spike` 保留作参考，不合入产品。
-
-**恢复 A1-P 的条件（满足其一即可）**：
-
-- Streamdown 上游修复 #601，且在 Cyrene 高频流式公式矩阵中验证通过；
-- 能证明"公式块闭合后只渲染一次"既不会错乱，也不会出现明显视觉降级；
-- 出现其他成熟渲染器，同时通过流式性能、实时公式、安全语义和维护性验收。
+- 实现保留 Streamdown 默认 `raw → sanitize → harden` 安全链；内部 `file:///` 链接在净化前编码为受控 `https://cyrene.invalid/...` 占位链接，anchor 组件解码后仍执行工作区边界检查。不会复用 spike 中移除 `rehype-harden` 的实验链。
+- 流式模式使用 `parseIncompleteMarkdown`，完成态切为 Streamdown 的 static mode；两者都是同一个渲染器，static 仅表示不再补全未闭合语法，并非回退到 XMarkdown。
+- `@streamdown/math` 以 `singleDollarTextMath: true` 配置接入。定向测试覆盖流式行内 `$E=mc^2$`、块级 `$$...$$`、未闭合代码围栏、Mermaid 占位、SVG、文件链接和危险 HTML/URL；另有 jsdom 测试验证非前缀替换后不会残留旧 block。
+- 上游 [vercel/streamdown#601](https://github.com/vercel/streamdown/issues/601) 仍为 open：它不是迁移时被忽略的已知风险。采用后续运行中若出现公式错乱，按消息内容、浏览器版本、流式事件序列记录最小复现并回归到该 issue；不在代码中静默切回另一渲染器。
+- A1-S 注入式对照、成对控制和 spike 文件已删除；性能 harness 仅测量正式产品路径，默认不产生视频文件。
 
 ### A1-D 候选：DSH 增量块引擎 + XMarkdown 稳定块渲染（2026-09-18 源码级可行性分析，未实施）
 
