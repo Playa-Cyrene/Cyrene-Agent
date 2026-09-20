@@ -9,7 +9,9 @@ import {
   resolveTranscriptRetainTokens,
   type TranscriptRunReader,
 } from "./conversation-transcript-context";
-import type { TranscriptEntry } from "./conversation-transcript-types";
+import { prepareTranscriptDispatch } from "./conversation-transcript-coordinator";
+import { createTranscriptSink } from "./transcript-sink";
+import type { TranscriptAppendInput, TranscriptEntry } from "./conversation-transcript-types";
 import type { HarnessRunSession } from "./harness/run-store";
 import type { ChatMessage, ToolCall } from "./vendors/types";
 
@@ -185,5 +187,121 @@ describe("resolveTranscriptRetainTokens", () => {
     expect(resolveTranscriptRetainTokens(256_000))
       .toBe(Math.floor((256_000 - 8_192 - 512) * 0.7));
     expect(resolveTranscriptRetainTokens(0)).toBe(1);
+  });
+});
+
+// ── 完整失败矩阵：每个轨迹写入断点的 fail-closed 语义（CTA Phase 1 验收）──
+
+describe("transcript failure matrix", () => {
+  const roots: string[] = [];
+
+  afterEach(() => {
+    for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  /** 按条目 kind 注入 append 失败的 store 视图（只覆盖协议用到的方法）。 */
+  function withRejectedKinds(store: ConversationTranscriptStore, kinds: TranscriptEntry["kind"][]) {
+    const rejected = new Set<string>(kinds);
+    return {
+      append: (conversationId: string, input: TranscriptAppendInput) =>
+        rejected.has(input.kind)
+          ? Promise.reject(new Error(`injected ${input.kind} failure`))
+          : store.append(conversationId, input),
+      read: (conversationId: string) => store.read(conversationId),
+      checkpoint: (conversationId: string) => store.checkpoint(conversationId),
+      waitForIdle: (conversationId: string) => store.waitForIdle(conversationId),
+    } as unknown as ConversationTranscriptStore;
+  }
+
+  it("每个轨迹写入断点失败时保持各自的 fail-closed 语义", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-transcript-matrix-"));
+    roots.push(root);
+    const store = new ConversationTranscriptStore(root, { now: () => 1_000 });
+    const conversationId = "c-matrix";
+    const session = {
+      id: conversationId,
+      messages: [{ id: "u1", role: "user", content: "问题", at: 1 }],
+    } as unknown as Parameters<typeof prepareTranscriptDispatch>[0]["session"];
+    const matrix: Record<string, string> = {};
+
+    // userWrite：dispatch 前 user 落盘失败 → 协议上抛，模型不启动
+    try {
+      await prepareTranscriptDispatch({
+        store: withRejectedKinds(store, ["user"]),
+        session, userTurnId: "u1", runId: "run-x",
+      });
+      matrix.userWrite = "unexpected_success";
+    } catch {
+      matrix.userWrite = "model_not_started";
+    }
+
+    // rewindWrite：turn_rewind 落盘失败 → 同一 fail-closed 断点
+    try {
+      await prepareTranscriptDispatch({
+        store: withRejectedKinds(store, ["turn_rewind"]),
+        session, userTurnId: "u1", runId: "run-x",
+        rewind: { anchorUserTurnId: "u1", disposition: "replace_user" },
+      });
+      matrix.rewindWrite = "unexpected_success";
+    } catch {
+      matrix.rewindWrite = "model_not_started";
+    }
+
+    // assistantWrite：assistant 声明落盘失败 → sink 上抛，工具不启动
+    try {
+      await createTranscriptSink({ store: withRejectedKinds(store, ["assistant"]), conversationId, runId: "run-a" })
+        .appendAssistant({ message: { role: "assistant", content: "calling" } });
+      matrix.assistantWrite = "unexpected_success";
+    } catch {
+      matrix.assistantWrite = "tool_not_started";
+    }
+
+    // toolResultWrite：canonical 工具结果落盘失败 → 上抛，下一次模型请求被阻断
+    const anchorSink = createTranscriptSink({ store, conversationId, runId: "run-b" });
+    const anchorEntryId = await anchorSink.appendAssistant({
+      message: {
+        role: "assistant", content: "calling",
+        toolCalls: [{ id: "call-1", name: "read_file", arguments: "{}" }],
+      },
+    });
+    try {
+      await createTranscriptSink({ store: withRejectedKinds(store, ["tool_result"]), conversationId, runId: "run-b" })
+        .appendToolResult({
+          assistantEntryId: anchorEntryId,
+          message: { role: "tool", toolCallId: "call-1", name: "read_file", content: "文件内容" },
+          outcome: "success",
+        });
+      matrix.toolResultWrite = "unexpected_success";
+    } catch {
+      matrix.toolResultWrite = "next_model_request_blocked";
+    }
+
+    // interruptionWrite：取消闭合落盘失败 → 读侧孤儿分类兜底修复
+    try {
+      await createTranscriptSink({ store: withRejectedKinds(store, ["interruption"]), conversationId, runId: "run-c" })
+        .closeInterruption({ reason: "user_cancel", runSession: null });
+      matrix.interruptionWrite = "unexpected_success";
+    } catch {
+      matrix.interruptionWrite = "read_side_orphan_repair_required";
+    }
+
+    // readDuringPendingWrite：写入队列未排空时读取 → 排队等待后读到一致状态
+    const pendingAppend = store.append(conversationId, {
+      id: "pending-user", at: 1, kind: "user", turnId: "u9", revision: 1, payload: { text: "并发写入" },
+    });
+    const readDuringWrite = await store.read(conversationId);
+    matrix.readDuringPendingWrite = readDuringWrite.entries.some((entry) => entry.id === "pending-user")
+      ? "waited_for_queue"
+      : "read_raced_ahead";
+    await pendingAppend;
+
+    expect(matrix).toEqual({
+      userWrite: "model_not_started",
+      rewindWrite: "model_not_started",
+      assistantWrite: "tool_not_started",
+      toolResultWrite: "next_model_request_blocked",
+      interruptionWrite: "read_side_orphan_repair_required",
+      readDuringPendingWrite: "waited_for_queue",
+    });
   });
 });

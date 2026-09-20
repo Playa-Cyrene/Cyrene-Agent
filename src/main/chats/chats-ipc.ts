@@ -25,6 +25,7 @@ import { ensureVaultStructure, isEmptyDirectory } from "../learn/obsidian/vault-
 import { getDefaultModelProfile, loadModelSettings, resolveModelSettingsProfile } from "../settings/model-settings";
 import { FileToolOutputStore } from "../orchestrator/harness/tool-output/file-tool-output-store";
 import { getHarnessRunStore } from "../orchestrator/harness/run-store";
+import { getConversationTranscriptStore } from "../orchestrator/conversation-transcript-store";
 import { getRunReviewTracker } from "../orchestrator/review/run-review-tracker";
 import { getAdapterForConfig } from "../orchestrator/vendors";
 import { activeChatTargetRegistry } from "../plugin-host/active-chat-target";
@@ -316,6 +317,12 @@ export function registerChatsIpc(
         getHarnessRunStore(app.getPath("userData")).deleteConversation(id);
       } catch (error) {
         console.error("[ChatsIpc] failed to delete persisted harness runs", error);
+      }
+      try {
+        await getConversationTranscriptStore(app.getPath("userData")).deleteConversation(id);
+      } catch (error) {
+        // 会话已删除；权威轨迹清理失败只记日志，不得把 UI 回滚成"删除失败"
+        console.error("[ChatsIpc] failed to delete conversation transcript", error);
       }
       broadcastChanged(event.sender);
     }

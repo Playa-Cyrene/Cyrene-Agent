@@ -187,6 +187,36 @@ describe("chats IPC mode filtering", () => {
       .resolves.toMatchObject({ content: "second output" });
   });
 
+  it("removes only the deleted conversation's transcript directory", async () => {
+    const { registerChatsIpc } = await import("./chats-ipc");
+    const { getConversationTranscriptStore } = await import("../orchestrator/conversation-transcript-store");
+    registerChatsIpc();
+    const create = mocks.handlers.get(IPC.CHATS_CREATE);
+    const remove = mocks.handlers.get(IPC.CHATS_DELETE);
+    if (!create || !remove) throw new Error("chat delete IPC handler was not registered");
+    const event = { sender: {} };
+    const first = await create(event, { mode: "work" }) as { id: string };
+    const second = await create(event, { mode: "work" }) as { id: string };
+    const store = getConversationTranscriptStore(mocks.userDataDir);
+    // 两个会话各写一条 user 轨迹（user 条目必带 turnId + revision 幂等键）
+    await store.append(first.id, {
+      id: "tr-user-1", at: 1, kind: "user", turnId: "turn-1", revision: 1,
+      payload: { text: "first conversation" },
+    });
+    await store.append(second.id, {
+      id: "tr-user-2", at: 1, kind: "user", turnId: "turn-2", revision: 1,
+      payload: { text: "second conversation" },
+    });
+
+    expect(await remove(event, first.id)).toBe(true);
+    // 第一个会话的轨迹目录被整体删除（JSONL 与快照一起消失），读取回到空轨迹
+    expect(fs.existsSync(path.join(mocks.userDataDir, first.id))).toBe(false);
+    expect((await store.read(first.id)).entries).toEqual([]);
+    // 第二个会话的轨迹不受影响，仍然可读
+    const remaining = await store.read(second.id);
+    expect(remaining.entries).toEqual([expect.objectContaining({ id: "tr-user-2" })]);
+  });
+
   it("opens only a workspace already bound to a project conversation", async () => {
     const { registerChatsIpc } = await import("./chats-ipc");
     registerChatsIpc();

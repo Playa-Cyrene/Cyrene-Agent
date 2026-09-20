@@ -1768,6 +1768,211 @@ describe("agui-bridge transcript dispatch", () => {
     expect(agentOptions?.recoveryContext).toContain("派发侧：渠道恢复上下文");
     mocks.userDataRoot = "";
   });
+
+  // ── 四模式连续性验收：下一轮模型请求由权威轨迹物化（CTA Phase 1）──
+  it.each(["chat", "work", "code", "learn"] as const)(
+    "%s 模式下一轮模型请求使用权威轨迹上下文",
+    async (mode) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-bridge-modes-"));
+      roots.push(root);
+      mocks.userDataRoot = root;
+      const conversationId = `conv-${mode}`;
+      // work/code/learn 派发前必须绑定工作区；chat 不需要
+      const sessionShape = (messages: unknown[]) => ({
+        id: conversationId,
+        mode,
+        ...(mode !== "chat" ? { workspaceBinding: { workspaceRoot: "E:\\tmp\\workspace" } } : {}),
+        messages,
+      });
+      mocks.getSession.mockReturnValue(sessionShape([
+        { id: "turn-1", role: "user", content: "first-user", at: 1 },
+      ]));
+
+      // 物化函数占位：setupBridge 触发 resetModules 之后才能 import（保证与 bridge 共享单例）
+      let materialize: () => Promise<unknown[]> = async () => [];
+      const { runHandler } = await setupBridge(async (input: unknown) => ({
+        options: {
+          settings: { provider: "test", baseUrl: "", model: "", apiKey: "", contextWindowTokens: 256000 },
+          messages: await materialize(),
+          timeoutMs: 1000,
+          toolSystemContent: "TOOL",
+          soulSystemBaseContent: "SOUL",
+        },
+        latestUserText: (input as { messages?: Array<{ content?: string }> }).messages?.at(-1)?.content ?? "",
+      }));
+      const { getConversationTranscriptStore } = await import("./orchestrator/conversation-transcript-store");
+      const { buildModelContext, resolveTranscriptRetainTokens } = await import("./orchestrator/conversation-transcript-context");
+      const { createTranscriptSink } = await import("./orchestrator/transcript-sink");
+      const retainTokens = resolveTranscriptRetainTokens(256_000);
+      const noRuns = { get: () => null };
+      materialize = async () => (await buildModelContext({
+        store: getConversationTranscriptStore(root),
+        conversationId,
+        retainTokens,
+        runReader: noRuns,
+      })).messages;
+      const sender = makeSender();
+      const lastModelRequestMessages = () =>
+        (mocks.runCyreneAgent.mock.calls.at(-1)?.[0] as { messages: Array<Record<string, unknown>> }).messages;
+      const currentRunId = () =>
+        (mocks.runCyreneAgent.mock.calls.at(-1)?.[0] as { runId: string }).runId;
+
+      // 第一轮：当前 user 落盘，run 级提交端写入 canonical assistant
+      await runHandler({ sender }, {
+        messages: [{ role: "user", content: "first-user" }],
+        sessionId: conversationId,
+        userTurnId: "turn-1",
+      });
+      const firstSink = createTranscriptSink({
+        store: getConversationTranscriptStore(root),
+        conversationId,
+        runId: currentRunId(),
+      });
+      // work/code/learn：第一轮含工具调用与 canonical 工具结果；chat：纯文本（ChatLoop 单轮路径）
+      const assistantEntryId = await firstSink.appendAssistant({
+        message: mode === "chat"
+          ? { role: "assistant", content: "first-assistant" }
+          : {
+            role: "assistant",
+            content: "first-assistant",
+            toolCalls: [{ id: "call-1", name: "read_file", arguments: '{"path":"a.txt"}' }],
+          },
+      });
+      if (mode !== "chat") {
+        await firstSink.appendToolResult({
+          assistantEntryId,
+          message: { role: "tool", toolCallId: "call-1", name: "read_file", content: "文件内容" },
+          outcome: "success",
+        });
+      }
+
+      // 第二轮派发：渲染端已收到 assistant；回填 boundary 已存在，连续性只能来自权威轨迹
+      mocks.getSession.mockReturnValue(sessionShape([
+        { id: "turn-1", role: "user", content: "first-user", at: 1 },
+        { id: "a-1", role: "model", content: "first-assistant", at: 2 },
+        { id: "turn-2", role: "user", content: "second-user", at: 3 },
+      ]));
+      await runHandler({ sender }, {
+        messages: [{ role: "user", content: "second-user" }],
+        sessionId: conversationId,
+        userTurnId: "turn-2",
+      });
+
+      const messages = lastModelRequestMessages();
+      expect(messages).toEqual(expect.arrayContaining([
+        expect.objectContaining({ role: "user", content: "first-user" }),
+        expect.objectContaining({ role: "assistant", content: "first-assistant" }),
+        expect.objectContaining({ role: "user", content: "second-user" }),
+      ]));
+      if (mode !== "chat") {
+        // canonical 工具结果随轨迹重放，声明与结果保持配对
+        expect(messages).toEqual(expect.arrayContaining([
+          expect.objectContaining({ role: "tool", toolCallId: "call-1", content: "文件内容" }),
+        ]));
+      }
+      // 四模式各走各的执行通道：chat 单请求链路，其余走 harness 执行模式
+      const lastOptions = mocks.runCyreneAgent.mock.calls.at(-1)?.[0] as { executionMode?: string };
+      expect(lastOptions.executionMode).toBe(mode === "chat" ? "chat" : "work");
+      mocks.userDataRoot = "";
+    },
+  );
+
+  it("chat 模式跨工具开关保持轨迹连续（ChatLoop 与 Harness 共用权威轨迹）", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-bridge-chat-tools-"));
+    roots.push(root);
+    mocks.userDataRoot = root;
+    const conversationId = "conv-chat-tools";
+    const sessionShape = (messages: unknown[]) => ({ id: conversationId, mode: "chat", messages });
+    mocks.getSession.mockReturnValue(sessionShape([
+      { id: "turn-1", role: "user", content: "first-user", at: 1 },
+    ]));
+
+    let materialize: () => Promise<unknown[]> = async () => [];
+    const { runHandler } = await setupBridge(async (input: unknown) => ({
+      options: {
+        settings: { provider: "test", baseUrl: "", model: "", apiKey: "", contextWindowTokens: 256000 },
+        messages: await materialize(),
+        timeoutMs: 1000,
+        toolSystemContent: "TOOL",
+        soulSystemBaseContent: "SOUL",
+      },
+      latestUserText: (input as { messages?: Array<{ content?: string }> }).messages?.at(-1)?.content ?? "",
+    }));
+    const { getConversationTranscriptStore } = await import("./orchestrator/conversation-transcript-store");
+    const { buildModelContext, resolveTranscriptRetainTokens } = await import("./orchestrator/conversation-transcript-context");
+    const { createTranscriptSink } = await import("./orchestrator/transcript-sink");
+    const retainTokens = resolveTranscriptRetainTokens(256_000);
+    materialize = async () => (await buildModelContext({
+      store: getConversationTranscriptStore(root),
+      conversationId,
+      retainTokens,
+      runReader: { get: () => null },
+    })).messages;
+    const sender = makeSender();
+    const lastModelRequestMessages = () =>
+      (mocks.runCyreneAgent.mock.calls.at(-1)?.[0] as { messages: Array<Record<string, unknown>> }).messages;
+    const currentRunId = () =>
+      (mocks.runCyreneAgent.mock.calls.at(-1)?.[0] as { runId: string }).runId;
+    const store = getConversationTranscriptStore(root);
+
+    // 轮次 1：无工具（ChatLoop 单请求路径，assistant 无 roundId）
+    await runHandler({ sender }, {
+      messages: [{ role: "user", content: "first-user" }],
+      sessionId: conversationId,
+      userTurnId: "turn-1",
+    });
+    await createTranscriptSink({ store, conversationId, runId: currentRunId() })
+      .appendAssistant({ message: { role: "assistant", content: "first-assistant" } });
+
+    // 轮次 2：启用工具（Harness 路径，含工具调用与 canonical 结果）
+    mocks.getSession.mockReturnValue(sessionShape([
+      { id: "turn-1", role: "user", content: "first-user", at: 1 },
+      { id: "a-1", role: "model", content: "first-assistant", at: 2 },
+      { id: "turn-2", role: "user", content: "second-user", at: 3 },
+    ]));
+    await runHandler({ sender }, {
+      messages: [{ role: "user", content: "second-user" }],
+      sessionId: conversationId,
+      userTurnId: "turn-2",
+    });
+    const harnessSink = createTranscriptSink({ store, conversationId, runId: currentRunId() });
+    const harnessAssistantEntryId = await harnessSink.appendAssistant({
+      message: {
+        role: "assistant",
+        content: "second-assistant",
+        toolCalls: [{ id: "call-1", name: "read_file", arguments: '{"path":"a.txt"}' }],
+      },
+    });
+    await harnessSink.appendToolResult({
+      assistantEntryId: harnessAssistantEntryId,
+      message: { role: "tool", toolCallId: "call-1", name: "read_file", content: "工具结果" },
+      outcome: "success",
+    });
+
+    // 轮次 3：再关闭工具（回到 ChatLoop），三轮历史必须在同一条轨迹里保持连续
+    mocks.getSession.mockReturnValue(sessionShape([
+      { id: "turn-1", role: "user", content: "first-user", at: 1 },
+      { id: "a-1", role: "model", content: "first-assistant", at: 2 },
+      { id: "turn-2", role: "user", content: "second-user", at: 3 },
+      { id: "a-2", role: "model", content: "second-assistant", at: 4 },
+      { id: "turn-3", role: "user", content: "third-user", at: 5 },
+    ]));
+    await runHandler({ sender }, {
+      messages: [{ role: "user", content: "third-user" }],
+      sessionId: conversationId,
+      userTurnId: "turn-3",
+    });
+
+    expect(lastModelRequestMessages()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ role: "user", content: "first-user" }),
+      expect.objectContaining({ role: "assistant", content: "first-assistant" }),
+      expect.objectContaining({ role: "user", content: "second-user" }),
+      expect.objectContaining({ role: "assistant", content: "second-assistant" }),
+      expect.objectContaining({ role: "tool", toolCallId: "call-1", content: "工具结果" }),
+      expect.objectContaining({ role: "user", content: "third-user" }),
+    ]));
+    mocks.userDataRoot = "";
+  });
 });
 
 describe("resolveTranscriptContextSource", () => {
