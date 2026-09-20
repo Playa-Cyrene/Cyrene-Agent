@@ -7,7 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 vi.stubGlobal("React", React);
 
 // FileTreePanel 会引入 ChatMessageList 的 MarkdownContent（MD 预览用），
-// 该模块连带 @ant-design/x-markdown 在测试环境解析报语法错，这里 mock 成轻量替身
+// 正文渲染涉及浏览器样式与插件链；该结构测试只需轻量替身。
 vi.mock("./ChatMessageList", () => ({
   MarkdownContent: ({ content }: { content: string }) => createElement("div", null, content),
 }));

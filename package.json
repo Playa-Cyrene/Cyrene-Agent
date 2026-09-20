@@ -78,7 +78,6 @@
     "@ant-design/cssinjs": "^2.1.2",
     "@ant-design/icons": "^6.3.2",
     "@ant-design/x": "^2.9.0",
-    "@ant-design/x-markdown": "^2.9.0",
     "@anthropic-ai/sandbox-runtime": "^0.0.71",
     "@anthropic-ai/sdk": "^0.115.0",
     "@ast-grep/napi": "^0.45.1",

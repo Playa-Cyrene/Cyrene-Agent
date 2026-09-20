@@ -595,7 +595,7 @@ button.cy-file-change-card__row:hover { background: #f7f4f6; }
   font-size: 11.5px;
 }
 
-/* XMarkdown 的 GFM task list 勾选态：已完成项弱化 + 删除线 */
+/* GFM task list 勾选态：已完成项弱化 + 删除线 */
 .cy-plan-content__body .cy-message-markdown li:has(> input[type="checkbox"]:checked) {
   color: var(--cy-text-muted, #817b82);
   text-decoration: line-through;

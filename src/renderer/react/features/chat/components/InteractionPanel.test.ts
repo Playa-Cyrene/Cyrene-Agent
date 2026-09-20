@@ -4,7 +4,7 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 import { AskUserPanel } from "./InteractionPanel";
 import type { AskUserInteraction } from "./run-presentation";
 
-// 面板结构测试不覆盖 Markdown/LaTeX 渲染细节；真 XMarkdown 链路在 node 测试环境
+// 面板结构测试不覆盖 Markdown/LaTeX 渲染细节；真实渲染链在 node 测试环境
 // 会加载带 CSS 的 CJS 模块而无法静态渲染，这里替换为直通文本
 vi.mock("./ChatMessageList", () => ({
   MarkdownContent: ({ content }: { content: string }) => createElement("span", null, content),

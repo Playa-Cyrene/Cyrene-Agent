@@ -79,14 +79,20 @@ describe("assistantRenderStages", () => {
     expect(source).not.toContain("destroyOnHidden={false}");
   });
 
-  it("keeps the shared Markdown component map stable", () => {
-    const source = fs.readFileSync(
+  it("keeps the shared Streamdown configuration stable", () => {
+    const listSource = fs.readFileSync(
       fileURLToPath(new URL("./ChatMessageList.tsx", import.meta.url)),
       "utf8",
     );
-    expect(source).toContain("const markdownComponents = { code: MarkdownCode, a: MarkdownAnchor };");
-    expect(source).toContain("components={markdownComponents}");
-    expect(source).not.toContain("componentDidUpdate(previousProps");
-    expect(source).toContain("prismLightMode={false}");
+    const rendererSource = fs.readFileSync(
+      fileURLToPath(new URL("./StreamdownMessageContent.tsx", import.meta.url)),
+      "utf8",
+    );
+    expect(listSource).toContain("<StreamdownMessageContent content={normalized} streaming={Boolean(streaming)} />");
+    expect(rendererSource).toContain("const messageComponents: Components");
+    expect(rendererSource).toContain("const rehypePlugins: PluggableList");
+    expect(rendererSource).toContain("singleDollarTextMath: true");
+    expect(rendererSource).not.toContain("componentDidUpdate(previousProps");
+    expect(rendererSource).toContain("prismLightMode={false}");
   });
 });

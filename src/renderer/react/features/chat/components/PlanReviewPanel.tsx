@@ -1,6 +1,6 @@
 // PlanContent — 计划清单内容（由 RightInspector 容器承载）。
 //
-// 渲染复用聊天正文的 MarkdownContent（@ant-design/x-markdown + 代码高亮），
+// 渲染复用聊天正文的 MarkdownContent（Streamdown + 代码高亮），
 // 与模型回复的 md 渲染保持完全一致；阶段色点与提示由 RightInspector 顶部 tab 提供。
 // 入口 chip（PlanReviewEntry）由 Code Todo 卡片承载，点击打开右侧面板。
 

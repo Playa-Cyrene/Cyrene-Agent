@@ -12,11 +12,6 @@ vi.mock("@ant-design/x", async () => {
     ThoughtChain: () => null,
   };
 });
-vi.mock("@ant-design/x-markdown", async () => {
-  const ReactModule = await import("react");
-  return { XMarkdown: ({ content }: { content?: string }) => ReactModule.createElement("div", null, content) };
-});
-vi.mock("@ant-design/x-markdown/plugins/Latex", () => ({ default: () => ({}) }));
 vi.mock("../../../../../shared/renderer-base", () => ({ resolveAsset: (path: string) => path }));
 vi.mock("./StreamdownMessageContent.css", () => ({}));
 vi.mock("./MermaidBlock", () => ({
