@@ -1,9 +1,9 @@
-@import "tailwindcss/theme.css" layer(cyrene-streamdown-theme) prefix(sd);
-@import "tailwindcss/utilities.css" layer(cyrene-streamdown-utilities) prefix(sd);
+@import "tailwindcss/theme.css" layer(cyrene-streamdown-theme);
+@import "tailwindcss/utilities.css" layer(cyrene-streamdown-utilities) source(none);
 @import "streamdown/styles.css";
 @import "katex/dist/katex.min.css";
 
-@source "../../../../../node_modules/streamdown/dist/*.js";
+@source "../../../../../../node_modules/streamdown/dist/*.js";
 
 @theme inline {
   --color-background: var(--background);

@@ -107,7 +107,6 @@ export function StreamdownMessageContent({ content, streaming }: StreamdownMessa
       plugins={{ math: mathPlugin }}
       components={messageComponents}
       rehypePlugins={rehypePlugins}
-      prefix="sd"
       className="cy-message-markdown cy-streamdown-message"
     >
       {content}

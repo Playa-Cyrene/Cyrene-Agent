@@ -39,6 +39,13 @@ function render(content: string, streaming: boolean, workspaceRoot?: string): st
 }
 
 describe("StreamdownMessageContent", () => {
+  it("emits the unprefixed utilities generated from the Streamdown source scan", () => {
+    const markup = render("一段正文", false);
+
+    expect(markup).toContain("space-y-4");
+    expect(markup).not.toContain("sd:space-y-4");
+  });
+
   it("renders inline and display mathematics with KaTeX", () => {
     const markup = render("行内 $E=mc^2$ 与块级：\n\n$$a^2+b^2=c^2$$", true);
 

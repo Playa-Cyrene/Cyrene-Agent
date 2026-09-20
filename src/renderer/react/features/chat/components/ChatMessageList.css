@@ -690,6 +690,7 @@
 
 .cy-message-reasoning .ant-think-content {
   padding-block-start: 8px;
+  padding-inline-start: 46px;
 }
 
 .cy-message-reasoning .cy-message-markdown {
