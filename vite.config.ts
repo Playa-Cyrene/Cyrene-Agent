@@ -2,8 +2,8 @@ import { defineConfig, type Plugin } from "vite";
 import { readFileSync } from "node:fs";
 import { resolve } from "path";
 import react from "@vitejs/plugin-react";
-// Tailwind 仅服务 perf harness 的 A1-S spike（Streamdown 布局类依赖 Tailwind 工具类）：
-// 只在 CYRENE_PERF_HARNESS=1 构建挂载插件，正式产品构建链连插件都不加载，产物零影响
+// Streamdown 的预置布局使用 Tailwind 工具类。样式文件以 sd 前缀和局部容器隔离，
+// 因此插件需要参与正式渲染构建，但不会引入全局 preflight 或产品 utility class 习惯。
 import tailwindcss from "@tailwindcss/vite";
 
 /**
@@ -96,8 +96,7 @@ const isPerfProfileBuild = process.env.CYRENE_PERF_PROFILE === "1";
 const perfOutDir = process.env.CYRENE_PERF_OUT_DIR;
 
 export default defineConfig({
-  // Tailwind 插件只在 perf harness 构建挂载（A1-S spike 专用，见顶部注释）
-  plugins: [react(), appVersionPlugin(), reactRendererCspPlugin(), ...(isPerfHarnessBuild ? [tailwindcss()] : [])],
+  plugins: [react(), appVersionPlugin(), reactRendererCspPlugin(), tailwindcss()],
   root: resolve(__dirname, "src/renderer"),
   base: "./",
   ...(isPerfProfileBuild
