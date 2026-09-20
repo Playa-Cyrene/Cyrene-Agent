@@ -4,7 +4,6 @@ import { IPC } from "../../shared/ipc-channels";
 import { isDev } from "../env";
 import { computeLayout } from "../window-layout";
 import { stopCall, setCallWindow } from "../call/call-manager";
-import { attachExternalLinkHandler } from "./external-link";
 import {
   callWindow,
   getCurrentAppIconPath,
@@ -71,9 +70,6 @@ export function createReactChatWindowShell(): BrowserWindow {
     },
   });
   setReactChatWindow(window);
-
-  // 聊天窗口内出现外链（如插件收录仓库）时转交系统浏览器打开，不再派生新窗口
-  attachExternalLinkHandler(window);
 
   window.webContents.on("did-start-loading", () => {
     reactChatSession.markLoading();
@@ -267,8 +263,6 @@ export function createSettingsWindow(section?: string): void {
     },
   });
   setSettingsWindow(window);
-
-  attachExternalLinkHandler(window);
 
   const hash = section ? `#${section}` : "";
   if (isDev) {
