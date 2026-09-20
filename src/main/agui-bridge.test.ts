@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Observable } from "rxjs";
 import { IPC } from "../shared/ipc-channels";
 
@@ -25,6 +25,8 @@ const mocks = vi.hoisted(() => ({
   // 会话守卫/takeover 测试：abort 触发 RUN_FINISHED(cancelled) + complete，
   // 模拟真实 harness 的 cancelled 结算链路（AGUI_CANCEL / takeover 都走这条链）
   completeOnAbort: false,
+  // 轨迹派发测试：主进程 app.getPath("userData") 的可替换根目录
+  userDataRoot: "",
 }));
 
 vi.mock("electron", () => ({
@@ -41,6 +43,7 @@ vi.mock("electron", () => ({
   BrowserWindow: {
     getAllWindows: () => [],
   },
+  app: { getPath: () => mocks.userDataRoot },
 }));
 
 vi.mock("./orchestrator/cyrene-agent", () => ({
@@ -173,7 +176,14 @@ describe("agui-bridge sticker event ordering", () => {
     vi.resetModules();
     mocks.handlers.clear();
     mocks.listeners.clear();
-    mocks.getSession.mockReturnValue({ id: "chat-pending", mode: "chat" });
+    // 桌面派发带 userTurnId：session 需含该 user 消息，轨迹写入用临时目录
+    const transcriptRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-bridge-pending-"));
+    mocks.userDataRoot = transcriptRoot;
+    mocks.getSession.mockReturnValue({
+      id: "chat-pending",
+      mode: "chat",
+      messages: [{ id: "msg-user-1", role: "user", content: "你好", at: 1 }],
+    });
     const { registerAgUiIpc } = await import("./agui-bridge");
     const { createPendingTurnLifecycle } = await import("./plugin-host/pending-turn-lifecycle");
     const publisher = {
@@ -235,6 +245,8 @@ describe("agui-bridge sticker event ordering", () => {
       status: "success",
     }));
     expect(pendingTurns.pendingCount()).toBe(0);
+    fs.rmSync(transcriptRoot, { recursive: true, force: true });
+    mocks.userDataRoot = "";
   });
 
   it("routes structured Ask cards to the AG-UI run sender", async () => {
@@ -1567,5 +1579,120 @@ describe("agui-bridge pending adjust IPC", () => {
     })).rejects.toThrow("boom: build options failed");
 
     expect(mocks.resetPendingAdjustByRun).toHaveBeenCalled();
+  });
+});
+
+describe("agui-bridge transcript dispatch", () => {
+  const roots: string[] = [];
+
+  function makeSender() {
+    return { isDestroyed: () => false, send: () => {} };
+  }
+
+  afterEach(() => {
+    for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  async function setupBridge(buildOptions?: (input: unknown) => Promise<unknown>) {
+    vi.resetModules();
+    mocks.handlers.clear();
+    mocks.runCyreneAgent.mockClear();
+    const seenInputs: unknown[] = [];
+    const bridge = await import("./agui-bridge");
+    bridge.registerAgUiIpc(
+      buildOptions ?? (async (input: unknown) => {
+        seenInputs.push(input);
+        return {
+          options: {
+            settings: { provider: "test", baseUrl: "", model: "", apiKey: "", contextWindowTokens: 256000 },
+            messages: [],
+            timeoutMs: 1000,
+            toolSystemContent: "TOOL",
+            soulSystemBaseContent: "SOUL",
+          },
+          latestUserText: "当前输入",
+        };
+      }),
+      async () => {},
+      () => null,
+    );
+    const runHandler = mocks.handlers.get(IPC.AGUI_RUN);
+    if (!runHandler) throw new Error("AGUI_RUN handler was not registered");
+    return { bridge, runHandler, seenInputs };
+  }
+
+  it("commits the turn to the transcript and flags transcript context before build options", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-bridge-dispatch-"));
+    roots.push(root);
+    mocks.userDataRoot = root;
+    mocks.getSession.mockReturnValue({
+      id: "chat-transcript",
+      mode: "chat",
+      messages: [
+        { id: "m1", role: "user", content: "旧问题", at: 1 },
+        { id: "m2", role: "model", content: "旧回答", at: 2 },
+        { id: "u1", role: "user", content: "当前输入", at: 3 },
+      ],
+    });
+    const { runHandler, seenInputs } = await setupBridge();
+    const sender = makeSender();
+
+    await runHandler({ sender }, {
+      messages: [{ role: "user", content: "当前输入" }],
+      sessionId: "chat-transcript",
+      userTurnId: "u1",
+    });
+
+    // buildOptions 收到轨迹上下文标记（主进程内部字段）
+    expect(seenInputs[0]).toMatchObject({ useTranscriptContext: true });
+
+    // 派发前轨迹已落盘：回填边界 + 当前 user
+    const { getConversationTranscriptStore } = await import("./orchestrator/conversation-transcript-store");
+    const entries = (await getConversationTranscriptStore(root).read("chat-transcript")).entries;
+    expect(entries.some((entry) => entry.kind === "backfill_boundary")).toBe(true);
+    expect(entries.some((entry) => entry.kind === "user" && entry.turnId === "u1")).toBe(true);
+    expect(entries.some((entry) => entry.kind === "assistant" && entry.payload.content === "旧回答")).toBe(true);
+    mocks.userDataRoot = "";
+  });
+
+  it("keeps callers without userTurnId on supplied messages without transcript context", async () => {
+    mocks.getSession.mockReturnValue({ id: "chat-plain", mode: "chat" });
+    const { runHandler, seenInputs } = await setupBridge();
+    const sender = makeSender();
+
+    await runHandler({ sender }, {
+      messages: [{ role: "user", content: "channel text" }],
+      sessionId: "chat-plain",
+    });
+
+    // 无 userTurnId 的调用方（渠道/内部路径语义）：不写轨迹、不用轨迹上下文
+    expect(seenInputs[0]).not.toHaveProperty("useTranscriptContext");
+    const onFinishedNotStarted = mocks.runCyreneAgent;
+    expect(onFinishedNotStarted).toHaveBeenCalled();
+  });
+
+  it("does not start the model when the transcript write fails", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-bridge-fail-"));
+    roots.push(root);
+    mocks.userDataRoot = root;
+    // userTurnId 指向的消息不存在 → prepareTranscriptDispatch 拒绝（fail-closed）
+    mocks.getSession.mockReturnValue({
+      id: "chat-fail",
+      mode: "chat",
+      messages: [{ id: "m1", role: "user", content: "旧问题", at: 1 }],
+    });
+    const { runHandler, seenInputs } = await setupBridge();
+    const sender = makeSender();
+
+    await expect(runHandler({ sender }, {
+      messages: [{ role: "user", content: "输入" }],
+      sessionId: "chat-fail",
+      userTurnId: "missing-turn",
+    })).rejects.toThrow("TRANSCRIPT_USER_TURN_NOT_FOUND");
+
+    // 模型不得启动：buildOptions 未被调用
+    expect(seenInputs).toHaveLength(0);
+    expect(mocks.runCyreneAgent).not.toHaveBeenCalled();
+    mocks.userDataRoot = "";
   });
 });

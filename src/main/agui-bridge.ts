@@ -38,6 +38,8 @@ import * as chatsStore from "./chats/chats-store";
 import { createRunAdjustmentPoller } from "./chats/pending-adjustment";
 import { broadcastChatsChanged } from "./chats/chats-ipc";
 import type { ConversationMode } from "../shared/chat-types";
+import { prepareTranscriptDispatch, type TranscriptRewindRequest } from "./orchestrator/conversation-transcript-coordinator";
+import { getConversationTranscriptStore } from "./orchestrator/conversation-transcript-store";
 import {
   requestUserClarification,
   cancelPendingChoicesForRun,
@@ -124,6 +126,10 @@ export interface AguiRunInput {
   takeoverFromRunId?: string;
   /** 只由主进程根据会话持久化字段注入，渲染端传值不可信。 */
   modelProfileId?: string;
+  /** 桌面 edit / regenerate 的轨迹回退锚点（主进程写 turn_rewind；渲染端只传锚点元数据）。 */
+  transcriptRewind?: TranscriptRewindRequest;
+  /** 主进程内部字段：本轮模型上下文改用权威轨迹构建；外部渠道与插件不设置。 */
+  useTranscriptContext?: boolean;
 }
 
 /** 调用方（index.ts）注入：把输入转成 agent 需要的 options（含 system prompt 拼接）。 */
@@ -468,6 +474,34 @@ export function registerAgUiIpc(
         }),
       ]);
       clearTimeout(settleTimeout);
+    }
+
+    // ── 轨迹派发（CTA Phase 1）：模型请求启动前原子提交 user / rewind ──
+    // 桌面渲染端 dispatch 总带 userTurnId（AgentRunController 已落库锚点）；
+    // 缺 userTurnId 的非标准调用按渲染端消息走，不写轨迹。
+    // 回退开关：显式 CYRENE_TRANSCRIPT_CONTEXT_SOURCE=renderer 时跳过轨迹源（仅一个版本周期）。
+    const transcriptSource = process.env.CYRENE_TRANSCRIPT_CONTEXT_SOURCE === "renderer"
+      ? "renderer"
+      : "transcript";
+    if (transcriptSource === "transcript" && input.userTurnId) {
+      try {
+        await prepareTranscriptDispatch({
+          store: getConversationTranscriptStore(app.getPath("userData")),
+          session,
+          userTurnId: input.userTurnId,
+          runId,
+          rewind: input.transcriptRewind,
+        });
+      } catch (error) {
+        // 轨迹写入失败即阻断模型启动（fail-closed），复位守卫与插话标记后上抛
+        perf.dump();
+        try { chatsStore.resetPendingAdjustByRun(sessionId, runId); } catch { /* 复位尽力而为 */ }
+        releaseSessionGuard?.();
+        releaseSessionGuard = null;
+        lifecycle?.onConversationEnded();
+        throw error;
+      }
+      input.useTranscriptContext = true;
     }
 
     // ── Chat / Work / Learn / Code：共用 CyreneAgent 外壳 ──
