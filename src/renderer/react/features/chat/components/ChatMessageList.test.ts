@@ -14,35 +14,10 @@ vi.mock("@ant-design/x", async () => {
     ThoughtChain: () => null,
   };
 });
-vi.mock("@ant-design/x-markdown", async () => {
-  const ReactModule = await import("react");
-  return {
-    XMarkdown: ({ content, streaming }: {
-      content?: string;
-      streaming?: {
-        hasNextChunk?: boolean;
-        enableAnimation?: boolean;
-        animationConfig?: { fadeDuration?: number; easing?: string };
-        tail?: { component?: React.ComponentType } | false;
-      };
-    }) => {
-      const Tail = typeof streaming?.tail === "object" ? streaming.tail.component : undefined;
-      return ReactModule.createElement(
-        "div",
-        {
-          "data-has-next": String(Boolean(streaming?.hasNextChunk)),
-          "data-animation": String(Boolean(streaming?.enableAnimation)),
-          "data-fade-duration": String(streaming?.animationConfig?.fadeDuration ?? ""),
-          "data-easing": streaming?.animationConfig?.easing ?? "",
-        },
-        content ?? null,
-        Tail ? ReactModule.createElement(Tail) : null,
-      );
-    },
-  };
-});
-vi.mock("@ant-design/x-markdown/plugins/Latex", () => ({ default: () => ({}) }));
 vi.mock("../../../../../shared/renderer-base", () => ({ resolveAsset: (path: string) => path }));
+vi.mock("./StreamdownMessageContent.css", () => ({}));
+vi.mock("./MermaidBlock", () => ({ MermaidBlock: () => null }));
+vi.mock("./SvgCardBlock", () => ({ SvgCardBlock: () => null }));
 
 import { assembleMessageItems, createMessageItems, formatChannelSourceLabel, MarkdownContent, resolveChannelConversationLabel, RunActivityDetail, type ChatMessageItem, type EnabledSticker } from "./ChatMessageList";
 import { extractMessageStickerId, stripMessageStickerMarkers } from "./message-sticker";
@@ -91,7 +66,7 @@ describe("formal answer visibility", () => {
     expect(message.content).toBe("");
   });
 
-  it("fades in live text while keeping the tail cursor and generating hint disabled", () => {
+  it("renders both streaming and completed content through the message Markdown renderer", () => {
     (globalThis as typeof globalThis & { React: typeof React }).React = React;
     const liveHtml = renderToStaticMarkup(React.createElement(MarkdownContent, {
       content: "正在生成",
@@ -102,14 +77,10 @@ describe("formal answer visibility", () => {
       streaming: false,
     }));
 
-    expect(liveHtml).toContain('data-has-next="true"');
-    expect(liveHtml).toContain('data-animation="true"');
-    expect(liveHtml).toContain('data-fade-duration="100"');
-    expect(liveHtml).toContain('data-easing="ease-out"');
-    expect(liveHtml).not.toContain("cy-live-answer-tail");
-    expect(completedHtml).toContain('data-has-next="false"');
-    expect(completedHtml).toContain('data-animation="false"');
-    expect(completedHtml).not.toContain("cy-live-answer-tail");
+    expect(liveHtml).toContain("正在生成");
+    expect(completedHtml).toContain("已经完成");
+    expect(liveHtml).toContain("cy-streamdown-message");
+    expect(completedHtml).toContain("cy-streamdown-message");
   });
 
   it("keeps the source free of breathing tails, tail animations and generating hints", () => {

@@ -7,16 +7,16 @@ import { createRoot, type Root } from "react-dom/client";
 import { JSDOM } from "jsdom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-// 与 ChatMessageList.test.ts 相同的 mock：node 环境下 x-markdown 的 lib 产物不可直载
 vi.mock("@ant-design/x", () => ({
   Bubble: { List: () => null },
   CodeHighlighter: () => null,
   Think: () => null,
   ThoughtChain: () => null,
 }));
-vi.mock("@ant-design/x-markdown", () => ({ XMarkdown: () => null }));
-vi.mock("@ant-design/x-markdown/plugins/Latex", () => ({ default: () => ({}) }));
 vi.mock("../../../../../shared/renderer-base", () => ({ resolveAsset: (path: string) => path }));
+vi.mock("./StreamdownMessageContent.css", () => ({}));
+vi.mock("./MermaidBlock", () => ({ MermaidBlock: () => null }));
+vi.mock("./SvgCardBlock", () => ({ SvgCardBlock: () => null }));
 
 import { AssistantMessageFooter, LastTurnEditAction, LastTurnIdsContext, type LastTurnIds } from "./ChatMessageList";
 

@@ -756,7 +756,7 @@
   user-select: text;
 }
 
-/* 正式回答的标题节奏：保留 XMarkdown 字号，增加章节留白；一级标题用细线建立清晰边界。 */
+/* 正式回答的标题节奏：沿用现有字号，增加章节留白；一级标题用细线建立清晰边界。 */
 .cy-message--assistant .cy-message-markdown h1 {
   margin: 28px 0 18px;
   padding-bottom: 10px;

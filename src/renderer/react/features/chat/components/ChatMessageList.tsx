@@ -1,6 +1,4 @@
-import { Bubble, CodeHighlighter, Think, ThoughtChain, type BubbleItemType } from "@ant-design/x";
-import { XMarkdown, type ComponentProps } from "@ant-design/x-markdown";
-import Latex from "@ant-design/x-markdown/plugins/Latex";
+import { Bubble, Think, ThoughtChain, type BubbleItemType } from "@ant-design/x";
 import { Component, createContext, createElement, useCallback, useContext, useEffect, useMemo, useRef, useState, type ErrorInfo, type KeyboardEvent, type ReactNode } from "react";
 import { t, useTranslation } from "../../../i18n";
 import { normalizeModelMarkdown } from "./markdown-normalize";
@@ -35,10 +33,8 @@ import { buildAskUserQa, buildFlatRunTimeline, countRoundChangedFiles, describeT
 import { TaskDelegationRow } from "./TaskDelegationRow";
 import { extractFileChanges, FileChangeCard } from "./FileChangeCard";
 import { ReviewPanel } from "./ReviewPanel";
-import { MermaidBlock } from "./MermaidBlock";
-import { SvgCardBlock } from "./SvgCardBlock";
-import { parseFileLinkHref, relativePathInsideWorkspace } from "./file-link";
 import { reportChatPerfRender } from "./chat-perf-probe";
+import { StreamdownMessageContent } from "./StreamdownMessageContent";
 
 export interface ChatMessageItem {
   id: string;
@@ -107,16 +103,13 @@ interface ChatMessageListProps {
   onOpenFileLink?: (relPath: string, line?: number) => void;
 }
 
-const markdownConfig = { extensions: Latex() };
 const cyreneAvatarUrl = resolveAsset("avatars/cyrene-avatar.png");
 
 // 消息是否正在流式输出。code 渲染器收不到 MarkdownContent 的 props，用 context 传下去，
 // mermaid 块靠它在流式期间显示占位而不是渲染半截语法。
-// A1-S spike：perf harness 的 streamdown 渲染器也消费此 context（占位语义一致），故导出
 export const MessageStreamingContext = createContext(false);
 
-/** 文件链接环境：工作区根 + 点击回调，由 ChatMessageList 提供，anchor 渲染器消费。
- * A1-S spike：perf harness 的 streamdown 渲染器复用同一环境判断界内/越界文件链接，故导出 */
+/** 文件链接环境：工作区根 + 点击回调，由 ChatMessageList 提供，anchor 渲染器消费。 */
 export interface FileLinkEnv {
   workspaceRoot?: string;
   openFile?: (relPath: string, line?: number) => void;
@@ -190,94 +183,6 @@ export function AssistantMessageFooter({ content, messageId, streaming, conversa
   );
 }
 
-function MarkdownCode({ children, lang, block }: ComponentProps<{ children?: ReactNode }>) {
-  const streaming = useContext(MessageStreamingContext);
-  if (!block) return <code>{children}</code>;
-  const source = String(children ?? "").replace(/\n$/, "");
-  if ((lang ?? "").split(/\s+/)[0] === "mermaid") {
-    return <MermaidBlock code={source} streaming={streaming} />;
-  }
-  if ((lang ?? "").split(/\s+/)[0] === "svg") {
-    return <SvgCardBlock code={source} streaming={streaming} />;
-  }
-  return (
-    <CodeHighlighter lang={(lang ?? "text").split(/\s+/)[0]} prismLightMode={false}>
-      {source}
-    </CodeHighlighter>
-  );
-}
-
-// 聊天正文里的 <a>：file:/// 链接指向工作区内文件时渲染成可点 chip（打开右侧预览并
-// 定位行号），越界（桌面等）或未绑定工作区时降级纯文本——渲染时就摘掉可点样式，
-// 而不是让用户点了没反应；其余链接保持默认（新窗口打开）
-function MarkdownAnchor({ children, href }: ComponentProps<{ children?: ReactNode; href?: string }>) {
-  const { workspaceRoot, openFile } = useContext(FileLinkContext);
-  const target = href ? parseFileLinkHref(href) : null;
-  if (target) {
-    const relPath = workspaceRoot ? relativePathInsideWorkspace(target.absPath, workspaceRoot) : null;
-    if (relPath && openFile) {
-      return (
-        <button
-          type="button"
-          className="cy-file-link"
-          title={target.absPath}
-          onClick={() => openFile(relPath, target.lineStart)}
-        >
-          <svg className="cy-file-link__icon" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
-            <path
-              d="M4 1.5h5L12.5 5v9a.5.5 0 0 1-.5.5H4a.5.5 0 0 1-.5-.5V2a.5.5 0 0 1 .5-.5Z"
-              fill="none" stroke="currentColor" strokeLinejoin="round"
-            />
-            <path d="M9 1.5V5h3.5" fill="none" stroke="currentColor" strokeLinejoin="round" />
-          </svg>
-          <span className="cy-file-link__text">{children}</span>
-        </button>
-      );
-    }
-    return <span className="cy-file-link is-plain">{children}</span>;
-  }
-  return (
-    <a href={href} target="_blank" rel="noreferrer">
-      {children}
-    </a>
-  );
-}
-
-const markdownComponents = { code: MarkdownCode, a: MarkdownAnchor };
-const completedMarkdownOptions = {
-  hasNextChunk: false,
-  enableAnimation: false,
-  tail: false,
-};
-const streamingMarkdownOptions = {
-  hasNextChunk: true,
-  enableAnimation: true,
-  animationConfig: {
-    fadeDuration: 100,
-    easing: "ease-out",
-  },
-  tail: false,
-};
-// A0 对照组二：流式渲染但关闭动画（enableAnimation 是 XMarkdown 现有配置项，非新能力）
-const streamingMarkdownStaticOptions = {
-  hasNextChunk: true,
-  enableAnimation: false,
-  tail: false,
-};
-
-/**
- * A0 对照实验开关（perf harness 页面注入，正式构建恒为 animated，零行为差异）：
- * static=流式渲染关动画；plain=流式消息绕过 XMarkdown 渲染为转义纯文本（历史消息不受影响）。
- * A1-S 对照组不在此判断：perf harness 按需注册 __cyreneChatPerfMarkdownRenderer，
- * 注册与否是唯一开关，正式产物因此不含任何 spike 模式名。
- * 见 issue 文档"阶段 2 后终验"的 A0 限时归因实验设计。
- */
-function perfStreamRenderMode(): "animated" | "static" | "plain" {
-  if (typeof window === "undefined") return "animated";
-  const value = (window as typeof window & { __cyreneChatPerfStreamRender?: string }).__cyreneChatPerfStreamRender;
-  return value === "static" || value === "plain" ? value : "animated";
-}
-
 class MarkdownRenderBoundary extends Component<{
   content: string;
   children: ReactNode;
@@ -300,9 +205,6 @@ class MarkdownRenderBoundary extends Component<{
   }
 }
 
-/** A1-S spike：perf harness 挂载前注册的流式正文渲染器（仅 streamRender=streamdown 时消费） */
-type PerfHarnessMarkdownRenderer = (props: { content: string }) => ReactNode;
-
 export function MarkdownContent({
   content,
   streaming,
@@ -312,44 +214,12 @@ export function MarkdownContent({
 }) {
   // 性能探针：perf harness 注册后统计正文渲染次数（阶段 2 验收：流式期间历史消息应为 0）
   reportChatPerfRender("markdownRenders");
-  // 模型偶尔输出畸形 Markdown（# 后缺空格、标题粘正文、围栏粘句子），
-  // 渲染前先做机械归一化；归一化与 XMarkdown 解析都在同一 memo 周期内完成
+  // 模型偶尔输出畸形 Markdown（# 后缺空格、标题粘正文、围栏粘句子），渲染前先做机械归一化。
   const normalized = useMemo(() => normalizeModelMarkdown(content), [content]);
-  const streamMode = streaming ? perfStreamRenderMode() : "animated";
-  // A0 对照组三：流式消息绕过 XMarkdown，渲染为转义纯文本（pre 内文本节点自动转义），
-  // 隔离"流式全文重解析"成本；历史消息（streaming=false）不受影响
-  if (streamMode === "plain") {
-    return <pre className="cy-message-markdown-fallback">{content}</pre>;
-  }
-  // A1-S 对照组：perf harness 注册了流式渲染器时接管流式消息（react-perf/main.tsx 按
-  // streamRender 参数决定是否注册；正式构建不注册，本分支零执行且不产生任何 spike 依赖）
-  if (streaming && typeof window !== "undefined") {
-    const harnessRenderer = (window as typeof window & { __cyreneChatPerfMarkdownRenderer?: PerfHarnessMarkdownRenderer })
-      .__cyreneChatPerfMarkdownRenderer;
-    if (harnessRenderer) {
-      return (
-        <MarkdownRenderBoundary content={normalized}>
-          <MessageStreamingContext.Provider value>
-            {harnessRenderer({ content: normalized })}
-          </MessageStreamingContext.Provider>
-        </MarkdownRenderBoundary>
-      );
-    }
-  }
   return (
     <MarkdownRenderBoundary content={normalized}>
       <MessageStreamingContext.Provider value={Boolean(streaming)}>
-        <XMarkdown
-          content={normalized}
-          config={markdownConfig}
-          components={markdownComponents}
-          openLinksInNewTab
-          escapeRawHtml
-          rootClassName="cy-message-markdown"
-          streaming={streaming
-            ? (streamMode === "static" ? streamingMarkdownStaticOptions : streamingMarkdownOptions)
-            : completedMarkdownOptions}
-        />
+        <StreamdownMessageContent content={normalized} streaming={Boolean(streaming)} />
       </MessageStreamingContext.Provider>
     </MarkdownRenderBoundary>
   );
