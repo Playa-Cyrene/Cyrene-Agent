@@ -73,17 +73,18 @@ const chatApi = {
   isMaximized: () => ipcRenderer.invoke(IPC.CHAT_IS_MAXIMIZED),
   getEnabledStickers: () => ipcRenderer.invoke(IPC.STICKERS_GET_ENABLED),
   /** 从 dataTransfer.files 或 fileInput.files 提取路径后批量摄入。
-   *  路径提取在 preload（webUtils.getPathForFile），避免新版 Electron 中 File.path 不可用的问题。 */
+   *  路径提取在 preload（webUtils.getPathForFile），避免新版 Electron 中 File.path 不可用的问题。
+   *  同时携带 File.type（MIME）：主进程图片判定按「扩展名或 MIME」，与渲染端预览口径一致。 */
   ingestDroppedFiles: async (files: File[]): Promise<unknown[]> => {
-    const paths: string[] = [];
+    const entries: Array<{ path: string; mime: string }> = [];
     for (const f of files) {
       try {
         const p = webUtils.getPathForFile(f);
-        if (p) paths.push(p);
+        if (p) entries.push({ path: p, mime: f.type });
       } catch { /* 跳过无法识别路径的文件 */ }
     }
-    if (paths.length === 0) return [];
-    return ipcRenderer.invoke(IPC.CHAT_INGEST_FILES, paths);
+    if (entries.length === 0) return [];
+    return ipcRenderer.invoke(IPC.CHAT_INGEST_FILES, entries);
   },
   processDocuments: (filePaths: string[], query: string) =>
     ipcRenderer.invoke(IPC.CHAT_PROCESS_DOCUMENTS, { filePaths, query }),

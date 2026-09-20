@@ -94,15 +94,17 @@ export function isDocumentExt(ext: string): boolean {
   return normalized === "" || isTextExt(normalized);
 }
 
-export function describePendingAttachment(filePath: string): Attachment {
+/** 拖入阶段的 pending 附件描述：图片按「扩展名或 MIME」判定，与渲染端预览口径一致。 */
+export function describePendingAttachment(filePath: string, mime?: string): Attachment {
   const ext = path.extname(filePath).toLowerCase();
   const name = path.basename(filePath);
-  if (isImageExt(ext)) {
+  if (isImageExt(ext) || (typeof mime === "string" && mime.startsWith("image/"))) {
     return {
       name,
       kind: "image",
       filePath,
-      mime: getMimeFromExt(ext),
+      // 扩展名优先；无扩展名（如截图工具产物）时用调用方传入的 MIME
+      mime: isImageExt(ext) ? getMimeFromExt(ext) : (mime ?? getMimeFromExt(ext)),
       previewUrl: pathToFileURL(filePath).toString(),
       status: "pending",
     };

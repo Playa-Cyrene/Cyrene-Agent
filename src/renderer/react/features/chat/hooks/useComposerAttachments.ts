@@ -300,12 +300,18 @@ export function useComposerAttachments(input: {
   }
 
   function handleDrop(event: DragEvent<HTMLElement>) {
-    if (!containsFiles(event.dataTransfer)) return;
+    // 无条件拦截默认行为：即使拖入的不是文件（如 URL/富文本），也不允许窗口意外导航
     event.preventDefault();
+    if (!containsFiles(event.dataTransfer)) return;
     dragDepthRef.current = 0;
     setIsDraggingFiles(false);
     const files = Array.from(event.dataTransfer.files);
-    if (files.length > 0) void chooseFiles(files);
+    if (files.length > 0) {
+      void chooseFiles(files);
+    } else {
+      // 声称携带文件但实际为空（部分应用拖出的富内容）：给出提示而非静默丢弃
+      feedback.notice({ tone: "warning", message: t("chatPage.dropNoFiles") });
+    }
   }
 
   return {

@@ -128,6 +128,32 @@ describe("describePendingAttachment", () => {
       expect(image.status).toBe("pending");
     }
   });
+
+  it("无扩展名但 MIME 是图片时按图片登记，MIME 用调用方传入值", () => {
+    const image = describePendingAttachment(fixture("clipboard-image"), "image/png");
+    expect(image.kind).toBe("image");
+    if (image.kind === "image") {
+      expect(image.mime).toBe("image/png");
+      expect(image.filePath).toBe(fixture("clipboard-image"));
+    }
+  });
+
+  it("无扩展名且 MIME 非图片时仍按文档登记", () => {
+    const doc = describePendingAttachment(fixture("noext-file"), "text/plain");
+    expect(doc).toMatchObject({
+      name: "noext-file",
+      kind: "document",
+      status: "pending",
+    });
+  });
+
+  it("图片扩展名优先于 MIME：mime 字段按扩展名推导", () => {
+    const image = describePendingAttachment(fixture("photo.jpg"), "image/junk");
+    expect(image.kind).toBe("image");
+    if (image.kind === "image") {
+      expect(image.mime).toBe("image/jpeg");
+    }
+  });
 });
 
 // ── ingestOneFile ──

@@ -135,11 +135,15 @@ export function registerChatUiIpc(deps: ChatUiIpcDependencies): void {
     saveModelSettings({ reasoning: normalized });
   });
 
-  ipc.handle(IPC.CHAT_INGEST_FILES, async (_event, paths: unknown) => {
-    const list = Array.isArray(paths) ? paths.filter((p): p is string => typeof p === "string") : [];
+  ipc.handle(IPC.CHAT_INGEST_FILES, async (_event, entries: unknown) => {
+    const list = Array.isArray(entries)
+      ? entries.filter((entry): entry is { path: string; mime?: string } =>
+          typeof entry === "object" && entry !== null
+          && typeof (entry as { path?: unknown }).path === "string")
+      : [];
     if (list.length === 0) return [];
     try {
-      return list.map((filePath) => describePendingAttachment(filePath));
+      return list.map((entry) => describePendingAttachment(entry.path, entry.mime));
     } catch (err: any) {
       console.error("[Cyrene] ingestFiles ERROR:", err?.message || err);
       return [];
