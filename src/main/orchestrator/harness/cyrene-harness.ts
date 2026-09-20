@@ -154,8 +154,16 @@ export async function runCyreneHarness(input: HarnessInput): Promise<HarnessResu
     } catch (err) {
       // signal abort 属于用户取消：按 cancelled 结算，不归类为 error。
       if (input.signal?.aborted) return cancelledResult(run);
-      console.error(`${LOG_PREFIX} LLM call failed:`, err);
+      // 失败摘要：模型名 / 请求地址 / 错误码置顶，堆栈跟在后面，定位不用翻设置。
       const errorMsg = err instanceof Error ? err.message : String(err);
+      const errCode = (err as { code?: string }).code ?? "无错误码";
+      console.error(
+        `${LOG_PREFIX} LLM call failed:`,
+        `\n  model id: ${input.vendorConfig.model}`,
+        `\n  baseUrl: ${input.vendorConfig.baseUrl}`,
+        `\n  error: ${errCode} ${errorMsg}`,
+        err,
+      );
       return finishRun(run, `抱歉，模型调用失败：${errorMsg}`, true, "error");
     }
 

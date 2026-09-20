@@ -92,6 +92,19 @@ function cancellationError(signal: AbortSignal): Error {
     : new DOMException("The operation was aborted", "AbortError");
 }
 
+/** 模型错误摘要：SDK 错误自带 status / code / type（如 500 + do_request_failed + AgnesAI_error），
+ * 拼成一行，让失败原因脱离堆栈也能直接读。 */
+function describeModelError(error: unknown): string {
+  if (!(error instanceof Error)) return String(error);
+  const detail = error as Error & { status?: unknown; code?: unknown; type?: unknown };
+  const parts: string[] = [];
+  if (detail.status !== undefined && detail.status !== null) parts.push(`status=${String(detail.status)}`);
+  if (detail.code) parts.push(`code=${String(detail.code)}`);
+  if (detail.type) parts.push(`type=${String(detail.type)}`);
+  const suffix = parts.length > 0 ? ` (${parts.join(", ")})` : "";
+  return `${error.name}: ${error.message}${suffix}`;
+}
+
 /**
  * 捕获 Responses 流的终态事件本体（response.completed / response.incomplete 都带完整 Response）。
  * 这是 rawAssistant 补挂的 canonical source；incomplete（如 max_output_tokens 截断）时 output
@@ -126,6 +139,8 @@ export async function streamChatWithSdk(
   const taggedThinkFilter = createThinkFilter("leading-only");
   // LLM 调用原文 traceId —— 即使 dump 关闭也会生成，方便上层日志关联。
   let traceId = "";
+  // 本次请求的完整地址 —— 失败日志要带上；catch 块读不到 try 内的局部变量，提升到外层。
+  let requestEndpoint = "";
   const commitDelta = (delta: UnifiedStreamDelta) => {
     if (delta.type === "finish"
       && (input.adapter.transport === "openai" || input.adapter.transport === "responses")) {
@@ -164,6 +179,7 @@ export async function streamChatWithSdk(
 
   try {
     const prepared = requestBody(input.adapter, input.request, input.config);
+    requestEndpoint = prepared.endpoint;
     traceId = dumpRequest({
       transport: input.adapter.transport,
       endpoint: prepared.endpoint,
@@ -260,18 +276,20 @@ export async function streamChatWithSdk(
     });
     return reconciled;
   } catch (error) {
-    // [image-send] 链路日志④（流式）：SDK 抛出的 APIError message 含 status 与服务端
-    // 错误体摘要（Anthropic 400 的具体 reason），落一条主进程日志便于定位。
+    // [image-send] 链路日志④（流式）：失败时带上模型名、请求地址、错误码，
+    // 排查"谁挂了、挂在哪"不用再翻设置或记账文件。
     console.error(
       "[image-send] 流式请求失败:",
-      error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+      `\n  model id: ${input.request.model}`,
+      `\n  baseUrl: ${requestEndpoint || "请求未发出"}`,
+      `\n  error: ${describeModelError(error)}`,
     );
     if (traceId) {
       dumpResponse(traceId, {
         transport: input.adapter.transport,
         ok: false,
         raw: null,
-        error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+        error: describeModelError(error),
       });
     }
     if (timedOut) {

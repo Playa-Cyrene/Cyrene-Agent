@@ -114,9 +114,14 @@ export async function callLLM(
     signal,
   });
   if (!response.ok) {
-    // [image-send] 链路日志④：服务端拒绝时打印完整错误体（Anthropic 400 会带具体 reason）。
+    // [image-send] 链路日志④：服务端拒绝时带上模型名、请求地址与完整错误体（Anthropic 400 会带具体 reason）。
     const rawBody = await response.text().catch(() => "");
-    console.error(`[image-send] LLM 请求被拒 HTTP ${response.status}:`, rawBody.slice(0, 500) || "(无响应体)");
+    console.error(
+      "[image-send] LLM 请求被拒:",
+      `\n  model id: ${vendorConfig.model}`,
+      `\n  baseUrl: ${http.url}`,
+      `\n  error: HTTP ${response.status} ${rawBody.slice(0, 500) || "(无响应体)"}`,
+    );
     const errorData = JSON.parse(rawBody || "{}") as { error?: { message?: string } };
     throw new Error(errorData.error?.message || `模型请求失败：HTTP ${response.status}`);
   }
@@ -157,8 +162,14 @@ export async function summarizeHistory(
   });
 
   if (!response.ok) {
+    // 摘要请求被拒：与主链路失败日志同格式，带上模型名与请求地址。
     const rawBody = await response.text().catch(() => "");
-    console.error(`[image-send] 摘要请求被拒 HTTP ${response.status}:`, rawBody.slice(0, 500) || "(无响应体)");
+    console.error(
+      "[image-send] 摘要请求被拒:",
+      `\n  model id: ${vendorConfig.model}`,
+      `\n  baseUrl: ${http.url}`,
+      `\n  error: HTTP ${response.status} ${rawBody.slice(0, 500) || "(无响应体)"}`,
+    );
     throw new Error(`摘要请求失败：HTTP ${response.status}`);
   }
 
