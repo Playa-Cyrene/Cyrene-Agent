@@ -52,6 +52,7 @@ export function detectMpvBinary(): string {
       path.join(repoRoot, "resources", "bin", "mpv", "mpv.exe"),
       path.join(process.env.PROGRAMFILES ?? "C:\\Program Files", "mpv", "mpv.exe"),
       path.join(process.env["PROGRAMFILES(X86)"] ?? "C:\\Program Files (x86)", "mpv", "mpv.exe"),
+      path.join(process.env.LOCALAPPDATA ?? "", "Microsoft", "WinGet", "Links", "mpv.exe"),
       "mpv", // PATH
     ];
     for (const c of candidates) {
@@ -86,6 +87,7 @@ export class MpvController extends EventEmitter {
   private socket: net.Socket | null = null;
   private connected = false;
   private disposed = false;
+  private spawnError: Error | null = null;
   private cmdId = 0;
   private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
   private state: PlaybackState = {
@@ -118,6 +120,13 @@ export class MpvController extends EventEmitter {
     if (this.disposed) throw new Error("E_MPV_DISPOSED");
     if (this.proc) return; // already started
 
+    // 预检查：detectMpvBinary 可能回退到 PATH 上的裸 "mpv"。对具体路径先验证
+    // 存在，避免 spawn 一个必然失败的进程；裸 "mpv"（PATH 解析）无法用
+    // existsSync 判断，交给 spawn 的 error 事件兑底。
+    if (this.binaryPath !== "mpv" && !fs.existsSync(this.binaryPath)) {
+      throw new Error(`E_MPV_NOT_FOUND: ${this.binaryPath}`);
+    }
+
     const args = [
       "--idle",
       `--input-ipc-server=${this.socketPath}`,
@@ -144,10 +153,23 @@ export class MpvController extends EventEmitter {
       }
     });
     this.proc.on("error", (err) => {
-      this.emit("error", new Error(`E_MPV_SPAWN_FAILED: ${err.message}`));
+      // 关键修复（issue #98）：不再无条件 this.emit("error", …)。
+      // EventEmitter 对无监听者的 'error' 事件会抛未捕获异常，直接搞崩 Electron 主进程。
+      // 改为记录错误，让 start() 以可诊断的 reject 结束，由上层 music-service try/catch 降级。
+      this.spawnError = new Error(`E_MPV_SPAWN_FAILED: ${err.message}`);
+      this.connected = false;
+      this.state.connected = false;
+      if (this.listenerCount("error") > 0) {
+        this.emit("error", this.spawnError);
+      }
     });
 
-    await this.connectSocket();
+    try {
+      await this.connectSocket();
+    } catch (err) {
+      // spawn 失败优先返回更具体的 E_MPV_SPAWN_FAILED，而非笼统的 socket 超时
+      throw this.spawnError ?? err;
+    }
   }
 
   /** Connect to mpv's IPC socket with retry (mpv takes a moment to create it). */
@@ -156,6 +178,11 @@ export class MpvController extends EventEmitter {
       const tryConnect = (attempt: number) => {
         if (this.disposed || !this.proc) {
           reject(new Error("E_MPV_DISPOSED"));
+          return;
+        }
+        // spawn 已失败（如 ENOENT）：立即以具体错误 reject，不再空转重试 2 秒
+        if (this.spawnError) {
+          reject(this.spawnError);
           return;
         }
         const sock = net.createConnection(this.socketPath, () => {
