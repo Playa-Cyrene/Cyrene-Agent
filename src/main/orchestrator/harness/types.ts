@@ -306,6 +306,12 @@ export interface HarnessInput {
   executionLedger?: import("../execution-ledger").ExecutionLedger;
   /** ToolOutputStore：生产 Harness 注入的完整工具结果存储。 */
   toolOutputStore?: ToolOutputStore;
+  /**
+   * Run 级轨迹提交端（CTA Phase 1）：canonical 消息权威落盘。
+   * assistant 先于工具 dispatch、tool_result 先于生命周期 committed 写入；
+   * 写失败 fail-closed（终态 error），缺省不写轨迹。
+   */
+  transcriptSink?: import("../transcript-sink").TranscriptSink;
   /** 父会话注入的前台子任务执行器；子 Harness 不会继续注入它。 */
   taskExecutor?: (request: import("../task-runtime").TaskExecuteRequest) => Promise<import("../task-runtime").TaskExecuteResult>;
 }

@@ -200,6 +200,11 @@ export interface CyreneRunOptions {
    * Chat 无工具链路是单请求运行，不消费该回调。
    */
   pollRunAdjustments?: () => Promise<import("./harness/types").RunAdjustmentMessage[]> | undefined;
+  /**
+   * Run 级轨迹提交端（CTA Phase 1）：canonical 消息权威落盘。
+   * 桌面链路由上游创建并注入；缺省（渠道/插件/测试）不写轨迹。
+   */
+  transcriptSink?: import("./transcript-sink").TranscriptSink;
 }
 
 /** Agent run 最终结果（供桥层做副作用用）。 */

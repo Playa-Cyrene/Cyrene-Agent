@@ -64,10 +64,11 @@ import { runCyreneHarness } from "./cyrene-harness";
 import { getAdapterForConfig } from "../vendors";
 import { dispatchToolCall } from "./tool-dispatcher";
 import type { ToolDispatchResult } from "./tool-dispatcher";
-import type { HarnessCacheDiagnostic, HarnessCheckpoint, HarnessEvent, HarnessToolFinishedEvent, RunAdjustmentMessage } from "./types";
+import type { HarnessCacheDiagnostic, HarnessCheckpoint, HarnessEvent, HarnessInput, HarnessToolFinishedEvent, HarnessToolLifecycleEvent, RunAdjustmentMessage } from "./types";
 import type { ChatMessage, ChatResponse, ToolCall } from "../vendors/types";
 import type { ToolDefinition } from "../tools/registry/tool-registry";
 import { projectCacheRelevantChatRequest } from "../prompt-layers";
+import type { TranscriptSink } from "../transcript-sink";
 
 const mockedDispatch = vi.mocked(dispatchToolCall);
 
@@ -1485,5 +1486,119 @@ describe("CyreneHarness context usage snapshots", () => {
     // cancelled 与其他终态共享统一结算：同样获得 terminal 快照（上下文环终态数据）
     const usageEvents = events.filter((event): event is Extract<HarnessEvent, { type: "context_usage" }> => event.type === "context_usage");
     expect(usageEvents.map((event) => event.snapshot.phase)).toEqual(["preRequest", "terminal"]);
+  });
+});
+
+// ── 轨迹提交端集成（CTA Phase 1 Task 4）──────────────────
+
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => { resolve = res; });
+  return { promise, resolve };
+}
+
+/** 轨迹提交端替身：默认全成功，按需覆写失败/挂起行为。 */
+function fakeSink(overrides: Partial<TranscriptSink> = {}): TranscriptSink {
+  const appendAssistant = vi.fn(overrides.appendAssistant ?? (async () => "assistant-entry"));
+  const appendToolResult = vi.fn(overrides.appendToolResult ?? (async () => undefined));
+  const closeInterruption = vi.fn(overrides.closeInterruption ?? (async () => undefined));
+  const checkpoint = vi.fn(overrides.checkpoint ?? (async () => undefined));
+  return { appendAssistant, appendToolResult, closeInterruption, checkpoint };
+}
+
+function harnessInput(overrides: Partial<HarnessInput> & { tool?: ToolDefinition } = {}): HarnessInput {
+  const { tool, ...rest } = overrides;
+  return {
+    systemPrompt: "test",
+    messages: [{ role: "user", content: "do work" }],
+    tools: tool ? [tool] : [],
+    vendorConfig,
+    ...rest,
+  };
+}
+
+function sendEmailCall(id = "call-1"): ToolCall {
+  return {
+    id,
+    name: "send_email",
+    arguments: JSON.stringify({ to: "x@y", subject: "hi", body: "hello" }),
+  };
+}
+
+describe("CyreneHarness transcript sink", () => {
+  beforeEach(() => {
+    mockedDispatch.mockReset();
+    fakeStreamChatWithSdk.mockClear();
+    recordUsage.mockReset();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("awaits assistant persistence before dispatching any tool", async () => {
+    const { fn: modelFetch } = fakeFetchSequencer([
+      assistantResponse({ toolCalls: [mutationToolCall("call-1")] }),
+      assistantResponse({ text: "完成" }),
+    ]);
+    vi.stubGlobal("fetch", modelFetch);
+    mockedDispatch.mockResolvedValue(successDispatchResult("call-1"));
+
+    const release = deferred<void>();
+    const sink = fakeSink({ appendAssistant: () => release.promise.then(() => "assistant-entry") });
+    const runPromise = runCyreneHarness(harnessInput({ transcriptSink: sink }));
+    await vi.waitFor(() => expect(sink.appendAssistant).toHaveBeenCalledOnce());
+    // assistant 尚未落盘：任何工具都不得开始执行
+    expect(mockedDispatch).not.toHaveBeenCalled();
+    release.resolve();
+    await runPromise;
+    expect(mockedDispatch).toHaveBeenCalledOnce();
+  });
+
+  it("turns assistant persistence failure into an error run without tool execution", async () => {
+    const { fn: modelFetch } = fakeFetchSequencer([
+      assistantResponse({ toolCalls: [mutationToolCall("call-1")] }),
+    ]);
+    vi.stubGlobal("fetch", modelFetch);
+
+    const result = await runCyreneHarness(harnessInput({
+      transcriptSink: fakeSink({ appendAssistant: async () => { throw new Error("disk full"); } }),
+    }));
+
+    expect(result.terminateReason).toBe("error");
+    expect(result.finalAnswer).toContain("会话轨迹保存失败");
+    expect(mockedDispatch).not.toHaveBeenCalled();
+  });
+
+  it("does not mark a tool committed or issue another model request when tool_result persistence fails", async () => {
+    const { fn: modelFetch } = fakeFetchSequencer([
+      assistantResponse({ toolCalls: [sendEmailCall("call-1")] }),
+      assistantResponse({ text: "不应到达" }),
+    ]);
+    vi.stubGlobal("fetch", modelFetch);
+    mockedDispatch.mockResolvedValue({
+      outcome: "success",
+      tool: "send_email",
+      target: "x@y",
+      message: "sent",
+      output: "sent",
+      truncated: false,
+      preview: "sent",
+    });
+
+    const lifecycle: HarnessToolLifecycleEvent[] = [];
+    const result = await runCyreneHarness({
+      ...harnessInput({ tool: sendEmailTool() }),
+      transcriptSink: fakeSink({ appendToolResult: async () => { throw new Error("disk full"); } }),
+      onToolLifecycle: (event) => lifecycle.push(event),
+    });
+
+    // 失败后不再有模型请求，工具不得被标记 committed
+    expect(modelFetch).toHaveBeenCalledTimes(1);
+    expect(lifecycle).toContainEqual(expect.objectContaining({ status: "started" }));
+    expect(lifecycle).not.toContainEqual(expect.objectContaining({ status: "committed" }));
+    // 非幂等副作用已执行但结果未持久化：必须保留不确定效果
+    expect(result.finalState.uncertainEffects).toContainEqual(expect.objectContaining({ toolName: "send_email" }));
+    expect(result.terminateReason).toBe("error");
   });
 });

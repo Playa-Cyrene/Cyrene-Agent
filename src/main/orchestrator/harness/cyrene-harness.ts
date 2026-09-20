@@ -81,6 +81,8 @@ export interface HarnessRun {
   toolDispatchContext: ToolDispatchContext;
   /** 工具调用开始时刻（toolCallId → epoch ms），供完成事件计算耗时；提交后即移除。 */
   toolCallStartedAt: Map<string, number>;
+  /** 当前轮 assistant 的轨迹条目 ID（appendAssistant 返回；工具结果提交的锚点）。 */
+  currentAssistantEntryId?: string;
 }
 
 // ═══ 主入口 ═══════════════════════════════════════════════
@@ -168,7 +170,18 @@ export async function runCyreneHarness(input: HarnessInput): Promise<HarnessResu
     }
 
     // ── Assistant response 必须写回 transcript（否则模型下一轮看不到自己上一轮的回复）──
-    run.messages.push(toAssistantMessage(response));
+    const assistantMessage = toAssistantMessage(response);
+    run.messages.push(assistantMessage);
+    try {
+      // canonical assistant 先于任何工具 dispatch 落盘（fail-closed）：
+      // 写失败 = 本轮协议断裂，直接终态 error，不得带着缺失的声明继续执行。
+      run.currentAssistantEntryId = await input.transcriptSink?.appendAssistant({
+        message: assistantMessage,
+        roundId,
+      });
+    } catch (error) {
+      return finishRun(run, `会话轨迹保存失败：${errorMessage(error)}`, true, "error");
+    }
     if (response.text) {
       run.streamController.bufferProgressContent(response.text);
     }
@@ -563,6 +576,11 @@ function toAssistantMessage(response: ChatResponse): ChatMessage {
     content: response.text,
     ...(response.toolCalls?.length ? { toolCalls: response.toolCalls } : {}),
   };
+}
+
+/** 统一错误消息提取（轨迹/工具失败文案用）。 */
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 /** 防御外部共享引用：initialState 的调用方在 run 期间可能复用/修改原对象。 */
