@@ -10,6 +10,8 @@ mockProc.stderr = new EventEmitter();
 mockProc.kill = vi.fn();
 vi.mock("node:child_process", () => ({
   spawn: vi.fn(() => mockProc),
+  // 模拟 PATH 里没有 mpv：探测命令以非 0 退出
+  spawnSync: vi.fn(() => ({ status: 1, error: undefined })),
 }));
 
 // Mock net.createConnection — simulates mpv JSON IPC responses.
@@ -248,5 +250,26 @@ describe("MpvController", () => {
     const written = mockSocket.write.mock.calls.map((c: unknown[]) => c[0] as string).join("");
     expect(written).toContain("100");
     await ctrl.dispose();
+  });
+
+  // ── mpv 缺失回归（issue #98）：探测失败/spawn 失败必须走 reject，
+  //    不能变成无监听的 'error' 事件把主进程搞崩 ──
+
+  it("二进制探测失败时 start() 抛 E_MPV_NOT_FOUND（不再裸 spawn 等 ENOENT）", async () => {
+    // 不传 binaryPath → detectMpvBinary：固定路径 existsSync=false、PATH 探测失败 → null
+    const ctrl = new MpvController();
+    await expect(ctrl.start()).rejects.toThrow(/E_MPV_NOT_FOUND/);
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it("spawn 失败（ENOENT）时 start() reject，而不是未捕获异常崩溃主进程", async () => {
+    const ctrl = new MpvController({ binaryPath: "mpv" });
+    const pending = ctrl.start();
+    // spawn ENOENT：子进程 error 事件异步到达
+    mockProc.emit("error", new Error("spawn mpv ENOENT"));
+    await expect(pending).rejects.toThrow(/E_MPV_SPAWN_FAILED/);
+    // 失败实例要能被 dispose 清理干净（music-service 会这么做）
+    await ctrl.dispose();
+    expect(ctrl.isReady()).toBe(false);
   });
 });

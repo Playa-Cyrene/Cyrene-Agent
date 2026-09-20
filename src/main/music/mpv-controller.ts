@@ -12,7 +12,7 @@
 //
 // State events are emitted on every observed property change
 // (time-position, pause, duration, volume, eof-reached).
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import * as net from "node:net";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -38,36 +38,47 @@ const OBSERVE_PROPS = [
   "time-pos", "pause", "duration", "volume", "eof-reached", "idle-active",
 ] as const;
 
-export function detectMpvBinary(): string {
+export function detectMpvBinary(): string | null {
   const platform = os.platform();
-  if (platform === "win32") {
-    // Search order:
-    //   1. electron-builder extraResources (packaged)  → process.resourcesPath/bin/mpv/mpv.exe
-    //   2. dev-time staged binary                       → <repo>/resources/bin/mpv/mpv.exe
-    //   3. system install                               → Program Files\mpv\mpv.exe
-    //   4. PATH                                        → mpv
-    const repoRoot = path.resolve(__dirname, "..", "..", "..", "..");
-    const candidates = [
-      path.join(process.resourcesPath ?? "", "bin", "mpv", "mpv.exe"),
-      path.join(repoRoot, "resources", "bin", "mpv", "mpv.exe"),
-      path.join(process.env.PROGRAMFILES ?? "C:\\Program Files", "mpv", "mpv.exe"),
-      path.join(process.env["PROGRAMFILES(X86)"] ?? "C:\\Program Files (x86)", "mpv", "mpv.exe"),
-      "mpv", // PATH
-    ];
-    for (const c of candidates) {
-      try {
-        if (c === "mpv" || fs.existsSync(c)) {
-          console.log("[mpv] detectMpvBinary →", c);
-          return c;
-        }
-      } catch { /* ignore */ }
-    }
-    console.warn("[mpv] detectMpvBinary: no candidate found, falling back to PATH 'mpv'");
+  // 固定路径候选：打包内资源 > dev 暂存目录 > 系统安装目录
+  const repoRoot = path.resolve(__dirname, "..", "..", "..", "..");
+  const fixedCandidates =
+    platform === "win32"
+      ? [
+          path.join(process.resourcesPath ?? "", "bin", "mpv", "mpv.exe"),
+          path.join(repoRoot, "resources", "bin", "mpv", "mpv.exe"),
+          path.join(process.env.PROGRAMFILES ?? "C:\\Program Files", "mpv", "mpv.exe"),
+          path.join(process.env["PROGRAMFILES(X86)"] ?? "C:\\Program Files (x86)", "mpv", "mpv.exe"),
+        ]
+      : platform === "darwin"
+        ? ["/opt/homebrew/bin/mpv", "/usr/local/bin/mpv"]
+        : ["/usr/bin/mpv", "/usr/local/bin/mpv"];
+  for (const c of fixedCandidates) {
+    try {
+      if (fs.existsSync(c)) {
+        console.log("[mpv] detectMpvBinary →", c);
+        return c;
+      }
+    } catch { /* ignore */ }
+  }
+  // PATH 兜底：探测方式和实际 spawn 一致，探测通过才认为可用。
+  // 之前无条件返回裸 "mpv"，没装 mpv 的机器上 spawn 必然 ENOENT（issue #98）
+  if (canSpawnMpv()) {
+    console.log("[mpv] detectMpvBinary → mpv (PATH)");
     return "mpv";
   }
-  // macOS: Homebrew /opt/homebrew/bin/mpv, /usr/local/bin/mpv
-  // Linux: /usr/bin/mpv, /usr/local/bin/mpv
-  return "mpv";
+  console.warn("[mpv] detectMpvBinary: 未找到可用的 mpv 二进制");
+  return null;
+}
+
+/** 试跑一次 `mpv --version` 验证 PATH 里的 mpv 真的存在且能执行。 */
+function canSpawnMpv(): boolean {
+  try {
+    const probe = spawnSync("mpv", ["--version"], { timeout: 5000, windowsHide: true });
+    return probe.status === 0;
+  } catch {
+    return false;
+  }
 }
 
 function defaultSocketPath(): string {
@@ -99,7 +110,10 @@ export class MpvController extends EventEmitter {
   };
   private readonly options: MpvControllerOptions;
   private readonly socketPath: string;
-  private readonly binaryPath: string;
+  private readonly binaryPath: string | null;
+  // spawn 失败（ENOENT 等）的错误。子进程 error 事件是异步到达的，
+  // 记在这里让 connectSocket 尽快 reject，由上层统一降级
+  private spawnFailure: Error | null = null;
   private stateTimer: ReturnType<typeof setInterval> | null = null;
   private positionEmitTimer: ReturnType<typeof setTimeout> | null = null;
   private positionDirty = false;
@@ -117,6 +131,9 @@ export class MpvController extends EventEmitter {
   async start(): Promise<void> {
     if (this.disposed) throw new Error("E_MPV_DISPOSED");
     if (this.proc) return; // already started
+    // 二进制探测失败（未安装 mpv / prepare:mpv 未跑）：直接抛可诊断的错误码，
+    // 由 music-service 统一降级为「播放器不可用」并提示用户（issue #98）
+    if (!this.binaryPath) throw new Error("E_MPV_NOT_FOUND");
 
     const args = [
       "--idle",
@@ -144,7 +161,11 @@ export class MpvController extends EventEmitter {
       }
     });
     this.proc.on("error", (err) => {
-      this.emit("error", new Error(`E_MPV_SPAWN_FAILED: ${err.message}`));
+      // spawn 失败（二进制不存在等）走 error 事件而不是同步抛错。
+      // 只记录、不 emit("error")：EventEmitter 的 'error' 事件没有监听者时
+      // 会被 Node 当未捕获异常抛出，直接搞崩 Electron 主进程（issue #98）
+      this.spawnFailure = new Error(`E_MPV_SPAWN_FAILED: ${err.message}`);
+      console.error("[mpv] 子进程启动失败：", err.message);
     });
 
     await this.connectSocket();
@@ -158,7 +179,19 @@ export class MpvController extends EventEmitter {
           reject(new Error("E_MPV_DISPOSED"));
           return;
         }
+        // spawn 已经失败（ENOENT 等）→ 不再空等重试，直接把失败原因抛给上层
+        if (this.spawnFailure) {
+          reject(this.spawnFailure);
+          return;
+        }
         const sock = net.createConnection(this.socketPath, () => {
+          // socket 连上了但 spawn 失败已确认（mpv 起来即崩等怪异场景）：
+          // 以失败为准，避免 start() 假成功
+          if (this.spawnFailure) {
+            sock.destroy();
+            reject(this.spawnFailure);
+            return;
+          }
           this.socket = sock;
           this.connected = true;
           this.state.connected = true;
@@ -171,6 +204,12 @@ export class MpvController extends EventEmitter {
             .catch(reject);
         });
         sock.on("error", () => {
+          // spawn 失败可能先于/后于 socket 错误到达，这里再查一次，
+          // 让真正的失败原因（而不是超时的连接错误）冒出去
+          if (this.spawnFailure) {
+            reject(this.spawnFailure);
+            return;
+          }
           if (attempt < retries) {
             setTimeout(() => tryConnect(attempt + 1), 100);
           } else {

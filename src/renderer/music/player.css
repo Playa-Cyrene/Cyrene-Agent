@@ -752,6 +752,24 @@ body {
   background: rgba(214, 51, 108, 0.08);
 }
 
+/* ============ mpv 内核缺失提示条 ============ */
+.mp-kernel-warning {
+  flex: none;
+  padding: 8px 20px;
+  background: rgba(217, 119, 6, 0.08);
+  border-top: 1px solid rgba(217, 119, 6, 0.3);
+  color: #b45309;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.mp-kernel-warning code {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(217, 119, 6, 0.12);
+}
+
 /* ============ 控制区 ============ */
 .mp-controls {
   flex: none;

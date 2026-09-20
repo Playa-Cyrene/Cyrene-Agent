@@ -32,7 +32,7 @@ vi.mock("./mpv-controller", () => ({
     return {
       start: vi.fn(async () => {
         mpvState.started += 1;
-        if (mpvState.failNext) throw new Error("mpv binary not found");
+        if (mpvState.failNext) throw new Error("E_MPV_NOT_FOUND");
         ready = true;
       }),
       dispose: vi.fn(async () => { mpvState.disposed += 1; ready = false; }),
@@ -164,6 +164,20 @@ describe("startMpv 失败后可重试", () => {
     await svc.start();
 
     expect(mpvState.disposed).toBe(1);
+  });
+
+  it("mpv 缺失时 snapshot 带 playerErrorCode，恢复后清空（issue #98 前端提示依据）", async () => {
+    mpvState.failNext = true;
+    const svc = service();
+    await svc.start();
+    expect(svc.getSnapshot().player).toBe("unavailable");
+    expect(svc.getSnapshot().playerErrorCode).toBe("E_MPV_NOT_FOUND");
+
+    // 环境修好（用户补装 mpv）后重试成功 → 错误码必须清空，否则提示条赖着不走
+    mpvState.failNext = false;
+    await svc.applyOpenapiConfig({ appId: "app", privateKey: "K".repeat(1600) });
+    expect(svc.getSnapshot().player).toBe("available");
+    expect(svc.getSnapshot().playerErrorCode).toBeUndefined();
   });
 
   it("已经跑起来时重复调用不会再 new 实例（幂等，避免丢监听器）", async () => {

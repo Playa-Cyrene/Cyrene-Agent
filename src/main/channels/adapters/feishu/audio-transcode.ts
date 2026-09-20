@@ -35,6 +35,11 @@ export async function transcodeAudioFileToFeishuOpus(
     path.dirname(inputPath),
     `${path.basename(inputPath, path.extname(inputPath))}-${randomUUID()}.opus`,
   );
+  // 找不到 mpv 时提前报错，避免把 null 传给子进程
+  const mpvBinary = (deps.resolveMpvBinary ?? detectMpvBinary)();
+  if (!mpvBinary) {
+    throw new Error("未找到可用的 mpv，无法将音频转码为飞书 Opus 格式");
+  }
   const args = [
     "--no-config",
     "--no-video",
@@ -48,10 +53,7 @@ export async function transcodeAudioFileToFeishuOpus(
   ];
 
   try {
-    await (deps.runMpv ?? runMpvProcess)(
-      (deps.resolveMpvBinary ?? detectMpvBinary)(),
-      args,
-    );
+    await (deps.runMpv ?? runMpvProcess)(mpvBinary, args);
     const header = await fs.promises.readFile(outputPath);
     if (header.length < 4 || header.subarray(0, 4).toString("ascii") !== "OggS") {
       throw new Error("mpv 返回的文件不是有效的 Ogg Opus 音频");

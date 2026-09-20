@@ -48,6 +48,9 @@ type StateListener<T> = (state: T) => void;
 export class MusicService {
   private backendState: MusicBackendState = "stopped";
   private playerState: MusicPlayerState = "unknown";
+  // playerState 为 "unavailable" 时的细分错误码（E_MPV_NOT_FOUND 等），
+  // 透传给前端做针对性提示（引导用户装 mpv / 跑 prepare:mpv）
+  private playerErrorCode: string | undefined;
   private activeProfile: MusicProfile | null = null;
   private shuttingDown = false;
   private startPromise: Promise<void> | null = null;
@@ -202,11 +205,16 @@ export class MusicService {
       // 「首次启动失败 → 重试成功」这条路径上更糟——字段会残留上一次的
       // "unavailable"，UI 显示播放器不可用，实际却已经跑起来了。
       this.playerState = "available";
+      this.playerErrorCode = undefined;
       this.emitPlayerChange("available");
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
       // mpv not found → degraded but still functional for non-playback operations.
-      console.error("[music] mpv 启动失败，播放器降级为不可用：", err instanceof Error ? err.message : err);
+      console.error("[music] mpv 启动失败，播放器降级为不可用：", message);
       this.playerState = "unavailable";
+      // 提取细分错误码（"E_MPV_NOT_FOUND: ..." → "E_MPV_NOT_FOUND"），
+      // 前端据此区分「没装 mpv」和「mpv 起不来」给出不同提示
+      this.playerErrorCode = message.startsWith("E_MPV_") ? message.split(":", 1)[0] : undefined;
       // 关键：把失败的实例清掉。留着的话下一次 startMpv() 会被守卫早退，
       // 用户即便补上了凭据、装好了 mpv，也要重启应用才能恢复。
       try { await this.mpv?.dispose(); } catch { /* ignore */ }
@@ -310,6 +318,7 @@ export class MusicService {
       backend: this.backendState,
       account: this.getAccountState(),
       player: this.playerState,
+      playerErrorCode: this.playerErrorCode,
       flow: this.getLoginFlowState(),
       profile: this.activeProfile,
     };

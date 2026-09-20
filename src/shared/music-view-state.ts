@@ -8,6 +8,8 @@ export interface MusicStatusSnapshot {
   backend: string;
   account: string;
   player: string;
+  /** player 为 "unavailable" 时的细分错误码（如 E_MPV_NOT_FOUND），供前端展示针对性提示。 */
+  playerErrorCode?: string;
   flow: LoginFlowState;
   profile?: { nickname?: string; avatarUrl?: string; avatar?: string } | null;
 }

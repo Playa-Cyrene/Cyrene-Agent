@@ -137,6 +137,27 @@ function makeCachePlaylist(tracks: Track[]): Playlist {
   };
 }
 
+// ── mpv 内核缺失判定：player 不可用且原因是二进制找不到/spawn 失败 ──
+function isMpvKernelMissing(
+  snap: { player?: string; playerErrorCode?: string } | undefined | null,
+): boolean {
+  return (
+    snap?.player === "unavailable" &&
+    (snap?.playerErrorCode === "E_MPV_NOT_FOUND" || snap?.playerErrorCode === "E_MPV_SPAWN_FAILED")
+  );
+}
+
+// mpv 内核缺失提示条：只提示安装方式，不阻断浏览/搜索（issue #98）
+function MpvKernelWarning() {
+  return (
+    <div className="mp-kernel-warning" role="alert">
+      <span>
+        未找到 mpv 播放器内核，暂时无法播放。请运行 <code>npm run prepare:mpv</code> 或安装 mpv 后重启应用
+      </span>
+    </div>
+  );
+}
+
 // ── 播放模式：普通歌单双模式，缓存歌单四模式，localStorage 分开持久化 ──
 const ONLINE_MODES: PlaybackMode[] = ["off", "one"];
 const CACHE_MODES: PlaybackMode[] = ["off", "all", "one", "shuffle"];
@@ -185,6 +206,8 @@ export function App() {
   // 自动选源必须等它，否则本地曲库会抢占默认歌单（本地 IPC 比网络快）。
   const [neteaseResolved, setNeteaseResolved] = useState(false);
   const [loading, setLoading] = useState(true);
+  // mpv 内核缺失（未安装 / spawn 失败）→ 顶部显示安装引导提示条
+  const [kernelMissing, setKernelMissing] = useState(false);
   const searchTimer = useRef<number | null>(null);
   // 记住静音前的音量，用于取消静音时恢复
   const volumeBeforeMute = useRef<number>(70);
@@ -410,7 +433,8 @@ export function App() {
         // 「只导入了本地音乐、没登录网易云」的用户会看到一个空播放器。
         void loadCacheTracks();
         const r = await api.getStatus();
-        const snap = r.data as { account?: string; backend?: string };
+        const snap = r.data as { account?: string; backend?: string; player?: string; playerErrorCode?: string };
+        setKernelMissing(isMpvKernelMissing(snap));
         if (snap?.account === "signed_in") {
           setLoginReady(true);
           // 已登录：等歌单真正拉回来才算有结论
@@ -426,7 +450,9 @@ export function App() {
     };
     void checkLogin();
     const unsub = api.onStateChanged?.((raw) => {
-      const snap = raw as { account?: string };
+      const snap = raw as { account?: string; player?: string; playerErrorCode?: string };
+      // mpv 失败后重试成功（比如用户补装了 mpv）→ 撤掉提示条
+      setKernelMissing(isMpvKernelMissing(snap));
       void loadCacheTracks();
       if (snap?.account === "signed_in") {
         setLoginReady(true);
@@ -861,6 +887,7 @@ export function App() {
           <button type="button" className="win-btn" onClick={minimizeWindow} title="最小化"><Minus size={14} /></button>
           <button type="button" className="win-btn win-btn--close" onClick={closeWindow} title="关闭"><X size={14} /></button>
         </div>
+        {kernelMissing && <MpvKernelWarning />}
         <div className="mp-not-ready">
           <p>还没有可播放的音乐</p>
           <p className="mp-not-ready-hint">在「设置 → 插件 → 音乐工具」里导入本地音乐，或扫码登录网易云</p>
@@ -875,6 +902,7 @@ export function App() {
         <button type="button" className="win-btn" onClick={minimizeWindow} title="最小化"><Minus size={14} /></button>
         <button type="button" className="win-btn win-btn--close" onClick={closeWindow} title="关闭"><X size={14} /></button>
       </div>
+      {kernelMissing && <MpvKernelWarning />}
       <MusicPlayer
         state={state}
         actions={actions}
