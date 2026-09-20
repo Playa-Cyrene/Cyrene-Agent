@@ -4,6 +4,7 @@ import {
   defaultRehypePlugins,
   Streamdown,
   type Components,
+  type ControlsConfig,
 } from "streamdown";
 import type { PluggableList } from "unified";
 import React, { isValidElement, useContext, type ReactNode } from "react";
@@ -88,6 +89,7 @@ function StreamdownAnchor({ href, children }: { href?: string; children?: ReactN
 }
 
 const mathPlugin = createMathPlugin({ singleDollarTextMath: true });
+const chatControls: ControlsConfig = { table: false };
 const messageComponents: Components = {
   a: (props) => <StreamdownAnchor {...props} />,
   pre: (props) => <StreamdownPre {...props} />,
@@ -107,6 +109,7 @@ export function StreamdownMessageContent({ content, streaming }: StreamdownMessa
       plugins={{ math: mathPlugin }}
       components={messageComponents}
       rehypePlugins={rehypePlugins}
+      controls={chatControls}
       className="cy-message-markdown cy-streamdown-message"
     >
       {content}

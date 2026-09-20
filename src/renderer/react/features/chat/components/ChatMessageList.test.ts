@@ -96,10 +96,10 @@ describe("formal answer visibility", () => {
   it("separates assistant Markdown headings from the following body text", () => {
     const stylesheet = readFileSync(resolve(__dirname, "ChatMessageList.css"), "utf8");
 
-    expect(stylesheet).toMatch(/\.cy-message--assistant \.cy-message-markdown h1 \{[^}]*padding-bottom:\s*10px;[^}]*border-bottom:\s*1px solid/s);
-    expect(stylesheet).toMatch(/\.cy-message--assistant \.cy-message-markdown h1 \{[^}]*margin:\s*28px 0 18px;/s);
-    expect(stylesheet).toMatch(/\.cy-message--assistant \.cy-message-markdown h2 \{[^}]*margin:\s*28px 0 12px;/s);
-    expect(stylesheet).toMatch(/\.cy-message--assistant \.cy-message-markdown h3 \{[^}]*margin:\s*24px 0 10px;/s);
+    expect(stylesheet).toMatch(/\.cy-message--assistant \.cy-message-markdown h1 \{[^}]*padding-bottom:\s*8px;[^}]*border-bottom:\s*1px solid/s);
+    expect(stylesheet).toMatch(/\.cy-message--assistant \.cy-message-markdown h1 \{[^}]*margin:\s*26px 0 16px;/s);
+    expect(stylesheet).toMatch(/\.cy-message--assistant \.cy-message-markdown h2 \{[^}]*margin:\s*24px 0 10px;/s);
+    expect(stylesheet).toMatch(/\.cy-message--assistant \.cy-message-markdown h3 \{[^}]*margin:\s*20px 0 8px;/s);
   });
 
   it("hides the run activity card at terminal when the run produced no process content", () => {

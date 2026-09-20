@@ -39,6 +39,12 @@ function render(content: string, streaming: boolean, workspaceRoot?: string): st
 }
 
 describe("StreamdownMessageContent", () => {
+  it("keeps chat tables free of copy, download, and fullscreen controls", () => {
+    const markup = render("| 报文 | 验证 |\n| --- | --- |\n| SYN | 客户端可发 |", false);
+
+    expect(markup).not.toContain("<button");
+  });
+
   it("emits the unprefixed utilities generated from the Streamdown source scan", () => {
     const markup = render("一段正文", false);
 

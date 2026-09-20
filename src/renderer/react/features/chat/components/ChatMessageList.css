@@ -757,19 +757,32 @@
   user-select: text;
 }
 
-/* 正式回答的标题节奏：沿用现有字号，增加章节留白；一级标题用细线建立清晰边界。 */
+/* 正式回答采用较紧凑的阅读节奏，避免 Markdown 默认标题压过正文。 */
+.cy-message--assistant .cy-message-markdown {
+  line-height: 1.68;
+}
+
 .cy-message--assistant .cy-message-markdown h1 {
-  margin: 28px 0 18px;
-  padding-bottom: 10px;
+  margin: 26px 0 16px;
+  padding-bottom: 8px;
   border-bottom: 1px solid color-mix(in srgb, currentColor 16%, transparent);
+  font-size: 26px;
+  font-weight: 650;
+  line-height: 1.28;
 }
 
 .cy-message--assistant .cy-message-markdown h2 {
-  margin: 28px 0 12px;
+  margin: 24px 0 10px;
+  font-size: 20px;
+  font-weight: 650;
+  line-height: 1.35;
 }
 
 .cy-message--assistant .cy-message-markdown h3 {
-  margin: 24px 0 10px;
+  margin: 20px 0 8px;
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.4;
 }
 
 .cy-message--assistant .cy-message-markdown > :is(h1, h2, h3):first-child {
@@ -994,6 +1007,73 @@
 .cy-message-markdown td {
   padding: 7px 10px;
   border: 1px solid #e7e7e7;
+}
+
+/* 聊天表格只保留内容本身：无复制、下载、全屏工具栏，也不制造额外一行空白。 */
+.cy-message-markdown [data-streamdown="table-wrapper"] {
+  max-width: 100%;
+  margin: 16px 0;
+  gap: 0;
+  padding: 0;
+  border: 1px solid #eadde3;
+  border-radius: 10px;
+  background: #fffdfd;
+  overflow: hidden;
+}
+
+.cy-message-markdown [data-streamdown="table-wrapper"] > div:last-child {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.cy-message-markdown [data-streamdown="table"] {
+  min-width: 100%;
+  border: 0;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.cy-message-markdown [data-streamdown="table"] th,
+.cy-message-markdown [data-streamdown="table"] td {
+  padding: 8px 12px;
+  border: 0;
+  color: var(--cy-text);
+  font-size: 13px;
+  vertical-align: top;
+}
+
+.cy-message-markdown [data-streamdown="table"] th {
+  background: #fff5f8;
+  color: #5f4b54;
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+.cy-message-markdown [data-streamdown="table"] :is(th, td):not(:last-child) {
+  border-right: 1px solid #eee3e7;
+}
+
+.cy-message-markdown [data-streamdown="table"] tbody tr + tr > td {
+  border-top: 1px solid #f0e7ea;
+}
+
+.cy-message-markdown hr[data-streamdown="horizontal-rule"] {
+  height: 1px;
+  margin: 20px 0;
+  border: 0;
+  border-top: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgb(238 170 191 / 22%) 16%,
+    rgb(224 142 171 / 44%) 50%,
+    rgb(238 170 191 / 22%) 84%,
+    transparent 100%
+  );
 }
 
 .cy-copy-button {
