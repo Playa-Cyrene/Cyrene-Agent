@@ -22,6 +22,7 @@ import { compressConversation } from "./context-manager";
 import { buildContextUsageSnapshot } from "./context-usage";
 import { isExplicitStreamUnsupported } from "./vendors/stream-support";
 import { composePromptLayers } from "./prompt-layers";
+import type { TranscriptSink } from "./transcript-sink";
 
 export interface ChatLoopOptions {
   settings: AgentLoopSettings;
@@ -42,6 +43,8 @@ export interface ChatLoopOptions {
   streamChat?: typeof streamChatWithSdk;
   /** 当前对话模式，用于上下文压缩保留的最近轮数。 */
   mode?: string;
+  /** 权威轨迹提交端：canonical assistant 落盘（CTA Phase 1）。 */
+  transcriptSink?: TranscriptSink;
 }
 
 class StreamUnavailableError extends Error {
@@ -323,6 +326,14 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<AgentLoopRe
     }
     const reply = stripLeakedChatTimeContext(stripToolProtocol(response.text))
       || "刚才没有生成正常回复，请再试一次。";
+    // 权威轨迹：归一化后的可见回复作为 canonical assistant 提交。
+    // 不从流式展示文本重建 rawAssistant / thinking / 厂商原始块，原样保留。
+    const canonicalAssistant: ChatMessage = {
+      ...response.assistantMessage,
+      role: "assistant",
+      content: reply,
+    };
+    await options.transcriptSink?.appendAssistant({ message: canonicalAssistant });
     // 终态快照：把最终回复并入历史口径（与下一轮进入历史的文本一致）。
     emitContextUsage("terminal", reply);
     if (result.needsReveal) {

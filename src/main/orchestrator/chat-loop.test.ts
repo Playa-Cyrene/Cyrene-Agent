@@ -5,8 +5,24 @@ vi.mock("../token-usage-store", () => ({
   recordRequest: vi.fn(),
 }));
 
+// 跨循环测试需要真实跑一轮 Harness：仅替换 streamChatWithSdk 为可控实现，
+// 其余导出（createSseReader / getAdapterForConfig 等）保持真实。
+const { fakeStreamChatWithSdk } = vi.hoisted(() => ({ fakeStreamChatWithSdk: vi.fn() }));
+vi.mock("./vendors", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./vendors")>();
+  return { ...actual, streamChatWithSdk: fakeStreamChatWithSdk };
+});
+
 import { runChatLoop as runChatLoopProduction, type ChatLoopOptions } from "./chat-loop";
 import { createSseReader } from "./vendors";
+import { ConversationTranscriptStore } from "./conversation-transcript-store";
+import { materializeTranscript } from "./conversation-transcript-context";
+import { createTranscriptSink, type TranscriptSink } from "./transcript-sink";
+import { runCyreneHarness } from "./harness/cyrene-harness";
+import type { ToolDefinition } from "./tools/registry/tool-registry";
+import os from "node:os";
+import fs from "node:fs";
+import path from "node:path";
 import type {
   ChatMessage,
   ChatRequest,
@@ -148,6 +164,16 @@ function runChatLoop(options: ChatLoopOptions) {
     ...options,
     streamChat: options.streamChat ?? testSdkStream,
   });
+}
+
+/** 可断言的假轨迹提交端：默认全部成功。 */
+function fakeSink(overrides: Partial<TranscriptSink> = {}): TranscriptSink {
+  return {
+    appendAssistant: vi.fn(overrides.appendAssistant ?? (async () => "assistant-entry")),
+    appendToolResult: vi.fn(overrides.appendToolResult ?? (async () => undefined)),
+    closeInterruption: vi.fn(overrides.closeInterruption ?? (async () => undefined)),
+    checkpoint: vi.fn(overrides.checkpoint ?? (async () => undefined)),
+  };
 }
 
 beforeEach(() => {
@@ -489,5 +515,234 @@ describe("runChatLoop", () => {
     });
 
     expect(result.totalUsage).toEqual({ input: 9, output: 5 });
+  });
+
+  it("persists the normalized visible reply while preserving rawAssistant and thinking", async () => {
+    const adapter = new FakeAdapter();
+    const sink = fakeSink();
+    const rawAssistant = [{ type: "text", text: "provider payload" }];
+    // 泄漏的时间戳前缀必须在落盘前被归一剥离，但原始协议块原样保留
+    const leakedText = "[2026-09-21 10:00, Asia/Shanghai] visible";
+
+    await runChatLoop({
+      settings: { provider: "test", baseUrl: "https://test", model: "m", apiKey: "k", contextWindowTokens: 256000 },
+      adapter,
+      messages: [{ role: "user", content: "在吗" }],
+      soulSystemBaseContent: "SOUL_SYSTEM",
+      timeoutMs: 30_000,
+      fallbackRevealIntervalMs: 0,
+      recordUsage: vi.fn(),
+      transcriptSink: sink,
+      streamChat: async () => ({
+        assistantMessage: { role: "assistant" as const, content: leakedText, thinking: "reasoning", rawAssistant },
+        text: leakedText,
+        thinking: "reasoning",
+        toolCalls: [],
+        finishReason: "stop" as const,
+        raw: {},
+      }),
+    });
+
+    expect(sink.appendAssistant).toHaveBeenCalledWith({
+      message: expect.objectContaining({ role: "assistant", content: "visible", thinking: "reasoning", rawAssistant }),
+    });
+  });
+
+  it("rejects the turn when ChatLoop assistant persistence fails", async () => {
+    const adapter = new FakeAdapter();
+
+    await expect(runChatLoop({
+      settings: { provider: "test", baseUrl: "https://test", model: "m", apiKey: "k", contextWindowTokens: 256000 },
+      adapter,
+      messages: [{ role: "user", content: "在吗" }],
+      soulSystemBaseContent: "SOUL_SYSTEM",
+      timeoutMs: 30_000,
+      recordUsage: vi.fn(),
+      transcriptSink: fakeSink({ appendAssistant: async () => { throw new Error("disk full"); } }),
+      streamChat: async () => ({
+        assistantMessage: { role: "assistant" as const, content: "好的" },
+        text: "好的",
+        toolCalls: [],
+        finishReason: "stop" as const,
+        raw: {},
+      }),
+    })).rejects.toThrow("disk full");
+  });
+});
+
+describe("ChatLoop transcript cross-loop continuity", () => {
+  /** 跨循环测试占位工具：模型不调用它，仅让 Harness 轮"带工具"语义成立。 */
+  function crossLoopTool(): ToolDefinition {
+    return {
+      id: "cross_loop_probe",
+      name: "cross_loop_probe",
+      description: "测试占位工具",
+      enabled: true,
+      inputSchema: { type: "object", properties: {} },
+    };
+  }
+
+  /** 协调器写入 user 条目的测试替身（生产由 coordinator 负责）。 */
+  async function seedUserEntry(
+    store: ConversationTranscriptStore,
+    conversationId: string,
+    input: { runId: string; turnId: string; text: string },
+  ): Promise<void> {
+    await store.append(conversationId, {
+      id: `user-${input.turnId}`,
+      at: 1,
+      runId: input.runId,
+      turnId: input.turnId,
+      revision: 1,
+      kind: "user",
+      payload: { text: input.text },
+    });
+  }
+
+  it("feeds a chat turn's canonical assistant into the next tools-enabled round", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-crossloop-a-"));
+    const store = new ConversationTranscriptStore(root);
+    const conversationId = "conv-cross-chat-work";
+    try {
+      await seedUserEntry(store, conversationId, { runId: "run-chat-1", turnId: "turn-1", text: "在吗" });
+
+      // 上一轮：ChatLoop 提交 canonical assistant（泄漏时间戳被归一剥离）
+      const chatSink = createTranscriptSink({ store, conversationId, runId: "run-chat-1" });
+      await runChatLoop({
+        settings: { provider: "test", baseUrl: "https://test", model: "m", apiKey: "k", contextWindowTokens: 256000 },
+        adapter: new FakeAdapter(),
+        messages: [{ role: "user", content: "在吗" }],
+        soulSystemBaseContent: "SOUL_SYSTEM",
+        timeoutMs: 30_000,
+        fallbackRevealIntervalMs: 0,
+        recordUsage: vi.fn(),
+        transcriptSink: chatSink,
+        streamChat: async () => ({
+          assistantMessage: {
+            role: "assistant" as const,
+            content: "[2026-09-21 10:00, Asia/Shanghai] 你好呀",
+            thinking: "reasoning",
+            rawAssistant: [{ type: "text", text: "provider payload" }],
+          },
+          text: "[2026-09-21 10:00, Asia/Shanghai] 你好呀",
+          toolCalls: [],
+          finishReason: "stop" as const,
+          raw: {},
+        }),
+      });
+
+      // 轨迹层：物化得到 user + canonical assistant（归一内容，原始字段保留）
+      const snapshot = await store.read(conversationId);
+      const materialized = materializeTranscript(snapshot.entries, { get: () => null });
+      expect(materialized.messages).toEqual([
+        { role: "user", content: "在吗" },
+        expect.objectContaining({ role: "assistant", content: "你好呀", thinking: "reasoning" }),
+      ]);
+
+      // 下一轮：追加新 user，喂给带工具的 Harness 轮，模型请求必须收到完整 canonical 上下文
+      fakeStreamChatWithSdk.mockResolvedValueOnce({
+        assistantMessage: { role: "assistant", content: "已接上对话。" },
+        text: "已接上对话。",
+        toolCalls: [],
+        finishReason: "stop",
+        raw: {},
+      });
+      const workSink = createTranscriptSink({ store, conversationId, runId: "run-work-1" });
+      const result = await runCyreneHarness({
+        systemPrompt: "you are a test agent",
+        messages: [...materialized.messages, { role: "user", content: "帮我查天气" }],
+        tools: [crossLoopTool()],
+        vendorConfig: {
+          provider: "test",
+          baseUrl: "https://test",
+          model: "m",
+          apiKey: "k",
+        } as unknown as Parameters<typeof runCyreneHarness>[0]["vendorConfig"],
+        transcriptSink: workSink,
+      });
+      expect(result.finalAnswer).toBe("已接上对话。");
+
+      const requestMessages = (fakeStreamChatWithSdk.mock.calls[0][0] as {
+        request: { messages: Array<{ role: string; content: string }> };
+      }).request.messages;
+      expect(requestMessages).toEqual(expect.arrayContaining([
+        expect.objectContaining({ role: "user", content: "在吗" }),
+        expect.objectContaining({ role: "assistant", content: "你好呀" }),
+        expect.objectContaining({ role: "user", content: "帮我查天气" }),
+      ]));
+
+      // 双向连续性：两轮 assistant 共存于同一权威轨迹
+      const finalSnapshot = await store.read(conversationId);
+      expect(finalSnapshot.entries.filter((entry) => entry.kind === "assistant")).toHaveLength(2);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("feeds a tools round's tool messages into the next tools-disabled chat turn", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-crossloop-b-"));
+    const store = new ConversationTranscriptStore(root);
+    const conversationId = "conv-cross-work-chat";
+    try {
+      await seedUserEntry(store, conversationId, { runId: "run-work-1", turnId: "turn-1", text: "查一下天气" });
+
+      // 上一轮：用真实 sink 复现带工具的 Harness 写入（提交路径已由 Task 4 覆盖）
+      const workSink = createTranscriptSink({ store, conversationId, runId: "run-work-1" });
+      const assistantEntryId = await workSink.appendAssistant({
+        message: {
+          role: "assistant",
+          content: "",
+          toolCalls: [{ id: "call-1", name: "get_weather", arguments: JSON.stringify({ city: "上海" }) }],
+        },
+        roundId: "round-1",
+      });
+      await workSink.appendToolResult({
+        assistantEntryId,
+        message: { role: "tool", toolCallId: "call-1", name: "get_weather", content: "上海 晴 26℃" },
+        outcome: "success",
+        roundId: "round-1",
+      });
+
+      // 轨迹层：物化得到 user + assistant(toolCalls) + 工具结果
+      const snapshot = await store.read(conversationId);
+      const materialized = materializeTranscript(snapshot.entries, { get: () => null });
+      expect(materialized.messages).toEqual([
+        { role: "user", content: "查一下天气" },
+        expect.objectContaining({
+          role: "assistant",
+          toolCalls: [expect.objectContaining({ id: "call-1", name: "get_weather" })],
+        }),
+        expect.objectContaining({ role: "tool", toolCallId: "call-1", content: "上海 晴 26℃" }),
+      ]);
+
+      // 下一轮：关闭工具的 ChatLoop 轮收到完整工具历史
+      let chatRequestMessages: ChatMessage[] = [];
+      await runChatLoop({
+        settings: { provider: "test", baseUrl: "https://test", model: "m", apiKey: "k", contextWindowTokens: 256000 },
+        adapter: new FakeAdapter(),
+        messages: [...materialized.messages, { role: "user", content: "谢谢，再聊聊" }],
+        soulSystemBaseContent: "SOUL_SYSTEM",
+        timeoutMs: 30_000,
+        fallbackRevealIntervalMs: 0,
+        recordUsage: vi.fn(),
+        streamChat: async (input) => {
+          chatRequestMessages = input.request.messages;
+          return {
+            assistantMessage: { role: "assistant" as const, content: "好的" },
+            text: "好的",
+            toolCalls: [],
+            finishReason: "stop" as const,
+            raw: {},
+          };
+        },
+      });
+
+      expect(chatRequestMessages).toEqual(expect.arrayContaining([
+        expect.objectContaining({ role: "tool", toolCallId: "call-1", content: "上海 晴 26℃" }),
+        expect.objectContaining({ role: "user", content: "谢谢，再聊聊" }),
+      ]));
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 });

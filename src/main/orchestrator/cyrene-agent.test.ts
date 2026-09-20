@@ -6,6 +6,7 @@ import { AgentExecutionError } from "./run-execution-status";
 import { requestUserClarification } from "../user-choice";
 import { runHarnessWithAdapter } from "./harness-adapter";
 import { runChatLoop } from "./chat-loop";
+import type { TranscriptSink } from "./transcript-sink";
 import { EventType } from "@ag-ui/core";
 
 vi.mock("./vendors", () => ({
@@ -601,6 +602,132 @@ describe("CyreneAgent chat tool enhancement branch", () => {
     await vi.waitFor(() => {
       expect(events.find((e) => (e as { type?: string }).type === EventType.RUN_FINISHED)).toBeDefined();
     });
+    sub.unsubscribe();
+  });
+});
+
+describe("CyreneAgent transcript sink wiring", () => {
+  /** 可断言的假轨迹提交端：默认全部成功。 */
+  function fakeSink(overrides: Partial<TranscriptSink> = {}): TranscriptSink {
+    return {
+      appendAssistant: vi.fn(overrides.appendAssistant ?? (async () => "assistant-entry")),
+      appendToolResult: vi.fn(overrides.appendToolResult ?? (async () => undefined)),
+      closeInterruption: vi.fn(overrides.closeInterruption ?? (async () => undefined)),
+      checkpoint: vi.fn(overrides.checkpoint ?? (async () => undefined)),
+    };
+  }
+
+  beforeEach(() => {
+    mockedRunChatLoop.mockClear();
+  });
+
+  it("passes the transcript sink into runChatLoop for plain chat turns", async () => {
+    const agent = new CyreneAgent({ threadId: "thread-chat-sink" });
+    const sink = fakeSink();
+    const events: unknown[] = [];
+    const sub = agent.runWithEvents({
+      settings: { provider: "test", baseUrl: "", model: "", apiKey: "", contextWindowTokens: 256000 } as never,
+      messages: [{ role: "user", content: "hi" }] as never,
+      timeoutMs: 60000,
+      toolSystemContent: "",
+      soulSystemBaseContent: "",
+      executionMode: "chat",
+      tools: [],
+      runId: "run-chat-sink",
+      transcriptSink: sink,
+    }).subscribe({ next: (e) => events.push(e) });
+
+    await vi.waitFor(() => expect(mockedRunChatLoop).toHaveBeenCalledOnce());
+    expect(mockedRunChatLoop).toHaveBeenCalledWith(expect.objectContaining({ transcriptSink: sink }));
+
+    await vi.waitFor(() => {
+      expect(events.find((e) => (e as { type?: string }).type === EventType.RUN_FINISHED)).toBeDefined();
+    });
+    sub.unsubscribe();
+  });
+
+  it("closes the transcript interruption before emitting the cancelled terminal", async () => {
+    const agent = new CyreneAgent({ threadId: "thread-chat-cancel" });
+    const externalController = new AbortController();
+    const closeInterruption = vi.fn(async () => undefined);
+    const sink = fakeSink({ closeInterruption });
+    // 等外部取消信号落地后以 AbortError 结束（贴近真实 ChatLoop 取消行为）
+    mockedRunChatLoop.mockImplementationOnce(async () => {
+      await new Promise<void>((resolve) => {
+        if (externalController.signal.aborted) return resolve();
+        externalController.signal.addEventListener("abort", () => resolve(), { once: true });
+      });
+      throw Object.assign(new Error("E_SOUL_ONLY_CANCELLED"), { name: "AbortError" });
+    });
+
+    const events: unknown[] = [];
+    const sub = agent.runWithEvents({
+      settings: { provider: "test", baseUrl: "", model: "", apiKey: "", contextWindowTokens: 256000 } as never,
+      messages: [{ role: "user", content: "hi" }] as never,
+      timeoutMs: 60000,
+      toolSystemContent: "",
+      soulSystemBaseContent: "",
+      executionMode: "chat",
+      tools: [],
+      runId: "run-chat-cancel",
+      transcriptSink: sink,
+      signal: externalController.signal,
+    }).subscribe({ next: (e) => events.push(e) });
+
+    await vi.waitFor(() => expect(mockedRunChatLoop).toHaveBeenCalledOnce());
+    externalController.abort();
+    await vi.waitFor(() => {
+      expect(events.find((e) => (e as { type?: string }).type === EventType.RUN_FINISHED)).toBeDefined();
+    });
+
+    // 取消边界先于终态事件写入；ChatLoop 无工具，runSession 为空只写边界
+    expect(closeInterruption).toHaveBeenCalledWith({ reason: "user_cancel", runSession: null });
+    const runFinished = events.find(
+      (e) => (e as { type?: string }).type === EventType.RUN_FINISHED,
+    ) as { result?: { status?: string } };
+    expect(runFinished?.result?.status).toBe("cancelled");
+    sub.unsubscribe();
+  });
+
+  it("reports a runtime error when the ChatLoop interruption closure fails", async () => {
+    const agent = new CyreneAgent({ threadId: "thread-chat-cancel-fail" });
+    const externalController = new AbortController();
+    const closeInterruption = vi.fn(async () => { throw new Error("disk full"); });
+    const sink = fakeSink({ closeInterruption });
+    mockedRunChatLoop.mockImplementationOnce(async () => {
+      await new Promise<void>((resolve) => {
+        if (externalController.signal.aborted) return resolve();
+        externalController.signal.addEventListener("abort", () => resolve(), { once: true });
+      });
+      throw Object.assign(new Error("E_SOUL_ONLY_CANCELLED"), { name: "AbortError" });
+    });
+
+    const events: unknown[] = [];
+    const sub = agent.runWithEvents({
+      settings: { provider: "test", baseUrl: "", model: "", apiKey: "", contextWindowTokens: 256000 } as never,
+      messages: [{ role: "user", content: "hi" }] as never,
+      timeoutMs: 60000,
+      toolSystemContent: "",
+      soulSystemBaseContent: "",
+      executionMode: "chat",
+      tools: [],
+      runId: "run-chat-cancel-fail",
+      transcriptSink: sink,
+      signal: externalController.signal,
+    }).subscribe({ next: (e) => events.push(e) });
+
+    await vi.waitFor(() => expect(mockedRunChatLoop).toHaveBeenCalledOnce());
+    externalController.abort();
+    await vi.waitFor(() => {
+      expect(events.find((e) => (e as { type?: string }).type === EventType.RUN_FINISHED)).toBeDefined();
+    });
+
+    // 闭合失败不得伪装成取消成功：按运行时错误上报
+    const runFinished = events.find(
+      (e) => (e as { type?: string }).type === EventType.RUN_FINISHED,
+    ) as { result?: { status?: string; reason?: string } };
+    expect(runFinished?.result?.status).toBe("runtime_error");
+    expect(runFinished?.result?.reason).toBe("transcript_interruption_closure_failed");
     sub.unsubscribe();
   });
 });

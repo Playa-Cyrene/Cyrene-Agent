@@ -472,6 +472,7 @@ export class CyreneAgent extends AbstractAgent {
               onEvent,
               signal: abortController.signal,
               mode: options.conversationMode,
+              transcriptSink: options.transcriptSink,
             }));
           } else {
             const executeTool = (tc: Parameters<typeof executeToolCall>[0], runnableToolIds: Set<string>) => executeToolCall(tc, runnableToolIds, {
@@ -531,6 +532,29 @@ export class CyreneAgent extends AbstractAgent {
           );
           console.error(LOG_PREFIX, `run 失败 [${classification.source}]:`, classification.diagnostics);
           if (classification.source === "user_cancelled") {
+            // 权威轨迹：取消边界先于终态事件落盘。
+            // ChatLoop 无工具调用，runSession 传空只写 interruption 边界；
+            // Harness 路径已在 adapter 内按 runStore 状态闭合，这里幂等不重复。
+            try {
+              await options.transcriptSink?.closeInterruption({ reason: "user_cancel", runSession: null });
+            } catch (closureError) {
+              // 闭合失败不得伪装成取消成功：按运行时错误上报
+              console.error(LOG_PREFIX, "transcript interruption closure failed:", closureError);
+              subscriber.next({
+                type: EventType.RUN_FINISHED,
+                threadId,
+                runId,
+                result: {
+                  status: "runtime_error",
+                  reason: "transcript_interruption_closure_failed",
+                  externalEffectsMayContinue: true,
+                },
+              });
+              finished = true;
+              detachExternalAbort();
+              subscriber.complete();
+              return;
+            }
             // 取消走 RUN_FINISHED + result.status="cancelled"，
             // 不伪装成 AG-UI interrupt，也不写 outcome。
             subscriber.next({
