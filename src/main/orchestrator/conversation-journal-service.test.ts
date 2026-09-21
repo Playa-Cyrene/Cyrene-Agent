@@ -1,0 +1,97 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  ConversationJournalService,
+  type JournalUserInput,
+} from "./conversation-journal-service";
+import {
+  ConversationTranscriptStore,
+  transcriptStorageKey,
+} from "./conversation-transcript-store";
+
+const roots: string[] = [];
+
+function createJournal() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-journal-"));
+  roots.push(root);
+  const store = new ConversationTranscriptStore(root, { now: () => 1_000 });
+  return {
+    root,
+    journal: new ConversationJournalService(store, { runReader: { get: () => null } }),
+  };
+}
+
+function userInput(turnId: string, text: string): JournalUserInput {
+  return { id: `user:${turnId}`, turnId, text, revision: 1, at: 1_000 };
+}
+
+async function corruptSnapshotProjection(root: string, conversationId: string): Promise<void> {
+  const snapshotPath = path.join(
+    root,
+    "transcripts",
+    transcriptStorageKey(conversationId),
+    "snapshot.json",
+  );
+  const snapshot = JSON.parse(await fs.promises.readFile(snapshotPath, "utf8")) as {
+    projection: unknown;
+  };
+  snapshot.projection = { throughSeq: "corrupt", messages: null };
+  await fs.promises.writeFile(snapshotPath, JSON.stringify(snapshot), "utf8");
+}
+
+afterEach(() => {
+  for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
+});
+
+describe("ConversationJournalService", () => {
+  it("投影快照损坏时从日志重建且模型上下文不变", async () => {
+    const { root, journal } = createJournal();
+    await journal.appendUser("c1", userInput("u1", "hello"));
+    await journal.appendPresentation("c1", "user:u1", 1, { sticker: "calm" });
+    await corruptSnapshotProjection(root, "c1");
+
+    const reopened = new ConversationJournalService(
+      new ConversationTranscriptStore(root, { now: () => 1_000 }),
+      { runReader: { get: () => null } },
+    );
+    expect((await reopened.readProjection("c1")).messages[0].sticker).toBe("calm");
+    expect((await reopened.buildModelContext("c1")).messages[0].content).toBe("hello");
+  });
+
+  it("canonical 行损坏时保持 fail-closed", async () => {
+    const { root, journal } = createJournal();
+    await journal.appendUser("c1", userInput("u1", "hello"));
+    const jsonlPath = path.join(
+      root,
+      "transcripts",
+      transcriptStorageKey("c1"),
+      "transcript.jsonl",
+    );
+    await fs.promises.appendFile(jsonlPath, '{"seq":2,"id":"broken"}\nnot-json\n', "utf8");
+    await expect(journal.readProjection("c1")).rejects.toThrow("TRANSCRIPT_CORRUPT_ROW");
+  });
+
+  it("展示补丁使用确定性 ID 并按投影尾部分页", async () => {
+    const { journal } = createJournal();
+    const user = await journal.appendUser("c1", userInput("u1", "hello"));
+    const first = await journal.appendPresentation("c1", user.id, 1, { sticker: "calm" });
+    const retry = await journal.appendPresentation("c1", user.id, 1, { sticker: "calm" });
+    expect(retry.id).toBe(first.id);
+
+    await journal.appendUser("c1", userInput("u2", "world"));
+    const page = await journal.readProjectionPage("c1", null, 1);
+    expect(page.messages.map((message) => message.content)).toEqual(["world"]);
+    expect(page.hasMore).toBe(true);
+    expect((await journal.readProjectionPage("c1", 1, 1)).messages[0].sticker).toBe("calm");
+  });
+
+  it("withdrawUserTurn 写入墓碑且重复撤回为 absent", async () => {
+    const { journal } = createJournal();
+    await journal.appendUser("c1", userInput("u1", "hello"));
+    expect(await journal.withdrawUserTurn("c1", "u1")).toBe("written");
+    expect(await journal.withdrawUserTurn("c1", "u1")).toBe("absent");
+    expect((await journal.readProjection("c1")).messages).toEqual([]);
+  });
+});

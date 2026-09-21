@@ -160,14 +160,18 @@ export class ConversationTranscriptStore {
     });
   }
 
-  checkpoint(conversationId: string): Promise<TranscriptSnapshotV2> {
+  /** Atomically persist a snapshot, optionally replacing only its projection. */
+  checkpoint(
+    conversationId: string,
+    projection?: TranscriptSnapshotV2["projection"],
+  ): Promise<TranscriptSnapshotV2> {
     return this.enqueue(conversationId, async () => {
       const state = await this.loadState(conversationId);
       const snapshot: TranscriptSnapshotV2 = {
         schemaVersion: SCHEMA_VERSION,
         throughSeq: state.maxSeq,
         entries: state.entries,
-        projection: state.projection,
+        projection: projection ?? state.projection,
         archives: state.archives,
         seenEntryIds: [...state.seenEntryIds],
         seenUserRevisions: [...state.seenUserRevisions],
@@ -227,6 +231,7 @@ export class ConversationTranscriptStore {
     const snapshot = await this.readSnapshotFile(dir);
     const throughSeq = snapshot?.throughSeq ?? 0;
     const entries: TranscriptEntry[] = [...(snapshot?.entries ?? [])];
+    for (const entry of entries) validateLoadedTranscriptEntry(entry);
     const seenEntryIds = new Set<string>(snapshot?.seenEntryIds ?? []);
     const seenUserRevisions = new Set<string>(snapshot?.seenUserRevisions ?? []);
 
@@ -240,9 +245,7 @@ export class ConversationTranscriptStore {
         throw new Error("TRANSCRIPT_CORRUPT_ROW");
       }
       const entry = parsed as TranscriptEntry;
-      if (!entry || typeof entry !== "object" || typeof entry.id !== "string" || typeof entry.seq !== "number") {
-        throw new Error("TRANSCRIPT_CORRUPT_ROW");
-      }
+      validateLoadedTranscriptEntry(entry);
       if (entry.seq <= throughSeq) continue;
       entries.push(entry);
       seenEntryIds.add(entry.id);
@@ -270,12 +273,23 @@ export class ConversationTranscriptStore {
     try {
       const raw = await fs.promises.readFile(path.join(dir, SNAPSHOT_FILE_NAME), "utf8");
       const parsed = JSON.parse(raw) as TranscriptSnapshotV2;
-      if (parsed?.schemaVersion === SCHEMA_VERSION) return parsed;
-      if (parsed?.schemaVersion === V1_SCHEMA_VERSION) return parsed as unknown as TranscriptSnapshotV1OnDisk;
+      if (parsed?.schemaVersion === SCHEMA_VERSION) {
+        if (!Array.isArray(parsed.entries)) throw new Error("TRANSCRIPT_CORRUPT_ROW");
+        return parsed;
+      }
+      if (parsed?.schemaVersion === V1_SCHEMA_VERSION) {
+        if (!Array.isArray((parsed as unknown as TranscriptSnapshotV1OnDisk).entries)) {
+          throw new Error("TRANSCRIPT_CORRUPT_ROW");
+        }
+        return parsed as unknown as TranscriptSnapshotV1OnDisk;
+      }
       return null;
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      return null;
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+      // A damaged snapshot is only a recoverable projection/cache failure:
+      // canonical JSONL remains the source of truth and will be replayed.
+      if (error instanceof SyntaxError) return null;
+      throw error;
     }
   }
 
@@ -326,6 +340,26 @@ export class ConversationTranscriptStore {
       throw new Error("TRANSCRIPT_IDENTITY_MISMATCH");
     }
   }
+}
+
+function validateLoadedTranscriptEntry(entry: unknown): asserts entry is TranscriptEntry {
+  if (!entry || typeof entry !== "object") throw new Error("TRANSCRIPT_CORRUPT_ROW");
+  const candidate = entry as Partial<TranscriptEntry>;
+  const kinds = new Set([
+    "user", "assistant", "tool_result", "interruption", "turn_rewind",
+    "backfill_boundary", "compaction_checkpoint", "presentation_patch",
+    "turn_tombstone", "delivery_receipt",
+  ]);
+  if (
+    typeof candidate.id !== "string" ||
+    candidate.id.length === 0 ||
+    typeof candidate.seq !== "number" ||
+    !Number.isFinite(candidate.seq) ||
+    !Number.isInteger(candidate.seq) ||
+    !kinds.has(candidate.kind as string) ||
+    !candidate.payload ||
+    typeof candidate.payload !== "object"
+  ) throw new Error("TRANSCRIPT_CORRUPT_ROW");
 }
 
 async function pathExists(target: string): Promise<boolean> {

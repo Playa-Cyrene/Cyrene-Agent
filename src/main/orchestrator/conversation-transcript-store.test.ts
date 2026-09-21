@@ -159,6 +159,18 @@ describe("ConversationTranscriptStore", () => {
     expect((await store.append("c1", userDraft("e1", "u1", 1, "retry"))).id).toBe("e1");
   });
 
+  it("checkpoint can replace only the recoverable projection while retaining canonical rows", async () => {
+    const { store } = createStore();
+    await store.append("c1", userDraft("e1", "u1", 1, "one"));
+    const snapshot = await store.checkpoint("c1", {
+      throughSeq: 1,
+      messages: [{ id: "e1", role: "user", content: "one", at: 1_000 }],
+    });
+    expect(snapshot.entries.map((entry) => entry.id)).toEqual(["e1"]);
+    expect(snapshot.projection.messages[0].content).toBe("one");
+    expect((await store.read("c1")).entries.map((entry) => entry.id)).toEqual(["e1"]);
+  });
+
   it("hashes conversation ids that contain path separators", async () => {
     const { store, root } = createStore();
     await store.append("../escape", userDraft("e1", "u1", 1, "x"));
