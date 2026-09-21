@@ -76,7 +76,7 @@
     "@ag-ui/client": "^0.0.57",
     "@ag-ui/core": "^0.0.57",
     "@ant-design/cssinjs": "^2.1.2",
-    "@ant-design/icons": "^6.3.2",
+    "@ant-design/icons": "^6.3.4",
     "@ant-design/x": "^2.9.0",
     "@anthropic-ai/sandbox-runtime": "^0.0.71",
     "@anthropic-ai/sdk": "^0.115.0",
