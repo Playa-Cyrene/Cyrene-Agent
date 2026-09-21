@@ -293,8 +293,11 @@ export class ConversationTranscriptStore {
       : null;
     if (legacyDir && await pathExists(legacyDir)) {
       await fs.promises.mkdir(this.root, { recursive: true });
+      // Write the marker while the legacy directory is still authoritative. If this
+      // write or the subsequent rename is interrupted, retrying can still find the
+      // complete legacy directory and finish the migration without data loss.
+      await this.writeIdentity(legacyDir, conversationId);
       await fs.promises.rename(legacyDir, hashedDir);
-      await this.writeIdentity(hashedDir, conversationId);
       return hashedDir;
     }
 

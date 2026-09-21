@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ConversationTranscriptStore, transcriptStorageKey } from "./conversation-transcript-store";
 import type { TranscriptAppendInput, TranscriptEntry } from "./conversation-transcript-types";
 
@@ -66,6 +66,29 @@ describe("ConversationTranscriptStore", () => {
     await writeV1Snapshot(root, "desktop-1", { throughSeq: 2, entries: seedEntries });
     const appended = await store.append("desktop-1", userDraft("e3", "u-3", 1, "three"));
     expect(appended.seq).toBe(3);
+  });
+
+  it("legacy 迁移在 identity 写入失败后可由重启恢复", async () => {
+    const { root, store } = createStore();
+    const seedEntries: TranscriptEntry[] = [
+      { seq: 1, id: "e1", at: 1_000, kind: "user", turnId: "u-1", revision: 1, payload: { text: "one" } },
+    ];
+    await writeV1Snapshot(root, "desktop-crash-recovery", { throughSeq: 1, entries: seedEntries });
+
+    const identityWrite = vi.spyOn(fs.promises, "writeFile")
+      .mockRejectedValueOnce(new Error("simulated-crash"));
+    await expect(store.append("desktop-crash-recovery", userDraft("e2", "u-2", 1, "two")))
+      .rejects.toThrow("simulated-crash");
+    identityWrite.mockRestore();
+
+    const restarted = new ConversationTranscriptStore(root, { now: () => 1_000 });
+    const appended = await restarted.append(
+      "desktop-crash-recovery",
+      userDraft("e2", "u-2", 1, "two"),
+    );
+    expect(appended.seq).toBe(2);
+    expect((await restarted.read("desktop-crash-recovery")).entries.map((entry) => entry.id))
+      .toEqual(["e1", "e2"]);
   });
 
   it("冒号渠道 ID 不直接成为目录名", async () => {
