@@ -113,8 +113,8 @@ rustup default stable-x86_64-pc-windows-msvc
 ### 1. 克隆项目
 
 ```bash
-# GitHub（主仓库）
-git clone https://github.com/Playa-0v0/Cyrene-Agent.git
+# GitHub（组织主仓库）
+git clone https://github.com/Playa-Cyrene/Cyrene-Agent.git
 
 # 或 Gitee（国内镜像）
 git clone https://gitee.com/playa0/cyrene-agent.git
