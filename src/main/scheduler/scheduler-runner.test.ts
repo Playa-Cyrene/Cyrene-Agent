@@ -366,7 +366,22 @@ describe("createSchedulerRunner lifecycle events", () => {
       expect(projection.messages).toEqual(expect.arrayContaining([
         expect.objectContaining({ id: "scheduler-reply-hist-1", content: "disk_usage：完成", toolExecutions: [expect.objectContaining({ id: "tool-1" })] }),
       ]));
-      expect(send).toHaveBeenCalledWith("scheduler:event", expect.objectContaining({ type: "RUN_FINISHED", content: "disk_usage：完成", messageId: "scheduler-reply-hist-1" }));
+      const reloaded = projection.messages.find((message) => message.id === "scheduler-reply-hist-1");
+      const live = send.mock.calls
+        .map((call) => call[1] as Record<string, unknown>)
+        .find((event) => event.type === "RUN_FINISHED");
+      expect(live).toMatchObject({ type: "RUN_FINISHED", content: "disk_usage：完成", messageId: "scheduler-reply-hist-1" });
+      expect({
+        id: live?.messageId,
+        content: live?.content,
+        toolExecutions: live?.toolExecutions,
+        runSnapshot: live?.runSnapshot,
+      }).toEqual({
+        id: reloaded?.id,
+        content: reloaded?.content,
+        toolExecutions: reloaded?.toolExecutions,
+        runSnapshot: reloaded?.runSnapshot,
+      });
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

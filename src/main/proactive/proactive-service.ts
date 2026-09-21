@@ -17,7 +17,7 @@ export interface ProactiveFallback {
 
 export interface ProactiveCommitInput {
   /** Durable delivery identity shared by local and channel adapters. */
-  intentId: string;
+  intentId?: string;
   candidate: ProactiveCandidate;
   text: string;
   source: "model" | "fallback";
@@ -33,12 +33,14 @@ export type ProactiveCommitResult =
 
 export interface ProactiveChatServiceDeps {
   loadState: () => ProactiveState;
-  saveState: (state: ProactiveState) => void;
+  saveState: (state: ProactiveState) => void | boolean;
   getSnapshot: () => ProactiveRuntimeSnapshot;
   buildMessages: (candidate: ProactiveCandidate, state: ProactiveState) => Promise<ChatMessage[]>;
   runModel: (messages: ChatMessage[]) => Promise<ProactiveModelResult>;
   getFallback: (candidate: ProactiveCandidate) => Promise<ProactiveFallback | null>;
   commitMessage: (input: ProactiveCommitInput) => Promise<ProactiveCommitResult>;
+  /** Local journal commits require a durable intent; legacy external channels do not. */
+  requiresDurableIntent?: () => boolean;
   canStartDelivery?: () => boolean;
   log?: (event: string, detail?: unknown) => void;
 }
@@ -55,6 +57,30 @@ export interface ProactiveChatService {
 export function createProactiveChatService(deps: ProactiveChatServiceDeps): ProactiveChatService {
   let generating = false;
 
+  const cloneState = (state: ProactiveState): ProactiveState => ({
+    ...state,
+    affinity: { ...state.affinity },
+    lastFiredAt: { ...state.lastFiredAt },
+    ...(state.pendingCommitIntent ? {
+      pendingCommitIntent: {
+        ...state.pendingCommitIntent,
+        candidate: { ...state.pendingCommitIntent.candidate },
+      },
+    } : {}),
+  });
+
+  const stateHasIntent = (state: ProactiveState, intent: ProactiveCommitIntent): boolean => (
+    state.proactiveCommitSequence === intent.sequence
+    && JSON.stringify(state.pendingCommitIntent) === JSON.stringify(intent)
+  );
+
+  const persistPendingIntent = (state: ProactiveState, intent: ProactiveCommitIntent): void => {
+    const result = deps.saveState(state);
+    if (result === false || !stateHasIntent(deps.loadState(), intent)) {
+      throw new Error("PROACTIVE_PENDING_INTENT_NOT_PERSISTED");
+    }
+  };
+
   const persistMutation = (mutate: (state: ProactiveState) => void): void => {
     const state = deps.loadState();
     mutate(state);
@@ -63,6 +89,43 @@ export function createProactiveChatService(deps: ProactiveChatServiceDeps): Proa
 
   const clearPendingIntent = (state: ProactiveState, intentId: string): void => {
     if (state.pendingCommitIntent?.intentId === intentId) delete state.pendingCommitIntent;
+  };
+
+  const finalizeDelivery = (
+    result: ProactiveCommitResult,
+    candidate: ProactiveCandidate,
+    source: "model" | "fallback",
+    generationEpoch: number,
+    intentAt: number,
+    intentId?: string,
+  ): ProactiveCommitResult => {
+    if (result.kind === "cancelled") {
+      const cancelledState = cloneState(deps.loadState());
+      if (intentId) clearPendingIntent(cancelledState, intentId);
+      deps.saveState(cancelledState);
+      deps.log?.("commit_cancelled", {
+        scene: candidate.sceneId,
+        reason: result.reason,
+        source,
+      });
+      return result;
+    }
+
+    const latestState = cloneState(deps.loadState());
+    if (intentId) clearPendingIntent(latestState, intentId);
+    if (latestState.proactiveEpoch === generationEpoch) {
+      markProactiveCommitted(latestState, candidate, intentAt);
+    } else {
+      // 文本已经成功写入，但用户可能在后续 TTS 等待期间发来消息。
+      // 保留更新后的 Epoch/unansweredCount，只补记这次真实发送的硬冷却时间。
+      latestState.lastProactiveAt = intentAt;
+      latestState.lastProactiveScene = candidate.sceneId;
+      latestState.lastFiredAt[candidate.sceneId] = intentAt;
+      latestState.globalDesire = 0;
+    }
+    deps.saveState(latestState);
+    deps.log?.("message_committed", { scene: candidate.sceneId, source, ...(intentId ? { intentId } : {}) });
+    return result;
   };
 
   const deliverIntent = async (intent: ProactiveCommitIntent): Promise<ProactiveCommitResult> => {
@@ -75,33 +138,7 @@ export function createProactiveChatService(deps: ProactiveChatServiceDeps): Proa
       generationEpoch: intent.generationEpoch,
       intentAt: intent.intentAt,
     });
-    if (result.kind === "cancelled") {
-      const cancelledState = deps.loadState();
-      clearPendingIntent(cancelledState, intent.intentId);
-      deps.saveState(cancelledState);
-      deps.log?.("commit_cancelled", {
-        scene: intent.candidate.sceneId,
-        reason: result.reason,
-        source: intent.source,
-      });
-      return result;
-    }
-
-    const latestState = deps.loadState();
-    clearPendingIntent(latestState, intent.intentId);
-    if (latestState.proactiveEpoch === intent.generationEpoch) {
-      markProactiveCommitted(latestState, intent.candidate, intent.intentAt);
-    } else {
-      // 文本已经成功写入，但用户可能在后续 TTS 等待期间发来消息。
-      // 保留更新后的 Epoch/unansweredCount，只补记这次真实发送的硬冷却时间。
-      latestState.lastProactiveAt = intent.intentAt;
-      latestState.lastProactiveScene = intent.candidate.sceneId;
-      latestState.lastFiredAt[intent.candidate.sceneId] = intent.intentAt;
-      latestState.globalDesire = 0;
-    }
-    deps.saveState(latestState);
-    deps.log?.("message_committed", { scene: intent.candidate.sceneId, source: intent.source, intentId: intent.intentId });
-    return result;
+    return finalizeDelivery(result, intent.candidate, intent.source, intent.generationEpoch, intent.intentAt, intent.intentId);
   };
 
   return {
@@ -110,7 +147,8 @@ export function createProactiveChatService(deps: ProactiveChatServiceDeps): Proa
       const rawInitialSnapshot = deps.getSnapshot();
       const initialSnapshot = { ...rawInitialSnapshot, generationBusy: rawInitialSnapshot.generationBusy || generating };
 
-      const pendingIntent = initialState.pendingCommitIntent;
+      const requiresDurableIntent = deps.requiresDurableIntent?.() ?? true;
+      const pendingIntent = requiresDurableIntent ? initialState.pendingCommitIntent : undefined;
       if (pendingIntent) {
         const pendingDecision = canCommitProactiveMessage(
           initialSnapshot,
@@ -202,7 +240,20 @@ export function createProactiveChatService(deps: ProactiveChatServiceDeps): Proa
           return;
         }
 
-        const commitStateBeforeIntent = deps.loadState();
+        if (!(deps.requiresDurableIntent?.() ?? true)) {
+          const directResult = await deps.commitMessage({
+            candidate,
+            text,
+            source,
+            ...(fallbackPayload !== undefined ? { fallbackPayload } : {}),
+            generationEpoch,
+            intentAt: commitSnapshot.now,
+          });
+          finalizeDelivery(directResult, candidate, source, generationEpoch, commitSnapshot.now);
+          return;
+        }
+
+        const commitStateBeforeIntent = cloneState(deps.loadState());
         const sequence = (commitStateBeforeIntent.proactiveCommitSequence ?? 0) + 1;
         const intent: ProactiveCommitIntent = {
           intentId: `proactive-intent-${sequence}`,
@@ -217,7 +268,7 @@ export function createProactiveChatService(deps: ProactiveChatServiceDeps): Proa
         commitStateBeforeIntent.proactiveCommitSequence = sequence;
         commitStateBeforeIntent.pendingCommitIntent = intent;
         // Persist the exact business intent before crossing into any delivery adapter.
-        deps.saveState(commitStateBeforeIntent);
+        persistPendingIntent(commitStateBeforeIntent, intent);
         await deliverIntent(intent);
       } finally {
         generating = false;

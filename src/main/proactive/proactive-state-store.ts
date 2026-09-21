@@ -90,8 +90,8 @@ export function saveProactiveState(state: ProactiveState): void {
   try {
     fs.writeFileSync(temporaryPath, JSON.stringify(state, null, 2), "utf8");
     fs.renameSync(temporaryPath, filePath);
-  } catch (err) {
+  } catch (error) {
     try { if (fs.existsSync(temporaryPath)) fs.unlinkSync(temporaryPath); } catch { /* best effort cleanup */ }
-    console.warn("[Proactive] save state failed:", err);
+    throw error;
   }
 }

@@ -29,7 +29,12 @@ function setup(overrides: Record<string, unknown> = {}) {
     screenLocked: false,
   };
   const commitMessage = vi.fn(async () => ({ kind: "committed" as const }));
-  const saveState = vi.fn();
+  const saveState = vi.fn((next: typeof state) => {
+    for (const key of Object.keys(state) as Array<keyof typeof state>) {
+      if (!(key in next)) delete state[key];
+    }
+    Object.assign(state, next);
+  });
   const runModel = vi.fn(async () => ({ kind: "send" as const, text: "休息一下吧♪" }));
   const getFallback = vi.fn(async () => ({ text: "预设关心", payload: { audio: true } }));
   const service = createProactiveChatService({
@@ -156,6 +161,27 @@ describe("proactive chat service", () => {
     expect(ctx.state.proactiveCommitSequence).toBe(1);
   });
 
+  it("fails closed when the pending intent save does not persist", async () => {
+    const saveState = vi.fn();
+    const ctx = setup({ saveState });
+
+    await expect(ctx.service.evaluateCandidate(candidate)).rejects.toThrow("PROACTIVE_PENDING_INTENT_NOT_PERSISTED");
+    expect(ctx.commitMessage).not.toHaveBeenCalled();
+    expect(ctx.state.pendingCommitIntent).toBeUndefined();
+    expect(ctx.state.proactiveCommitSequence).toBeUndefined();
+  });
+
+  it("keeps legacy external delivery outside the local durable-intent protocol", async () => {
+    const ctx = setup({ requiresDurableIntent: () => false });
+
+    await ctx.service.evaluateCandidate(candidate);
+
+    expect(ctx.commitMessage).toHaveBeenCalledWith(expect.objectContaining({ candidate, text: "休息一下吧♪" }));
+    expect(ctx.commitMessage.mock.calls[0][0].intentId).toBeUndefined();
+    expect(ctx.state.pendingCommitIntent).toBeUndefined();
+    expect(ctx.state.proactiveCommitSequence).toBeUndefined();
+  });
+
   it("allocates a fresh intent identity for a later same-scene trigger", async () => {
     const ctx = setup();
     await ctx.service.evaluateCandidate(candidate);
@@ -181,7 +207,12 @@ describe("proactive chat service", () => {
       refresh.mockRejectedValueOnce(new Error("refresh failed"));
       const service = createProactiveChatService({
         loadState: () => state,
-        saveState: () => undefined,
+        saveState: (next) => {
+          for (const key of Object.keys(state) as Array<keyof typeof state>) {
+            if (!(key in next)) delete state[key];
+          }
+          Object.assign(state, next);
+        },
         getSnapshot: () => ({ now, localHour: 14, idleSec: 0, enabled: true, conversationBusy: false, generationBusy: false, screenLocked: false }),
         buildMessages: async () => [],
         runModel: async () => ({ kind: "send" as const, text: generatedText }),

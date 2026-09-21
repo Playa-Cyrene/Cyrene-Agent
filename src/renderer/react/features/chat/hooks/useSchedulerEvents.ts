@@ -30,6 +30,8 @@ interface SchedulerStreamEvent {
   runId?: string;
   threadId?: string;
   messageId?: string;
+  toolExecutions?: ChatMessage["toolExecutions"];
+  runSnapshot?: ChatMessage["runSnapshot"];
 }
 
 interface SchedulerStartedValue {
@@ -84,7 +86,12 @@ export function useSchedulerEvents(deps: UseSchedulerEventsDeps): void {
     if (!api) return;
 
     /** 终态收尾：补丁占位消息为终态并落库。 */
-    const finishStream = (state: SchedulerStreamState, finalContent: string): void => {
+    const finishStream = (
+      state: SchedulerStreamState,
+      finalContent: string,
+      runSnapshot?: ChatMessage["runSnapshot"],
+      toolExecutions?: ChatMessage["toolExecutions"],
+    ): void => {
       if (!state.sessionId) return;
       const { sessionId, replyId } = state;
       depsRef.current.patchMessage(sessionId, replyId, {
@@ -93,6 +100,8 @@ export function useSchedulerEvents(deps: UseSchedulerEventsDeps): void {
         streaming: false,
         waitingForFirstEvent: false,
         responseStarted: true,
+        toolExecutions: toolExecutions ?? state.tools,
+        ...(runSnapshot !== undefined ? { runSnapshot } : {}),
       });
     };
 
@@ -187,7 +196,7 @@ export function useSchedulerEvents(deps: UseSchedulerEventsDeps): void {
         case "RUN_FINISHED": {
           // Main owns the deterministic display reply; local state is only a fallback for old events.
           const finalContent = event.content ?? state.content;
-          finishStream(state, finalContent);
+          finishStream(state, finalContent, event.runSnapshot, event.toolExecutions);
           streamsRef.current.delete(runKey);
           return;
         }

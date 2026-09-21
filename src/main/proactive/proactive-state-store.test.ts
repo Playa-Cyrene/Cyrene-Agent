@@ -16,6 +16,7 @@ describe("proactive state durable intent compatibility", () => {
 
   afterEach(() => {
     fs.rmSync(mocks.userDataDir, { recursive: true, force: true });
+    vi.restoreAllMocks();
   });
 
   it("loads legacy state with no pending intent or sequence", async () => {
@@ -47,5 +48,24 @@ describe("proactive state durable intent compatibility", () => {
       pendingCommitIntent: { intentId: "bad", sequence: 0, text: "" },
     }), "utf8");
     expect(loadProactiveState().pendingCommitIntent).toBeUndefined();
+  });
+
+  it("keeps atomic state write failures observable", async () => {
+    const { defaultProactiveState, saveProactiveState, loadProactiveState } = await import("./proactive-state-store");
+    const state = defaultProactiveState();
+    state.proactiveEpoch = 9;
+
+    const originalUserDataDir = mocks.userDataDir;
+    mocks.userDataDir = path.join(originalUserDataDir, "missing-parent");
+    expect(() => saveProactiveState(state)).toThrow();
+    mocks.userDataDir = originalUserDataDir;
+
+    fs.mkdirSync(path.join(originalUserDataDir, "proactive-state.json"));
+    expect(() => saveProactiveState(state)).toThrow();
+    fs.rmSync(path.join(originalUserDataDir, "proactive-state.json"), { recursive: true, force: true });
+
+    saveProactiveState(state);
+    expect(loadProactiveState().proactiveEpoch).toBe(9);
+    expect(fs.existsSync(path.join(mocks.userDataDir, `proactive-state.json.${process.pid}.tmp`))).toBe(false);
   });
 });

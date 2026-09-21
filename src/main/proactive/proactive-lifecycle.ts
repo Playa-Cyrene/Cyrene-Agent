@@ -168,6 +168,7 @@ export function createProactiveLifecycle(options: ProactiveLifecycleOptions): Pr
   async function commitLocalProactiveMessage(input: ProactiveCommitInput): Promise<ProactiveCommitResult> {
     const initialDecision = getProactiveCommitDecision(input.candidate, input.generationEpoch);
     if (!initialDecision.allowed) return { kind: "cancelled", reason: initialDecision.reason };
+    if (!input.intentId) return { kind: "cancelled", reason: "durable_intent_required" };
 
     const session = chatsStore.getOrCreateSessionByPurpose("proactive-chat", {
       title: "昔涟的主动消息",
@@ -207,9 +208,9 @@ export function createProactiveLifecycle(options: ProactiveLifecycleOptions): Pr
     const result = await routeProactiveDelivery(target, {
       commitLocal: () => commitLocalProactiveMessage(input),
       commitChannel: async (channel) => {
+        // External channel delivery remains the legacy direct path until Task 11.
         const channelResult = await sendProactiveChannelMessage({
           channel,
-          intentId: input.intentId,
           text: input.text,
           mobileMessageSegmentation: settings.mobileMessageSegmentation,
           manager: channelManager,
@@ -258,6 +259,7 @@ export function createProactiveLifecycle(options: ProactiveLifecycleOptions): Pr
         const target = options.loadGeneralSettings().proactiveDeliveryTarget;
         return target === "local" || canStartProactiveChannelDelivery(target, channelManager);
       },
+      requiresDurableIntent: () => options.loadGeneralSettings().proactiveDeliveryTarget === "local",
       commitMessage: commitSelectedProactiveMessage,
       log: (event, detail) => console.log(`[Proactive] ${event}`, detail ?? ""),
     });

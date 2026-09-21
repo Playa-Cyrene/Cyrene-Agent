@@ -1,9 +1,14 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { useSchedulerEvents } from "./useSchedulerEvents";
 import type { ChatMessageItem } from "../components/ChatMessageList";
+import { ConversationJournalService } from "../../../../../main/orchestrator/conversation-journal-service";
+import { ConversationTranscriptStore } from "../../../../../main/orchestrator/conversation-transcript-store";
 
 type EventCallback = (event: unknown) => void;
 
@@ -12,6 +17,7 @@ let host: HTMLElement | null = null;
 let listener: EventCallback | null = null;
 let appended: Array<{ sessionId: string; items: ChatMessageItem[] }> = [];
 let patched: Array<{ sessionId: string; id: string; patch: Partial<ChatMessageItem> }> = [];
+let liveMessages = new Map<string, ChatMessageItem>();
 
 function emit(event: unknown): void {
   act(() => {
@@ -23,6 +29,7 @@ beforeEach(() => {
   listener = null;
   appended = [];
   patched = [];
+  liveMessages = new Map();
   (window as unknown as { schedulerEvents?: unknown }).schedulerEvents = {
     onEvent: (callback: EventCallback) => {
       listener = callback;
@@ -33,8 +40,15 @@ beforeEach(() => {
 
   function Probe() {
     useSchedulerEvents({
-      appendMessages: (sessionId, items) => { appended.push({ sessionId, items }); },
-      patchMessage: (sessionId, id, patch) => { patched.push({ sessionId, id, patch }); },
+      appendMessages: (sessionId, items) => {
+        appended.push({ sessionId, items });
+        for (const item of items) liveMessages.set(item.id, item);
+      },
+      patchMessage: (sessionId, id, patch) => {
+        patched.push({ sessionId, id, patch });
+        const current = liveMessages.get(id);
+        if (current) liveMessages.set(id, { ...current, ...patch });
+      },
     });
     return null;
   }
@@ -127,13 +141,44 @@ describe("useSchedulerEvents", () => {
     });
     emit({ type: "TOOL_CALL_START", toolCallId: "t1", toolCallName: "disk_usage", schedulerRunId: "hist-4" });
     emit({ type: "TOOL_CALL_RESULT", toolCallId: "t1", content: "C: 80%", status: "success", schedulerRunId: "hist-4" });
-    emit({ type: "RUN_FINISHED", content: "disk_usage：完成", schedulerRunId: "hist-4" });
+    const runSnapshot = { runId: "hist-4", status: "terminal" as const, terminalStatus: "success" as const, updatedAt: 42 };
+    emit({ type: "RUN_FINISHED", content: "disk_usage：完成", toolExecutions: [{ id: "t1", name: "disk_usage", status: "success", result: "C: 80%" }], runSnapshot, schedulerRunId: "hist-4" });
 
     const toolPatches = patched.filter((entry) => entry.patch.toolExecutions !== undefined);
     expect(toolPatches.at(-1)!.patch.toolExecutions).toEqual([
       { id: "t1", name: "disk_usage", status: "success", result: "C: 80%" },
     ]);
     expect(patched.at(-1)!.patch.content).toBe("disk_usage：完成");
+    expect(patched.at(-1)!.patch.runSnapshot).toEqual(runSnapshot);
+  });
+
+  it("live hook reducer matches a real journal reload projection", async () => {
+    const rootPath = fs.mkdtempSync(path.join(os.tmpdir(), "cta-scheduler-hook-reload-"));
+    try {
+      const journal = new ConversationJournalService(new ConversationTranscriptStore(rootPath, { now: () => 1_000 }));
+      const conversationId = "session-hook-reload";
+      const runId = "hist-hook-reload";
+      const replyId = "scheduler-reply-hist-hook-reload";
+      const tools = [{ id: "t1", name: "disk_usage", status: "success" as const, result: "C: 80%" }];
+      const runSnapshot = { runId, status: "terminal" as const, terminalStatus: "success" as const, updatedAt: 2_000 };
+      await journal.appendUser(conversationId, { id: "scheduler-notice-hist-hook-reload", turnId: runId, text: "整理资料", runId });
+      const sink = journal.createRunSink({ conversationId, runId, assistantTurnId: replyId });
+      const assistantId = await sink.appendAssistant({ message: { role: "assistant", content: "disk_usage：完成", toolCalls: [{ id: "t1", name: "disk_usage", arguments: "{}" }] } });
+      await sink.appendToolResult({ assistantEntryId: assistantId, message: { role: "tool", toolCallId: "t1", content: "C: 80%" }, outcome: "success" });
+      await journal.appendPresentationNext(conversationId, replyId, "scheduler:hook-reload:reply", { content: "disk_usage：完成", toolExecutions: tools, runSnapshot });
+
+      emit({ type: "CUSTOM", name: "scheduler.started", schedulerRunId: runId, conversationId, value: { title: "整理资料", runId, noticeId: "scheduler-notice-hist-hook-reload", replyId } });
+      emit({ type: "TOOL_CALL_START", schedulerRunId: runId, toolCallId: "t1", toolCallName: "disk_usage" });
+      emit({ type: "TOOL_CALL_RESULT", schedulerRunId: runId, toolCallId: "t1", content: "C: 80%", status: "success" });
+      emit({ type: "RUN_FINISHED", schedulerRunId: runId, messageId: replyId, content: "disk_usage：完成", toolExecutions: tools, runSnapshot });
+
+      const reloaded = (await journal.readProjection(conversationId)).messages.find((message) => message.id === replyId);
+      const live = liveMessages.get(replyId);
+      expect({ id: live?.id, content: live?.content, toolExecutions: live?.toolExecutions, runSnapshot: live?.runSnapshot })
+        .toEqual({ id: reloaded?.id, content: reloaded?.content, toolExecutions: reloaded?.toolExecutions, runSnapshot: reloaded?.runSnapshot });
+    } finally {
+      fs.rmSync(rootPath, { recursive: true, force: true });
+    }
   });
 
   it("RUN_ERROR 终态展示并落库失败信息", () => {

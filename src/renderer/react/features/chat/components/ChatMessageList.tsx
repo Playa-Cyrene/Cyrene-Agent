@@ -3,7 +3,7 @@ import { Component, createContext, createElement, useCallback, useContext, useEf
 import { t, useTranslation } from "../../../i18n";
 import { normalizeModelMarkdown } from "./markdown-normalize";
 import { resolveAsset } from "../../../../../shared/renderer-base";
-import type { AgentRoundRecord, ChatMessageChannelSource, ConversationMode, ProcessMessageRecord, ReasoningBlock, RunActivityRecord, TaskDelegationDisplayRecord, ToolExecutionRecord, ToolFileChange } from "../../../../../shared/chat-types";
+import type { AgentRoundRecord, ChatMessage, ChatMessageChannelSource, ConversationMode, ProcessMessageRecord, ReasoningBlock, RunActivityRecord, TaskDelegationDisplayRecord, ToolExecutionRecord, ToolFileChange } from "../../../../../shared/chat-types";
 import type { ContextUsageSnapshot } from "../../../../../shared/context-usage";
 import thinkingMoodUrl from "../../../assets/status-moods/思考中.png?url";
 import completedThinkingMoodUrl from "../../../assets/status-moods/提醒.png?url";
@@ -58,6 +58,7 @@ export interface ChatMessageItem {
   sticker?: string | null;
   toolExecutions?: ToolExecutionRecord[];
   runActivity?: RunActivityRecord;
+  runSnapshot?: ChatMessage["runSnapshot"];
   runStage?: AgentRunStage;
   /** 关联的 Run ID，用于获取 Review 快照 */
   runId?: string;

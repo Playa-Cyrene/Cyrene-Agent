@@ -107,24 +107,6 @@ describe("proactive channel delivery", () => {
     });
   });
 
-  it("passes the durable proactive intent identity to the channel adapter", async () => {
-    const adapter = fakeAdapter();
-    registry.remember(incoming("wechat", "wx-1"), "session-wx-1");
-
-    await sendProactiveChannelMessage({
-      channel: "wechat",
-      intentId: "proactive-intent-7",
-      text: "固定文本",
-      mobileMessageSegmentation: "off",
-      manager: { getAdapter: () => adapter },
-      recipientRegistry: registry,
-      appendHistory: vi.fn(),
-      appendLog: vi.fn(),
-    });
-
-    expect(adapter.send).toHaveBeenCalledWith(expect.objectContaining({ idempotencyKey: "proactive-intent-7" }));
-  });
-
   it("sends segmented text sequentially and caps it at ten parts", async () => {
     const adapter = fakeAdapter();
     const order: string[] = [];

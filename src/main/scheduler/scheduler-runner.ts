@@ -1,6 +1,7 @@
 import type { WebContents } from "electron";
 import { IPC } from "../../shared/ipc-channels";
 import type { PluginPromptMode, PluginTurnStatus } from "../../plugins/api";
+import type { ChatMessage } from "../../shared/chat-types";
 import { AgentRuntimeError } from "../orchestrator/agent-runtime-error";
 import { CyreneAgent, type CyreneRunOptions } from "../orchestrator/cyrene-agent";
 import type { LifecyclePublisher } from "../plugin-host/lifecycle-publisher";
@@ -299,6 +300,12 @@ export function createSchedulerRunner(deps: RunnerDeps) {
       // Observable 在超时等非成功终态下也会正常 complete：事件状态以 agent 终态为准
       const status: PluginTurnStatus = agent.lastResult?.terminal?.status ?? "success";
       const displayReply = resolveSchedulerDisplayReply(reply, schedulerToolExecutions);
+      const terminalRunSnapshot: NonNullable<ChatMessage["runSnapshot"]> = {
+        runId: historyId,
+        status: "terminal",
+        terminalStatus: status,
+        updatedAt: Date.now(),
+      };
       if (conversationId && transcriptSink) {
         const messageId = transcriptSink.getLastAssistantEntryId?.();
         if (messageId) {
@@ -306,7 +313,7 @@ export function createSchedulerRunner(deps: RunnerDeps) {
           const presentationPatch = {
             content: displayReply,
             toolExecutions: schedulerToolExecutions,
-            runSnapshot: { runId: historyId, status: "terminal", terminalStatus: status, updatedAt: Date.now() },
+            runSnapshot: terminalRunSnapshot,
           } as const;
           // A presentation append may have reached JSONL before its projection
           // refresh failed. Retry the exact patch/key so the queue resolves the
@@ -356,7 +363,13 @@ export function createSchedulerRunner(deps: RunnerDeps) {
           outputPreview: displayReply.slice(0, 160),
         });
       }
-      if (deferredRunFinished) send({ ...deferredRunFinished, content: displayReply, message: displayReply });
+      if (deferredRunFinished) send({
+        ...deferredRunFinished,
+        content: displayReply,
+        message: displayReply,
+        toolExecutions: schedulerToolExecutions,
+        runSnapshot: terminalRunSnapshot,
+      });
       return { ok: true, historyId, reply: displayReply, effectiveToolIds };
     } catch (err) {
       const finishedAt = deps.now();
