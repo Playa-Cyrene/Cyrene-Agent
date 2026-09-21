@@ -76,9 +76,22 @@ describe("chats IPC mode filtering", () => {
     const page = await getPage(event, { id: session.id, limit: 1 }) as {
       session: { messageCount: number };
       messages: Array<{ id: string }>;
+      hasMore: boolean;
+      nextBefore: number | null;
     };
     expect(page.session.messageCount).toBe(2);
     expect(page.messages.map((message) => message.id)).toEqual(["a1"]);
+    expect(page.hasMore).toBe(true);
+    expect(page.nextBefore).toBe(1);
+
+    const firstPage = await getPage(event, { id: session.id, before: 1, limit: 1 }) as {
+      session: { messageCount: number };
+      messages: Array<{ id: string }>;
+      nextBefore: number | null;
+    };
+    expect(firstPage.session.messageCount).toBe(2);
+    expect(firstPage.messages.map((message) => message.id)).toEqual(["u1"]);
+    expect(firstPage.nextBefore).toBeNull();
   });
 
   it("validates and forwards CHATS_UPSERT for run checkpoints", async () => {

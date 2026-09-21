@@ -180,6 +180,17 @@ function writeSessionRecordFile(record: ChatSessionRecordV2): void {
   atomicWriteJson(sessionPath(record.id), record);
 }
 
+type WritableSession = ChatSession | ChatSessionRecordV2;
+
+function writeWritableSession(session: WritableSession): void {
+  if (session.schemaVersion === 2) writeSessionRecordFile(session);
+  else writeSessionFile(session);
+}
+
+function sessionView(session: WritableSession): ChatSession {
+  return session.schemaVersion === 2 ? composeSession(session, []) : session;
+}
+
 /**
  * 旧版会话没有 mode，也没有项目路径。升级时统一归入 Work，并绑定到
  * userData/迁移文件夹。旧版本曾把无模式会话回填成未绑定路径的 Work，
@@ -309,9 +320,26 @@ export function getSessionRecord(id: string): ChatSessionRecord | null {
 }
 
 /** 迁移器的原子提交点：只接受 v1 → v2 的一次性元数据改写。 */
-export function writeMigratedSession(record: ChatSessionRecordV2): ChatSessionRecordV2 {
+function recordsEqual(left: ChatSessionRecord, right: ChatSessionRecord): boolean {
+  if (left.schemaVersion !== right.schemaVersion) return false;
+  if (left.schemaVersion === 1 && right.schemaVersion === 1) {
+    return JSON.stringify(left) === JSON.stringify(right);
+  }
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+/**
+ * 迁移提交的 compare-and-swap（比较并交换）边界：expected 存在时只有磁盘仍是
+ * 同一份 v1 记录才允许瘦身为 v2；返回 null 表示期间已改变或被删除。
+ */
+export function writeMigratedSession(
+  record: ChatSessionRecordV2,
+  expected?: ChatSession,
+): ChatSessionRecordV2 | null {
   const current = readSessionRecordFile(record.id);
-  if (current?.schemaVersion === 2) return current;
+  if (!current) return null;
+  if (current.schemaVersion === 2) return current;
+  if (expected && !recordsEqual(current, expected)) return null;
   writeSessionRecordFile(record);
   upsertMeta(metaFromSession(record));
   return record;
@@ -381,7 +409,8 @@ export function createSession(opts?: {
 
 export function getSessionByPurpose(purpose: ChatSessionPurpose): ChatSession | null {
   const meta = indexCache.find((session) => session.purpose === purpose);
-  return meta ? readSessionFile(meta.id) : null;
+  const record = meta ? readSessionRecordFile(meta.id) : null;
+  return record ? sessionView(record) : null;
 }
 
 /**
@@ -474,16 +503,16 @@ export function replaceMessagesTail(id: string, startIndex: number, messages: Ch
 }
 
 export function renameSession(id: string, title: string): ChatSession | null {
-  const session = readSessionFile(id);
+  const session = readSessionRecordFile(id);
   if (!session) return null;
   const trimmed = title.trim();
-  if (!trimmed) return session;
+  if (!trimmed) return sessionView(session);
   session.title = trimmed.slice(0, 80);
   session.titleIsCustom = true;
   session.updatedAt = Date.now();
-  writeSessionFile(session);
+  writeWritableSession(session);
   upsertMeta(metaFromSession(session));
-  return session;
+  return sessionView(session);
 }
 
 export function setGeneratedTitle(id: string, firstUserMessageId: string, title: string): boolean {
@@ -502,22 +531,22 @@ export function setGeneratedTitle(id: string, firstUserMessageId: string, title:
 }
 
 export function setSessionPinned(id: string, pinned: boolean): ChatSession | null {
-  const session = readSessionFile(id);
+  const session = readSessionRecordFile(id);
   if (!session) return null;
   session.pinned = Boolean(pinned);
-  writeSessionFile(session);
+  writeWritableSession(session);
   upsertMeta(metaFromSession(session));
-  return session;
+  return sessionView(session);
 }
 
 export function setSessionModelProfile(id: string, modelProfileId: string | undefined): ChatSession | null {
-  const session = readSessionFile(id);
+  const session = readSessionRecordFile(id);
   if (!session) return null;
   session.modelProfileId = modelProfileId;
   session.updatedAt = Date.now();
-  writeSessionFile(session);
+  writeWritableSession(session);
   upsertMeta(metaFromSession(session));
-  return session;
+  return sessionView(session);
 }
 
 /**
@@ -528,12 +557,12 @@ export function setSessionContextUsage(
   id: string,
   snapshot: ContextUsageSnapshot,
 ): ChatSession | null {
-  const session = readSessionFile(id);
+  const session = readSessionRecordFile(id);
   if (!session) return null;
   session.currentContextUsage = snapshot;
-  writeSessionFile(session);
+  writeWritableSession(session);
   upsertMeta(metaFromSession(session));
-  return session;
+  return sessionView(session);
 }
 
 // ── 会话级待发队列（运行中排队、未派发）──────────────────
@@ -628,7 +657,7 @@ function pendingEntryEquals(a: PendingChatMessage, b: PendingChatMessage): boole
  * 队列变化不刷新会话排序时间、不写 index.json（会话文件写失败才返回失败）。
  */
 export function enqueuePendingMessage(sessionId: string, entry: PendingChatMessageInput): EnqueuePendingResult {
-  const session = readSessionFile(sessionId);
+  const session = readSessionRecordFile(sessionId);
   if (!session) return { ok: false, error: "session-not-found" };
   const normalized = normalizePendingMessage(entry?.id ?? "", entry);
   if (normalized === "empty") return { ok: false, error: "empty-content" };
@@ -643,7 +672,7 @@ export function enqueuePendingMessage(sessionId: string, entry: PendingChatMessa
   const nextQueue: PendingChatMessage[] = [...queue, normalized];
   session.pendingMessages = nextQueue;
   try {
-    writeSessionFile(session);
+    writeWritableSession(session);
   } catch (err) {
     console.warn("[chats-store] 待发消息落盘失败:", sessionId, err);
     return { ok: false, error: "write-failed" };
@@ -653,7 +682,7 @@ export function enqueuePendingMessage(sessionId: string, entry: PendingChatMessa
 
 /** 读取会话待发队列（快照副本）；旧会话无字段视为空队列；会话不存在返回 null。 */
 export function getPendingMessages(sessionId: string): PendingChatMessage[] | null {
-  const session = readSessionFile(sessionId);
+  const session = readSessionRecordFile(sessionId);
   if (!session) return null;
   return (session.pendingMessages ?? []).map((item) => ({ ...item }));
 }
@@ -664,7 +693,7 @@ export function getPendingMessages(sessionId: string): PendingChatMessage[] | nu
  * 与入队同理：不动 updatedAt、不写 index.json。
  */
 export function removePendingMessage(sessionId: string, messageId: string): RemovePendingResult {
-  const session = readSessionFile(sessionId);
+  const session = readSessionRecordFile(sessionId);
   if (!session) return { ok: false, error: "session-not-found" };
   const queue = session.pendingMessages ?? [];
   const target = queue.find((item) => item.id === messageId);
@@ -677,7 +706,7 @@ export function removePendingMessage(sessionId: string, messageId: string): Remo
   }
   session.pendingMessages = queue.filter((item) => item.id !== messageId);
   try {
-    writeSessionFile(session);
+    writeWritableSession(session);
   } catch (err) {
     console.warn("[chats-store] 待发消息删除落盘失败:", sessionId, err);
     return { ok: false, error: "write-failed" };
@@ -704,26 +733,12 @@ export type ClaimPendingResult =
   | { ok: true; claimed: false }
   | { ok: false; error: "session-not-found" | "already-dispatching" | "write-failed" };
 
-/**
- * 认领队首待发消息：在【一次会话文件写入】内完成——
- * 待发条目移出队列、转成正式用户消息追加进 messages、写入 pendingDispatch 派发状态。
- * 写盘失败时队首保留在队列中（绝不半途丢消息）；已有未完成的认领时拒绝（already-dispatching），
- * 调用方应先恢复该认领（续派不重复追加）再继续消费队列。
- * 认领等于真实历史消息入册（messageCount+1），与 appendMessage 一致地刷新 updatedAt 与索引。
- */
-export function claimPendingMessage(sessionId: string): ClaimPendingResult {
-  const session = readSessionFile(sessionId);
-  if (!session) return { ok: false, error: "session-not-found" };
-  if (session.pendingDispatch) return { ok: false, error: "already-dispatching" };
-  const queue = session.pendingMessages ?? [];
-  if (queue.length === 0) return { ok: true, claimed: false };
-  const head = queue[0];
-  const claimedAt = Date.now();
-  const userMessage: ChatMessage = {
+function pendingUserMessage(head: PendingChatMessage, at: number): ChatMessage {
+  return {
     id: head.id,
     role: "user",
     content: head.rawContent,
-    at: claimedAt,
+    at,
     ...(head.userSticker ? { sticker: head.userSticker } : {}),
     ...(head.attachments && head.attachments.length > 0 ? {
       attachments: head.attachments.map((attachment) => attachment.kind === "image" ? {
@@ -742,7 +757,47 @@ export function claimPendingMessage(sessionId: string): ClaimPendingResult {
       }),
     } : {}),
   };
+}
+
+/**
+ * 认领队首待发消息：在【一次会话文件写入】内完成——
+ * 待发条目移出队列、转成正式用户消息追加进 messages、写入 pendingDispatch 派发状态。
+ * 写盘失败时队首保留在队列中（绝不半途丢消息）；已有未完成的认领时拒绝（already-dispatching），
+ * 调用方应先恢复该认领（续派不重复追加）再继续消费队列。
+ * 认领等于真实历史消息入册（messageCount+1），与 appendMessage 一致地刷新 updatedAt 与索引。
+ */
+export function claimPendingMessage(sessionId: string): ClaimPendingResult {
+  const record = readSessionRecordFile(sessionId);
+  if (!record) return { ok: false, error: "session-not-found" };
+  if (record.pendingDispatch) return { ok: false, error: "already-dispatching" };
+  const queue = record.pendingMessages ?? [];
+  if (queue.length === 0) return { ok: true, claimed: false };
+  const head = queue[0];
+  const claimedAt = Date.now();
+  const userMessage = pendingUserMessage(head, claimedAt);
   const remaining = queue.slice(1);
+
+  if (record.schemaVersion === 2) {
+    record.pendingMessages = remaining;
+    record.pendingDispatch = { messageId: head.id, claimedAt };
+    try {
+      writeSessionRecordFile(record);
+    } catch (err) {
+      console.warn("[chats-store] v2 待发消息认领落盘失败:", sessionId, err);
+      return { ok: false, error: "write-failed" };
+    }
+    return {
+      ok: true,
+      claimed: true,
+      userMessage,
+      visibleContent: head.visibleContent,
+      ...(head.resumeFromRunId ? { resumeFromRunId: head.resumeFromRunId } : {}),
+      remainingQueue: remaining.map((item) => ({ ...item })),
+      session: composeSession(record, [userMessage]),
+    };
+  }
+
+  const session = record;
   session.messages = [...session.messages, userMessage];
   session.pendingMessages = remaining;
   session.pendingDispatch = { messageId: head.id, claimedAt };
@@ -784,12 +839,12 @@ export type CompleteDispatchResult =
  * 纯派发簿记：不动 updatedAt、不写 index.json。
  */
 export function completePendingDispatch(sessionId: string, messageId: string): CompleteDispatchResult {
-  const session = readSessionFile(sessionId);
+  const session = readSessionRecordFile(sessionId);
   if (!session) return { ok: false, error: "session-not-found" };
   if (session.pendingDispatch?.messageId !== messageId) return { ok: true, cleared: false };
   delete session.pendingDispatch;
   try {
-    writeSessionFile(session);
+    writeWritableSession(session);
   } catch (err) {
     console.warn("[chats-store] 待发派发确认落盘失败:", sessionId, err);
     return { ok: false, error: "write-failed" };
@@ -819,7 +874,7 @@ export function editPendingMessage(
   messageId: string,
   update: { rawContent: string; visibleContent: string; userSticker?: string },
 ): EditPendingResult {
-  const session = readSessionFile(sessionId);
+  const session = readSessionRecordFile(sessionId);
   if (!session) return { ok: false, error: "session-not-found" };
   const queue = session.pendingMessages ?? [];
   const snapshot = (): PendingChatMessage[] => queue.map((item) => ({ ...item }));
@@ -851,7 +906,7 @@ export function editPendingMessage(
   }
   queue[index] = next;
   try {
-    writeSessionFile(session);
+    writeWritableSession(session);
   } catch (err) {
     console.warn("[chats-store] 待发消息编辑落盘失败:", sessionId, err);
     return { ok: false, error: "write-failed", queue: beforeWrite };
@@ -878,7 +933,7 @@ export function markPendingAdjust(
   messageId: string,
   runId: string,
 ): MarkPendingAdjustResult {
-  const session = readSessionFile(sessionId);
+  const session = readSessionRecordFile(sessionId);
   if (!session) return { ok: false, error: "session-not-found" };
   const queue = session.pendingMessages ?? [];
   const snapshot = (): PendingChatMessage[] => queue.map((item) => ({ ...item }));
@@ -896,7 +951,7 @@ export function markPendingAdjust(
   }
   queue[index] = { ...target, adjustRunId: runId };
   try {
-    writeSessionFile(session);
+    writeWritableSession(session);
   } catch (err) {
     console.warn("[chats-store] 待发消息调整标记落盘失败:", sessionId, err);
     return { ok: false, error: "write-failed", queue: snapshot() };
@@ -920,38 +975,30 @@ export function commitPendingAdjust(
   messageId: string,
   runId: string,
 ): CommitPendingAdjustResult {
-  const session = readSessionFile(sessionId);
-  if (!session) return { ok: false, error: "session-not-found" };
-  const queue = session.pendingMessages ?? [];
+  const record = readSessionRecordFile(sessionId);
+  if (!record) return { ok: false, error: "session-not-found" };
+  const queue = record.pendingMessages ?? [];
   const index = queue.findIndex((item) => item.id === messageId);
   if (index === -1) return { ok: false, error: "not-found" };
   const target = queue[index];
   if (target.adjustRunId !== runId) return { ok: false, error: "run-mismatch" };
   const committedAt = Date.now();
-  const userMessage: ChatMessage = {
-    id: target.id,
-    role: "user",
-    content: target.rawContent,
-    at: committedAt,
-    ...(target.userSticker ? { sticker: target.userSticker } : {}),
-    // 标记阶段已拒绝附件；此处仅防御性映射，保证任何残留标记条目也不会丢附件
-    ...(target.attachments && target.attachments.length > 0 ? {
-      attachments: target.attachments.map((attachment) => attachment.kind === "image" ? {
-        kind: "image" as const,
-        name: attachment.name,
-        filePath: attachment.filePath,
-        mime: attachment.mime ?? "application/octet-stream",
-        caption: attachment.caption,
-        status: "pending" as const,
-        ...(attachment.hasAnnotations === true ? { hasAnnotations: true } : {}),
-      } : {
-        kind: "document" as const,
-        name: attachment.name,
-        filePath: attachment.filePath,
-        status: "pending" as const,
-      }),
-    } : {}),
-  };
+  const userMessage = pendingUserMessage(target, committedAt);
+  if (record.schemaVersion === 2) {
+    record.pendingMessages = queue.filter((item) => item.id !== messageId);
+    try {
+      writeSessionRecordFile(record);
+    } catch (err) {
+      console.warn("[chats-store] v2 待发消息调整提交落盘失败:", sessionId, err);
+      return { ok: false, error: "write-failed" };
+    }
+    return {
+      ok: true,
+      userMessage,
+      remainingQueue: record.pendingMessages.map((item) => ({ ...item })),
+    };
+  }
+  const session = record;
   session.messages = [...session.messages, userMessage];
   session.pendingMessages = queue.filter((item) => item.id !== messageId);
   session.updatedAt = committedAt;
@@ -985,7 +1032,7 @@ export type ResetPendingAdjustResult =
  * 认领派发不依赖该标记，消息不会丢失。
  */
 export function resetPendingAdjustByRun(sessionId: string, runId: string): ResetPendingAdjustResult {
-  const session = readSessionFile(sessionId);
+  const session = readSessionRecordFile(sessionId);
   if (!session) return { ok: false, error: "session-not-found" };
   const queue = session.pendingMessages ?? [];
   let reset = 0;
@@ -999,7 +1046,7 @@ export function resetPendingAdjustByRun(sessionId: string, runId: string): Reset
   if (reset === 0) return { ok: true, reset: 0 };
   session.pendingMessages = nextQueue;
   try {
-    writeSessionFile(session);
+    writeWritableSession(session);
   } catch (err) {
     console.warn("[chats-store] 待发消息调整复位落盘失败:", sessionId, err);
     return { ok: false, error: "write-failed" };
@@ -1015,7 +1062,7 @@ export function resetPendingAdjustByRun(sessionId: string, runId: string): Reset
 export function clearStalePendingAdjustMarks(): void {
   for (const meta of [...indexCache]) {
     try {
-      const session = readSessionFile(meta.id);
+      const session = readSessionRecordFile(meta.id);
       if (!session?.pendingMessages?.some((item) => item.adjustRunId)) continue;
       let changed = false;
       session.pendingMessages = session.pendingMessages.map((item) => {
@@ -1025,7 +1072,7 @@ export function clearStalePendingAdjustMarks(): void {
         delete restored.adjustRunId;
         return restored;
       });
-      if (changed) writeSessionFile(session);
+      if (changed) writeWritableSession(session);
     } catch (err) {
       console.warn("[chats-store] 清理陈旧调整标记失败:", meta.id, err);
     }
@@ -1092,13 +1139,13 @@ export function setWorkspaceBinding(
   sessionId: string,
   binding: ConversationWorkspaceBinding,
 ): ChatSession | null {
-  const session = readSessionFile(sessionId);
+  const session = readSessionRecordFile(sessionId);
   if (!session) return null;
   session.workspaceBinding = binding;
   session.updatedAt = Date.now();
-  writeSessionFile(session);
+  writeWritableSession(session);
   upsertMeta(metaFromSession(session));
-  return session;
+  return sessionView(session);
 }
 
 /**
@@ -1106,7 +1153,7 @@ export function setWorkspaceBinding(
  * 未绑定返回 undefined。
  */
 export function getWorkspaceBinding(sessionId: string): ConversationWorkspaceBinding | undefined {
-  const session = readSessionFile(sessionId);
+  const session = readSessionRecordFile(sessionId);
   return session?.workspaceBinding;
 }
 
@@ -1115,11 +1162,11 @@ export function getWorkspaceBinding(sessionId: string): ConversationWorkspaceBin
  * 返回更新后的 session，失败返回 null。
  */
 export function clearWorkspaceBinding(sessionId: string): ChatSession | null {
-  const session = readSessionFile(sessionId);
+  const session = readSessionRecordFile(sessionId);
   if (!session) return null;
   session.workspaceBinding = undefined;
   session.updatedAt = Date.now();
-  writeSessionFile(session);
+  writeWritableSession(session);
   upsertMeta(metaFromSession(session));
-  return session;
+  return sessionView(session);
 }

@@ -23,6 +23,12 @@ export class ConversationSessionMigration {
   private readonly sessionStore: MigrationSessionStore;
   private readonly locks = new Map<string, Promise<ChatSessionRecordV2 | null>>();
   private crashAfterCheckpoint = false;
+  private checkpointGate: {
+    entered: Promise<void>;
+    signalEntered: () => void;
+    released: Promise<void>;
+    release: () => void;
+  } | null = null;
 
   constructor(options: ConversationSessionMigrationOptions) {
     this.journal = options.journal;
@@ -33,6 +39,16 @@ export class ConversationSessionMigration {
   /** 测试用崩溃注入点：checkpoint 成功后、元数据原子写之前抛错。 */
   failAfterCheckpointOnce(): void {
     this.crashAfterCheckpoint = true;
+  }
+
+  /** 测试用窗口：在 checkpoint 成功后暂停，允许并发 append/delete。 */
+  pauseAfterCheckpoint(): { entered: Promise<void>; release: () => void } {
+    let signalEntered!: () => void;
+    let release!: () => void;
+    const entered = new Promise<void>((resolve) => { signalEntered = resolve; });
+    const released = new Promise<void>((resolve) => { release = resolve; });
+    this.checkpointGate = { entered, signalEntered, released, release };
+    return { entered, release };
   }
 
   getJournal(): ConversationJournalService {
@@ -50,56 +66,70 @@ export class ConversationSessionMigration {
   }
 
   private async migrate(sessionId: string): Promise<ChatSessionRecordV2 | null> {
-    const current = this.sessionStore.getSessionRecord(sessionId);
+    let current = this.sessionStore.getSessionRecord(sessionId);
     if (!current) return null;
     if (current.schemaVersion === 2) return current;
 
-    for (const draft of buildLegacyBackfillDrafts(current.messages)) {
-      const canonicalId = `migration:v2:${draft.message.id}:canonical`;
-      if (draft.message.role === "user") {
+    while (current.schemaVersion === 1) {
+      for (const draft of buildLegacyBackfillDrafts(current.messages)) {
+        const canonicalId = `migration:v2:${draft.message.id}:canonical`;
+        if (draft.message.role === "user") {
+          await this.store.append(sessionId, {
+            id: canonicalId,
+            at: draft.message.at,
+            kind: "user",
+            turnId: draft.message.id,
+            revision: 1,
+            payload: { text: draft.text, attachments: draft.attachments },
+          });
+        } else {
+          await this.store.append(sessionId, {
+            id: canonicalId,
+            at: draft.message.at,
+            kind: "assistant",
+            turnId: draft.message.id,
+            payload: { role: "assistant", content: draft.text },
+          });
+        }
         await this.store.append(sessionId, {
-          id: canonicalId,
+          kind: "presentation_patch",
+          id: `migration:v2:${draft.message.id}:presentation:r1`,
           at: draft.message.at,
-          kind: "user",
-          turnId: draft.message.id,
-          revision: 1,
-          payload: { text: draft.text, attachments: draft.attachments },
-        });
-      } else {
-        await this.store.append(sessionId, {
-          id: canonicalId,
-          at: draft.message.at,
-          kind: "assistant",
-          turnId: draft.message.id,
-          payload: { role: "assistant", content: draft.text },
+          payload: {
+            messageId: draft.message.id,
+            patchRevision: 1,
+            patch: draft.presentationPatch,
+          },
         });
       }
-      await this.store.append(sessionId, {
-        kind: "presentation_patch",
-        id: `migration:v2:${draft.message.id}:presentation:r1`,
-        at: draft.message.at,
-        payload: {
-          messageId: draft.message.id,
-          patchRevision: 1,
-          patch: draft.presentationPatch,
-        },
-      });
-    }
 
-    await this.journal.checkpoint(sessionId);
-    if (this.crashAfterCheckpoint) {
-      this.crashAfterCheckpoint = false;
-      throw new Error("TEST_CRASH");
-    }
+      await this.journal.checkpoint(sessionId);
+      const checkpointGate = this.checkpointGate;
+      if (checkpointGate) {
+        this.checkpointGate = null;
+        checkpointGate.signalEntered();
+        await checkpointGate.released;
+      }
+      if (this.crashAfterCheckpoint) {
+        this.crashAfterCheckpoint = false;
+        throw new Error("TEST_CRASH");
+      }
 
-    const projection = await this.journal.readProjection(sessionId);
-    const { messages: _messages, schemaVersion: _schemaVersion, ...metadata } = current;
-    const record: ChatSessionRecordV2 = {
-      ...metadata,
-      schemaVersion: 2,
-      messageCount: projection.messages.length,
-    };
-    return this.sessionStore.writeMigratedSession(record);
+      const projection = await this.journal.readProjection(sessionId);
+      const { messages: _messages, schemaVersion: _schemaVersion, ...metadata } = current;
+      const record: ChatSessionRecordV2 = {
+        ...metadata,
+        schemaVersion: 2,
+        messageCount: projection.messages.length,
+      };
+      const committed = this.sessionStore.writeMigratedSession(record, current);
+      if (committed) return committed;
+      const latest = this.sessionStore.getSessionRecord(sessionId);
+      if (!latest) return null;
+      if (latest.schemaVersion === 2) return latest;
+      current = latest;
+    }
+    return current;
   }
 }
 

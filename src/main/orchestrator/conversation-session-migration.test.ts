@@ -89,4 +89,59 @@ describe("ConversationSessionMigration", () => {
       expect.objectContaining({ id: "u1", role: "user", content: "hello" }),
     ]);
   });
+
+  it("checkpoint 后并发追加 v1 消息时不覆盖新消息", async () => {
+    const store = await import("../chats/chats-store");
+    store.initialize();
+    const session = store.createSession({
+      initialMessages: [{ id: "u1", role: "user", content: "旧消息", at: 1 }],
+    });
+    const { ConversationTranscriptStore } = await import("./conversation-transcript-store");
+    const { ConversationJournalService } = await import("./conversation-journal-service");
+    const { ConversationSessionMigration } = await import("./conversation-session-migration");
+    const transcriptStore = new ConversationTranscriptStore(mocks.userDataDir);
+    const migration = new ConversationSessionMigration({
+      journal: new ConversationJournalService(transcriptStore),
+      store: transcriptStore,
+    });
+    const gate = migration.pauseAfterCheckpoint();
+    const pending = migration.ensureConversationMigrated(session.id);
+    await gate.entered;
+    expect(store.appendMessage(session.id, {
+      id: "u2", role: "user", content: "并发追加", at: 2,
+    })).not.toBeNull();
+    gate.release();
+
+    const record = await pending;
+    expect(record?.schemaVersion).toBe(2);
+    const projection = await migration.getJournal().readProjection(session.id);
+    expect(projection.messages.map((message) => message.id)).toEqual([
+      expect.stringContaining("migration:v2:u1:canonical"),
+      expect.stringContaining("migration:v2:u2:canonical"),
+    ]);
+  });
+
+  it("checkpoint 后会话被删除时不复活 v2 元数据", async () => {
+    const store = await import("../chats/chats-store");
+    store.initialize();
+    const session = store.createSession({
+      initialMessages: [{ id: "u1", role: "user", content: "待删除", at: 1 }],
+    });
+    const { ConversationTranscriptStore } = await import("./conversation-transcript-store");
+    const { ConversationJournalService } = await import("./conversation-journal-service");
+    const { ConversationSessionMigration } = await import("./conversation-session-migration");
+    const transcriptStore = new ConversationTranscriptStore(mocks.userDataDir);
+    const migration = new ConversationSessionMigration({
+      journal: new ConversationJournalService(transcriptStore),
+      store: transcriptStore,
+    });
+    const gate = migration.pauseAfterCheckpoint();
+    const pending = migration.ensureConversationMigrated(session.id);
+    await gate.entered;
+    expect(store.deleteSession(session.id)).toBe(true);
+    gate.release();
+
+    expect(await pending).toBeNull();
+    expect(store.getSessionRecord(session.id)).toBeNull();
+  });
 });

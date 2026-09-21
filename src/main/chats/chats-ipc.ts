@@ -118,8 +118,9 @@ export function registerChatsIpc(
     const { messages: _messages, ...session } = composed;
     return {
       session: { ...session, messageCount: page.messageCount },
-      messages: page.messages,
+      messages: composed.messages,
       hasMore: page.hasMore,
+      nextBefore: page.nextBefore,
     };
   });
 

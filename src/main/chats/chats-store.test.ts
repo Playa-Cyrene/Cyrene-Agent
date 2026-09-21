@@ -72,6 +72,66 @@ describe("chats store", () => {
     expect(store.listSessions().find((item) => item.id === session.id)?.messageCount).toBe(4);
   });
 
+  it("v2 元数据记录保留 pending 状态往返且磁盘不写回 messages", async () => {
+    const store = await import("./chats-store");
+    store.initialize();
+    const session = store.createSession({ title: "v2 会话" });
+    const file = path.join(store.getRootDir(), "sessions", `${session.id}.json`);
+    const persisted = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
+    delete persisted.messages;
+    persisted.schemaVersion = 2;
+    persisted.messageCount = 0;
+    fs.writeFileSync(file, JSON.stringify(persisted));
+
+    const entry = { id: "q-v2", rawContent: "原始", visibleContent: "原始" };
+    expect(store.enqueuePendingMessage(session.id, entry)).toEqual(
+      expect.objectContaining({ ok: true, enqueued: true }),
+    );
+    expect(store.getPendingMessages(session.id)?.map((item) => item.id)).toEqual(["q-v2"]);
+    expect(store.editPendingMessage(session.id, "q-v2", {
+      rawContent: "编辑后", visibleContent: "编辑后",
+    })).toEqual(expect.objectContaining({ ok: true }));
+    expect(store.markPendingAdjust(session.id, "q-v2", "run-v2")).toEqual(
+      expect.objectContaining({ ok: true }),
+    );
+    expect(store.commitPendingAdjust(session.id, "q-v2", "run-v2")).toEqual(
+      expect.objectContaining({ ok: true, userMessage: expect.objectContaining({ id: "q-v2" }) }),
+    );
+    expect(store.getPendingMessages(session.id)).toEqual([]);
+
+    expect(store.enqueuePendingMessage(session.id, {
+      id: "q-remove", rawContent: "待删除", visibleContent: "待删除",
+    })).toEqual(expect.objectContaining({ ok: true }));
+    expect(store.removePendingMessage(session.id, "q-remove")).toEqual(
+      expect.objectContaining({ ok: true, removed: true }),
+    );
+
+    expect(store.enqueuePendingMessage(session.id, {
+      id: "q-claim", rawContent: "认领", visibleContent: "认领",
+    })).toEqual(expect.objectContaining({ ok: true }));
+    const claim = store.claimPendingMessage(session.id);
+    expect(claim).toEqual(expect.objectContaining({
+      ok: true,
+      claimed: true,
+      userMessage: expect.objectContaining({ id: "q-claim" }),
+    }));
+    expect(store.completePendingDispatch(session.id, "q-claim")).toEqual(
+      expect.objectContaining({ ok: true, cleared: true }),
+    );
+    expect(store.renameSession(session.id, "重命名")).not.toBeNull();
+    expect(store.setSessionPinned(session.id, true)).not.toBeNull();
+
+    const disk = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
+    expect(disk.schemaVersion).toBe(2);
+    expect(disk).not.toHaveProperty("messages");
+    expect(disk.pendingDispatch).toBeUndefined();
+    expect(store.getSessionRecord(session.id)).toEqual(expect.objectContaining({
+      schemaVersion: 2,
+      title: "重命名",
+      pinned: true,
+    }));
+  });
+
   it("includes the immutable session mode in every list item", async () => {
     const { createSession, initialize, listSessions } = await import("./chats-store");
     initialize();
