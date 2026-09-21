@@ -330,6 +330,23 @@ interface TranscriptEnvelope {
 - `npm run check:renderer` → 通过；
 - `npm test` → **全部通过：498 个测试文件，4489 通过 / 1 跳过 / 0 失败（exit 0）**。十二.1 时期的 ChatMessageList.test.ts:99 预存失败未再出现——其 Streamdown 样式改动已在修复轮开工前由 `3abf1cdf` / `2d6ed489` / `4fffd685` 提交入库，全量套件至此完全干净。
 
+### 十二.3 第二轮评审修复验收证据（2026-09-21）
+
+第二轮评审发现 1×P1 + 2×P2（插话双写可撤回竞态、无 userTurnId 写孤立 assistant、回退开关未强制覆盖），按 A→B→C 顺序逐项 TDD 修复，每项独立 commit：
+
+| # | 修复 | Commit | 红→绿测试 |
+|---|------|--------|-----------|
+| A（P1） | `removePendingMessage` 对带 `adjustRunId` 的条目返回 `already-adjusting`（附最新权威队列）：双写窗口内撤回会使轨迹留下 UI 不存在的隐藏 user，与编辑路径同语义拒绝；IPC 透传零改动、渲染端走既有通用错误提示 | `573ca4eb` | chats-pending-queue.test.ts「撤回已标记条目被拒」+「撤回与插话双写的并发窗口」（挂起 `appendUser` → 撤回被拒 → 恢复 → 双写完成） |
+| B（P2） | `transcriptEnabled = Boolean(userTurnId)` 统一门控：sink 与插话轨迹端口都不注入（否则模型回写无对应 user 的孤立 assistant，首次回填还会再写一次该回答）；poller 轨迹端口改可选，兼容调用退化为只提交聊天历史（CTA 之前旧行为，插话注入保留） | `a99055e5` | agui-bridge.test.ts 兼容测试实断言 `options.transcriptSink` 为 undefined + pending-adjustment.test.ts「无轨迹端口只提交聊天历史」 |
+| C（P2） | 读取源主进程权威覆盖：`useTranscriptContext = Boolean(userTurnId) && transcriptSource === "transcript"`——renderer 回退强制清除 rawInput 恶意携带的 true，兼容调用强制 false（按渲染端消息走） | `aad04ecf` | 回退测试补「rawInput 带 true 仍被覆盖为 false」+ 兼容测试断言改 `toBe(false)`（正向 true 已有 ：1647 覆盖） |
+
+**已知边界（失败路径残留，Phase 2 处理）**：双写进行中若聊天历史提交失败（轨迹 user 已写、pending 保留），运行按 fail-closed 终止后 `endLifecycle` 会无条件复位 `adjustRunId` 标记，条目回普通队列即可被撤回——此时撤回不再被 `already-adjusting` 拦截（标记已清），轨迹中的 user 条目保留，后续模型仍会读到 UI 不存在的输入。这是 fail-closed 失败路径与 append-only 轨迹（无删除/墓碑语义）的结构性冲突：不复位则条目永久卡死（不可编辑不可撤回），复位则接受轨迹残留，两害相权取复位。彻底解决需要 Phase 2 引入轨迹墓碑/删除语义；正常双写窗口（A 修复覆盖）不受此边界影响。
+
+**自动化回归（全部通过）：**
+
+- 定向回归（`npx vitest run` 7 文件：chats-pending-queue / pending-adjustment / chats-store / chats-ipc、agui-bridge、cyrene-harness、cyrene-harness-cancel）→ **179 测试全部通过**；
+- `npm run build:main` → 通过（每项修复后各跑一次）。
+
 ---
 
 ## 十三、施工前核对点（开工前逐项确认代码事实）
