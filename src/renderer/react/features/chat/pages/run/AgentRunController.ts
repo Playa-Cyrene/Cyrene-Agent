@@ -186,7 +186,8 @@ export class AgentRunController {
   private contextUsage: ContextUsageSnapshot | undefined;
   private assistantAt = 0;
   private checkpointTimer: number | undefined;
-  private checkpointChain: Promise<ChatSession | null> = Promise.resolve<ChatSession | null>(null);
+  private checkpointChain: Promise<boolean> = Promise.resolve(true);
+  private presentationRevision = 0;
   private readonly activeReasoningStarts = new Map<string, number>();
   private currentReasoningId: string | undefined;
   private earlyTtsQueue: EarlyTtsPlaybackQueue | undefined;
@@ -212,14 +213,6 @@ export class AgentRunController {
         waitingForFirstEvent: false,
         streaming: false,
         responseStarted: true,
-      });
-      await store?.append(this.input.sessionId, {
-        id: this.input.assistantId,
-        role: "model",
-        content: visibleError,
-        at: Date.now(),
-        // 桥不可用的错误提示也锚定到本轮用户消息：恢复判定把它算作已派发
-        answersUserMessageId: this.input.userMessageId,
       });
       // run 未被主进程接受：认领派发（若有）保留 pendingDispatch 供恢复，宿主暂停队列消费
       this.deps.host.onRunFinished({ mode: this.input.targetMode, sessionId: this.input.sessionId, queuePaused: true });
@@ -511,11 +504,21 @@ export class AgentRunController {
   }
 
   /** 把检查点写入会话存储；串到链上保证与之前的写盘顺序一致。 */
-  private writeCheckpoint(status: "running" | "waiting_user" | "terminal"): Promise<ChatSession | null> {
+  private writeCheckpoint(status: "running" | "waiting_user" | "terminal"): Promise<boolean> {
     const snapshot = this.buildCheckpoint(status);
+    const { id: _id, role: _role, at: _at, ...patch } = snapshot;
+    const patchRevision = ++this.presentationRevision;
     this.checkpointChain = this.checkpointChain
-      .catch(() => null)
-      .then(() => this.deps.store!.upsert(this.input.sessionId, snapshot));
+      .then(async () => {
+        const result = await this.deps.store!.checkpointPresentation(
+          this.input.sessionId,
+          this.input.assistantId,
+          patchRevision,
+          patch,
+        );
+        if (!result.ok) throw new Error(result.error);
+        return true;
+      });
     return this.checkpointChain;
   }
 
@@ -526,7 +529,7 @@ export class AgentRunController {
   private checkpointRun(
     status: "running" | "waiting_user" | "terminal",
     immediate = false,
-  ): Promise<ChatSession | null> {
+  ): Promise<boolean> {
     if (this.checkpointTimer !== undefined) {
       window.clearTimeout(this.checkpointTimer);
       this.checkpointTimer = undefined;

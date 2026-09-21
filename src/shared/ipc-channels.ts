@@ -171,6 +171,7 @@ export const IPC = {
   CHATS_SET_MESSAGE_TTS_CACHE: "chats:set-message-tts-cache",
   CHATS_REPLACE_MESSAGES: "chats:replace-messages",
   CHATS_REPLACE_TAIL: "chats:replace-tail",
+  CTA_PRESENTATION_CHECKPOINT: "cta:presentation-checkpoint",
   // renderer → main：主动压缩会话上下文（模型窗口内旧消息摘要成一条记忆）
   CHATS_COMPACT: "chats:compact",
   CHATS_RENAME: "chats:rename",
@@ -515,4 +516,3 @@ export const IPC = {
   PLUGINS_MARKET_INSTALL: "plugins:market:install",
 
 } as const;
-

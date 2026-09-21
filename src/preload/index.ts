@@ -129,14 +129,17 @@ contextBridge.exposeInMainWorld("chat", chatApi);
 // onEvent 返回的取消订阅函数用于停止监听。
 const aguiApi = {
   run: (input: {
-    messages: unknown[];
-    userTurnId?: string;
-    assistantTurnId?: string;
-    style?: string;
+    currentUser: {
+      turnId: string;
+      text: string;
+      visibleContent: string;
+      attachments?: Array<{ kind: "image" | "document"; name: string; filePath: string; mime?: string; caption?: string; hasAnnotations?: boolean }>;
+      sticker?: string;
+      at?: number;
+    };
+    assistantTurnId: string;
     styleId?: string;
-    executionMode?: "work" | "chat" | "code";
-    sessionId?: string;
-    attachments?: { name: string; text: string }[];
+    sessionId: string;
     imageAttachments?: { name: string; filePath: string; mime?: string }[];
     recoveryContext?: string;
     resumeFromRunId?: string;
@@ -680,16 +683,8 @@ const chatStoreApi = {
     ipcRenderer.invoke(IPC.CHATS_GET_PAGE, { id, before, limit }),
   create: (payload?: { title?: string; identityId?: string | null; mode?: "chat" | "work" | "code" | "learn" }) =>
     ipcRenderer.invoke(IPC.CHATS_CREATE, payload ?? {}),
-  append: (id: string, message: unknown) =>
-    ipcRenderer.invoke(IPC.CHATS_APPEND, { id, message }),
-  upsert: (id: string, message: unknown) =>
-    ipcRenderer.invoke(IPC.CHATS_UPSERT, { id, message }),
-  setMessageTtsCacheKey: (id: string, messageId: string, cacheKey: string, converterVersion: string) =>
-    ipcRenderer.invoke(IPC.CHATS_SET_MESSAGE_TTS_CACHE, { id, messageId, cacheKey, converterVersion }),
-  replaceMessages: (id: string, messages: unknown[]) =>
-    ipcRenderer.invoke(IPC.CHATS_REPLACE_MESSAGES, { id, messages }),
-  replaceTail: (id: string, startIndex: number, messages: unknown[]) =>
-    ipcRenderer.invoke(IPC.CHATS_REPLACE_TAIL, { id, startIndex, messages }),
+  checkpointPresentation: (sessionId: string, messageId: string, patchRevision: number, patch: unknown) =>
+    ipcRenderer.invoke(IPC.CTA_PRESENTATION_CHECKPOINT, { sessionId, messageId, patchRevision, patch }),
   // 主动压缩：把模型窗口内旧消息摘要成一条记忆（上下文容量菜单小人点击触发）
   compactConversation: (sessionId: string) =>
     ipcRenderer.invoke(IPC.CHATS_COMPACT, { sessionId }) as Promise<{

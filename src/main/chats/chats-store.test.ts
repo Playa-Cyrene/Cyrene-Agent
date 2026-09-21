@@ -40,38 +40,6 @@ describe("chats store", () => {
     expect(page?.session.messageCount).toBe(3);
   });
 
-  it("upserts a run checkpoint by message id without disturbing conversation order", async () => {
-    const store = await import("./chats-store");
-    store.initialize();
-    const session = store.createSession({
-      initialMessages: [
-        { id: "user-1", role: "user", content: "开始", at: 1 },
-        { id: "assistant-1", role: "model", content: "", at: 2 },
-        { id: "user-2", role: "user", content: "排队消息", at: 3 },
-      ],
-    });
-
-    store.upsertMessage(session.id, {
-      id: "assistant-1",
-      role: "model",
-      content: "处理中",
-      at: 2,
-    });
-    store.upsertMessage(session.id, {
-      id: "assistant-2",
-      role: "model",
-      content: "新回复",
-      at: 4,
-    });
-
-    const updated = store.getSession(session.id);
-    expect(updated?.messages.map((message) => message.id)).toEqual([
-      "user-1", "assistant-1", "user-2", "assistant-2",
-    ]);
-    expect(updated?.messages[1].content).toBe("处理中");
-    expect(store.listSessions().find((item) => item.id === session.id)?.messageCount).toBe(4);
-  });
-
   it("v2 元数据记录保留 pending 状态往返且磁盘不写回 messages", async () => {
     const store = await import("./chats-store");
     store.initialize();
@@ -471,28 +439,8 @@ describe("chats store", () => {
     expect(new Set(sessions.map((session) => session.id)).size).toBe(1);
     expect(store.listSessions().filter((session) => session.purpose === "proactive-chat")).toHaveLength(1);
 
-    store.appendMessage(sessions[0].id, { id: "p1", role: "model", content: "主动问候", at: 1 });
+    store.legacyChannelAppendMessage(sessions[0].id, { id: "p1", role: "model", content: "主动问候", at: 1 });
     expect(store.getSession(sessions[0].id)?.title).toBe("昔涟的主动消息");
-  });
-
-  it("persists a valid TTS cache key only on model messages without changing updatedAt", async () => {
-    const store = await import("./chats-store");
-    store.initialize();
-    const session = store.createSession({
-      initialMessages: [
-        { id: "user-1", role: "user", content: "你好", at: 1 },
-        { id: "model-1", role: "model", content: "你好呀", at: 2 },
-      ],
-    });
-    const cacheKey = `minimax-${"a".repeat(64)}`;
-    const converterVersion = "markdown-v1";
-
-    expect(store.setMessageTtsCacheKey(session.id, "model-1", cacheKey, converterVersion)?.updatedAt).toBe(session.updatedAt);
-    expect(store.getSession(session.id)?.messages[1].ttsCacheKey).toBe(cacheKey);
-    expect(store.getSession(session.id)?.messages[1].ttsCacheVersion).toBe(converterVersion);
-    expect(store.setMessageTtsCacheKey(session.id, "user-1", cacheKey, converterVersion)).toBeNull();
-    expect(store.setMessageTtsCacheKey(session.id, "model-1", "invalid-key", converterVersion)).toBeNull();
-    expect(store.setMessageTtsCacheKey(session.id, "model-1", cacheKey, "invalid version!")).toBeNull();
   });
 
   it("recreates the proactive singleton after it is deleted", async () => {

@@ -37,17 +37,22 @@ function createFakeApi(ack: { success: boolean; runId: string; error?: string })
   };
 }
 
-/** 假会话存储：记录每次 upsert 的快照供顺序断言。 */
+/** 假会话存储：记录每次 presentation checkpoint 的快照供顺序断言。 */
 function createFakeStore() {
-  return {
+  const store = {
     upsert: vi.fn(async () => ({ id: "session-1" } as never)),
     append: vi.fn(async () => null),
+    checkpointPresentation: vi.fn(async (_sessionId: string, _messageId: string, _revision: number, patch: Record<string, unknown>) => {
+      await store.upsert("session-1", { id: "assistant-1", role: "model", at: 0, ...patch } as never);
+      return { ok: true as const };
+    }),
     pendingCompleteDispatch: vi.fn(async () => ({ ok: true })),
   } as unknown as ChatStoreApi & {
     upsert: ReturnType<typeof vi.fn>;
     append: ReturnType<typeof vi.fn>;
     pendingCompleteDispatch: ReturnType<typeof vi.fn>;
   };
+  return store;
 }
 
 /** 记录型宿主：全部端口为 vi.fn，Todo 状态按函数式更新真实维护。 */
@@ -164,6 +169,51 @@ afterEach(() => {
 });
 
 describe("AgentRunController", () => {
+  it("awaits the presentation checkpoint before reporting run persistence", async () => {
+    const api = createFakeApi({ success: true, runId: "run-1" });
+    const store = createFakeStore();
+    const { host } = createRecordingHost();
+    const order: string[] = [];
+    store.checkpointPresentation.mockImplementation(async (...args: unknown[]) => {
+      order.push(`checkpoint:${String(args[2])}`);
+      return { ok: true };
+    });
+    (api.reportRunPersisted as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      order.push("report");
+    });
+    const { promise } = launch(createInput(), { api, store, host, registries: createRegistries() });
+    await flush();
+    api.emit(RUN_STARTED_EVENT);
+    api.emit({ type: "TEXT_MESSAGE_START", runId: "run-1" });
+    api.emit({ type: "TEXT_MESSAGE_CONTENT", runId: "run-1", delta: "完成" });
+    api.emit({ type: "TEXT_MESSAGE_END", runId: "run-1" });
+    api.emit({ type: "RUN_FINISHED", runId: "run-1", result: { status: "success" } });
+    await promise;
+
+    expect(order.at(-1)).toBe("report");
+    expect(order.slice(0, -1).every((entry) => entry.startsWith("checkpoint:"))).toBe(true);
+  });
+
+  it("does not report persistence when the terminal presentation checkpoint fails", async () => {
+    const api = createFakeApi({ success: true, runId: "run-1" });
+    const store = createFakeStore();
+    const { host } = createRecordingHost();
+    store.checkpointPresentation.mockImplementation(async (...args: unknown[]) => {
+      if (Number(args[2]) >= 3) throw new Error("journal unavailable");
+      return { ok: true };
+    });
+    const { promise } = launch(createInput(), { api, store, host, registries: createRegistries() });
+    await flush();
+    api.emit(RUN_STARTED_EVENT);
+    api.emit({ type: "TEXT_MESSAGE_START", runId: "run-1" });
+    api.emit({ type: "TEXT_MESSAGE_CONTENT", runId: "run-1", delta: "完成" });
+    api.emit({ type: "TEXT_MESSAGE_END", runId: "run-1" });
+    api.emit({ type: "RUN_FINISHED", runId: "run-1", result: { status: "success" } });
+
+    await expect(promise).rejects.toThrow("journal unavailable");
+    expect(api.reportRunPersisted).not.toHaveBeenCalled();
+  });
+
   it("只发送结构化当前 user，不上传 renderer 的完整历史", async () => {
     const api = createFakeApi({ success: true, runId: "run-1" });
     const store = createFakeStore();
@@ -216,7 +266,7 @@ describe("AgentRunController", () => {
       loading: false,
       streaming: false,
     }));
-    expect(store.append).toHaveBeenCalled();
+    expect(store.append).not.toHaveBeenCalled();
     // run 未被主进程接受：仍要通知宿主（queuePaused 暂停队列消费），但不进入 busy 流程
     expect(host.onRunFinished).toHaveBeenCalledWith({ mode: "chat", sessionId: "session-1", queuePaused: true });
     expect(host.setModeBusy).not.toHaveBeenCalled();

@@ -4,6 +4,8 @@ import type { PluginPromptMode, PluginTurnStatus } from "../../plugins/api";
 import { AgentRuntimeError } from "../orchestrator/agent-runtime-error";
 import { CyreneAgent, type CyreneRunOptions } from "../orchestrator/cyrene-agent";
 import type { LifecyclePublisher } from "../plugin-host/lifecycle-publisher";
+import type { ConversationJournalService } from "../orchestrator/conversation-journal-service";
+import type { ActiveConversationSelection } from "../chats/active-conversation-registry";
 import { toolRegistry } from "../orchestrator/tools/registry/tool-registry";
 import { toastEvents } from "../toast/toast-events";
 import { filterToolsForTask } from "./tool-filter";
@@ -27,6 +29,8 @@ interface RunnerDeps {
   now: () => Date;
   /** 生命周期事件发布器；缺省不发布（早期装配与纯策略测试场景）。 */
   publishLifecycle?: LifecyclePublisher;
+  conversationJournal?: ConversationJournalService;
+  getActiveConversation?: () => ActiveConversationSelection | null;
 }
 
 /**
@@ -51,6 +55,10 @@ export function createSchedulerRunner(deps: RunnerDeps) {
     const allTools = toolRegistry.getAllTools();
     const effectiveTools = filterToolsForTask(task, allTools);
     const effectiveToolIds = effectiveTools.map(t => t.id);
+    // Freeze the UI target before any async build work; a later window switch
+    // must not redirect this run's canonical facts or presentation events.
+    const conversationId = deps.getActiveConversation?.()?.sessionId ?? null;
+    const runMode = task.mode ?? "work";
 
     deps.recordHistory({
       id: historyId,
@@ -73,18 +81,20 @@ export function createSchedulerRunner(deps: RunnerDeps) {
       name: "scheduler.started",
       schedulerRunId: historyId,
       schedulerTaskId: task.id,
-      value: { taskId: task.id, title: task.title, manual, firedAt: startedAt.toISOString(), runId: historyId },
+      ...(conversationId ? { conversationId } : {}),
+      value: { taskId: task.id, title: task.title, manual, firedAt: startedAt.toISOString(), runId: historyId, ...(conversationId ? { conversationId } : {}) },
     });
 
-    // 调度执行没有桌面会话，事件只携带任务与历史标识，不伪造 conversationId
     deps.publishLifecycle?.publishTurnStarted({
       source: "scheduler",
       runId: historyId,
-      mode: task.mode ?? "work",
+      mode: runMode,
       taskId: task.id,
       schedulerRunId: historyId,
+      ...(conversationId ? { conversationId } : {}),
     });
 
+    let transcriptSink: ReturnType<ConversationJournalService["createRunSink"]> | undefined;
     try {
       const legacyOptions = await deps.buildOptions(task);
       legacyOptions.tools = effectiveTools;
@@ -108,13 +118,31 @@ export function createSchedulerRunner(deps: RunnerDeps) {
         messages,
         toolSystemContent,
         soulSystemBaseContent,
-      }, task.mode ?? "work");
+        ...(conversationId ? { conversationId, runId: historyId } : { runId: historyId }),
+        ...(conversationId && deps.conversationJournal ? {
+          transcriptSink: deps.conversationJournal.createRunSink({ conversationId, runId: historyId }),
+        } : {}),
+      }, runMode);
+      transcriptSink = options.transcriptSink;
+
+      if (conversationId && deps.conversationJournal) {
+        await deps.conversationJournal.appendUser(conversationId, {
+          turnId: historyId,
+          text: task.prompt,
+          runId: historyId,
+        });
+      }
 
       const agent = new CyreneAgent({ threadId: `scheduler-${task.id}`, description: `Scheduled task: ${task.title}` });
 
       await new Promise<void>((resolve, reject) => {
         const sub = agent.runWithEvents(options).subscribe({
-          next: (event) => send({ ...event, schedulerRunId: historyId, schedulerTaskId: task.id }),
+          next: (event) => send({
+            ...event,
+            schedulerRunId: historyId,
+            schedulerTaskId: task.id,
+            ...(conversationId ? { conversationId } : {}),
+          }),
           error: (err) => {
             sub.unsubscribe();
             reject(err instanceof Error ? err : new Error(String(err)));
@@ -142,20 +170,23 @@ export function createSchedulerRunner(deps: RunnerDeps) {
         outputPreview: reply.slice(0, 160),
         effectiveToolIds,
       });
+      if (conversationId && transcriptSink) await transcriptSink.checkpoint();
       deps.publishLifecycle?.publishTurnFinished({
         source: "scheduler",
         runId: historyId,
-        mode: task.mode ?? "work",
+        mode: runMode,
         taskId: task.id,
         schedulerRunId: historyId,
         status,
         durationMs,
+        ...(conversationId ? { conversationId } : {}),
       });
       deps.publishLifecycle?.publishSchedulerFinished({
         taskId: task.id,
         schedulerRunId: historyId,
         status,
         durationMs,
+        ...(conversationId ? { conversationId } : {}),
       });
       // 注意力提醒：任务成功完成时通知 ToastService 弹右下角提醒（失败不弹，V1 边界）
       if (status === "success") {
@@ -169,17 +200,25 @@ export function createSchedulerRunner(deps: RunnerDeps) {
       }
       return { ok: true, historyId, reply, effectiveToolIds };
     } catch (err) {
+      if (transcriptSink) {
+        try {
+          await transcriptSink.closeInterruption({ reason: "user_cancel", runSession: null });
+        } catch (closureError) {
+          console.error("[Scheduler] failed to close journal after persistence error", closureError);
+        }
+      }
       const finishedAt = deps.now();
       const message = err instanceof Error ? err.message : String(err);
       const durationMs = finishedAt.getTime() - startedAt.getTime();
       deps.publishLifecycle?.publishTurnFinished({
         source: "scheduler",
         runId: historyId,
-        mode: task.mode ?? "work",
+        mode: runMode,
         taskId: task.id,
         schedulerRunId: historyId,
         status: "runtime_error",
         durationMs,
+        ...(conversationId ? { conversationId } : {}),
       });
       deps.publishLifecycle?.publishSchedulerFinished({
         taskId: task.id,
@@ -198,7 +237,7 @@ export function createSchedulerRunner(deps: RunnerDeps) {
         errorMessage: message,
         effectiveToolIds,
       });
-      send({ type: "RUN_ERROR", message, code: err instanceof AgentRuntimeError ? err.code : undefined, threadId: `scheduler-${task.id}`, runId: historyId, schedulerRunId: historyId, schedulerTaskId: task.id });
+      send({ type: "RUN_ERROR", message, code: err instanceof AgentRuntimeError ? err.code : undefined, threadId: `scheduler-${task.id}`, runId: historyId, schedulerRunId: historyId, schedulerTaskId: task.id, ...(conversationId ? { conversationId } : {}) });
       return { ok: false, historyId, error: message, effectiveToolIds };
     }
   }

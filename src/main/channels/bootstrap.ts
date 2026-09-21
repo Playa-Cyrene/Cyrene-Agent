@@ -16,7 +16,7 @@ import type { TtsSynthesisService } from "../services/tts/tts-synthesis-service"
 import { buildChannelAttachmentInputs } from "./agent-input";
 import { loadChannelsSettings } from "./settings-store";
 import { enforceChannelAgentPolicy, resolveChannelAgentPolicy } from "./agent-policy";
-import { appendMessage, getSession, listSessions } from "../chats/chats-store";
+import { legacyChannelAppendMessage, getSession, listSessions } from "../chats/chats-store";
 import { getChannelConversationBindingStore } from "./conversation-binding-store";
 import { ChannelDispatcher, type DispatcherDeps } from "./dispatcher";
 import {
@@ -111,7 +111,7 @@ export function createChannelsSubsystem(
     content: string,
     metadata: BoundConversationMessageMetadata,
   ) => {
-    const session = appendMessage(conversationId, {
+    const session = legacyChannelAppendMessage(conversationId, {
       id: randomUUID(),
       role: role === "assistant" ? "model" : "user",
       content,

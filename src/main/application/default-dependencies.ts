@@ -32,6 +32,9 @@ import {
   tasksWindow,
 } from "../windows/window-state";
 import { loadModelSettings, saveModelSettings } from "../settings/model-settings";
+import { getConversationTranscriptStore } from "../orchestrator/conversation-transcript-store";
+import { ConversationJournalService } from "../orchestrator/conversation-journal-service";
+import { activeConversationRegistry } from "../chats/active-conversation-registry";
 import { registerSettingsIpc } from "../settings/settings-ipc";
 import {
   applyGeneralSettings,
@@ -286,7 +289,12 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
         });
         const citaService = createCitaService({ llmClient });
         const socialContextService = createSocialContextService({ llmClient, enqueueLLMTask });
-        const proactiveLifecycle = createProactiveLifecycle({ loadGeneralSettings });
+        const proactiveLifecycle = createProactiveLifecycle({
+          loadGeneralSettings,
+          conversationJournal: new ConversationJournalService({
+            store: getConversationTranscriptStore(app.getPath("userData")),
+          }),
+        });
         // 主动聊天服务初始化是纯装配；触发器由 background 阶段启动
         proactiveLifecycle.initializeProactiveChatService();
 
@@ -456,6 +464,10 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
         getReactChatWindow: () => reactChatWindow,
         ipc: shell.ipc,
         publishLifecycle: lifecyclePublisher,
+        conversationJournal: new ConversationJournalService({
+          store: getConversationTranscriptStore(app.getPath("userData")),
+        }),
+        getActiveConversation: () => activeConversationRegistry.getMostRecent(),
         // 插件任务只有在所属插件运行中才允许触发；用户任务不受影响。
         canRunTask: (task) => !task.ownerPluginId
           || (pluginManager?.isRunning(task.ownerPluginId) ?? false),

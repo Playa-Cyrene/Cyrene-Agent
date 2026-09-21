@@ -110,6 +110,69 @@ describe("scheduled Cyrene execution policy", () => {
 });
 
 describe("createSchedulerRunner lifecycle events", () => {
+  it("freezes the selected conversation and writes scheduler facts through the journal", async () => {
+    const sink = {
+      checkpoint: vi.fn(async () => undefined),
+      appendAssistant: vi.fn(async () => "assistant-entry"),
+      appendToolResult: vi.fn(async () => undefined),
+      closeInterruption: vi.fn(async () => undefined),
+    };
+    const journal = {
+      appendUser: vi.fn(async () => undefined),
+      createRunSink: vi.fn(() => sink),
+    };
+    let active = { sessionId: "session-1", mode: "work" as const };
+    const send = vi.fn();
+    const publishLifecycle = {
+      publishTurnStarted: vi.fn(),
+      publishTurnFinished: vi.fn(),
+      publishSchedulerFinished: vi.fn(),
+    };
+    const deps = makeRunnerDeps({
+      getChatWebContents: () => ({ isDestroyed: () => false, send } as never),
+      getActiveConversation: () => {
+        const selected = active;
+        active = { sessionId: "session-2", mode: "work" };
+        return selected;
+      },
+      conversationJournal: journal,
+      publishLifecycle,
+    });
+
+    const runner = createSchedulerRunner(deps as never);
+    await runner.runScheduledTask(makeTask(), new Date(), false);
+
+    expect(journal.appendUser).toHaveBeenCalledWith("session-1", expect.objectContaining({ text: "整理资料" }));
+    expect(journal.createRunSink).toHaveBeenCalledWith({ conversationId: "session-1", runId: "hist-1" });
+    expect(sink.checkpoint).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith("scheduler:event", expect.objectContaining({ conversationId: "session-1" }));
+    expect(publishLifecycle.publishTurnStarted).toHaveBeenCalledWith(expect.objectContaining({ conversationId: "session-1" }));
+    expect(publishLifecycle.publishTurnFinished).toHaveBeenCalledWith(expect.objectContaining({ conversationId: "session-1" }));
+  });
+
+  it("closes the journal when scheduler presentation checkpoint fails", async () => {
+    const sink = {
+      checkpoint: vi.fn(async () => { throw new Error("journal unavailable"); }),
+      appendAssistant: vi.fn(async () => "assistant-entry"),
+      appendToolResult: vi.fn(async () => undefined),
+      closeInterruption: vi.fn(async () => undefined),
+    };
+    const journal = {
+      appendUser: vi.fn(async () => undefined),
+      createRunSink: vi.fn(() => sink),
+    };
+    const deps = makeRunnerDeps({
+      conversationJournal: journal,
+      getActiveConversation: () => ({ sessionId: "session-1", mode: "work" }),
+    });
+
+    const runner = createSchedulerRunner(deps as never);
+    const result = await runner.runScheduledTask(makeTask(), new Date(), false);
+
+    expect(result.ok).toBe(false);
+    expect(sink.closeInterruption).toHaveBeenCalledWith({ reason: "user_cancel", runSession: null });
+  });
+
   it("成功执行发布 started/finished/scheduler:finished 且不伪造 conversationId", async () => {
     const publishLifecycle = {
       publishTurnStarted: vi.fn(),

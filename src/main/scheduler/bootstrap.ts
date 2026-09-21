@@ -2,6 +2,8 @@ import type { BrowserWindow } from "electron";
 import type { IpcScope } from "../application/ipc-scope";
 import type { AgentRuntime } from "../orchestrator/agent-runtime";
 import type { LifecyclePublisher } from "../plugin-host/lifecycle-publisher";
+import type { ConversationJournalService } from "../orchestrator/conversation-journal-service";
+import type { ActiveConversationSelection } from "../chats/active-conversation-registry";
 import { toolRegistry } from "../orchestrator/tools/registry/tool-registry";
 import type { ScheduledTask } from "./types";
 import { SchedulerEngine, type SchedulerEngineDeps } from "./scheduler-engine";
@@ -24,6 +26,8 @@ export interface SchedulerSubsystemDeps {
   canRunTask?: (task: ScheduledTask) => boolean;
   /** 生命周期事件发布器：调度轮次事件与 scheduler:finished 由此发布。 */
   publishLifecycle?: LifecyclePublisher;
+  conversationJournal?: ConversationJournalService;
+  getActiveConversation?: () => ActiveConversationSelection | null;
 }
 
 export interface SchedulerSubsystem {
@@ -51,6 +55,8 @@ export function createSchedulerSubsystem(deps: SchedulerSubsystemDeps): Schedule
     id: () => `hist-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     now: () => new Date(),
     ...(deps.publishLifecycle ? { publishLifecycle: deps.publishLifecycle } : {}),
+    ...(deps.conversationJournal ? { conversationJournal: deps.conversationJournal } : {}),
+    ...(deps.getActiveConversation ? { getActiveConversation: deps.getActiveConversation } : {}),
   });
 
   const engineDeps: SchedulerEngineDeps = {

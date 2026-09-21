@@ -56,18 +56,89 @@ describe("chats IPC mode filtering", () => {
     ]);
   });
 
+  it("writes a presentation checkpoint to the conversation journal", async () => {
+    const { registerChatsIpc } = await import("./chats-ipc");
+    const { getConversationTranscriptStore } = await import("../orchestrator/conversation-transcript-store");
+    registerChatsIpc();
+    const create = mocks.handlers.get(IPC.CHATS_CREATE);
+    const checkpoint = mocks.handlers.get(IPC.CTA_PRESENTATION_CHECKPOINT);
+    if (!create || !checkpoint) throw new Error("presentation checkpoint IPC handler was not registered");
+    const event = { sender: {} };
+    const session = await create(event, { mode: "work" }) as { id: string };
+    await getConversationTranscriptStore(mocks.userDataDir).append(session.id, {
+      id: "assistant-1",
+      at: 1,
+      kind: "assistant",
+      payload: { role: "assistant", content: "draft" },
+    });
+
+    await expect(checkpoint(event, {
+      sessionId: session.id,
+      messageId: "assistant-1",
+      patchRevision: 4,
+      patch: { content: "final", toolExecutions: [] },
+    })).resolves.toEqual(expect.objectContaining({ ok: true }));
+
+    const snapshot = await getConversationTranscriptStore(mocks.userDataDir).read(session.id);
+    expect(snapshot.entries).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: "presentation_patch",
+        payload: expect.objectContaining({ messageId: "assistant-1", patchRevision: 4 }),
+      }),
+    ]));
+  });
+
+  it("returns a stable retired error for formal message IPC", async () => {
+    const { registerChatsIpc } = await import("./chats-ipc");
+    registerChatsIpc();
+    const upsert = mocks.handlers.get(IPC.CHATS_UPSERT);
+    if (!upsert) throw new Error("retired message IPC handler was not registered");
+    expect(upsert({ sender: {} }, { id: "session-1", message: { id: "m1" } }))
+      .toEqual({ ok: false, error: "chat-message-store-retired" });
+  });
+
+  it("accepts a TTS cache update as a presentation-only patch", async () => {
+    const { registerChatsIpc } = await import("./chats-ipc");
+    const { getConversationTranscriptStore } = await import("../orchestrator/conversation-transcript-store");
+    registerChatsIpc();
+    const create = mocks.handlers.get(IPC.CHATS_CREATE);
+    const checkpoint = mocks.handlers.get(IPC.CTA_PRESENTATION_CHECKPOINT);
+    if (!create || !checkpoint) throw new Error("presentation checkpoint IPC handler was not registered");
+    const event = { sender: {} };
+    const session = await create(event, { mode: "chat" }) as { id: string };
+    const transcript = getConversationTranscriptStore(mocks.userDataDir);
+    await transcript.append(session.id, {
+      id: "assistant-tts",
+      at: 1,
+      kind: "assistant",
+      payload: { role: "assistant", content: "你好" },
+    });
+
+    await expect(checkpoint(event, {
+      sessionId: session.id,
+      messageId: "assistant-tts",
+      patchRevision: 2,
+      patch: { ttsCacheKey: "minimax-key", ttsCacheVersion: "v1" },
+    })).resolves.toEqual({ ok: true });
+    const patchEntry = (await transcript.read(session.id)).entries.at(-1);
+    expect(patchEntry).toEqual(expect.objectContaining({
+      kind: "presentation_patch",
+      payload: { messageId: "assistant-tts", patchRevision: 2, patch: { ttsCacheKey: "minimax-key", ttsCacheVersion: "v1" } },
+    }));
+  });
+
   it("先迁移再从轨迹 projection 组合 CHATS_GET 与 CHATS_GET_PAGE", async () => {
     const { registerChatsIpc } = await import("./chats-ipc");
     registerChatsIpc();
     const create = mocks.handlers.get(IPC.CHATS_CREATE);
     const get = mocks.handlers.get(IPC.CHATS_GET);
     const getPage = mocks.handlers.get(IPC.CHATS_GET_PAGE);
-    const append = mocks.handlers.get(IPC.CHATS_APPEND);
-    if (!create || !get || !getPage || !append) throw new Error("chat IPC handlers were not registered");
+    if (!create || !get || !getPage) throw new Error("chat IPC handlers were not registered");
     const event = { sender: {} };
     const session = await create(event, { mode: "work" }) as { id: string };
-    await append(event, { id: session.id, message: { id: "u1", role: "user", content: "hello", at: 1 } });
-    await append(event, { id: session.id, message: { id: "a1", role: "model", content: "world", at: 2 } });
+    const transcript = (await import("../orchestrator/conversation-transcript-store")).getConversationTranscriptStore(mocks.userDataDir);
+    await transcript.append(session.id, { id: "u1", kind: "user", turnId: "u1", revision: 1, at: 1, payload: { text: "hello" } });
+    await transcript.append(session.id, { id: "a1", kind: "assistant", at: 2, payload: { role: "assistant", content: "world" } });
 
     const full = await get(event, session.id) as { schemaVersion: number; messages: Array<{ id: string }> };
     expect(full.schemaVersion).toBe(1);
@@ -104,14 +175,12 @@ describe("chats IPC mode filtering", () => {
     const event = { sender: {} };
     const session = await create(event, { mode: "work" }) as { id: string };
 
-    expect(await upsert(event, null)).toBeNull();
-    expect(await upsert(event, { id: session.id })).toBeNull();
+    expect(await upsert(event, null)).toEqual({ ok: false, error: "chat-message-store-retired" });
+    expect(await upsert(event, { id: session.id })).toEqual({ ok: false, error: "chat-message-store-retired" });
     expect(await upsert(event, {
       id: session.id,
       message: { id: "assistant-1", role: "model", content: "checkpoint", at: 1 },
-    })).toEqual(expect.objectContaining({
-      messages: [expect.objectContaining({ id: "assistant-1", content: "checkpoint" })],
-    }));
+    })).toEqual({ ok: false, error: "chat-message-store-retired" });
   });
 
   it("schedules first-message title generation for every conversation mode with visible text only", async () => {
@@ -155,7 +224,7 @@ describe("chats IPC mode filtering", () => {
     ]);
   });
 
-  it("also schedules legacy direct appends without sticker markers or attachments", async () => {
+  it("retires legacy direct appends without writing metadata", async () => {
     const { registerChatsIpc } = await import("./chats-ipc");
     const scheduled: Array<{ sessionId: string; userMessageId: string; text: string }> = [];
     registerChatsIpc(undefined, {
@@ -172,7 +241,7 @@ describe("chats IPC mode filtering", () => {
     const event = { sender: {} };
     const created = await create(event, { mode: "chat" }) as { id: string };
 
-    await append(event, {
+    expect(await append(event, {
       id: created.id,
       message: {
         id: "legacy-first",
@@ -181,13 +250,8 @@ describe("chats IPC mode filtering", () => {
         at: 1,
         attachments: [{ kind: "document", name: "secret.txt", filePath: "C:\\tmp\\secret.txt", status: "pending" }],
       },
-    });
-
-    expect(scheduled).toEqual([{
-      sessionId: created.id,
-      userMessageId: "legacy-first",
-      text: "总结这份材料",
-    }]);
+    })).toEqual({ ok: false, error: "chat-message-store-retired" });
+    expect(scheduled).toEqual([]);
   });
 
   it("pending remove 先写 journal 墓碑，不能绕过轨迹直接删除", async () => {

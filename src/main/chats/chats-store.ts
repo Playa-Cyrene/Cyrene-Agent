@@ -443,7 +443,8 @@ export function getOrCreateSessionByPurpose(
   });
 }
 
-export function appendMessage(id: string, message: ChatMessage): ChatSession | null {
+/** Task 11 compatibility: only the channel adapter may call this writer. */
+export function legacyChannelAppendMessage(id: string, message: ChatMessage): ChatSession | null {
   const session = readSessionFile(id);
   if (!session) return null;
   session.messages.push(message);
@@ -452,64 +453,6 @@ export function appendMessage(id: string, message: ChatMessage): ChatSession | n
   if (!session.titleIsCustom) {
     session.title = deriveTitle(session.messages);
   }
-  writeSessionFile(session);
-  upsertMeta(metaFromSession(session));
-  return session;
-}
-
-export function upsertMessage(id: string, message: ChatMessage): ChatSession | null {
-  const session = readSessionFile(id);
-  if (!session) return null;
-  const index = session.messages.findIndex((item) => item.id === message.id);
-  if (index >= 0) session.messages[index] = message;
-  else session.messages.push(message);
-  session.updatedAt = Date.now();
-  if (!session.titleIsCustom) session.title = deriveTitle(session.messages);
-  writeSessionFile(session);
-  upsertMeta(metaFromSession(session));
-  return session;
-}
-
-/** 仅回写模型消息的 TTS 缓存引用，不改变会话的业务修改时间。 */
-export function setMessageTtsCacheKey(
-  id: string,
-  messageId: string,
-  cacheKey: string,
-  converterVersion: string,
-): ChatSession | null {
-  if (!/^(minimax|gptsovits|custom-cloud|mimo|mossland)-[a-f0-9]{64}$/.test(cacheKey)) return null;
-  if (!/^[a-z\d][a-z\d._-]{0,63}$/i.test(converterVersion)) return null;
-  const session = readSessionFile(id);
-  if (!session) return null;
-  const message = session.messages.find((item) => item.id === messageId && item.role === "model");
-  if (!message) return null;
-  message.ttsCacheKey = cacheKey;
-  message.ttsCacheVersion = converterVersion;
-  writeSessionFile(session);
-  return session;
-}
-
-// 批量覆盖整个 messages 数组（聊天窗口流式结束/清空/错误等场景用）。
-// updatedAt 一并刷新；用户没手动改名时根据新内容重新派生。
-export function replaceMessages(id: string, messages: ChatMessage[]): ChatSession | null {
-  const session = readSessionFile(id);
-  if (!session) return null;
-  session.messages = messages;
-  session.updatedAt = Date.now();
-  if (!session.titleIsCustom) {
-    session.title = deriveTitle(session.messages);
-  }
-  writeSessionFile(session);
-  upsertMeta(metaFromSession(session));
-  return session;
-}
-
-export function replaceMessagesTail(id: string, startIndex: number, messages: ChatMessage[]): ChatSession | null {
-  const session = readSessionFile(id);
-  if (!session || !Number.isInteger(startIndex) || startIndex < 0 || startIndex > session.messages.length) return null;
-  session.messages = session.messages.slice(0, startIndex).concat(messages);
-  session.updatedAt = Date.now();
-  if (!session.titleIsCustom) session.title = deriveTitle(session.messages);
   writeSessionFile(session);
   upsertMeta(metaFromSession(session));
   return session;
@@ -896,7 +839,7 @@ export function getPendingDispatch(sessionId: string): PendingDispatchState | nu
  * 待发条目移出队列、转成正式用户消息追加进 messages、写入 pendingDispatch 派发状态。
  * 写盘失败时队首保留在队列中（绝不半途丢消息）；已有未完成的认领时拒绝（already-dispatching），
  * 调用方应先恢复该认领（续派不重复追加）再继续消费队列。
- * 认领等于真实历史消息入册（messageCount+1），与 appendMessage 一致地刷新 updatedAt 与索引。
+ * 认领等于真实历史消息入册（messageCount+1），与 legacy channel writer 一致地刷新 updatedAt 与索引。
  */
 export function claimPendingMessage(sessionId: string): ClaimPendingResult {
   const record = readSessionRecordFile(sessionId);

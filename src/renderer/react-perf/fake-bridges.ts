@@ -109,37 +109,18 @@ export function installFakeBridges(options: FakeBridgeOptions): FakeBridgeRuntim
 
   // ── 内存版 chatStore：完整实现 ChatStoreApi，所有变更只发生在内存 session 上 ──
   const pendingQueue: PendingChatMessage[] = [];
-  let ttsSeq = 0;
 
   const fakeStore: ChatStoreApi = {
     list: async () => [perfSessionMeta(session)],
     get: async (id) => (id === session.id ? cloneSession(session) : null),
     create: async () => cloneSession(session),
-    append: async (id, message) => {
-      if (id !== session.id) return null;
-      session.messages.push(message);
-      return cloneSession(session);
-    },
-    upsert: async (id, message) => {
-      if (id !== session.id) return null;
-      const index = session.messages.findIndex((item) => item.id === message.id);
-      if (index === -1) session.messages.push(message);
-      else session.messages[index] = message;
-      return cloneSession(session);
-    },
-    replaceTail: async (id, startIndex, messages) => {
-      if (id !== session.id) return null;
-      session.messages.splice(startIndex, session.messages.length - startIndex, ...messages);
-      return cloneSession(session);
-    },
-    setMessageTtsCacheKey: async (id, messageId, cacheKey, converterVersion) => {
-      if (id !== session.id) return null;
+    checkpointPresentation: async (id, messageId, _patchRevision, patch) => {
+      if (id !== session.id) return { ok: false, error: "session not found" };
       const target = session.messages.find((item) => item.id === messageId);
       if (target) {
-        target.ttsCacheKey = cacheKey;
-        target.ttsCacheVersion = converterVersion;
+        Object.assign(target, patch);
       }
-      return cloneSession(session);
+      return { ok: true };
     },
     rename: async () => cloneSession(session),
     delete: async () => true,

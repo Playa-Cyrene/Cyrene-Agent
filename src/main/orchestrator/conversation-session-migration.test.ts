@@ -107,7 +107,7 @@ describe("ConversationSessionMigration", () => {
     const gate = migration.pauseAfterCheckpoint();
     const pending = migration.ensureConversationMigrated(session.id);
     await gate.entered;
-    expect(store.appendMessage(session.id, {
+    expect(store.legacyChannelAppendMessage(session.id, {
       id: "u2", role: "user", content: "并发追加", at: 2,
     })).not.toBeNull();
     gate.release();

@@ -9,7 +9,7 @@ const channelMocks = vi.hoisted(() => ({
   flush: vi.fn(),
   listSessions: vi.fn(),
   getSession: vi.fn(),
-  appendMessage: vi.fn(),
+  legacyChannelAppendMessage: vi.fn(),
   loadBoundConversationHistory: undefined as ((conversationId: string, limit: number) => Promise<Array<{ role: "user" | "assistant"; content: string }>>) | undefined,
   appendBoundConversationMessage: undefined as ((conversationId: string, role: "user" | "assistant", content: string, metadata: { channel: "wechat" | "feishu" | "qq" | "qqbot"; chatType: "private" | "group"; senderName?: string; modelContext?: string; sticker?: string }) => void) | undefined,
   buildAndRunAgent: undefined as ((...args: unknown[]) => Promise<unknown>) | undefined,
@@ -81,7 +81,7 @@ vi.mock("./conversation-binding-store", () => ({
 vi.mock("../chats/chats-store", () => ({
   listSessions: channelMocks.listSessions,
   getSession: channelMocks.getSession,
-  appendMessage: channelMocks.appendMessage,
+  legacyChannelAppendMessage: channelMocks.legacyChannelAppendMessage,
 }));
 
 // 避免拉起真实 tool registry（会级联 import RAG 等重依赖）
@@ -251,7 +251,7 @@ describe("createChannelsSubsystem lifecycle", () => {
   });
 
   it("persists clean bubble text together with channel and model-context metadata", () => {
-    channelMocks.appendMessage.mockReturnValue({ id: "desktop-1" });
+  channelMocks.legacyChannelAppendMessage.mockReturnValue({ id: "desktop-1" });
     createChannelsSubsystem(makeChannelsDeps());
 
     channelMocks.appendBoundConversationMessage?.("desktop-1", "user", "大家好", {
@@ -262,7 +262,7 @@ describe("createChannelsSubsystem lifecycle", () => {
       sticker: "OK",
     });
 
-    expect(channelMocks.appendMessage).toHaveBeenCalledWith("desktop-1", expect.objectContaining({
+    expect(channelMocks.legacyChannelAppendMessage).toHaveBeenCalledWith("desktop-1", expect.objectContaining({
       role: "user",
       content: "大家好",
       modelContext: "[QQ群发送者：伙伴]\n大家好",

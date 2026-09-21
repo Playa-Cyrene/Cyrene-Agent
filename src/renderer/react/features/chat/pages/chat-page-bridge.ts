@@ -41,10 +41,12 @@ export interface ChatStoreApi {
   list: (options?: { mode?: ConversationMode }) => Promise<ChatSessionMeta[]>;
   get: (id: string) => Promise<ChatSession | null>;
   create: (input: { identityId: null; mode: ConversationMode; title?: string }) => Promise<ChatSession>;
-  append: (id: string, message: ChatMessage) => Promise<ChatSession | null>;
-  upsert: (id: string, message: ChatMessage) => Promise<ChatSession | null>;
-  replaceTail: (id: string, startIndex: number, messages: ChatMessage[]) => Promise<ChatSession | null>;
-  setMessageTtsCacheKey: (id: string, messageId: string, cacheKey: string, converterVersion: string) => Promise<ChatSession | null>;
+  checkpointPresentation: (
+    sessionId: string,
+    messageId: string,
+    patchRevision: number,
+    patch: Partial<ChatMessage>,
+  ) => Promise<{ ok: true } | { ok: false; error: string }>;
   rename: (id: string, title: string) => Promise<ChatSession | null>;
   delete: (id: string) => Promise<boolean>;
   // 会话级待发队列（主进程为权威）：入队失败时 ok=false，页面必须保留草稿

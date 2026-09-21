@@ -307,6 +307,7 @@ export type PluginTurnStartedEvent =
       source: "scheduler";
       taskId: string;
       schedulerRunId: string;
+      conversationId?: string;
     });
 
 interface PluginTurnFinishedBase extends PluginTurnEventBase {
@@ -335,6 +336,7 @@ export type PluginTurnFinishedEvent =
       source: "scheduler";
       taskId: string;
       schedulerRunId: string;
+      conversationId?: string;
     });
 
 /**
@@ -344,6 +346,7 @@ export type PluginTurnFinishedEvent =
 export interface PluginSchedulerFinishedEvent extends PluginHostEventBase {
   taskId: string;
   schedulerRunId: string;
+  conversationId?: string;
   status: PluginTurnStatus;
   durationMs?: number;
 }

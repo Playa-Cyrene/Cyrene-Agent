@@ -210,6 +210,7 @@ export function ChatPage() {
   const sessionSelectionGeneration = useRef(0);
 
   const activeRunsBySession = useRef<Record<string, { assistantId: string; runId?: string; mode: ConversationMode }>>({});
+  const presentationRevisionByMessageRef = useRef<Record<string, number>>({});
   const runCheckpointBySessionRef = useRef<Record<string, (status: "running" | "waiting_user") => void>>({});
   // bootstrap 标志：只由 cold-start finally 写入；模式切换 effect 仅检查
   const [bootstrapCompleted, setBootstrapCompleted] = useState(false);
@@ -240,12 +241,8 @@ export function ChatPage() {
 
   // 定时任务执行事件：任务触发/流式回复/终态展示在当前会话（主进程 scheduler-runner 推送）
   useSchedulerEvents({
-    getActiveSessionId: () => activeSessionIdsRef.current[activeModeRef.current],
     appendMessages,
     patchMessage: updateMessage,
-    persistMessage: (sessionId, message) => {
-      void chatStore()?.append(sessionId, message);
-    },
   });
 
   // 渠道消息镜像：微信/飞书等外部渠道收发消息以临时系统消息展示在当前会话（dispatcher 推送）
@@ -674,7 +671,16 @@ export function ChatPage() {
     converterVersion: string,
   ) {
     updateMessage(sessionId, messageId, { ttsCacheKey: cacheKey, ttsCacheVersion: converterVersion });
-    void chatStore()?.setMessageTtsCacheKey(sessionId, messageId, cacheKey, converterVersion);
+    const nextRevision = (presentationRevisionByMessageRef.current[`${sessionId}:${messageId}`] ?? 0) + 1;
+    presentationRevisionByMessageRef.current[`${sessionId}:${messageId}`] = nextRevision;
+    void chatStore()?.checkpointPresentation(sessionId, messageId, nextRevision, {
+      ttsCacheKey: cacheKey,
+      ttsCacheVersion: converterVersion,
+    }).then((result) => {
+      if (!result.ok) throw new Error(result.error);
+    }).catch((error) => {
+      console.error("[ChatPage] TTS presentation checkpoint failed", error);
+    });
   }
 
   // 阶段 1B：TTS 缓存回调稳定化——roles 依赖该引用，仅会话切换时换新；
@@ -942,8 +948,12 @@ export function ChatPage() {
             content: nextContent,
             at: Date.now(),
           };
-      const truncatedSession = await store.replaceTail(sessionId, userIndex, [nextUserMessage]);
-      if (!truncatedSession) return false;
+      // 编辑/重新生成只把回退元数据交给主进程轨迹；这里构造临时内存视图，
+      // 不再通过旧正式消息写接口改写持久化 messages。
+      const truncatedSession: ChatSession = {
+        ...session,
+        messages: [...session.messages.slice(0, userIndex), nextUserMessage],
+      };
 
       activeEarlyTtsRef.current?.queue.cancel();
       activeEarlyTtsRef.current = null;

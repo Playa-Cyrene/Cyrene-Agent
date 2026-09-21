@@ -29,6 +29,7 @@ import {
   activeChatTargetRegistry,
   parseActiveTargetPayload,
 } from "../plugin-host/active-chat-target";
+import { activeConversationRegistry } from "./active-conversation-registry";
 
 export interface ChatUiIpcDependencies {
   live2dWindowLifecycle: { getDiagnostics(): unknown };
@@ -42,8 +43,12 @@ export interface ChatUiIpcDependencies {
 
 /** 兼容旧语义：当前活动会话 ID（无目标或欢迎页时为 null）。 */
 export function getActiveChatSessionId(): string | null {
-  return activeChatTargetRegistry.getActive()?.sessionId ?? null;
+  return activeConversationRegistry.getMostRecent()?.sessionId ?? null;
 }
+
+activeChatTargetRegistry.onInvalidated((_reason, affected) => {
+  if (affected) activeConversationRegistry.clearWindow(affected.webContentsId);
+});
 
 export function registerChatUiIpc(deps: ChatUiIpcDependencies): void {
   const { live2dWindowLifecycle } = deps;
@@ -251,10 +256,12 @@ export function registerChatUiIpc(deps: ChatUiIpcDependencies): void {
     let activeSessionId: string | null = null;
     if (payload == null) {
       activeChatTargetRegistry.clearActive(event.sender);
+      activeConversationRegistry.clearWindow(event.sender.id);
     } else {
       const parsed = parseActiveTargetPayload(payload);
       if (parsed) {
         activeChatTargetRegistry.setActive({ sender: event.sender, ...parsed });
+        activeConversationRegistry.set(event.sender.id, parsed.sessionId, parsed.mode);
         activeSessionId = parsed.sessionId;
       }
     }

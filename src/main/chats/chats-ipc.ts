@@ -14,7 +14,6 @@
 // 由 src/main/index.ts 自行注册，不在本模块；本模块只管纯数据操作。
 
 import { app, BrowserWindow, type WebContents, dialog, shell } from "electron";
-import { randomUUID } from "crypto";
 import { IPC } from "../../shared/ipc-channels";
 import { createIpcScope, type IpcScope } from "../application/ipc-scope";
 import type { ChatMessage, ConversationMode, ConversationWorkspaceBinding } from "../../shared/chat-types";
@@ -29,12 +28,10 @@ import { getConversationTranscriptStore } from "../orchestrator/conversation-tra
 import { ConversationJournalService } from "../orchestrator/conversation-journal-service";
 import { ConversationSessionMigration } from "../orchestrator/conversation-session-migration";
 import { getRunReviewTracker } from "../orchestrator/review/run-review-tracker";
-import { getAdapterForConfig } from "../orchestrator/vendors";
 import { activeChatTargetRegistry } from "../plugin-host/active-chat-target";
-import { callSummarizeModel } from "../orchestrator/context-manager";
-import { buildContextUsageSnapshot } from "../orchestrator/context-usage";
 import type { LlmClient } from "../services/llm/llm-client";
 import { enqueueLLMTask } from "../llm-queue";
+import type { TranscriptPresentationPatch } from "../orchestrator/conversation-transcript-types";
 import {
   createConversationTitleService,
   type ConversationTitleService,
@@ -52,13 +49,6 @@ function broadcastChanged(senderWebContents?: WebContents | null): void {
     }
   }
 }
-
-/** 主动压缩的模型窗口大小：与渲染层 ChatPage 每轮 run 的 slice(-16) 保持一致。 */
-const COMPACT_MODEL_WINDOW = 16;
-/** 主动压缩保留的最近消息条数（约 3 轮对话），其余窗口内消息摘要成一条记忆。 */
-const COMPACT_KEEP_RECENT = 6;
-/** 并发保护：同一会话压缩进行中时拒绝重复触发。 */
-const compactingSessions = new Set<string>();
 
 function visibleUserText(content: string): string {
   return content.replace(/\[sticker:[^\]]+\]/gi, "").trim();
@@ -134,182 +124,42 @@ export function registerChatsIpc(
     },
   );
 
+  const retiredMessageStore = () => ({ ok: false as const, error: "chat-message-store-retired" as const });
+  ipc.handle(IPC.CHATS_APPEND, retiredMessageStore);
+  ipc.handle(IPC.CHATS_UPSERT, retiredMessageStore);
+  ipc.handle(IPC.CHATS_SET_MESSAGE_TTS_CACHE, retiredMessageStore);
+  ipc.handle(IPC.CHATS_REPLACE_MESSAGES, retiredMessageStore);
+  ipc.handle(IPC.CHATS_REPLACE_TAIL, retiredMessageStore);
+
   ipc.handle(
-    IPC.CHATS_APPEND,
-    (event, payload: { id: string; message: ChatMessage }) => {
-      if (!payload || !payload.id || !payload.message) return null;
-      const session = chatsStore.appendMessage(payload.id, payload.message);
-      if (session) {
-        broadcastChanged(event.sender);
-        if (payload.message.role === "user") {
-          titleService?.schedule({
-            sessionId: payload.id,
-            userMessageId: payload.message.id,
-            text: visibleUserText(payload.message.content),
-          });
-        }
+    IPC.CTA_PRESENTATION_CHECKPOINT,
+    async (_event, payload: {
+      sessionId?: unknown;
+      messageId?: unknown;
+      patchRevision?: unknown;
+      patch?: unknown;
+    }) => {
+      if (
+        typeof payload?.sessionId !== "string" || !payload.sessionId
+        || typeof payload.messageId !== "string" || !payload.messageId
+        || !Number.isInteger(payload.patchRevision) || (payload.patchRevision as number) < 1
+        || !payload.patch || typeof payload.patch !== "object" || Array.isArray(payload.patch)
+      ) {
+        return { ok: false as const, error: "invalid-payload" as const };
       }
-      return session;
-    },
-  );
-
-  ipc.handle(
-    IPC.CHATS_UPSERT,
-    (event, payload: { id: string; message: ChatMessage } | null | undefined) => {
-      if (!payload?.id || !payload.message) return null;
-      const session = chatsStore.upsertMessage(payload.id, payload.message);
-      if (session) broadcastChanged(event.sender);
-      return session;
-    },
-  );
-
-  ipc.handle(
-    IPC.CHATS_SET_MESSAGE_TTS_CACHE,
-    (event, payload: { id: string; messageId: string; cacheKey: string; converterVersion: string }) => {
-      if (!payload?.id || !payload.messageId || !payload.cacheKey || !payload.converterVersion) return null;
-      const session = chatsStore.setMessageTtsCacheKey(
-        payload.id,
+      await conversationJournal.appendPresentation(
+        payload.sessionId,
         payload.messageId,
-        payload.cacheKey,
-        payload.converterVersion,
+        payload.patchRevision as number,
+        payload.patch as TranscriptPresentationPatch,
       );
-      if (session) broadcastChanged(event.sender);
-      return session;
+      return { ok: true as const };
     },
   );
 
-  ipc.handle(
-    IPC.CHATS_REPLACE_MESSAGES,
-    (event, payload: { id: string; messages: ChatMessage[] }) => {
-      if (!payload || !payload.id || !Array.isArray(payload.messages)) return null;
-      const session = chatsStore.replaceMessages(payload.id, payload.messages);
-      if (session) broadcastChanged(event.sender);
-      return session;
-    },
-  );
-  ipc.handle(
-    IPC.CHATS_REPLACE_TAIL,
-    (event, payload: { id: string; startIndex: number; messages: ChatMessage[] }) => {
-      if (!payload?.id || !Array.isArray(payload.messages)) return null;
-      const session = chatsStore.replaceMessagesTail(payload.id, payload.startIndex, payload.messages);
-      if (session) broadcastChanged(event.sender);
-      return session;
-    },
-  );
-
-  // ── 主动压缩：上下文容量菜单小人点击触发 ──────────────
-  // 口径与渲染层每轮 run 的 slice(-16) 模型窗口对齐：窗口外是纯 UI 历史
-  // （不进模型上下文，原样保留）；窗口内保留最近 COMPACT_KEEP 条，其余
-  // 摘要成一条记忆消息（与 Chat 模式循环内自动压缩同格式，下一轮 run
-  // normalize 后作为 assistant 消息进入模型上下文）。
-  ipc.handle(
-    IPC.CHATS_COMPACT,
-    async (_event, payload: { sessionId?: unknown }) => {
-      const sessionId = payload && typeof payload === "object"
-        ? (payload as { sessionId?: unknown }).sessionId
-        : undefined;
-      if (typeof sessionId !== "string" || !sessionId) {
-        return { ok: false, error: "missing sessionId" };
-      }
-      if (compactingSessions.has(sessionId)) {
-        return { ok: false, error: "正在压缩，请稍候" };
-      }
-      const session = chatsStore.getSession(sessionId);
-      if (!session) return { ok: false, error: "会话不存在" };
-
-      const windowMessages = session.messages.slice(-COMPACT_MODEL_WINDOW);
-      const keepMessages = windowMessages.slice(-COMPACT_KEEP_RECENT);
-      const oldMessages = windowMessages.slice(0, -COMPACT_KEEP_RECENT);
-      if (oldMessages.length === 0) {
-        return { ok: false, error: "对话还很短，不需要压缩" };
-      }
-
-      // UI 消息 → 模型消息（与 normalizeChatMessages 同口径：model→assistant，空内容丢弃）。
-      const history = oldMessages
-        .filter((message) => typeof message.content === "string" && message.content.trim())
-        .map((message) => ({
-          role: message.role === "user" ? ("user" as const) : ("assistant" as const),
-          content: message.content,
-        }));
-      if (history.length === 0) {
-        return { ok: false, error: "对话还很短，不需要压缩" };
-      }
-
-      compactingSessions.add(sessionId);
-      try {
-        const base = loadModelSettings();
-        const settings = session.modelProfileId
-          ? resolveModelSettingsProfile(base, session.modelProfileId)
-          : base;
-        if (!settings.baseUrl) {
-          return { ok: false, error: "还没有填写 API URL，请先在设置里保存 API 配置。" };
-        }
-        const adapter = getAdapterForConfig({
-          provider: settings.provider,
-          baseUrl: settings.baseUrl,
-          model: settings.model,
-          apiKey: settings.apiKey,
-          ...(settings.explicitTransport ? { explicitTransport: settings.explicitTransport } : {}),
-          ...(settings.reasoning ? { reasoning: settings.reasoning } : {}),
-        });
-
-        // 摘要失败直接报错返回，绝不落库、不动原消息（历史安全优先）。
-        const summary = await callSummarizeModel(history, adapter, settings);
-        const summaryMessage: ChatMessage = {
-          id: `compact-${randomUUID().slice(0, 8)}`,
-          role: "model",
-          content: `[此前对话已压缩为记忆摘要]\n${summary}`,
-          at: Date.now(),
-        };
-
-        const head = session.messages.slice(0, session.messages.length - COMPACT_MODEL_WINDOW);
-        const nextMessages = [...head, summaryMessage, ...keepMessages];
-        const updated = chatsStore.replaceMessages(sessionId, nextMessages);
-        if (!updated) return { ok: false, error: "会话不存在" };
-
-        // 压缩成功后写 session 级上下文快照，环形图立即可见压缩效果
-        // （known-issues 问题 3：手动压缩不产生 run，没有 preRequest 快照）。
-        // 非 conversation 桶（systemPrompt/tools/skills 等）压缩前后不变，
-        // 从最近一条消息级快照继承；conversation 桶按压缩后消息重算。
-        const lastSnapshot = session.messages.filter((message) => message.contextUsage).pop()?.contextUsage;
-        const compactModelMessages = nextMessages
-          .filter((message) => typeof message.content === "string" && message.content.trim())
-          .map((message) => ({
-            role: message.role === "user" ? ("user" as const) : ("assistant" as const),
-            content: message.content as string,
-          }));
-        const snapshot = buildContextUsageSnapshot({
-          phase: "terminal",
-          contextWindowTokens: lastSnapshot?.contextWindowTokens
-            ?? settings.contextWindowTokens
-            ?? 256000,
-          personaContent: "",
-          messages: compactModelMessages as never,
-        });
-        if (lastSnapshot) {
-          snapshot.categories = snapshot.categories.map((category) => (
-            category.key === "conversation" || category.key === "toolDefinitions"
-              ? category
-              : {
-                  key: category.key,
-                  tokens: lastSnapshot.categories.find((item) => item.key === category.key)?.tokens ?? 0,
-                }
-          ));
-          snapshot.totalTokens = snapshot.categories.reduce((sum, category) => sum + category.tokens, 0);
-        }
-        chatsStore.setSessionContextUsage(sessionId, snapshot);
-
-        // 压缩结果由主进程改写，发起窗口并不知情；必须广播给所有窗口
-        // （含 sender）触发聊天窗口重载，不能走跳过 sender 的来源隔离。
-        broadcastChanged();
-        return { ok: true, before: session.messages.length, after: nextMessages.length };
-      } catch (err) {
-        return { ok: false, error: err instanceof Error ? err.message : String(err) };
-      } finally {
-        compactingSessions.delete(sessionId);
-      }
-    },
-  );
+  // Manual compaction is owned by the transcript compactor in Task 8. Keep
+  // the old entrypoint explicit and fail closed during this ownership cutover.
+  ipc.handle(IPC.CHATS_COMPACT, () => ({ ok: false, error: "chat-message-store-retired" }));
 
   ipc.handle(
     IPC.CHATS_RENAME,

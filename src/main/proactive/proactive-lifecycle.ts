@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import { powerMonitor } from "electron";
 import * as chatsStore from "../chats/chats-store";
 import { broadcastChatsChanged } from "../chats/chats-ipc";
+import type { ConversationJournalService } from "../orchestrator/conversation-journal-service";
 import { setChannelsConversationLifecycle } from "../channels/init";
 import { channelManager } from "../channels/manager";
 import {
@@ -30,6 +31,7 @@ import type { ProactiveCandidate, ProactiveRuntimeSnapshot } from "./proactive-t
 
 export interface ProactiveLifecycleOptions {
   loadGeneralSettings: () => GeneralSettings;
+  conversationJournal: ConversationJournalService;
 }
 
 export interface ProactiveLifecycle {
@@ -48,6 +50,7 @@ export function createProactiveLifecycle(options: ProactiveLifecycleOptions): Pr
   let proactiveChatService: ProactiveChatService | null = null;
   let proactiveTrigger: ProactiveTriggerController | null = null;
   const proactiveBackoffMap = new Map<string, number>();
+  const conversationJournal = options.conversationJournal;
   let normalConversationBusyCount = 0;
   let proactiveScreenLocked = false;
 
@@ -76,13 +79,17 @@ export function createProactiveLifecycle(options: ProactiveLifecycleOptions): Pr
       .map((message) => ({ role: message.role, content: message.content, at: message.at }));
   }
 
-  function getProactiveHistories(): { ordinary: ProactiveHistoryTurn[]; proactive: ProactiveHistoryTurn[] } {
+  async function getProactiveHistories(): Promise<{ ordinary: ProactiveHistoryTurn[]; proactive: ProactiveHistoryTurn[] }> {
     const ordinaryMeta = chatsStore.listSessions().find((session) => session.purpose !== "proactive-chat");
-    const ordinarySession = ordinaryMeta ? chatsStore.getSession(ordinaryMeta.id) : null;
-    const proactiveSession = chatsStore.getSessionByPurpose("proactive-chat");
+    const [ordinaryProjection, proactiveProjection] = await Promise.all([
+      ordinaryMeta ? conversationJournal.readProjection(ordinaryMeta.id) : Promise.resolve(null),
+      (chatsStore.listSessions().find((session) => session.purpose === "proactive-chat")
+        ? conversationJournal.readProjection(chatsStore.listSessions().find((session) => session.purpose === "proactive-chat")!.id)
+        : Promise.resolve(null)),
+    ]);
     return {
-      ordinary: toProactiveHistory(ordinarySession?.messages ?? []),
-      proactive: toProactiveHistory(proactiveSession?.messages ?? []),
+      ordinary: toProactiveHistory(ordinaryProjection?.messages ?? []),
+      proactive: toProactiveHistory(proactiveProjection?.messages ?? []),
     };
   }
 
@@ -102,7 +109,7 @@ export function createProactiveLifecycle(options: ProactiveLifecycleOptions): Pr
   }
 
   async function buildProactiveAgentMessages(candidate: ProactiveCandidate) {
-    const histories = getProactiveHistories();
+    const histories = await getProactiveHistories();
     const recentTopic = histories.ordinary.slice(-4).map((turn) => turn.content).join("\n");
     const retrievalQuery = `${candidate.sceneId}\n${recentTopic}`.trim();
     const [profileContext, memoryContext] = await Promise.all([
@@ -167,19 +174,26 @@ export function createProactiveLifecycle(options: ProactiveLifecycleOptions): Pr
       title: "昔涟的主动消息",
       identityId: null,
     });
-    const at = Date.now();
-    const appended = chatsStore.appendMessage(session.id, {
-      id: randomUUID(),
-      role: "model",
-      content: input.text,
-      at,
-    });
-    if (!appended) throw new Error("主动聊天会话写入失败");
+    const runId = `proactive:${randomUUID()}`;
+    const sink = conversationJournal.createRunSink({ conversationId: session.id, runId });
+    try {
+      await sink.appendAssistant({
+        message: { role: "assistant", content: input.text },
+        roundId: "proactive",
+      });
+      await sink.checkpoint();
+    } catch (error) {
+      try {
+        await sink.closeInterruption({ reason: "user_cancel", runSession: null });
+      } catch (closureError) {
+        console.error("[Proactive] failed to close journal after persistence error", closureError);
+      }
+      throw error;
+    }
     broadcastChatsChanged();
 
     // 文本已落库；上次落库后没有 panel/show 步骤要做（opener 气泡已被移除，fallback 路径没有了）。
     void input;
-    void at;
     return { kind: "committed" };
   }
 

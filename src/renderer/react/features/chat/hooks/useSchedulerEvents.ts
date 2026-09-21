@@ -26,6 +26,7 @@ interface SchedulerStreamEvent {
   toolCallDisplayName?: string;
   schedulerRunId?: string;
   schedulerTaskId?: string;
+  conversationId?: string;
   runId?: string;
   threadId?: string;
 }
@@ -47,12 +48,9 @@ interface SchedulerStreamState {
 }
 
 export interface UseSchedulerEventsDeps {
-  /** 触发时刻取"当前激活会话"作为消息归属；无激活会话时本轮不展示。 */
-  getActiveSessionId: () => string | undefined;
+  /** 主进程在 scheduler started 时冻结的会话归属。 */
   appendMessages: (sessionId: string, items: ChatMessageItem[]) => void;
   patchMessage: (sessionId: string, id: string, patch: Partial<ChatMessageItem>) => void;
-  /** 终态落库通道（chatStore.append）；缺省只做渲染态展示。 */
-  persistMessage?: (sessionId: string, message: ChatMessage) => void;
 }
 
 /** preload 暴露的 schedulerEvents 全局对象。 */
@@ -93,13 +91,6 @@ export function useSchedulerEvents(deps: UseSchedulerEventsDeps): void {
         waitingForFirstEvent: false,
         responseStarted: true,
       });
-      depsRef.current.persistMessage?.(sessionId, {
-        id: replyId,
-        role: "model",
-        content: finalContent,
-        toolExecutions: state.tools?.length ? state.tools : undefined,
-        at: Date.now(),
-      });
     };
 
     const off = api.onEvent((rawEvent) => {
@@ -110,7 +101,7 @@ export function useSchedulerEvents(deps: UseSchedulerEventsDeps): void {
         const value = startedValue(event);
         const runKey = event.schedulerRunId ?? value?.runId ?? `scheduler-${Date.now()}`;
         if (streamsRef.current.has(runKey)) return;
-        const sessionId = depsRef.current.getActiveSessionId() ?? null;
+        const sessionId = event.conversationId ?? null;
         const replyId = `scheduler-reply-${runKey}`;
         const noticeId = `scheduler-notice-${runKey}`;
         const title = value?.title ?? "未命名任务";
@@ -128,12 +119,6 @@ export function useSchedulerEvents(deps: UseSchedulerEventsDeps): void {
             responseStarted: false,
           },
         ]);
-        depsRef.current.persistMessage?.(sessionId, {
-          id: noticeId,
-          role: "model",
-          content: `定时任务「${title}」已触发`,
-          at: Date.now(),
-        });
         return;
       }
 
