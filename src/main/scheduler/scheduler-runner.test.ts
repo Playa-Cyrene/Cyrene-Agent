@@ -171,7 +171,7 @@ describe("createSchedulerRunner lifecycle events", () => {
 
     expect(journal.appendUser).toHaveBeenCalledWith("session-1", expect.objectContaining({ text: "整理资料" }));
     expect(journal.createRunSink).toHaveBeenCalledWith({ conversationId: "session-1", runId: "hist-1", assistantTurnId: "scheduler-reply-hist-1" });
-    expect(sink.checkpoint).toHaveBeenCalledTimes(1);
+    expect(sink.checkpoint).not.toHaveBeenCalled();
     expect(journal.appendPresentationNext).toHaveBeenCalledWith(
       "session-1",
       "scheduler-reply-hist-1",
@@ -213,11 +213,12 @@ describe("createSchedulerRunner lifecycle events", () => {
       appendAssistant: vi.fn(async () => "assistant-entry"),
       appendToolResult: vi.fn(async () => undefined),
       closeInterruption: vi.fn(async () => undefined),
+      getLastAssistantEntryId: vi.fn(() => "assistant-entry"),
     };
     const journal = {
       appendUser: vi.fn(async () => undefined),
       createRunSink: vi.fn(() => sink),
-      appendPresentationNext: vi.fn(async () => undefined),
+      appendPresentationNext: vi.fn(async () => { throw new Error("presentation refresh failed"); }),
     };
     const deps = makeRunnerDeps({
       conversationJournal: journal,
@@ -228,7 +229,36 @@ describe("createSchedulerRunner lifecycle events", () => {
     const result = await runner.runScheduledTask(makeTask(), new Date(), false);
 
     expect(result.ok).toBe(false);
+    expect(journal.appendPresentationNext).toHaveBeenCalledTimes(2);
     expect(sink.closeInterruption).not.toHaveBeenCalled();
+  });
+
+  it("retries a refresh failure with the exact presentation mutation", async () => {
+    const sink = {
+      appendAssistant: vi.fn(async () => "assistant-entry"),
+      appendToolResult: vi.fn(async () => undefined),
+      closeInterruption: vi.fn(async () => undefined),
+      getLastAssistantEntryId: vi.fn(() => "assistant-entry"),
+    };
+    const appendPresentationNext = vi.fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("projection refresh failed"))
+      .mockResolvedValueOnce(undefined);
+    const journal = {
+      appendUser: vi.fn(async () => undefined),
+      createRunSink: vi.fn(() => sink),
+      appendPresentationNext,
+    };
+    const deps = makeRunnerDeps({
+      conversationJournal: journal,
+      getActiveConversation: () => ({ sessionId: "session-1", mode: "work" }),
+    });
+
+    const result = await createSchedulerRunner(deps as never).runScheduledTask(makeTask(), new Date(), false);
+
+    expect(result.ok).toBe(true);
+    expect(appendPresentationNext).toHaveBeenCalledTimes(3);
+    expect(appendPresentationNext.mock.calls[1]).toEqual(appendPresentationNext.mock.calls[2]);
   });
 
   it("成功执行发布 started/finished/scheduler:finished 且不伪造 conversationId", async () => {
@@ -237,7 +267,8 @@ describe("createSchedulerRunner lifecycle events", () => {
       publishTurnFinished: vi.fn(),
       publishSchedulerFinished: vi.fn(),
     };
-    const deps = makeRunnerDeps({ publishLifecycle });
+    const send = vi.fn();
+    const deps = makeRunnerDeps({ publishLifecycle, getChatWebContents: () => ({ isDestroyed: () => false, send } as never) });
     const runner = createSchedulerRunner(deps as never);
     const result = await runner.runScheduledTask(makeTask(), new Date(), false);
 
@@ -276,7 +307,8 @@ describe("createSchedulerRunner lifecycle events", () => {
       publishTurnFinished: vi.fn(),
       publishSchedulerFinished: vi.fn(),
     };
-    const deps = makeRunnerDeps({ publishLifecycle });
+    const send = vi.fn();
+    const deps = makeRunnerDeps({ publishLifecycle, getChatWebContents: () => ({ isDestroyed: () => false, send } as never) });
     const runner = createSchedulerRunner(deps as never);
     await runner.runScheduledTask(makeTask({ mode: "chat" }), new Date(), false);
 
@@ -296,9 +328,14 @@ describe("createSchedulerRunner lifecycle events", () => {
       publishTurnFinished: vi.fn(),
       publishSchedulerFinished: vi.fn(),
     };
-    const deps = makeRunnerDeps({ publishLifecycle });
+    const send = vi.fn();
+    const deps = makeRunnerDeps({ publishLifecycle, getChatWebContents: () => ({ isDestroyed: () => false, send } as never) });
     const runner = createSchedulerRunner(deps as never);
-    await runner.runScheduledTask(makeTask(), new Date(), false);
+    const result = await runner.runScheduledTask(makeTask(), new Date(), false);
+
+    expect(result.ok).toBe(false);
+    const events = (publishLifecycle.publishTurnFinished.mock.invocationCallOrder as number[]);
+    expect(events.length).toBe(1);
 
     expect(publishLifecycle.publishTurnFinished).toHaveBeenCalledWith(
       expect.objectContaining({ status: "timeout" }),
@@ -306,6 +343,51 @@ describe("createSchedulerRunner lifecycle events", () => {
     expect(publishLifecycle.publishSchedulerFinished).toHaveBeenCalledWith(
       expect.objectContaining({ status: "timeout" }),
     );
+    const terminalEvents = send.mock.calls.map((call) => call[1] as Record<string, unknown>);
+    expect(terminalEvents.filter((event) => event.type === "RUN_FINISHED")).toHaveLength(0);
+    expect(terminalEvents.filter((event) => event.type === "RUN_ERROR")).toHaveLength(1);
+    expect(terminalEvents.find((event) => event.type === "RUN_ERROR")).toMatchObject({ status: "timeout", reason: "timeout" });
+  });
+
+  it("tool-only runs persist and stream the same deterministic display reply", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "cta-scheduler-tool-only-"));
+    try {
+      runnerMocks.agentResult = { reply: "", terminal: undefined };
+      const journal = new ConversationJournalService(new ConversationTranscriptStore(root, { now: () => 1_000 }));
+      const send = vi.fn();
+      const deps = makeRunnerDeps({
+        conversationJournal: journal,
+        getActiveConversation: () => ({ sessionId: "session-tool-only", mode: "work" }),
+        getChatWebContents: () => ({ isDestroyed: () => false, send } as never),
+      });
+      const result = await createSchedulerRunner(deps as never).runScheduledTask(makeTask(), new Date(), false);
+      expect(result).toMatchObject({ ok: true, reply: "disk_usage：完成" });
+      const projection = await journal.readProjection("session-tool-only");
+      expect(projection.messages).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: "scheduler-reply-hist-1", content: "disk_usage：完成", toolExecutions: [expect.objectContaining({ id: "tool-1" })] }),
+      ]));
+      expect(send).toHaveBeenCalledWith("scheduler:event", expect.objectContaining({ type: "RUN_FINISHED", content: "disk_usage：完成", messageId: "scheduler-reply-hist-1" }));
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("history failure leaves the stream open for one RUN_ERROR and never sends RUN_FINISHED", async () => {
+    const send = vi.fn();
+    let historyCalls = 0;
+    const deps = makeRunnerDeps({
+      getChatWebContents: () => ({ isDestroyed: () => false, send } as never),
+      recordHistory: vi.fn(() => {
+        historyCalls += 1;
+        if (historyCalls > 1) throw new Error("history unavailable");
+      }),
+    });
+    const result = await createSchedulerRunner(deps as never).runScheduledTask(makeTask(), new Date(), false);
+    expect(result.ok).toBe(false);
+    const events = send.mock.calls.map((call) => call[1] as Record<string, unknown>);
+    expect(events.filter((event) => event.type === "RUN_FINISHED")).toHaveLength(0);
+    expect(events.filter((event) => event.type === "RUN_ERROR")).toHaveLength(1);
+    expect(events.find((event) => event.type === "RUN_ERROR")).toMatchObject({ reason: "runtime_error" });
   });
 
   it("执行抛错时发布 runtime_error 终态事件", async () => {

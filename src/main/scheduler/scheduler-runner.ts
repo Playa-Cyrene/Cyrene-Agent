@@ -33,6 +33,22 @@ interface RunnerDeps {
   getActiveConversation?: () => ActiveConversationSelection | null;
 }
 
+type SchedulerDisplayTool = {
+  name: string;
+  displayName?: string;
+  status: "running" | "success" | "error";
+};
+
+/** One deterministic display value is shared by the durable presentation and terminal event. */
+function resolveSchedulerDisplayReply(reply: string, tools: readonly SchedulerDisplayTool[]): string {
+  const trimmed = reply.trim();
+  if (trimmed) return trimmed;
+  const summary = tools
+    .map((tool) => `${tool.displayName ?? tool.name}：${tool.status === "error" ? "失败" : "完成"}`)
+    .join("\n");
+  return summary || "任务执行完毕。";
+}
+
 /**
  * 定时任务是无人值守的 Work Harness：不询问、不审批，直接执行已分配工具。
  * 会话模式来自任务冻结的 mode 字段（旧任务默认 work）；执行循环沿用现有
@@ -69,8 +85,9 @@ export function createSchedulerRunner(deps: RunnerDeps) {
       status: "running" | "success" | "error";
       result?: string;
     }> = [];
-    let deferredRunFinished: unknown;
+    let deferredRunFinished: Record<string, unknown> | undefined;
     let startedEventSent = false;
+    let failureEventSent = false;
 
     deps.recordHistory({
       id: historyId,
@@ -86,6 +103,91 @@ export function createSchedulerRunner(deps: RunnerDeps) {
       const wc = deps.getChatWebContents();
       if (!wc || wc.isDestroyed()) return;
       wc.send(IPC.SCHEDULER_EVENT, event);
+    };
+
+    const publishFailure = (finishedAt: Date, status: PluginTurnStatus, message: string, code?: string): void => {
+      if (failureEventSent) return;
+      failureEventSent = true;
+      const durationMs = finishedAt.getTime() - startedAt.getTime();
+      try {
+        deps.recordHistory({
+          id: historyId,
+          taskId: task.id,
+          taskTitle: task.title,
+          firedAt: startedAt.toISOString(),
+          finishedAt: finishedAt.toISOString(),
+          durationMs,
+          status: "failed",
+          reason: status,
+          errorMessage: message,
+          effectiveToolIds,
+        });
+      } catch {
+        // The UI error event remains the last-resort durable signal when history is unavailable.
+      }
+      try {
+        deps.publishLifecycle?.publishTurnFinished({
+          source: "scheduler",
+          runId: historyId,
+          mode: runMode,
+          taskId: task.id,
+          schedulerRunId: historyId,
+          status,
+          durationMs,
+          ...(conversationId ? { conversationId } : {}),
+        });
+        deps.publishLifecycle?.publishSchedulerFinished({
+          taskId: task.id,
+          schedulerRunId: historyId,
+          status,
+          durationMs,
+          ...(conversationId ? { conversationId } : {}),
+        });
+      } catch {
+        // A plugin subscriber must not prevent the renderer from receiving RUN_ERROR.
+      }
+      if (!startedEventSent) {
+        send({
+          type: "CUSTOM",
+          name: "scheduler.started",
+          schedulerRunId: historyId,
+          schedulerTaskId: task.id,
+          ...(conversationId ? { conversationId } : {}),
+          messageId: noticeId,
+          value: { taskId: task.id, title: task.title, manual, firedAt: startedAt.toISOString(), runId: historyId, noticeId, replyId, ...(conversationId ? { conversationId } : {}) },
+        });
+      }
+      send({
+        type: "RUN_ERROR",
+        message,
+        reason: status,
+        status,
+        ...(code ? { code } : {}),
+        threadId: `scheduler-${task.id}`,
+        runId: historyId,
+        schedulerRunId: historyId,
+        schedulerTaskId: task.id,
+        ...(conversationId ? { conversationId } : {}),
+      });
+    };
+
+    const appendPresentationWithRetry = async (
+      targetConversationId: string,
+      messageId: string,
+      mutationKey: string,
+      patch: Parameters<ConversationJournalService["appendPresentationNext"]>[3],
+    ): Promise<void> => {
+      let presentationError: unknown;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          await deps.conversationJournal!.appendPresentationNext(targetConversationId, messageId, mutationKey, patch);
+          presentationError = undefined;
+          break;
+        } catch (error) {
+          presentationError = error;
+        }
+      }
+      if (presentationError !== undefined) throw presentationError;
     };
 
     let transcriptSink: ReturnType<ConversationJournalService["createRunSink"]> | undefined;
@@ -126,7 +228,7 @@ export function createSchedulerRunner(deps: RunnerDeps) {
           text: task.prompt,
           runId: historyId,
         });
-        await deps.conversationJournal.appendPresentationNext(conversationId, noticeId, `scheduler:${historyId}:notice`, { content: noticeText });
+        await appendPresentationWithRetry(conversationId, noticeId, `scheduler:${historyId}:notice`, { content: noticeText });
       }
 
       send({
@@ -196,23 +298,26 @@ export function createSchedulerRunner(deps: RunnerDeps) {
       const durationMs = finishedAt.getTime() - startedAt.getTime();
       // Observable 在超时等非成功终态下也会正常 complete：事件状态以 agent 终态为准
       const status: PluginTurnStatus = agent.lastResult?.terminal?.status ?? "success";
+      const displayReply = resolveSchedulerDisplayReply(reply, schedulerToolExecutions);
       if (conversationId && transcriptSink) {
         const messageId = transcriptSink.getLastAssistantEntryId?.();
         if (messageId) {
-          await deps.conversationJournal!.appendPresentationNext(
-            conversationId,
-            replyId,
-            `scheduler:${historyId}:reply:${encodeURIComponent(reply)}`,
-            {
-              content: reply,
-              toolExecutions: schedulerToolExecutions,
-              runSnapshot: { runId: historyId, status: "terminal", updatedAt: Date.now() },
-            },
-          );
+          const presentationMutationKey = `scheduler:${historyId}:reply:${encodeURIComponent(displayReply)}`;
+          const presentationPatch = {
+            content: displayReply,
+            toolExecutions: schedulerToolExecutions,
+            runSnapshot: { runId: historyId, status: "terminal", terminalStatus: status, updatedAt: Date.now() },
+          } as const;
+          // A presentation append may have reached JSONL before its projection
+          // refresh failed. Retry the exact patch/key so the queue resolves the
+          // already-written mutation instead of splitting UI and durable state.
+          await appendPresentationWithRetry(conversationId, replyId, presentationMutationKey, presentationPatch);
         }
-        await transcriptSink.checkpoint();
       }
-      if (deferredRunFinished) send(deferredRunFinished);
+      if (status !== "success") {
+        publishFailure(finishedAt, status, `定时任务${status}终止`);
+        return { ok: false, historyId, error: status, effectiveToolIds };
+      }
       deps.recordHistory({
         id: historyId,
         taskId: task.id,
@@ -221,7 +326,7 @@ export function createSchedulerRunner(deps: RunnerDeps) {
         finishedAt: finishedAt.toISOString(),
         durationMs,
         status: status === "success" ? "success" : "failed",
-        outputPreview: reply.slice(0, 160),
+        outputPreview: displayReply.slice(0, 160),
         effectiveToolIds,
       });
       deps.publishLifecycle?.publishTurnFinished({
@@ -248,54 +353,16 @@ export function createSchedulerRunner(deps: RunnerDeps) {
           taskId: task.id,
           taskTitle: task.title,
           status,
-          outputPreview: reply.slice(0, 160),
+          outputPreview: displayReply.slice(0, 160),
         });
       }
-      return { ok: true, historyId, reply, effectiveToolIds };
+      if (deferredRunFinished) send({ ...deferredRunFinished, content: displayReply, message: displayReply });
+      return { ok: true, historyId, reply: displayReply, effectiveToolIds };
     } catch (err) {
       const finishedAt = deps.now();
       const message = err instanceof Error ? err.message : String(err);
-      const durationMs = finishedAt.getTime() - startedAt.getTime();
-      deps.publishLifecycle?.publishTurnFinished({
-        source: "scheduler",
-        runId: historyId,
-        mode: runMode,
-        taskId: task.id,
-        schedulerRunId: historyId,
-        status: "runtime_error",
-        durationMs,
-        ...(conversationId ? { conversationId } : {}),
-      });
-      deps.publishLifecycle?.publishSchedulerFinished({
-        taskId: task.id,
-        schedulerRunId: historyId,
-        status: "runtime_error",
-        durationMs,
-        ...(conversationId ? { conversationId } : {}),
-      });
-      deps.recordHistory({
-        id: historyId,
-        taskId: task.id,
-        taskTitle: task.title,
-        firedAt: startedAt.toISOString(),
-        finishedAt: finishedAt.toISOString(),
-        durationMs: finishedAt.getTime() - startedAt.getTime(),
-        status: "failed",
-        errorMessage: message,
-        effectiveToolIds,
-      });
-      if (!startedEventSent) {
-        send({
-          type: "CUSTOM",
-          name: "scheduler.started",
-          schedulerRunId: historyId,
-          schedulerTaskId: task.id,
-          ...(conversationId ? { conversationId } : {}),
-          messageId: noticeId,
-          value: { taskId: task.id, title: task.title, manual, firedAt: startedAt.toISOString(), runId: historyId, noticeId, replyId, ...(conversationId ? { conversationId } : {}) },
-        });
-      }
-      send({ type: "RUN_ERROR", message, code: err instanceof AgentRuntimeError ? err.code : undefined, threadId: `scheduler-${task.id}`, runId: historyId, schedulerRunId: historyId, schedulerTaskId: task.id, ...(conversationId ? { conversationId } : {}) });
+      const errorCode = err instanceof AgentRuntimeError ? err.code : undefined;
+      publishFailure(finishedAt, "runtime_error", message, errorCode);
       return { ok: false, historyId, error: message, effectiveToolIds };
     }
   }

@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { createDefaultProactiveState, FOLLOWUP_INTERVAL_MS } from "./proactive-policy";
 import { createProactiveChatService } from "./proactive-service";
 import type { ProactiveCandidate, ProactiveRuntimeSnapshot } from "./proactive-types";
+import { ConversationJournalService } from "../orchestrator/conversation-journal-service";
+import { ConversationTranscriptStore } from "../orchestrator/conversation-transcript-store";
 
 const NOW = Date.UTC(2026, 6, 13, 6);
 const candidate: ProactiveCandidate = { sceneId: "work_break", score: 90, sceneCooldownMs: 0 };
@@ -114,6 +119,98 @@ describe("proactive chat service", () => {
       generationEpoch: 0,
       intentAt: NOW,
     }));
+  });
+
+  it("persists one intent before delivery and replays its first payload after a refresh failure", async () => {
+    let first = true;
+    const commitMessage = vi.fn(async (input: { text: string; intentAt?: number; generationEpoch: number }) => {
+      if (first) {
+        first = false;
+        throw new Error("snapshot refresh failed");
+      }
+      return { kind: "committed" as const, input };
+    });
+    const ctx = setup({ commitMessage });
+    await expect(ctx.service.evaluateCandidate(candidate)).rejects.toThrow("snapshot refresh failed");
+    expect(ctx.state.pendingCommitIntent).toMatchObject({
+      intentId: "proactive-intent-1",
+      sequence: 1,
+      candidate,
+      generationEpoch: 0,
+      intentAt: NOW,
+      text: "休息一下吧♪",
+      source: "model",
+    });
+
+    ctx.setSnapshot({ now: NOW + 123_456 });
+    await ctx.service.evaluateCandidate({ ...candidate, score: 1 });
+    expect(ctx.runModel).toHaveBeenCalledOnce();
+    expect(commitMessage).toHaveBeenCalledTimes(2);
+    expect(commitMessage.mock.calls[1][0]).toMatchObject({
+      candidate,
+      text: "休息一下吧♪",
+      generationEpoch: 0,
+      intentAt: NOW,
+    });
+    expect(ctx.state.pendingCommitIntent).toBeUndefined();
+    expect(ctx.state.proactiveCommitSequence).toBe(1);
+  });
+
+  it("allocates a fresh intent identity for a later same-scene trigger", async () => {
+    const ctx = setup();
+    await ctx.service.evaluateCandidate(candidate);
+    ctx.state.unansweredCount = 0;
+    ctx.state.lastProactiveAt = NOW - 8 * 60 * 60 * 1000;
+    ctx.state.lastFiredAt[candidate.sceneId] = NOW - 8 * 60 * 60 * 1000;
+    await ctx.service.evaluateCandidate(candidate);
+    expect(ctx.commitMessage).toHaveBeenCalledTimes(2);
+    expect(ctx.state.proactiveCommitSequence).toBe(2);
+    expect(ctx.state.pendingCommitIntent).toBeUndefined();
+    expect(ctx.commitMessage.mock.calls.map((call) => (call[0] as { intentAt?: number }).intentAt)).toEqual([NOW, NOW]);
+  });
+
+  it("retries one real canonical assistant and presentation after refresh failure", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "cta-proactive-journal-"));
+    try {
+      const store = new ConversationTranscriptStore(root, { now: () => 1_000 });
+      const journal = new ConversationJournalService(store);
+      const state = createDefaultProactiveState();
+      let now = NOW;
+      let generatedText = "首次文本";
+      const refresh = vi.spyOn(journal as unknown as { refreshProjection: (id: string) => Promise<unknown> }, "refreshProjection");
+      refresh.mockRejectedValueOnce(new Error("refresh failed"));
+      const service = createProactiveChatService({
+        loadState: () => state,
+        saveState: () => undefined,
+        getSnapshot: () => ({ now, localHour: 14, idleSec: 0, enabled: true, conversationBusy: false, generationBusy: false, screenLocked: false }),
+        buildMessages: async () => [],
+        runModel: async () => ({ kind: "send" as const, text: generatedText }),
+        getFallback: async () => null,
+        commitMessage: async (input) => {
+          const sink = journal.createRunSink({ conversationId: "proactive-session", runId: input.intentId });
+          const assistantId = await sink.appendAssistant({ message: { role: "assistant", content: input.text }, roundId: "proactive" });
+          await journal.appendPresentationNext("proactive-session", assistantId, `${input.intentId}:presentation`, {
+            content: input.text,
+            runSnapshot: { runId: input.intentId, status: "terminal", updatedAt: input.intentAt ?? 0 },
+          });
+          await sink.checkpoint();
+          return { kind: "committed" as const };
+        },
+      });
+
+      await expect(service.evaluateCandidate(candidate)).rejects.toThrow("refresh failed");
+      expect(state.pendingCommitIntent?.intentId).toBe("proactive-intent-1");
+      generatedText = "第二次模型文本";
+      now += 999_999;
+      await service.evaluateCandidate({ ...candidate, score: 1 });
+      const snapshot = await store.read("proactive-session");
+      expect(snapshot.entries.filter((entry) => entry.kind === "assistant")).toHaveLength(1);
+      expect(snapshot.entries.filter((entry) => entry.kind === "presentation_patch")).toHaveLength(1);
+      expect((await journal.readProjection("proactive-session")).messages[0]).toMatchObject({ content: "首次文本" });
+      expect(state.pendingCommitIntent).toBeUndefined();
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("does not call the model when the selected delivery destination is unavailable", async () => {

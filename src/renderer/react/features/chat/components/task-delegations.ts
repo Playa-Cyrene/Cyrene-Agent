@@ -33,7 +33,14 @@ export function applyTaskDelegationEvent(
 ): TaskDelegationDisplayRecord[] {
   const index = records.findIndex((record) => record.invocationId === event.invocationId);
   if (index < 0) return [...records, { ...event, ...(roundId !== undefined ? { roundId } : {}) }];
-  return records.map((record, recordIndex) => recordIndex === index
-    ? { ...record, ...event, roundId: record.roundId ?? roundId }
-    : record);
+  return records.map((record, recordIndex) => {
+    if (recordIndex !== index) return record;
+    const { roundId: existingRoundId, ...recordWithoutRound } = record;
+    const nextRoundId = existingRoundId ?? roundId;
+    return {
+      ...recordWithoutRound,
+      ...event,
+      ...(nextRoundId !== undefined ? { roundId: nextRoundId } : {}),
+    };
+  });
 }

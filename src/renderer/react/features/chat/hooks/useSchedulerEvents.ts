@@ -185,10 +185,8 @@ export function useSchedulerEvents(deps: UseSchedulerEventsDeps): void {
           return;
         }
         case "RUN_FINISHED": {
-          // 兜底摘要行优先用中文展示名，缺失回退英文 ID
-          const finalContent = state.content
-            || state.tools?.map((tool) => `${tool.displayName ?? tool.name}：${tool.status === "error" ? "失败" : "完成"}`).join("\n")
-            || "任务执行完毕。";
+          // Main owns the deterministic display reply; local state is only a fallback for old events.
+          const finalContent = event.content ?? state.content;
           finishStream(state, finalContent);
           streamsRef.current.delete(runKey);
           return;

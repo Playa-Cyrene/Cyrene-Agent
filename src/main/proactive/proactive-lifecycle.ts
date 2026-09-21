@@ -175,7 +175,7 @@ export function createProactiveLifecycle(options: ProactiveLifecycleOptions): Pr
     });
     // Stable business identity makes a retry after a derived snapshot failure
     // resolve the same canonical assistant entry instead of duplicating it.
-    const commitKey = `proactive:${input.candidate.sceneId}:epoch:${input.generationEpoch}`;
+    const commitKey = input.intentId;
     const runId = commitKey;
     const intentAt = input.intentAt ?? 0;
     const sink = conversationJournal.createRunSink({ conversationId: session.id, runId });
@@ -209,6 +209,7 @@ export function createProactiveLifecycle(options: ProactiveLifecycleOptions): Pr
       commitChannel: async (channel) => {
         const channelResult = await sendProactiveChannelMessage({
           channel,
+          intentId: input.intentId,
           text: input.text,
           mobileMessageSegmentation: settings.mobileMessageSegmentation,
           manager: channelManager,

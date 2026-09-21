@@ -64,6 +64,7 @@ export type ProactiveChannelDeliveryResult =
 
 interface ProactiveChannelDeliveryInput {
   channel: ProactiveMobileChannel;
+  intentId?: string;
   text: string;
   mobileMessageSegmentation: MobileMessageSegmentationMode;
   manager: Pick<ChannelManager, "getAdapter">;
@@ -96,6 +97,7 @@ export async function sendProactiveChannelMessage(
     if (adapter.getStatus().phase !== "running") break;
     const message: OutgoingMessage = {
       channel: input.channel,
+      ...(input.intentId ? { idempotencyKey: input.intentId } : {}),
       targetId: recipient.targetId,
       ...(recipient.threadId ? { threadId: recipient.threadId } : {}),
       parts: [{ kind: "text", text }],

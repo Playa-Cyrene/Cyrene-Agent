@@ -8,7 +8,7 @@ import {
   markUserActivity,
 } from "./proactive-policy";
 import type { ProactiveModelResult } from "./proactive-model";
-import type { ProactiveCandidate, ProactiveRuntimeSnapshot, ProactiveState } from "./proactive-types";
+import type { ProactiveCandidate, ProactiveCommitIntent, ProactiveRuntimeSnapshot, ProactiveState } from "./proactive-types";
 
 export interface ProactiveFallback {
   text: string;
@@ -16,6 +16,8 @@ export interface ProactiveFallback {
 }
 
 export interface ProactiveCommitInput {
+  /** Durable delivery identity shared by local and channel adapters. */
+  intentId: string;
   candidate: ProactiveCandidate;
   text: string;
   source: "model" | "fallback";
@@ -59,11 +61,85 @@ export function createProactiveChatService(deps: ProactiveChatServiceDeps): Proa
     deps.saveState(state);
   };
 
+  const clearPendingIntent = (state: ProactiveState, intentId: string): void => {
+    if (state.pendingCommitIntent?.intentId === intentId) delete state.pendingCommitIntent;
+  };
+
+  const deliverIntent = async (intent: ProactiveCommitIntent): Promise<ProactiveCommitResult> => {
+    const result = await deps.commitMessage({
+      intentId: intent.intentId,
+      candidate: intent.candidate,
+      text: intent.text,
+      source: intent.source,
+      ...(intent.fallbackPayload !== undefined ? { fallbackPayload: intent.fallbackPayload } : {}),
+      generationEpoch: intent.generationEpoch,
+      intentAt: intent.intentAt,
+    });
+    if (result.kind === "cancelled") {
+      const cancelledState = deps.loadState();
+      clearPendingIntent(cancelledState, intent.intentId);
+      deps.saveState(cancelledState);
+      deps.log?.("commit_cancelled", {
+        scene: intent.candidate.sceneId,
+        reason: result.reason,
+        source: intent.source,
+      });
+      return result;
+    }
+
+    const latestState = deps.loadState();
+    clearPendingIntent(latestState, intent.intentId);
+    if (latestState.proactiveEpoch === intent.generationEpoch) {
+      markProactiveCommitted(latestState, intent.candidate, intent.intentAt);
+    } else {
+      // 文本已经成功写入，但用户可能在后续 TTS 等待期间发来消息。
+      // 保留更新后的 Epoch/unansweredCount，只补记这次真实发送的硬冷却时间。
+      latestState.lastProactiveAt = intent.intentAt;
+      latestState.lastProactiveScene = intent.candidate.sceneId;
+      latestState.lastFiredAt[intent.candidate.sceneId] = intent.intentAt;
+      latestState.globalDesire = 0;
+    }
+    deps.saveState(latestState);
+    deps.log?.("message_committed", { scene: intent.candidate.sceneId, source: intent.source, intentId: intent.intentId });
+    return result;
+  };
+
   return {
     async evaluateCandidate(candidate): Promise<void> {
       const initialState = deps.loadState();
       const rawInitialSnapshot = deps.getSnapshot();
       const initialSnapshot = { ...rawInitialSnapshot, generationBusy: rawInitialSnapshot.generationBusy || generating };
+
+      const pendingIntent = initialState.pendingCommitIntent;
+      if (pendingIntent) {
+        const pendingDecision = canCommitProactiveMessage(
+          initialSnapshot,
+          initialState,
+          pendingIntent.candidate,
+          pendingIntent.generationEpoch,
+        );
+        if (!pendingDecision.allowed) {
+          if (pendingDecision.reason === "stale_epoch") {
+            const staleState = deps.loadState();
+            clearPendingIntent(staleState, pendingIntent.intentId);
+            deps.saveState(staleState);
+          }
+          deps.log?.("pending_commit_blocked", { scene: pendingIntent.candidate.sceneId, reason: pendingDecision.reason, intentId: pendingIntent.intentId });
+          return;
+        }
+        if (deps.canStartDelivery && !deps.canStartDelivery()) {
+          deps.log?.("pending_commit_blocked", { scene: pendingIntent.candidate.sceneId, reason: "delivery_unavailable", intentId: pendingIntent.intentId });
+          return;
+        }
+        generating = true;
+        try {
+          await deliverIntent(pendingIntent);
+        } finally {
+          generating = false;
+        }
+        return;
+      }
+
       const startDecision = canStartProactiveGeneration(initialSnapshot, initialState, candidate);
       if (!startDecision.allowed) {
         deps.log?.("candidate_blocked", { scene: candidate.sceneId, reason: startDecision.reason });
@@ -126,28 +202,23 @@ export function createProactiveChatService(deps: ProactiveChatServiceDeps): Proa
           return;
         }
 
-        const commitResult = await deps.commitMessage({ candidate, text, source, fallbackPayload, generationEpoch, intentAt: commitSnapshot.now });
-        if (commitResult.kind === "cancelled") {
-          deps.log?.("commit_cancelled", {
-            scene: candidate.sceneId,
-            reason: commitResult.reason,
-            source,
-          });
-          return;
-        }
-        const latestState = deps.loadState();
-        if (latestState.proactiveEpoch === generationEpoch) {
-          markProactiveCommitted(latestState, candidate, commitSnapshot.now);
-        } else {
-          // 文本已经成功写入，但用户可能在后续 TTS 等待期间发来消息。
-          // 保留更新后的 Epoch/unansweredCount，只补记这次真实发送的硬冷却时间。
-          latestState.lastProactiveAt = commitSnapshot.now;
-          latestState.lastProactiveScene = candidate.sceneId;
-          latestState.lastFiredAt[candidate.sceneId] = commitSnapshot.now;
-          latestState.globalDesire = 0;
-        }
-        deps.saveState(latestState);
-        deps.log?.("message_committed", { scene: candidate.sceneId, source });
+        const commitStateBeforeIntent = deps.loadState();
+        const sequence = (commitStateBeforeIntent.proactiveCommitSequence ?? 0) + 1;
+        const intent: ProactiveCommitIntent = {
+          intentId: `proactive-intent-${sequence}`,
+          sequence,
+          candidate: { ...candidate },
+          generationEpoch,
+          intentAt: commitSnapshot.now,
+          text,
+          source,
+          ...(fallbackPayload !== undefined ? { fallbackPayload } : {}),
+        };
+        commitStateBeforeIntent.proactiveCommitSequence = sequence;
+        commitStateBeforeIntent.pendingCommitIntent = intent;
+        // Persist the exact business intent before crossing into any delivery adapter.
+        deps.saveState(commitStateBeforeIntent);
+        await deliverIntent(intent);
       } finally {
         generating = false;
       }

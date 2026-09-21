@@ -101,6 +101,8 @@ export type OutgoingPart =
 /** 出站消息。dispatcher → adapters。 */
 export interface OutgoingMessage {
   channel: ChannelId;
+  /** Optional business idempotency identity; proactive delivery reuses its durable intent. */
+  idempotencyKey?: string;
   chatType?: ChannelChatType;
   /** 回复给谁（私聊 = senderId；群聊 = chatId） */
   targetId: string;

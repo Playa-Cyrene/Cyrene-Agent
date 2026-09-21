@@ -127,12 +127,13 @@ describe("useSchedulerEvents", () => {
     });
     emit({ type: "TOOL_CALL_START", toolCallId: "t1", toolCallName: "disk_usage", schedulerRunId: "hist-4" });
     emit({ type: "TOOL_CALL_RESULT", toolCallId: "t1", content: "C: 80%", status: "success", schedulerRunId: "hist-4" });
-    emit({ type: "RUN_FINISHED", schedulerRunId: "hist-4" });
+    emit({ type: "RUN_FINISHED", content: "disk_usage：完成", schedulerRunId: "hist-4" });
 
     const toolPatches = patched.filter((entry) => entry.patch.toolExecutions !== undefined);
     expect(toolPatches.at(-1)!.patch.toolExecutions).toEqual([
       { id: "t1", name: "disk_usage", status: "success", result: "C: 80%" },
     ]);
+    expect(patched.at(-1)!.patch.content).toBe("disk_usage：完成");
   });
 
   it("RUN_ERROR 终态展示并落库失败信息", () => {

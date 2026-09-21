@@ -14,6 +14,18 @@ export interface ProactiveCandidate {
   sceneCooldownMs: number;
 }
 
+/** Durable intent captured before delivery; retries must replay this exact payload. */
+export interface ProactiveCommitIntent {
+  intentId: string;
+  sequence: number;
+  candidate: ProactiveCandidate;
+  generationEpoch: number;
+  intentAt: number;
+  text: string;
+  source: "model" | "fallback";
+  fallbackPayload?: unknown;
+}
+
 export interface ProactiveState {
   proactiveEpoch: number;
   unansweredCount: 0 | 1 | 2;
@@ -23,6 +35,10 @@ export interface ProactiveState {
   globalDesire: number;
   affinity: Record<string, number>;
   lastFiredAt: Record<string, number | null>;
+  /** At most one durable commit can be awaiting delivery completion. */
+  pendingCommitIntent?: ProactiveCommitIntent;
+  /** Monotonic durable identity source; absent in legacy state files. */
+  proactiveCommitSequence?: number;
 }
 
 export type ProactiveBlockReason =

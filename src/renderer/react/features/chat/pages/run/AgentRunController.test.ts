@@ -286,11 +286,54 @@ describe("AgentRunController", () => {
       const { host } = createRecordingHost();
       const { promise } = launch(createInput(), { api, store: realStore, host, registries: createRegistries() });
       await flush();
+      await vi.waitFor(() => expect(api.run).toHaveBeenCalledTimes(1));
       api.emit(RUN_STARTED_EVENT);
       api.emit({ type: "RUN_FINISHED", runId: "run-real", result: { status: "success" } });
       await promise;
       expect(api.run).toHaveBeenCalledTimes(1);
       expect((await transcript.read("session-1")).entries.filter((entry) => entry.kind === "presentation_patch").length).toBeGreaterThan(0);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("persists a delegation without an active round as a valid presentation patch", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "cta-controller-delegation-"));
+    try {
+      const transcript = new ConversationTranscriptStore(root, { now: () => 1_000 });
+      const journal = new ConversationJournalService(transcript);
+      await transcript.append("session-1", {
+        id: "assistant-1",
+        at: 1,
+        kind: "assistant",
+        payload: { role: "assistant", content: "" },
+      });
+      const api = createFakeApi({ success: true, runId: "run-1" });
+      const realStore = {
+        checkpointPresentation: async (sessionId: string, messageId: string, mutationKey: string, patch: Record<string, unknown>) => {
+          await journal.appendPresentationNext(sessionId, messageId, mutationKey, patch as never);
+          return { ok: true as const };
+        },
+        pendingCompleteDispatch: vi.fn(async () => ({ ok: true })),
+      } as unknown as ChatStoreApi;
+      const { host } = createRecordingHost();
+      const { promise } = launch(createInput(), { api, store: realStore, host, registries: createRegistries() });
+      await flush();
+      await vi.waitFor(() => expect(api.run).toHaveBeenCalledTimes(1));
+      api.emit(RUN_STARTED_EVENT);
+      await flush();
+      api.emit({ type: "CUSTOM", name: "cyrene.task", runId: "run-1", value: {
+        invocationId: "inv-1", taskId: "task-1", description: "整理资料", nickname: "风堇", assetFileName: "风堇.png", status: "running",
+      } });
+      api.emit({ type: "CUSTOM", name: "cyrene.task", runId: "run-1", value: {
+        invocationId: "inv-1", taskId: "task-1", description: "整理资料", nickname: "风堇", assetFileName: "风堇.png", status: "completed",
+      } });
+      await flush();
+      api.emit({ type: "RUN_FINISHED", runId: "run-1", result: { status: "success" } });
+      await promise;
+      const message = (await journal.readProjection("session-1")).messages.find((item) => item.id === "assistant-1");
+      expect(message?.taskDelegations).toEqual([expect.objectContaining({ invocationId: "inv-1", status: "completed" })]);
+      expect(Object.prototype.hasOwnProperty.call(message?.taskDelegations?.[0] ?? {}, "roundId")).toBe(false);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
