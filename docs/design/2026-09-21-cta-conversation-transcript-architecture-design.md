@@ -301,7 +301,7 @@ interface TranscriptEnvelope {
   - 渲染端 rewind 元数据透传（edit → replace_user / regenerate → keep_user）与 16 条硬截断废除（全量历史发送）。
 - `npm run build:main` → 通过。
 - `npm run check:renderer` → 通过。
-- `npm test` → 4478 通过 / 1 失败 / 1 跳过；唯一失败为 `ChatMessageList.test.ts:99`（工作区未提交的 Streamdown 样式改动把 `h1 padding-bottom` 从 10px 改为 8px，与 CTA 改动无关；HEAD 上该测试通过）。CTA 相关改动文件全部在通过集合内。
+- `npm test` → 4478 通过 / 1 失败 / 1 跳过；唯一失败为 `ChatMessageList.test.ts:99`（工作区未提交的 Streamdown 样式改动把 `h1 padding-bottom` 从 10px 改为 8px，与 CTA 改动无关；HEAD 上该测试通过）。CTA 相关改动文件全部在通过集合内。该预存失败随后消除（样式改动已入库），评审修复轮全量回归 0 失败，见十二.2。
 
 **手动烟测（待真实桌面环境执行，完成前对应验收条目不视为已验收）：**
 
@@ -310,6 +310,25 @@ interface TranscriptEnvelope {
 - [ ] 条目 3：Chat 模式无工具一轮 → 启用工具一轮 → 再禁用第三轮，三轮保持连续；
 - [ ] 条目 7：编辑最新 user 消息两次、重新生成一次，重启应用，确认只有最新编辑文本是活动分支；
 - [ ] 回退开关：设 `CYRENE_TRANSCRIPT_CONTEXT_SOURCE=renderer` 重启确认旧渲染端源可跑；取消后重启确认轨迹源恢复默认。
+
+### 十二.2 评审修复轮验收证据（2026-09-21）
+
+针对 Phase 1 评审发现的 5 项问题（2×P0 + 3×P1），按修订顺序 1→2→4→3→5（先 scheduler 取消闭合、再 user 稳定 ID、回退开关拆分、sink 接线、插话双写）逐项 TDD 修复，每项独立 commit：
+
+| # | 修复 | Commit | 红→绿测试 |
+|---|------|--------|-----------|
+| 1 | scheduler 取消时已启动独占调用保留 `started`（闭合起点 `index+1`，交 `closeInterruption` 写 unknown + uncertainEffects；未派发调用才记 `aborted_before_dispatch`） | `90fed854` | tool-call-scheduler.test.ts「cancel during an exclusive call」 |
+| 2 | user 条目稳定 ID 显式含 revision：`user:v1:${userTurnId}:r1`，条目不写 `runId`（换 runId 重试命中主键幂等，不再触发次级键冲突） | `79fad414` | coordinator.test.ts「re-dispatches the same user turn under a new runId」 |
+| 3 | renderer 回退开关只切换读取源（`useTranscriptContext` 标记），轨迹双写无条件持续 | `a78e0c01` | agui-bridge.test.ts「renderer 回退开关只切换读取源，桌面双写持续」 |
+| 4 | TranscriptSink 接入生产 run：bridge 创建 sink（含 `assistantTurnId` 锚点）注入 `options.transcriptSink`，ChatLoop / Harness 两条链路生效；四模式测试改用 bridge 实际注入的 sink | `d2794637` | 四模式 + chat 跨工具测试断言 `options.transcriptSink` 存在 |
+| 5 | 插话双写下沉 `createRunAdjustmentPoller`：先稳定 ID 写轨迹（含附件元数据）→ 后 `commitPendingAdjust`；任一步失败抛错、pending 保留（fail-closed）；Harness 两注入点只消费双写成功返回值，poll 抛错转 error 终态 | `65f5429f` | pending-adjustment.test.ts 双写顺序/两失败分支 + cyrene-harness.test.ts「插话双写失败」 |
+
+**自动化回归（全部通过）：**
+
+- CTA 相关回归（`npx vitest run` 13 文件：conversation-transcript-store / coordinator / context、transcript-sink、internal-transcript、agui-bridge、cyrene-agent、chat-loop、cyrene-harness、cyrene-harness-cancel、tool-call-scheduler、pending-adjustment、run-recovery、run-store）→ **200 测试全部通过**；
+- `npm run build:main` → 通过；
+- `npm run check:renderer` → 通过；
+- `npm test` → **全部通过：498 个测试文件，4489 通过 / 1 跳过 / 0 失败（exit 0）**。十二.1 时期的 ChatMessageList.test.ts:99 预存失败未再出现——其 Streamdown 样式改动已在修复轮开工前由 `3abf1cdf` / `2d6ed489` / `4fffd685` 提交入库，全量套件至此完全干净。
 
 ---
 
