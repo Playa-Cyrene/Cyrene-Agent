@@ -89,6 +89,7 @@ function StreamdownAnchor({ href, children }: { href?: string; children?: ReactN
 }
 
 const mathPlugin = createMathPlugin({ singleDollarTextMath: true });
+const messagePlugins = { math: mathPlugin };
 const chatControls: ControlsConfig = { table: false };
 const messageComponents: Components = {
   a: (props) => <StreamdownAnchor {...props} />,
@@ -101,12 +102,52 @@ const rehypePlugins: PluggableList = [
   defaultRehypePlugins.harden,
 ];
 
+function stripMarkdownCode(content: string): string {
+  return content
+    .replace(/(^|\n)[ \t]{0,3}(`{3,}|~{3,})[^\n]*(?:\n[\s\S]*?\n[ \t]{0,3}\2[ \t]*(?=\n|$)|$)/g, "$1")
+    .replace(/(`+)[^\n]*?\1/g, "");
+}
+
+function isEscaped(content: string, index: number): boolean {
+  let slashCount = 0;
+  for (let cursor = index - 1; cursor >= 0 && content[cursor] === "\\"; cursor -= 1) {
+    slashCount += 1;
+  }
+  return slashCount % 2 === 1;
+}
+
+function containsRenderedMath(content: string): boolean {
+  const visibleContent = stripMarkdownCode(content);
+  let inlineStart = -1;
+  let displayStart = -1;
+
+  for (let index = 0; index < visibleContent.length; index += 1) {
+    if (visibleContent[index] !== "$" || isEscaped(visibleContent, index)) continue;
+
+    if (visibleContent[index + 1] === "$" && !isEscaped(visibleContent, index + 1)) {
+      if (displayStart >= 0 && visibleContent.slice(displayStart, index).trim()) return true;
+      displayStart = index + 2;
+      index += 1;
+      continue;
+    }
+
+    if (inlineStart >= 0 && visibleContent.slice(inlineStart, index).trim()) return true;
+    inlineStart = index + 1;
+  }
+
+  return false;
+}
+
 export function StreamdownMessageContent({ content, streaming }: StreamdownMessageContentProps) {
+  // Streamdown's block mode preserves the already-rendered KaTeX blocks. Switching a long
+  // math response to static mode on completion would tear down and rebuild the entire tree.
+  const useBlockMode = streaming || containsRenderedMath(content);
+
   return (
     <Streamdown
-      mode={streaming ? "streaming" : "static"}
+      mode={useBlockMode ? "streaming" : "static"}
       parseIncompleteMarkdown={streaming}
-      plugins={{ math: mathPlugin }}
+      plugins={messagePlugins}
       components={messageComponents}
       rehypePlugins={rehypePlugins}
       controls={chatControls}

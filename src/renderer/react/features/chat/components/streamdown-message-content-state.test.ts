@@ -45,6 +45,19 @@ afterEach(() => {
 });
 
 describe("MarkdownContent Streamdown lifecycle", () => {
+  it("preserves the rendered KaTeX tree when a math response completes and later state updates repeat", () => {
+    const content = "公式：$E=mc^2$\n\n$$a^2+b^2=c^2$$";
+    update(content, true);
+    const streamedMath = container.querySelector(".katex");
+    expect(streamedMath).not.toBeNull();
+
+    update(content, false);
+    expect(container.querySelector(".katex")).toBe(streamedMath);
+
+    update(content, false);
+    expect(container.querySelector(".katex")).toBe(streamedMath);
+  });
+
   it("replaces an incomplete streamed fence with completed unrelated content without stale blocks", () => {
     update("~~~ts\nconst oldAnswer = true;", true);
     expect(container.textContent).toContain("oldAnswer");

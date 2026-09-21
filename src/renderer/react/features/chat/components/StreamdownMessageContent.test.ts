@@ -59,6 +59,29 @@ describe("StreamdownMessageContent", () => {
     expect(markup).toMatch(/<p><span class="katex">/);
   });
 
+  it("keeps whole-document parsing for completed messages without math", () => {
+    const markup = render("[引用][ref]\n\n[ref]: https://example.com", false);
+
+    expect(markup).toContain('href="https://example.com/"');
+  });
+
+  it("keeps completed math messages in block mode instead of rebuilding the full KaTeX tree", () => {
+    const markup = render("$E=mc^2$\n\n[引用][ref]\n\n[ref]: https://example.com", false);
+
+    expect(markup).toContain("katex");
+    expect(markup).not.toContain('href="https://example.com/"');
+  });
+
+  it("does not treat escaped dollars or code examples as rendered math", () => {
+    const escaped = render("价格是 \\$5\n\n[引用][ref]\n\n[ref]: https://example.com", false);
+    const inlineCode = render("`$HOME`\n\n[引用][ref]\n\n[ref]: https://example.com", false);
+    const fencedCode = render("```sh\necho $HOME\n```\n\n[引用][ref]\n\n[ref]: https://example.com", false);
+
+    expect(escaped).toContain('href="https://example.com/"');
+    expect(inlineCode).toContain('href="https://example.com/"');
+    expect(fencedCode).toContain('href="https://example.com/"');
+  });
+
   it("preserves checked and unchecked GFM task states", () => {
     const markup = render("- [x] 已完成\n- [ ] 待完成", false);
 
