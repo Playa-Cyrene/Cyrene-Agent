@@ -64,6 +64,8 @@ import { isPlanReadOnly, getPlanState } from "./plan-mode";
 import { policyFor, type ToolRiskLevel } from "../permission-policy";
 import { resolveTranscriptRetainTokens, type MaterializedTranscript } from "./conversation-transcript-context";
 import type { UncertainEffect } from "./harness/types";
+import { DEFAULT_HARNESS_CONFIG } from "./harness/types";
+import { estimateMessageTokens } from "./context-manager";
 
 /** index.ts 模块级符号的最小可注入子集。
  *  类型故意用宽签名（unknown / 任意 shape）—— 因为 build-options 是纯消费者，
@@ -126,6 +128,12 @@ export interface BuildOptionsDeps {
     conversationId: string,
     retainTokens: number,
   ) => Promise<MaterializedTranscript>;
+  /** 会话级权威压缩；成功后 buildModelContext 必须重新物化 checkpoint + suffix。 */
+  compactTranscript?: (input: {
+    conversationId: string;
+    trigger: "automatic" | "manual";
+    retainTokens: number;
+  }) => Promise<unknown>;
   chatRequestTimeoutMs: number;
   captionImageForFallback?: (filePath: string) => Promise<{ ok: boolean; caption?: string; error?: string }>;
   prepareCitaTurn?: (input: {
@@ -522,10 +530,26 @@ export async function buildAgentRunOptions(
   // 权威轨迹上下文：桌面 bridge 在 canonical append 后传入 modelContext；
   // 若由其它主进程入口调用，则从同一 journal reader 构建，不读取 renderer 历史。
   const retainTokens = resolveTranscriptRetainTokens(settings.contextWindowTokens ?? 256_000);
-  const transcriptContext = input.modelContext
+  let transcriptContext = input.modelContext
     ?? (input.currentUser && input.sessionId
       ? await requireBuildModelContext(deps)(input.sessionId, retainTokens)
       : undefined);
+  if (!input.modelContext && input.currentUser && input.sessionId && transcriptContext) {
+    const contextWindowTokens = settings.contextWindowTokens ?? 256_000;
+    const usableInputBudget = contextWindowTokens
+      - DEFAULT_HARNESS_CONFIG.reservedOutputTokens
+      - DEFAULT_HARNESS_CONFIG.safetyMarginTokens;
+    const estimatedMessages = estimateMessageTokens(transcriptContext.messages);
+    if (estimatedMessages >= usableInputBudget * DEFAULT_HARNESS_CONFIG.compactionThreshold) {
+      if (!deps.compactTranscript) throw new Error("TRANSCRIPT_COMPACTION_REQUIRED");
+      await deps.compactTranscript({
+        conversationId: input.sessionId,
+        trigger: "automatic",
+        retainTokens: Math.max(1, Math.floor(contextWindowTokens * DEFAULT_HARNESS_CONFIG.compactionRetainRatio)),
+      });
+      transcriptContext = await requireBuildModelContext(deps)(input.sessionId, retainTokens);
+    }
+  }
   const messages = transcriptContext?.messages
     ?? (input.currentUser
       ? [{ role: "user" as const, content: input.currentUser.text } as ChatMessage]

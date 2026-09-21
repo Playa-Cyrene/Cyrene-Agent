@@ -193,6 +193,21 @@ describe("buildModelContext", () => {
     // 尾窗必须包含最新 user
     expect(result.messages.some((item) => item.role === "user" && item.content === "最终问题")).toBe(true);
   });
+
+  it("returns the complete active view instead of silently dropping the old prefix", async () => {
+    const { store } = createStore();
+    await store.append("c1", {
+      id: "old", at: 1_000, kind: "user", turnId: "old", revision: 1,
+      payload: { text: "必须保留的旧上下文" },
+    });
+    await store.append("c1", {
+      id: "new", at: 1_000, kind: "user", turnId: "new", revision: 1,
+      payload: { text: "最新问题" },
+    });
+
+    const result = await buildModelContext({ store, conversationId: "c1", retainTokens: 1, runReader: noRuns });
+    expect(result.messages.map((message) => message.content)).toEqual(["必须保留的旧上下文", "最新问题"]);
+  });
 });
 
 // ── 预算计算 ─────────────────────────────────────────────

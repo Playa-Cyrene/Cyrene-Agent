@@ -44,6 +44,9 @@ import {
 import { buildModelContext } from "./conversation-transcript-context";
 import { getConversationTranscriptStore } from "./conversation-transcript-store";
 import { getHarnessRunStore } from "./harness/run-store";
+import { ConversationTranscriptCompactor } from "./conversation-transcript-compactor";
+import { callSummarizeModel } from "./context-manager";
+import { getAdapterForConfig } from "./vendors";
 import { type CyreneRunResult, type CyreneRunOptions } from "./cyrene-agent";
 import type { HarnessToolFinishedEvent } from "./harness/types";
 import type { ToolFinishedInput } from "../plugin-host/lifecycle-publisher";
@@ -114,6 +117,30 @@ export interface AgentRuntime {
 
 export function createAgentRuntime(rawDeps: AgentRuntimeDeps): AgentRuntime {
   const runtimeStateService = rawDeps.runtimeStateService;
+  const transcriptStore = getConversationTranscriptStore(app.getPath("userData"));
+  const transcriptRunStore = getHarnessRunStore(app.getPath("userData"));
+  // The desktop automatic path and CHATS_COMPACT use the same coordinator;
+  // only the model-specific summary callback is supplied by this composition root.
+  const transcriptCompactor = new ConversationTranscriptCompactor({
+    store: transcriptStore,
+    runReader: transcriptRunStore,
+    summarize: async (history) => {
+      const settings = resolveModelSettingsProfile(rawDeps.loadModelSettings());
+      const vendorConfig = {
+        provider: settings.provider,
+        baseUrl: settings.baseUrl,
+        model: settings.model,
+        apiKey: settings.apiKey,
+        explicitTransport: settings.explicitTransport,
+        reasoning: settings.reasoning,
+      };
+      return callSummarizeModel(
+        history,
+        getAdapterForConfig(vendorConfig),
+        { ...settings, contextWindowTokens: settings.contextWindowTokens ?? 256_000 },
+      );
+    },
+  });
 
   async function observeRuntimeState(
     settings: ModelSettingsLite,
@@ -233,11 +260,12 @@ export function createAgentRuntime(rawDeps: AgentRuntimeDeps): AgentRuntime {
       buildPluginPromptContext: (input) => rawDeps.buildPluginPromptContext(input),
       // 权威轨迹上下文（CTA Phase 1）：桌面端与 bridge 共用同一 userData 根下的单例 store
       buildModelContext: (conversationId, retainTokens) => buildModelContext({
-        store: getConversationTranscriptStore(app.getPath("userData")),
+        store: transcriptStore,
         conversationId,
         retainTokens,
-        runReader: getHarnessRunStore(app.getPath("userData")),
+        runReader: transcriptRunStore,
       }),
+      compactTranscript: (input) => transcriptCompactor.compact(input),
     };
   }
 

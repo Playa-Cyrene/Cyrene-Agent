@@ -1080,6 +1080,26 @@ describe("权威轨迹上下文源（CTA Phase 1）", () => {
     } as never, deps)).rejects.toThrow("buildModelContext")
   })
 
+  it("完整活动视图超预算时先提交会话级 compaction，再重新物化上下文", async () => {
+    const deps = createBuildDeps()
+    deps.loadModelSettings = () => ({
+      provider: "test", baseUrl: "https://example.test", model: "m", apiKey: "k",
+      contextWindowTokens: 100,
+    })
+    const full = [{ role: "user" as const, content: "历史".repeat(300) }]
+    deps.buildModelContext = vi.fn(async () => ({ messages: full, uncertainEffects: [], throughSeq: 8 }))
+    deps.compactTranscript = vi.fn(async () => ({ checkpointEntryId: "cp-1" }))
+
+    await buildAgentRunOptions({
+      sessionId: "auto-compact", currentUser: { turnId: "turn-1", text: "继续", visibleContent: "继续" },
+    } as never, deps)
+
+    expect(deps.compactTranscript).toHaveBeenCalledWith(expect.objectContaining({
+      conversationId: "auto-compact", trigger: "automatic", retainTokens: expect.any(Number),
+    }))
+    expect(deps.buildModelContext).toHaveBeenCalledTimes(2)
+  })
+
   it("崩溃孤儿不确定效果并入 recoveryContext", async () => {
     const deps = createBuildDeps()
     deps.buildModelContext = vi.fn(async () => ({

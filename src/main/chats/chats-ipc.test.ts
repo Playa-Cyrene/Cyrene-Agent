@@ -88,6 +88,39 @@ describe("chats IPC mode filtering", () => {
     ]));
   });
 
+  it("routes CHATS_COMPACT through the transcript compactor checkpoint protocol", async () => {
+    const { registerChatsIpc } = await import("./chats-ipc");
+    const { getConversationTranscriptStore } = await import("../orchestrator/conversation-transcript-store");
+    const { ConversationTranscriptCompactor } = await import("../orchestrator/conversation-transcript-compactor");
+    const store = getConversationTranscriptStore(mocks.userDataDir);
+    const compactor = new ConversationTranscriptCompactor({
+      store,
+      summarize: async () => "会话摘要",
+    });
+    registerChatsIpc(undefined, { transcriptCompactor: compactor });
+    const create = mocks.handlers.get(IPC.CHATS_CREATE);
+    const compact = mocks.handlers.get(IPC.CHATS_COMPACT);
+    if (!create || !compact) throw new Error("compaction IPC handlers were not registered");
+    const event = { sender: {} };
+    const session = await create(event, { mode: "chat" }) as { id: string; messages: unknown[] };
+    await store.append(session.id, {
+      id: "compact-u1", at: 1, kind: "user", turnId: "u1", revision: 1,
+      payload: { text: "旧上下文".repeat(30) },
+    });
+    await store.append(session.id, {
+      id: "compact-u2", at: 1, kind: "user", turnId: "u2", revision: 1,
+      payload: { text: "最新问题" },
+    });
+
+    await expect(compact(event, { sessionId: session.id, retainTokens: 1 })).resolves.toEqual(
+      expect.objectContaining({ ok: true, sourceThroughSeq: 1 }),
+    );
+    expect((await store.read(session.id)).entries).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "compaction_checkpoint" }),
+    ]));
+    expect(session.messages).toEqual([]);
+  });
+
   it("runs the controller through the real bridge handler before api.run and fails closed for a deep patch", async () => {
     const { registerChatsIpc } = await import("./chats-ipc");
     const { getConversationTranscriptStore } = await import("../orchestrator/conversation-transcript-store");

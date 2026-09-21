@@ -27,6 +27,9 @@ import { getHarnessRunStore } from "../orchestrator/harness/run-store";
 import { getConversationTranscriptStore } from "../orchestrator/conversation-transcript-store";
 import { ConversationJournalService } from "../orchestrator/conversation-journal-service";
 import { ConversationSessionMigration } from "../orchestrator/conversation-session-migration";
+import { ConversationTranscriptCompactor } from "../orchestrator/conversation-transcript-compactor";
+import { callSummarizeModel } from "../orchestrator/context-manager";
+import { getAdapterForConfig } from "../orchestrator/vendors";
 import { getRunReviewTracker } from "../orchestrator/review/run-review-tracker";
 import { activeChatTargetRegistry } from "../plugin-host/active-chat-target";
 import type { LlmClient } from "../services/llm/llm-client";
@@ -60,6 +63,7 @@ export function registerChatsIpc(
     titleService?: ConversationTitleService;
     llmClient?: LlmClient;
     isPrimaryModelBusy?: () => boolean;
+    transcriptCompactor?: ConversationTranscriptCompactor;
   } = {},
 ): void {
   const ipc = ipcOption ?? createIpcScope();
@@ -79,6 +83,25 @@ export function registerChatsIpc(
   const conversationJournal = new ConversationJournalService({
     store: transcriptStore,
     pendingStore: chatsStore,
+  });
+  const transcriptCompactor = options.transcriptCompactor ?? new ConversationTranscriptCompactor({
+    store: transcriptStore,
+    runReader: getHarnessRunStore(app.getPath("userData")),
+    summarize: async (history) => {
+      const settings = resolveModelSettingsProfile(loadModelSettings());
+      return callSummarizeModel(
+        history,
+        getAdapterForConfig({
+          provider: settings.provider,
+          baseUrl: settings.baseUrl,
+          model: settings.model,
+          apiKey: settings.apiKey,
+          explicitTransport: settings.explicitTransport,
+          reasoning: settings.reasoning,
+        }),
+        { ...settings, contextWindowTokens: settings.contextWindowTokens ?? 256_000 },
+      );
+    },
   });
   const sessionMigration = new ConversationSessionMigration({ journal: conversationJournal, store: transcriptStore });
   // 进程刚启动时没有任何存活运行：磁盘上遗留的插话标记都是陈旧的，清回普通队列
@@ -167,9 +190,28 @@ export function registerChatsIpc(
     },
   );
 
-  // Manual compaction is owned by the transcript compactor in Task 8. Keep
-  // the old entrypoint explicit and fail closed during this ownership cutover.
-  ipc.handle(IPC.CHATS_COMPACT, () => ({ ok: false, error: "chat-message-store-retired" }));
+  // Manual compaction is a transcript checkpoint operation; it never rewrites
+  // the renderer-owned session.messages compatibility record.
+  ipc.handle(IPC.CHATS_COMPACT, async (_event, payload: { sessionId?: unknown; retainTokens?: unknown }) => {
+    if (typeof payload?.sessionId !== "string" || !payload.sessionId) {
+      return { ok: false as const, error: "TRANSCRIPT_COMPACTION_REQUIRED" as const };
+    }
+    try {
+      const result = await transcriptCompactor.compact({
+        conversationId: payload.sessionId,
+        trigger: "manual",
+        ...(typeof payload.retainTokens === "number" && Number.isFinite(payload.retainTokens)
+          ? { retainTokens: payload.retainTokens }
+          : {}),
+      });
+      return { ok: true as const, ...result };
+    } catch (error) {
+      return {
+        ok: false as const,
+        error: error instanceof Error ? error.message : "TRANSCRIPT_COMPACTION_REQUIRED",
+      };
+    }
+  });
 
   ipc.handle(
     IPC.CHATS_RENAME,
