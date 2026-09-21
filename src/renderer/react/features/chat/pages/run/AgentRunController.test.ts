@@ -124,6 +124,12 @@ async function flush() {
   await new Promise<void>((resolve) => setTimeout(resolve, 0));
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
 function installManualAnimationFrame() {
   let nextId = 1;
   let now = performance.now();
@@ -197,6 +203,44 @@ describe("AgentRunController", () => {
 
     expect(order.at(-1)).toBe("report");
     expect(order.slice(0, -1).every((entry) => entry.startsWith("checkpoint:"))).toBe(true);
+  });
+
+  it("derives the mutation key from the exact queued patch", async () => {
+    const api = createFakeApi({ success: true, runId: "run-key" });
+    const store = createFakeStore();
+    const { host } = createRecordingHost();
+    const { promise } = launch(createInput(), { api, store, host, registries: createRegistries() });
+    await flush();
+    const firstCall = store.checkpointPresentation.mock.calls[0] as [string, string, string, Record<string, unknown>];
+    const encoded = firstCall[2].split(":").slice(3).join(":");
+    expect(JSON.parse(decodeURIComponent(encoded))).toEqual(firstCall[3]);
+    api.emit({ type: "RUN_STARTED", runId: "run-key" });
+    api.emit({ type: "TEXT_MESSAGE_START", runId: "run-key" });
+    api.emit({ type: "TEXT_MESSAGE_CONTENT", runId: "run-key", delta: "ok" });
+    api.emit({ type: "TEXT_MESSAGE_END", runId: "run-key" });
+    api.emit({ type: "RUN_FINISHED", runId: "run-key", result: { status: "success" } });
+    await promise;
+  });
+
+  it("keeps pre-ack RUN_STARTED buffered until the acknowledged run is bound", async () => {
+    const api = createFakeApi({ success: true, runId: "run-pre-ack" });
+    const ack = deferred<{ success: boolean; runId: string }>();
+    (api.run as ReturnType<typeof vi.fn>).mockImplementation(() => ack.promise);
+    const store = createFakeStore();
+    const { host } = createRecordingHost();
+    const registries = createRegistries();
+    const { promise } = launch(createInput(), { api, store, host, registries });
+    await flush();
+    api.emit({ type: "RUN_STARTED", runId: "run-pre-ack" });
+    expect(registries.activeRuns.current["session-1"]?.runId).toBeUndefined();
+    ack.resolve({ success: true, runId: "run-pre-ack" });
+    await flush();
+    expect(registries.activeRuns.current["session-1"]?.runId).toBe("run-pre-ack");
+    api.emit({ type: "RUN_FINISHED", runId: "run-pre-ack", result: { status: "success" } });
+    await promise;
+    expect(store.checkpointPresentation.mock.calls.some((call) => (
+      (call[3] as { runSnapshot?: { runId?: string } }).runSnapshot?.runId === "run-pre-ack"
+    ))).toBe(true);
   });
 
   it("does not report persistence when the terminal presentation checkpoint fails", async () => {

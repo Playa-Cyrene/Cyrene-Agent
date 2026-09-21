@@ -16,6 +16,8 @@ import type {
 } from "../../shared/chat-types";
 import type { ToolCallOutcome } from "./harness/types";
 import type { ChatMessage as CanonicalChatMessage } from "./vendors/types";
+import { isContextUsageSnapshot } from "../../shared/context-usage";
+import { normalizeMusicCardData } from "../../shared/music-card";
 
 export interface TranscriptEnvelopeBase {
   /** 会话内单调递增序号，快照/重放协议依据。 */
@@ -58,8 +60,7 @@ export function assertValidPresentationPatch(value: unknown): asserts value is T
   if (Object.keys(value).some((key) => !allowed.has(key))) {
     throw new Error("TRANSCRIPT_INVALID_PRESENTATION_PATCH");
   }
-  // The store remains the final boundary; keep this shared gate deliberately
-  // strict for scalar fields and collection/object shape.
+  // Keep this shared gate as strict as the persisted ChatMessage contract.
   for (const [key, field] of Object.entries(value)) {
     if (["content", "reasoning", "ttsCacheKey", "ttsCacheVersion"].includes(key)) {
       if (typeof field !== "string") throw new Error("TRANSCRIPT_INVALID_PRESENTATION_PATCH");
@@ -67,7 +68,26 @@ export function assertValidPresentationPatch(value: unknown): asserts value is T
       if (field !== null && typeof field !== "string") throw new Error("TRANSCRIPT_INVALID_PRESENTATION_PATCH");
     } else if (["reasoningBlocks", "processMessages", "agentRounds", "taskDelegations", "toolExecutions"].includes(key)) {
       if (!Array.isArray(field)) throw new Error("TRANSCRIPT_INVALID_PRESENTATION_PATCH");
-    } else if (!isRecord(field)) {
+      if (key === "reasoningBlocks" && !field.every((item) => isReasoningBlock(item))) throw new Error("TRANSCRIPT_INVALID_PRESENTATION_PATCH");
+      if (key === "processMessages" && !field.every((item) => isProcessMessage(item))) throw new Error("TRANSCRIPT_INVALID_PRESENTATION_PATCH");
+      if (key === "agentRounds" && !field.every((item) => isAgentRound(item))) throw new Error("TRANSCRIPT_INVALID_PRESENTATION_PATCH");
+      if (key === "taskDelegations" && !field.every((item) => isTaskDelegation(item))) throw new Error("TRANSCRIPT_INVALID_PRESENTATION_PATCH");
+      if (key === "toolExecutions" && !field.every((item) => isToolExecution(item))) throw new Error("TRANSCRIPT_INVALID_PRESENTATION_PATCH");
+    } else if (key === "channelSource") {
+      if (!isRecord(field) || !hasOnlyKeys(field, ["channel", "chatType", "senderName"]) || !["wechat", "feishu", "qq", "qqbot"].includes(field.channel as string) ||
+        !optionalField(field, "chatType", (chatType) => ["private", "group"].includes(chatType as string)) ||
+        !optionalField(field, "senderName", (senderName) => typeof senderName === "string")) throw new Error("TRANSCRIPT_INVALID_PRESENTATION_PATCH");
+    } else if (key === "runActivity") {
+      if (!isRecord(field) || !hasOnlyKeys(field, ["startedAt", "completedAt", "reasoningMs", "activeReasoningStartedAt", "keepExpanded"]) || !finiteNumber(field.startedAt) || !finiteNumber(field.reasoningMs) ||
+        !optionalField(field, "completedAt", finiteNumber) || !optionalField(field, "activeReasoningStartedAt", finiteNumber) ||
+        !optionalField(field, "keepExpanded", (keepExpanded) => typeof keepExpanded === "boolean")) throw new Error("TRANSCRIPT_INVALID_PRESENTATION_PATCH");
+    } else if (key === "runSnapshot") {
+      if (!isRunSnapshot(field)) throw new Error("TRANSCRIPT_INVALID_PRESENTATION_PATCH");
+    } else if (key === "musicCard") {
+      if (!isRecord(field) || normalizeMusicCardData(field) === null || !isMusicCard(field)) throw new Error("TRANSCRIPT_INVALID_PRESENTATION_PATCH");
+    } else if (key === "contextUsage") {
+      if (!isContextUsageSnapshot(field) || !isContextUsageShape(field)) throw new Error("TRANSCRIPT_INVALID_PRESENTATION_PATCH");
+    } else {
       throw new Error("TRANSCRIPT_INVALID_PRESENTATION_PATCH");
     }
   }
@@ -75,6 +95,102 @@ export function assertValidPresentationPatch(value: unknown): asserts value is T
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function finiteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function optionalField(value: Record<string, unknown>, key: string, predicate: (field: unknown) => boolean): boolean {
+  return !Object.prototype.hasOwnProperty.call(value, key) || predicate(value[key]);
+}
+
+function validSequenceFields(value: Record<string, unknown>): boolean {
+  return optionalField(value, "afterToolCount", (field) => typeof field === "number" && Number.isInteger(field)) &&
+    optionalField(value, "roundId", (field) => typeof field === "string") &&
+    optionalField(value, "seq", (field) => typeof field === "number" && Number.isInteger(field));
+}
+
+function hasOnlyKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+  const allowed = new Set(keys);
+  return Object.keys(value).every((key) => allowed.has(key));
+}
+
+function isReasoningBlock(value: unknown): boolean {
+  return isRecord(value) && hasOnlyKeys(value, ["id", "content", "streaming", "afterToolCount", "roundId", "seq"]) &&
+    typeof value.id === "string" && typeof value.content === "string" &&
+    optionalField(value, "streaming", (field) => typeof field === "boolean") && validSequenceFields(value);
+}
+
+function isProcessMessage(value: unknown): boolean {
+  return isRecord(value) && hasOnlyKeys(value, ["id", "content", "interrupted", "afterToolCount", "roundId", "seq"]) &&
+    typeof value.id === "string" && typeof value.content === "string" &&
+    optionalField(value, "interrupted", (field) => typeof field === "boolean") && validSequenceFields(value);
+}
+
+function isAgentRound(value: unknown): boolean {
+  return isRecord(value) && hasOnlyKeys(value, ["id", "status", "startedAt", "completedAt"]) &&
+    typeof value.id === "string" && ["running", "completed"].includes(value.status as string) &&
+    finiteNumber(value.startedAt) && optionalField(value, "completedAt", finiteNumber);
+}
+
+function isTaskDelegation(value: unknown): boolean {
+  return isRecord(value) && hasOnlyKeys(value, ["invocationId", "taskId", "description", "nickname", "assetFileName", "status", "roundId"]) &&
+    typeof value.invocationId === "string" && typeof value.taskId === "string" &&
+    typeof value.description === "string" && typeof value.nickname === "string" && typeof value.assetFileName === "string" &&
+    ["running", "completed", "failed", "cancelled"].includes(value.status as string) &&
+    optionalField(value, "roundId", (field) => typeof field === "string");
+}
+
+function isToolExecution(value: unknown): boolean {
+  return isRecord(value) && hasOnlyKeys(value, ["id", "name", "displayName", "status", "result", "argsText", "roundId", "changes", "seq"]) &&
+    typeof value.id === "string" && typeof value.name === "string" &&
+    ["running", "success", "error"].includes(value.status as string) &&
+    optionalField(value, "displayName", (field) => typeof field === "string") &&
+    optionalField(value, "result", (field) => typeof field === "string") &&
+    optionalField(value, "argsText", (field) => typeof field === "string") &&
+    optionalField(value, "roundId", (field) => typeof field === "string") &&
+    optionalField(value, "changes", (field) => Array.isArray(field) && field.every(isToolFileChange)) &&
+    optionalField(value, "seq", (field) => typeof field === "number" && Number.isInteger(field));
+}
+
+function isToolFileChange(value: unknown): boolean {
+  return isRecord(value) && hasOnlyKeys(value, ["file", "kind", "insertions", "deletions", "diff", "truncated"]) &&
+    typeof value.file === "string" && ["added", "modified", "deleted", "renamed"].includes(value.kind as string) &&
+    Number.isInteger(value.insertions) && Number.isInteger(value.deletions) &&
+    optionalField(value, "truncated", (field) => typeof field === "boolean") &&
+    optionalField(value, "diff", (field) => Array.isArray(field) && field.every(isToolDiffLine));
+}
+
+function isToolDiffLine(value: unknown): boolean {
+  return isRecord(value) && hasOnlyKeys(value, ["type", "text"]) &&
+    ["context", "add", "remove", "hunk"].includes(value.type as string) && typeof value.text === "string";
+}
+
+function isContextUsageShape(value: unknown): boolean {
+  if (!isRecord(value) || !hasOnlyKeys(value, ["phase", "runId", "round", "contextWindowTokens", "totalTokens", "categories", "messageCount", "updatedAt"])) return false;
+  return optionalField(value, "runId", (field) => typeof field === "string") &&
+    optionalField(value, "round", (field) => typeof field === "number" && Number.isInteger(field)) &&
+    Array.isArray(value.categories) && value.categories.every((category) => isRecord(category) &&
+      hasOnlyKeys(category, ["key", "tokens"]));
+}
+
+function isRunSnapshot(value: unknown): boolean {
+  return isRecord(value) && hasOnlyKeys(value, ["runId", "status", "terminalStatus", "todos", "updatedAt"]) &&
+    ["running", "waiting_user", "interrupted", "terminal"].includes(value.status as string) &&
+    finiteNumber(value.updatedAt) && optionalField(value, "runId", (field) => typeof field === "string") &&
+    optionalField(value, "terminalStatus", (field) => ["success", "cancelled", "timeout", "runtime_error"].includes(field as string)) &&
+    optionalField(value, "todos", (field) => Array.isArray(field) && field.every((todo) => isRecord(todo) && typeof todo.id === "string" &&
+      hasOnlyKeys(todo, ["id", "content", "status", "priority"]) && typeof todo.content === "string" &&
+      ["pending", "in_progress", "completed"].includes(todo.status as string) &&
+      optionalField(todo, "priority", (priority) => ["high", "medium", "low"].includes(priority as string))));
+}
+
+function isMusicCard(value: Record<string, unknown>): boolean {
+  if (!hasOnlyKeys(value, ["setId", "source", "tracks"]) || typeof value.setId !== "string" || !value.setId || !["daily_recommendation", "search"].includes(value.source as string) || !Array.isArray(value.tracks)) return false;
+  return value.tracks.length > 0 && value.tracks.length <= 5 && value.tracks.every((track) => isRecord(track) && typeof track.id === "string" &&
+    hasOnlyKeys(track, ["id", "name", "artists", "album", "coverUrl"]) && typeof track.name === "string" && Array.isArray(track.artists) && track.artists.every((artist) => typeof artist === "string") &&
+    optionalField(track, "album", (album) => typeof album === "string") && optionalField(track, "coverUrl", (coverUrl) => typeof coverUrl === "string"));
 }
 
 export type TranscriptCompactionCheckpointPayload = {

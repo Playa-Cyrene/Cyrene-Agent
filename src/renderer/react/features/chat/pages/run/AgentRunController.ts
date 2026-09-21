@@ -489,11 +489,13 @@ export class AgentRunController {
       toolExecutions: this.toolExecutions,
       contextUsage: this.contextUsage,
       runSnapshot: {
-        runId: this.deps.registries.activeRuns.current[this.input.sessionId]?.runId,
+        ...(this.deps.registries.activeRuns.current[this.input.sessionId]?.runId
+          ? { runId: this.deps.registries.activeRuns.current[this.input.sessionId]?.runId }
+          : {}),
         status,
-        terminalStatus: status === "terminal"
-          ? (this.terminalStatus as "success" | "cancelled" | "timeout" | "runtime_error" | undefined)
-          : undefined,
+        ...(status === "terminal" && this.terminalStatus
+          ? { terminalStatus: this.terminalStatus as "success" | "cancelled" | "timeout" | "runtime_error" }
+          : {}),
         todos: this.currentTodos,
         updatedAt: Date.now(),
       },
@@ -516,8 +518,10 @@ export class AgentRunController {
       toolExecutions: snapshot.toolExecutions,
       ...(snapshot.contextUsage !== undefined ? { contextUsage: snapshot.contextUsage } : {}),
     };
-    const keySnapshot = { ...patch, runSnapshot: patch.runSnapshot ? { ...patch.runSnapshot, updatedAt: 0 } : undefined };
-    const mutationKey = `run:${this.input.assistantId}:${status}:${encodeURIComponent(JSON.stringify(keySnapshot))}`;
+    // The idempotency key describes the exact queued patch, including its
+    // timestamp. A retry of this queued item therefore reuses the same key
+    // and payload instead of silently changing the mutation identity.
+    const mutationKey = `run:${this.input.assistantId}:${status}:${encodeURIComponent(JSON.stringify(patch))}`;
     this.checkpointChain = this.checkpointChain
       .then(async () => {
         const result = await this.deps.store!.checkpointPresentation(
@@ -554,20 +558,23 @@ export class AgentRunController {
 
   /** 更新（或新建）一条工具执行记录并同步到消息视图。 */
   private updateRunTool(toolId: string, patch: Partial<ToolExecutionRecord>) {
+    const definedPatch = Object.fromEntries(
+      Object.entries(patch).filter(([, value]) => value !== undefined),
+    ) as Partial<ToolExecutionRecord>;
     const index = this.toolExecutions.findIndex((tool) => tool.id === toolId);
     this.toolExecutions = index === -1
       ? [...this.toolExecutions, {
           id: toolId,
-          name: patch.name ?? t("chatPage.toolCallFallbackName"),
-          displayName: patch.displayName,
-          status: patch.status ?? "running",
-          result: patch.result,
-          argsText: patch.argsText,
-          changes: patch.changes,
-          roundId: patch.roundId ?? this.activeRoundId,
+          name: definedPatch.name ?? t("chatPage.toolCallFallbackName"),
+          ...(definedPatch.displayName !== undefined ? { displayName: definedPatch.displayName } : {}),
+          status: definedPatch.status ?? "running",
+          ...(definedPatch.result !== undefined ? { result: definedPatch.result } : {}),
+          ...(definedPatch.argsText !== undefined ? { argsText: definedPatch.argsText } : {}),
+          ...(definedPatch.changes !== undefined ? { changes: definedPatch.changes } : {}),
+          ...((definedPatch.roundId ?? this.activeRoundId) !== undefined ? { roundId: definedPatch.roundId ?? this.activeRoundId } : {}),
           seq: this.nextSeq(),
         }]
-      : this.toolExecutions.map((tool, toolIndex) => toolIndex === index ? { ...tool, ...patch } : tool);
+      : this.toolExecutions.map((tool, toolIndex) => toolIndex === index ? { ...tool, ...definedPatch } : tool);
     this.deps.host.patchMessage(this.input.sessionId, this.input.assistantId, { toolExecutions: this.toolExecutions });
   }
 
@@ -746,8 +753,8 @@ export class AgentRunController {
       content: this.candidateText,
       interrupted: true,
       afterToolCount: this.toolExecutions.length,
-      roundId: this.candidateRoundId,
-      seq: this.candidateSeq,
+      ...(this.candidateRoundId !== undefined ? { roundId: this.candidateRoundId } : {}),
+      ...(this.candidateSeq !== undefined ? { seq: this.candidateSeq } : {}),
     }];
     this.resetCandidateState();
   }
@@ -762,10 +769,10 @@ export class AgentRunController {
   private updateActiveReasoningStart() {
     const starts = [...this.activeReasoningStarts.values()];
     if (!this.runActivity) return;
-    this.runActivity = {
-      ...this.runActivity,
-      activeReasoningStartedAt: starts.length ? Math.min(...starts) : undefined,
-    };
+    const { activeReasoningStartedAt: _activeReasoningStartedAt, ...base } = this.runActivity;
+    this.runActivity = starts.length
+      ? { ...base, activeReasoningStartedAt: Math.min(...starts) }
+      : base;
   }
 
   /** 结算运行活动统计：把未关闭的推理段落计入耗时并标记完成。 */
@@ -782,7 +789,6 @@ export class AgentRunController {
       this.runActivity = {
         ...(this.runActivity ?? { startedAt: completedAt, reasoningMs: 0 }),
         completedAt,
-        activeReasoningStartedAt: undefined,
         keepExpanded,
       };
       this.publishRunActivity();
@@ -798,7 +804,14 @@ export class AgentRunController {
   private updateReasoningBlock(id: string, patch: Partial<ReasoningBlock>) {
     const index = this.reasoningBlocks.findIndex((block) => block.id === id);
     this.reasoningBlocks = index < 0
-      ? [...this.reasoningBlocks, { id, content: "", afterToolCount: this.toolExecutions.length, roundId: this.activeRoundId, seq: this.nextSeq(), ...patch }]
+      ? [...this.reasoningBlocks, {
+          id,
+          content: "",
+          afterToolCount: this.toolExecutions.length,
+          ...(this.activeRoundId !== undefined ? { roundId: this.activeRoundId } : {}),
+          seq: this.nextSeq(),
+          ...patch,
+        }]
       : this.reasoningBlocks.map((block, blockIndex) => blockIndex === index ? { ...block, ...patch } : block);
     this.reasoningContent = this.reasoningBlocks.map((block) => block.content).filter(Boolean).join("\n\n");
     this.deps.host.patchMessage(this.input.sessionId, this.input.assistantId, {

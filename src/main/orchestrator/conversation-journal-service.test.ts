@@ -195,6 +195,20 @@ describe("ConversationJournalService", () => {
     });
   });
 
+  it("同一 store 的多个 JournalService 共享 revision 写队列", async () => {
+    const { root } = createJournal();
+    const store = new ConversationTranscriptStore(root, { now: () => 1_000 });
+    const first = new ConversationJournalService(store);
+    const second = new ConversationJournalService(store);
+    await first.appendUser("c1", userInput("u1", "hello"));
+    const entries = await Promise.all([
+      first.appendPresentationNext("c1", "user:u1", "writer-a", { reasoning: "a" }),
+      second.appendPresentationNext("c1", "user:u1", "writer-b", { reasoningBlocks: [] }),
+    ]);
+    expect(entries.map((entry) => entry.payload.patchRevision).sort()).toEqual([1, 2]);
+    expect((await second.readProjection("c1")).messages[0]).toMatchObject({ reasoning: "a", reasoningBlocks: [] });
+  });
+
   it("拒绝空展示补丁和未知字段而不写入轨迹", async () => {
     const { journal } = createJournal();
     await journal.appendUser("c1", userInput("u1", "hello"));
@@ -202,6 +216,26 @@ describe("ConversationJournalService", () => {
       .rejects.toThrow("TRANSCRIPT_INVALID_PRESENTATION_PATCH");
     await expect(journal.appendPresentationNext("c1", "user:u1", "bad-field", { answersUserMessageId: "u1" } as never))
       .rejects.toThrow("TRANSCRIPT_INVALID_PRESENTATION_PATCH");
+    expect((await journal.readProjection("c1")).messages[0]).toMatchObject({ content: "hello" });
+  });
+
+  it("深度校验展示字段并拒绝非法子结构", async () => {
+    const { journal } = createJournal();
+    await journal.appendUser("c1", userInput("u1", "hello"));
+    const invalidPatches = [
+      { runSnapshot: {} },
+      { runSnapshot: { status: "terminal", updatedAt: "now" } },
+      { toolExecutions: [null] },
+      { agentRounds: [{ id: "r1", status: "unknown", startedAt: 1 }] },
+      { contextUsage: { phase: "terminal", updatedAt: 1 } },
+      { musicCard: { setId: "s", source: "search", tracks: [{ id: "t", name: "n", artists: [1] }] } },
+      { runSnapshot: { status: "running", updatedAt: 1, runId: undefined } },
+      { toolExecutions: [{ id: "tool", name: "tool", status: "running", changes: [{ file: "a", kind: "bad" }] }] },
+    ];
+    for (const patch of invalidPatches) {
+      await expect(journal.appendPresentationNext("c1", "user:u1", `invalid:${JSON.stringify(patch)}`, patch as never))
+        .rejects.toThrow("TRANSCRIPT_INVALID_PRESENTATION_PATCH");
+    }
     expect((await journal.readProjection("c1")).messages[0]).toMatchObject({ content: "hello" });
   });
 

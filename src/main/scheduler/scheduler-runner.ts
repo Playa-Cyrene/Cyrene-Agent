@@ -59,6 +59,18 @@ export function createSchedulerRunner(deps: RunnerDeps) {
     // must not redirect this run's canonical facts or presentation events.
     const conversationId = deps.getActiveConversation?.()?.sessionId ?? null;
     const runMode = task.mode ?? "work";
+    const noticeId = `scheduler-notice-${historyId}`;
+    const replyId = `scheduler-reply-${historyId}`;
+    const noticeText = `定时任务「${task.title}」已触发`;
+    const schedulerToolExecutions: Array<{
+      id: string;
+      name: string;
+      displayName?: string;
+      status: "running" | "success" | "error";
+      result?: string;
+    }> = [];
+    let deferredRunFinished: unknown;
+    let startedEventSent = false;
 
     deps.recordHistory({
       id: historyId,
@@ -75,24 +87,6 @@ export function createSchedulerRunner(deps: RunnerDeps) {
       if (!wc || wc.isDestroyed()) return;
       wc.send(IPC.SCHEDULER_EVENT, event);
     };
-
-    send({
-      type: "CUSTOM",
-      name: "scheduler.started",
-      schedulerRunId: historyId,
-      schedulerTaskId: task.id,
-      ...(conversationId ? { conversationId } : {}),
-      value: { taskId: task.id, title: task.title, manual, firedAt: startedAt.toISOString(), runId: historyId, ...(conversationId ? { conversationId } : {}) },
-    });
-
-    deps.publishLifecycle?.publishTurnStarted({
-      source: "scheduler",
-      runId: historyId,
-      mode: runMode,
-      taskId: task.id,
-      schedulerRunId: historyId,
-      ...(conversationId ? { conversationId } : {}),
-    });
 
     let transcriptSink: ReturnType<ConversationJournalService["createRunSink"]> | undefined;
     try {
@@ -120,29 +114,72 @@ export function createSchedulerRunner(deps: RunnerDeps) {
         soulSystemBaseContent,
         ...(conversationId ? { conversationId, runId: historyId } : { runId: historyId }),
         ...(conversationId && deps.conversationJournal ? {
-          transcriptSink: deps.conversationJournal.createRunSink({ conversationId, runId: historyId }),
+          transcriptSink: deps.conversationJournal.createRunSink({ conversationId, runId: historyId, assistantTurnId: replyId }),
         } : {}),
       }, runMode);
       transcriptSink = options.transcriptSink;
 
       if (conversationId && deps.conversationJournal) {
         await deps.conversationJournal.appendUser(conversationId, {
+          id: noticeId,
           turnId: historyId,
           text: task.prompt,
           runId: historyId,
         });
+        await deps.conversationJournal.appendPresentationNext(conversationId, noticeId, `scheduler:${historyId}:notice`, { content: noticeText });
       }
+
+      send({
+        type: "CUSTOM",
+        name: "scheduler.started",
+        schedulerRunId: historyId,
+        schedulerTaskId: task.id,
+        ...(conversationId ? { conversationId } : {}),
+        messageId: noticeId,
+        value: { taskId: task.id, title: task.title, manual, firedAt: startedAt.toISOString(), runId: historyId, noticeId, replyId, ...(conversationId ? { conversationId } : {}) },
+      });
+      startedEventSent = true;
+      deps.publishLifecycle?.publishTurnStarted({
+        source: "scheduler",
+        runId: historyId,
+        mode: runMode,
+        taskId: task.id,
+        schedulerRunId: historyId,
+        ...(conversationId ? { conversationId } : {}),
+      });
 
       const agent = new CyreneAgent({ threadId: `scheduler-${task.id}`, description: `Scheduled task: ${task.title}` });
 
       await new Promise<void>((resolve, reject) => {
         const sub = agent.runWithEvents(options).subscribe({
-          next: (event) => send({
-            ...event,
-            schedulerRunId: historyId,
-            schedulerTaskId: task.id,
-            ...(conversationId ? { conversationId } : {}),
-          }),
+          next: (event) => {
+            if (event.type === "TOOL_CALL_START" && event.toolCallId) {
+              const toolCallId = typeof event.toolCallId === "string" ? event.toolCallId : "";
+              if (!toolCallId) return;
+              schedulerToolExecutions.push({
+                id: toolCallId,
+                name: typeof event.toolCallName === "string" ? event.toolCallName : "工具",
+                ...(typeof event.toolCallDisplayName === "string" ? { displayName: event.toolCallDisplayName } : {}),
+                status: "running",
+              });
+            } else if (event.type === "TOOL_CALL_RESULT" && event.toolCallId) {
+              const toolCallId = typeof event.toolCallId === "string" ? event.toolCallId : "";
+              const tool = schedulerToolExecutions.find((item) => item.id === toolCallId);
+              if (tool) {
+                tool.status = event.status === "failed" ? "error" : "success";
+                tool.result = (typeof event.content === "string" ? event.content : "").slice(0, 4000);
+              }
+            }
+            const outboundEvent = {
+              ...event,
+              schedulerRunId: historyId,
+              schedulerTaskId: task.id,
+              ...(event.type === "CUSTOM" ? {} : { messageId: replyId }),
+              ...(conversationId ? { conversationId } : {}),
+            };
+            if (event.type === "RUN_FINISHED") deferredRunFinished = outboundEvent;
+            else send(outboundEvent);
+          },
           error: (err) => {
             sub.unsubscribe();
             reject(err instanceof Error ? err : new Error(String(err)));
@@ -164,13 +201,18 @@ export function createSchedulerRunner(deps: RunnerDeps) {
         if (messageId) {
           await deps.conversationJournal!.appendPresentationNext(
             conversationId,
-            messageId,
+            replyId,
             `scheduler:${historyId}:reply:${encodeURIComponent(reply)}`,
-            { content: reply, runSnapshot: { runId: historyId, status: "terminal", updatedAt: Date.now() } },
+            {
+              content: reply,
+              toolExecutions: schedulerToolExecutions,
+              runSnapshot: { runId: historyId, status: "terminal", updatedAt: Date.now() },
+            },
           );
         }
         await transcriptSink.checkpoint();
       }
+      if (deferredRunFinished) send(deferredRunFinished);
       deps.recordHistory({
         id: historyId,
         taskId: task.id,
@@ -242,6 +284,17 @@ export function createSchedulerRunner(deps: RunnerDeps) {
         errorMessage: message,
         effectiveToolIds,
       });
+      if (!startedEventSent) {
+        send({
+          type: "CUSTOM",
+          name: "scheduler.started",
+          schedulerRunId: historyId,
+          schedulerTaskId: task.id,
+          ...(conversationId ? { conversationId } : {}),
+          messageId: noticeId,
+          value: { taskId: task.id, title: task.title, manual, firedAt: startedAt.toISOString(), runId: historyId, noticeId, replyId, ...(conversationId ? { conversationId } : {}) },
+        });
+      }
       send({ type: "RUN_ERROR", message, code: err instanceof AgentRuntimeError ? err.code : undefined, threadId: `scheduler-${task.id}`, runId: historyId, schedulerRunId: historyId, schedulerTaskId: task.id, ...(conversationId ? { conversationId } : {}) });
       return { ok: false, historyId, error: message, effectiveToolIds };
     }

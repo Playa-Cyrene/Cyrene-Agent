@@ -76,7 +76,7 @@ describe("useSchedulerEvents", () => {
     expect(appended[0].sessionId).toBe("session-a");
     const [notice, reply] = appended[0].items;
     expect(notice.content).toBe("定时任务「每日摘要」已触发");
-    expect(notice.role).toBe("assistant");
+    expect(notice.role).toBe("user");
     expect(reply.loading).toBe(true);
     expect(reply.waitingForFirstEvent).toBe(true);
   });

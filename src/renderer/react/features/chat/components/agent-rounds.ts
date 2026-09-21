@@ -128,7 +128,13 @@ export function createRoundProcessMessage(
   roundId?: string,
   seq?: number,
 ): ProcessMessageRecord {
-  return { id, content, afterToolCount, roundId, seq };
+  return {
+    id,
+    content,
+    afterToolCount,
+    ...(roundId !== undefined ? { roundId } : {}),
+    ...(seq !== undefined ? { seq } : {}),
+  };
 }
 
 export function startAgentRound(

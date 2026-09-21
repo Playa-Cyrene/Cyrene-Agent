@@ -21,6 +21,8 @@ export interface ProactiveCommitInput {
   source: "model" | "fallback";
   fallbackPayload?: unknown;
   generationEpoch: number;
+  /** Stable intent timestamp captured before model generation. */
+  intentAt?: number;
 }
 
 export type ProactiveCommitResult =
@@ -124,7 +126,7 @@ export function createProactiveChatService(deps: ProactiveChatServiceDeps): Proa
           return;
         }
 
-        const commitResult = await deps.commitMessage({ candidate, text, source, fallbackPayload, generationEpoch });
+        const commitResult = await deps.commitMessage({ candidate, text, source, fallbackPayload, generationEpoch, intentAt: commitSnapshot.now });
         if (commitResult.kind === "cancelled") {
           deps.log?.("commit_cancelled", {
             scene: candidate.sceneId,

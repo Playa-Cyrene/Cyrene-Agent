@@ -88,6 +88,86 @@ describe("chats IPC mode filtering", () => {
     ]));
   });
 
+  it("runs the controller through the real bridge handler before api.run and fails closed for a deep patch", async () => {
+    const { registerChatsIpc } = await import("./chats-ipc");
+    const { getConversationTranscriptStore } = await import("../orchestrator/conversation-transcript-store");
+    const { AgentRunController } = await import("../../renderer/react/features/chat/pages/run/AgentRunController");
+    registerChatsIpc();
+    const create = mocks.handlers.get(IPC.CHATS_CREATE);
+    const checkpoint = mocks.handlers.get(IPC.CTA_PRESENTATION_CHECKPOINT);
+    if (!create || !checkpoint) throw new Error("controller bridge handlers were not registered");
+    vi.stubGlobal("window", { chat: undefined, setTimeout, clearTimeout });
+    const event = { sender: {} };
+    const session = await create(event, { mode: "chat" }) as { id: string };
+    const transcript = getConversationTranscriptStore(mocks.userDataDir);
+    await transcript.append(session.id, {
+      id: "assistant-controller",
+      at: 1,
+      kind: "assistant",
+      payload: { role: "assistant", content: "" },
+    });
+    const listeners = new Set<(value: { type: string; runId: string; result?: { status: string } }) => void>();
+    const api = {
+      run: vi.fn(async () => {
+        expect((await transcript.readProjection(session.id)).messages.find((message) => message.id === "assistant-controller")?.runSnapshot?.status)
+          .toBe("running");
+        setTimeout(() => {
+          const started = { type: "RUN_STARTED", runId: "run-controller" };
+          const finished = { type: "RUN_FINISHED", runId: "run-controller", result: { status: "success" } };
+          for (const listener of listeners) listener(started);
+          for (const listener of listeners) listener(finished);
+        }, 0);
+        return { success: true, runId: "run-controller" };
+      }),
+      onEvent: vi.fn((listener: (value: { type: string; runId: string; result?: { status: string } }) => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      }),
+      cancel: vi.fn(async () => undefined),
+      reportRunPersisted: vi.fn(),
+    };
+    const makeDeps = (store: { checkpointPresentation: (...args: any[]) => Promise<unknown> }, run: ReturnType<typeof vi.fn>) => ({
+      api: { ...api, run },
+      store,
+      host: {
+        patchMessage: vi.fn(), setInteraction: vi.fn(), clearInteraction: vi.fn(), dismissAskIfMatched: vi.fn(),
+        updateTodos: vi.fn(), updateContextUsage: vi.fn(), setCompressingContext: vi.fn(), setModeBusy: vi.fn(),
+        requestTakeover: vi.fn(), clearTakeover: vi.fn(), earlyTts: { start: vi.fn(() => ({ cancel: vi.fn() })), finish: vi.fn() },
+        onRunFinished: vi.fn(),
+      },
+      registries: {
+        activeRuns: { current: {} }, checkpointTriggers: { current: {} },
+        cancelRequestedSessions: { current: new Set<string>() }, eventUnsubscribers: { current: new Set<() => void>() },
+      },
+      startRun: vi.fn(async () => undefined),
+    });
+    const input = {
+      targetMode: "chat", sessionId: session.id, userMessageId: "user-controller", assistantId: "assistant-controller",
+      session: { id: session.id, messages: [{ id: "user-controller", role: "user", content: "hello", at: 1 }] }, attachments: [],
+    } as any;
+    const validStore = { checkpointPresentation: async (...args: any[]) => checkpoint(event, {
+      sessionId: args[0], messageId: args[1], mutationKey: args[2], patch: args[3],
+    }) };
+    await new AgentRunController(input, makeDeps(validStore, api.run) as any).start();
+    expect(api.run).toHaveBeenCalledTimes(1);
+
+    const invalidRun = vi.fn(async () => ({ success: true, runId: "never-started" }));
+    await transcript.append(session.id, {
+      id: "assistant-invalid",
+      at: 1,
+      kind: "assistant",
+      payload: { role: "assistant", content: "" },
+    });
+    let firstCheckpoint = true;
+    const failClosedStore = { checkpointPresentation: async (...args: any[]) => checkpoint(event, {
+      sessionId: args[0], messageId: args[1], mutationKey: args[2],
+      patch: firstCheckpoint ? (firstCheckpoint = false, { runSnapshot: {} }) : args[3],
+    }) };
+    const invalidController = new AgentRunController({ ...input, assistantId: "assistant-invalid" }, makeDeps(failClosedStore, invalidRun) as any);
+    await expect(invalidController.start()).rejects.toThrow("invalid-presentation-patch");
+    expect(invalidRun).not.toHaveBeenCalled();
+  });
+
   it("returns a stable retired error for formal message IPC", async () => {
     const { registerChatsIpc } = await import("./chats-ipc");
     registerChatsIpc();

@@ -29,6 +29,7 @@ interface SchedulerStreamEvent {
   conversationId?: string;
   runId?: string;
   threadId?: string;
+  messageId?: string;
 }
 
 interface SchedulerStartedValue {
@@ -37,6 +38,8 @@ interface SchedulerStartedValue {
   manual?: boolean;
   firedAt?: string;
   runId?: string;
+  noticeId?: string;
+  replyId?: string;
 }
 
 /** 单次调度执行在渲染端的累积状态；sessionId 在触发时冻结（切会话不改归属）。 */
@@ -102,13 +105,13 @@ export function useSchedulerEvents(deps: UseSchedulerEventsDeps): void {
         const runKey = event.schedulerRunId ?? value?.runId ?? `scheduler-${Date.now()}`;
         if (streamsRef.current.has(runKey)) return;
         const sessionId = event.conversationId ?? null;
-        const replyId = `scheduler-reply-${runKey}`;
-        const noticeId = `scheduler-notice-${runKey}`;
+        const replyId = value?.replyId ?? `scheduler-reply-${runKey}`;
+        const noticeId = value?.noticeId ?? event.messageId ?? `scheduler-notice-${runKey}`;
         const title = value?.title ?? "未命名任务";
         streamsRef.current.set(runKey, { sessionId, replyId, content: "", tools: [] });
         if (!sessionId) return;
         depsRef.current.appendMessages(sessionId, [
-          { id: noticeId, role: "assistant", content: `定时任务「${title}」已触发` },
+          { id: noticeId, role: "user", content: `定时任务「${title}」已触发` },
           {
             id: replyId,
             role: "assistant",
