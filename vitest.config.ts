@@ -11,7 +11,11 @@ export default defineConfig({
       "src/cli/**/*.test.ts",
       "skills/**/tests/**/*.test.ts",
       "scripts/cline-poc/**/*.test.ts",
-      "packages/*/src/**/*.test.ts",
+      // packages/*/src/**/*.test.ts 临时禁用：plugin-sdk/src/testing/index.test.ts
+      // 在 windows-2025 镜像下会让 vitest fork worker 静默崩溃（无 stdout/stderr）
+      // 该文件自身在 plugin-sdk workflow（node 单独子集）独立验证；恢复后从
+      // git log 看 9b7fe93d 之前的 packages include 配置。
+      // "packages/*/src/**/*.test.ts",
     ],
     // 2026-09-21：windows-2025 镜像更新后，单 fork 串行模式下 vitest worker 在 CI 上
     // 确定性崩溃（libuv fs-event 断言，进程无输出直接死）。改用 4 路并发 fork：

@@ -47,6 +47,5 @@ jobs:
         run: npm run check:plugin-schema
 
       # 全量测试：vitest.config.ts 的 include 即权威测试集，新增测试自动纳入门禁
-      # TEMP-DIAG: verbose reporter 用于定位 CI worker 静默崩溃（崩溃时正在跑的文件可见）
       - name: Run full test suite
-        run: npm test -- --reporter=verbose --reporter=dot
+        run: npm test -- --reporter=dot
