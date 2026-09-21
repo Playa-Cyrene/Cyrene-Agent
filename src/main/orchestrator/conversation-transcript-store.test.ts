@@ -16,6 +16,8 @@ function createStore() {
     store: new ConversationTranscriptStore(root, { now: () => 1_000 }),
     jsonlPath: (conversationId: string) =>
       path.join(root, "transcripts", transcriptStorageKey(conversationId), "transcript.jsonl"),
+    snapshotPath: (conversationId: string) =>
+      path.join(root, "transcripts", transcriptStorageKey(conversationId), "snapshot.json"),
   };
 }
 
@@ -169,6 +171,57 @@ describe("ConversationTranscriptStore", () => {
     expect(snapshot.entries.map((entry) => entry.id)).toEqual(["e1"]);
     expect(snapshot.projection.messages[0].content).toBe("one");
     expect((await store.read("c1")).entries.map((entry) => entry.id)).toEqual(["e1"]);
+  });
+
+  it("rejects malformed canonical user and assistant rows", async () => {
+    const { store, jsonlPath } = createStore();
+    await store.append("c1", userDraft("e1", "u1", 1, "one"));
+    await fs.promises.writeFile(
+      jsonlPath("c1"),
+      `${JSON.stringify({ seq: 1, id: "e1", at: 1_000, kind: "user", payload: {} })}\n`,
+      "utf8",
+    );
+    await expect(store.read("c1")).rejects.toThrow("TRANSCRIPT_CORRUPT_ROW");
+
+    await fs.promises.writeFile(
+      jsonlPath("c1"),
+      `${JSON.stringify({ seq: 1, id: "e1", at: 1_000, kind: "assistant", payload: { role: "assistant", content: 42 } })}\n`,
+      "utf8",
+    );
+    await expect(store.read("c1")).rejects.toThrow("TRANSCRIPT_CORRUPT_ROW");
+  });
+
+  it("rejects malformed canonical tool result rows", async () => {
+    const { store, jsonlPath } = createStore();
+    await store.append("c1", userDraft("e1", "u1", 1, "one"));
+    await fs.promises.writeFile(
+      jsonlPath("c1"),
+      `${JSON.stringify({ seq: 1, id: "e1", at: 1_000, kind: "tool_result", payload: { assistantEntryId: "a1" } })}\n`,
+      "utf8",
+    );
+    await expect(store.read("c1")).rejects.toThrow("TRANSCRIPT_CORRUPT_ROW");
+  });
+
+  it("fails closed on malformed v2 snapshot metadata", async () => {
+    const { store, snapshotPath } = createStore();
+    await store.append("c1", userDraft("e1", "u1", 1, "one"));
+    const valid = {
+      schemaVersion: 2,
+      throughSeq: 1,
+      entries: [{ seq: 1, id: "e1", at: 1_000, kind: "user", turnId: "u1", revision: 1, payload: { text: "one" } }],
+      projection: { throughSeq: 1, messages: [] },
+      archives: [],
+      seenEntryIds: ["e1"],
+      seenUserRevisions: ["u1\u00001"],
+    };
+    for (const corrupt of [
+      { ...valid, throughSeq: "one" },
+      { ...valid, seenEntryIds: "e1" },
+      { ...valid, archives: {} },
+    ]) {
+      await fs.promises.writeFile(snapshotPath("c1"), JSON.stringify(corrupt), "utf8");
+      await expect(store.read("c1")).rejects.toThrow("TRANSCRIPT_CORRUPT_SNAPSHOT");
+    }
   });
 
   it("hashes conversation ids that contain path separators", async () => {

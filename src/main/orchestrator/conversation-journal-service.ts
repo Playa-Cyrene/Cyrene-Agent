@@ -42,7 +42,9 @@ export interface CreateRunSinkInput {
 
 export interface ProjectionPage {
   messages: ConversationProjection["messages"];
+  messageCount: number;
   hasMore: boolean;
+  nextBefore: number | null;
 }
 
 export interface ConversationJournalServiceOptions {
@@ -147,7 +149,13 @@ export class ConversationJournalService {
     const end = Math.max(0, Math.min(before ?? projection.messages.length, projection.messages.length));
     const safeLimit = Math.max(1, Math.min(Math.floor(limit) || 1, 200));
     const start = Math.max(0, end - safeLimit);
-    return { messages: projection.messages.slice(start, end), hasMore: start > 0 };
+    const hasMore = start > 0;
+    return {
+      messages: projection.messages.slice(start, end),
+      messageCount: projection.messages.length,
+      hasMore,
+      nextBefore: hasMore ? start : null,
+    };
   }
 
   async buildModelContext(conversationId: string): Promise<MaterializedTranscript> {

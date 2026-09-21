@@ -23,6 +23,7 @@ import {
   type TranscriptEntry,
   type TranscriptSnapshotV2,
 } from "./conversation-transcript-types";
+import type { ChatMessage as CanonicalChatMessage } from "./vendors/types";
 
 const ROOT_DIR_NAME = "transcripts";
 const JSONL_FILE_NAME = "transcript.jsonl";
@@ -139,6 +140,7 @@ export class ConversationTranscriptStore {
 
       // seq 只在队列内分配：现有最大 seq + 1（快照基线 + 已重放增量）
       const entry = { ...input, seq: state.maxSeq + 1, at: input.at ?? this.now() } as TranscriptEntry;
+      validateLoadedTranscriptEntry(entry);
       await fs.promises.mkdir(state.dir, { recursive: true });
       await fs.promises.appendFile(path.join(state.dir, JSONL_FILE_NAME), `${JSON.stringify(entry)}\n`, "utf8");
       return entry;
@@ -274,7 +276,23 @@ export class ConversationTranscriptStore {
       const raw = await fs.promises.readFile(path.join(dir, SNAPSHOT_FILE_NAME), "utf8");
       const parsed = JSON.parse(raw) as TranscriptSnapshotV2;
       if (parsed?.schemaVersion === SCHEMA_VERSION) {
-        if (!Array.isArray(parsed.entries)) throw new Error("TRANSCRIPT_CORRUPT_ROW");
+        if (
+          !Number.isInteger(parsed.throughSeq) ||
+          parsed.throughSeq < 0 ||
+          !Array.isArray(parsed.entries) ||
+          !Array.isArray(parsed.archives) ||
+          !Array.isArray(parsed.seenEntryIds) ||
+          !Array.isArray(parsed.seenUserRevisions) ||
+          !parsed.seenEntryIds.every((id) => typeof id === "string") ||
+          !parsed.seenUserRevisions.every((key) => typeof key === "string") ||
+          !parsed.archives.every((archive) => (
+            isRecord(archive) &&
+            Number.isInteger(archive.fromSeq) && archive.fromSeq >= 0 &&
+            Number.isInteger(archive.throughSeq) && archive.throughSeq >= archive.fromSeq &&
+            typeof archive.file === "string" &&
+            typeof archive.sha256 === "string"
+          ))
+        ) throw new Error("TRANSCRIPT_CORRUPT_SNAPSHOT");
         return parsed;
       }
       if (parsed?.schemaVersion === V1_SCHEMA_VERSION) {
@@ -353,13 +371,97 @@ function validateLoadedTranscriptEntry(entry: unknown): asserts entry is Transcr
   if (
     typeof candidate.id !== "string" ||
     candidate.id.length === 0 ||
+    candidate.id.includes("\n") ||
     typeof candidate.seq !== "number" ||
     !Number.isFinite(candidate.seq) ||
     !Number.isInteger(candidate.seq) ||
+    candidate.seq < 1 ||
+    typeof candidate.at !== "number" ||
+    !Number.isFinite(candidate.at) ||
     !kinds.has(candidate.kind as string) ||
-    !candidate.payload ||
-    typeof candidate.payload !== "object"
+    (candidate.runId !== undefined && typeof candidate.runId !== "string") ||
+    (candidate.turnId !== undefined && typeof candidate.turnId !== "string") ||
+    (candidate.revision !== undefined && (!Number.isInteger(candidate.revision) || candidate.revision < 1)) ||
+    (candidate.roundId !== undefined && typeof candidate.roundId !== "string") ||
+    !isValidTranscriptPayload(candidate)
   ) throw new Error("TRANSCRIPT_CORRUPT_ROW");
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function isValidTranscriptPayload(entry: Partial<TranscriptEntry>): boolean {
+  if (!isRecord(entry.payload)) return false;
+  switch (entry.kind) {
+    case "user":
+      return typeof entry.payload.text === "string" &&
+        (entry.payload.attachments === undefined || Array.isArray(entry.payload.attachments));
+    case "assistant":
+      return isValidCanonicalChatMessage(entry.payload, "assistant");
+    case "tool_result":
+      return typeof entry.payload.assistantEntryId === "string" &&
+        typeof entry.payload.toolCallId === "string" &&
+        ["success", "failure", "unknown", "not_executed"].includes(entry.payload.outcome as string) &&
+        isValidCanonicalChatMessage(entry.payload.message, "tool") &&
+        (entry.payload.fullRef === undefined || typeof entry.payload.fullRef === "string");
+    case "interruption":
+      return entry.payload.reason === "user_cancel";
+    case "turn_rewind":
+      return typeof entry.payload.anchorUserTurnId === "string" &&
+        ["keep_user", "replace_user"].includes(entry.payload.disposition as string) &&
+        ["edit", "regenerate"].includes(entry.payload.reason as string) &&
+        (entry.payload.replacementUser === undefined || (
+          isRecord(entry.payload.replacementUser) &&
+          typeof entry.payload.replacementUser.text === "string"
+        ));
+    case "backfill_boundary":
+      return typeof entry.payload.note === "string";
+    case "compaction_checkpoint":
+      return Number.isInteger(entry.payload.baseThroughSeq) && entry.payload.baseThroughSeq >= 0 &&
+        Number.isInteger(entry.payload.sourceThroughSeq) && entry.payload.sourceThroughSeq >= 0 &&
+        typeof entry.payload.sourceDigest === "string" &&
+        isValidCanonicalChatMessage(entry.payload.replacement) &&
+        ["automatic", "manual"].includes(entry.payload.trigger as string);
+    case "presentation_patch":
+      return typeof entry.payload.messageId === "string" &&
+        Number.isInteger(entry.payload.patchRevision) && entry.payload.patchRevision >= 1 &&
+        isRecord(entry.payload.patch);
+    case "turn_tombstone":
+      return typeof entry.payload.targetUserTurnId === "string" && entry.payload.reason === "pending_withdrawn";
+    case "delivery_receipt":
+      return typeof entry.payload.assistantTurnId === "string" &&
+        ["wechat", "feishu", "qq", "qqbot"].includes(entry.payload.channel as string) &&
+        ["delivered", "failed"].includes(entry.payload.status as string) &&
+        (entry.payload.errorCode === undefined || typeof entry.payload.errorCode === "string");
+    default:
+      return false;
+  }
+}
+
+function isValidCanonicalChatMessage(value: unknown, expectedRole?: CanonicalChatMessage["role"]): value is CanonicalChatMessage {
+  if (!isRecord(value) || typeof value.role !== "string" || !["system", "user", "assistant", "tool"].includes(value.role)) {
+    return false;
+  }
+  if (expectedRole && value.role !== expectedRole) return false;
+  if (value.content !== undefined && !isValidChatMessageContent(value.content)) return false;
+  if (value.toolCalls !== undefined && (!Array.isArray(value.toolCalls) || !value.toolCalls.every((call) => (
+    isRecord(call) && typeof call.id === "string" && typeof call.name === "string" && typeof call.arguments === "string"
+  )))) return false;
+  if (value.toolCallId !== undefined && typeof value.toolCallId !== "string") return false;
+  if (value.name !== undefined && typeof value.name !== "string") return false;
+  if (value.thinking !== undefined && typeof value.thinking !== "string") return false;
+  if (value.visibility !== undefined && !["user", "internal"].includes(value.visibility as string)) return false;
+  return true;
+}
+
+function isValidChatMessageContent(value: unknown): boolean {
+  if (typeof value === "string") return true;
+  return Array.isArray(value) && value.every((block) => {
+    if (!isRecord(block) || typeof block.type !== "string") return false;
+    if (block.type === "text") return typeof block.text === "string";
+    return block.type === "image_url" && isRecord(block.image_url) && typeof block.image_url.url === "string";
+  });
 }
 
 async function pathExists(target: string): Promise<boolean> {

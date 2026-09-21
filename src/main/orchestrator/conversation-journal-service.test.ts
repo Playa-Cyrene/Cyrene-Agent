@@ -87,6 +87,23 @@ describe("ConversationJournalService", () => {
     expect((await journal.readProjectionPage("c1", 1, 1)).messages[0].sticker).toBe("calm");
   });
 
+  it("使用绝对 before 游标分页时连续返回完整投影尾部", async () => {
+    const { journal } = createJournal();
+    for (let index = 1; index <= 5; index++) {
+      await journal.appendUser("c1", userInput(`u${index}`, String(index)));
+    }
+
+    const first = await journal.readProjectionPage("c1", null, 2);
+    const second = await journal.readProjectionPage("c1", first.nextBefore, 2);
+    const third = await journal.readProjectionPage("c1", second.nextBefore, 2);
+    expect(first.messages.map((message) => message.content)).toEqual(["4", "5"]);
+    expect(second.messages.map((message) => message.content)).toEqual(["2", "3"]);
+    expect(third.messages.map((message) => message.content)).toEqual(["1"]);
+    expect(first).toMatchObject({ messageCount: 5, hasMore: true, nextBefore: 3 });
+    expect(second).toMatchObject({ messageCount: 5, hasMore: true, nextBefore: 1 });
+    expect(third).toMatchObject({ messageCount: 5, hasMore: false, nextBefore: null });
+  });
+
   it("withdrawUserTurn 写入墓碑且重复撤回为 absent", async () => {
     const { journal } = createJournal();
     await journal.appendUser("c1", userInput("u1", "hello"));
