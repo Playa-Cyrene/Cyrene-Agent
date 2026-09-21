@@ -3,6 +3,7 @@ import type {
   ChatMessage,
   ChatSession,
   ConversationMode,
+  PendingChatAttachment,
   ProcessMessageRecord,
   ReasoningBlock,
   RunActivityRecord,
@@ -53,6 +54,8 @@ export interface AgentRunInput {
   assistantId: string;
   session: ChatSession;
   attachments: ComposerAttachment[];
+  /** 原始用户文本对应的 UI 展示文本；表情包标记不进入模型 text。 */
+  visibleContent?: string;
   resumeFromRunId?: string;
   takeoverFromRunId?: string;
   /**
@@ -258,13 +261,33 @@ export class AgentRunController {
         splitMode,
       );
       const ack = await api.run({
-        // 权威模型上下文已由主进程轨迹构建；此数组仅一个版本周期的渲染端回退用，发送完整历史
-        messages: this.input.session.messages.map((item) => ({
-          role: item.role,
-          content: item.modelContext?.trim() || item.content,
-          at: item.at,
-        })),
-        userTurnId: this.input.userMessageId,
+        // 模型历史由主进程 journal 构建；renderer 只发送当前 user 事实。
+        currentUser: {
+          turnId: this.input.userMessageId,
+          text: (() => {
+            const message = this.input.session.messages.find((item) => item.id === this.input.userMessageId);
+            return message?.modelContext?.trim() || message?.content || "";
+          })(),
+          visibleContent: this.input.visibleContent
+            ?? this.input.session.messages.find((item) => item.id === this.input.userMessageId)?.content
+            ?? "",
+          ...(this.input.attachments.length > 0 ? {
+            attachments: this.input.attachments
+              .filter((attachment): attachment is ComposerAttachment & { filePath: string } => Boolean(attachment.filePath))
+              .map((attachment): PendingChatAttachment => ({
+                kind: attachment.kind === "image" ? "image" : "document",
+                name: attachment.name,
+                filePath: attachment.filePath,
+                ...(attachment.mime ? { mime: attachment.mime } : {}),
+                ...(attachment.caption ? { caption: attachment.caption } : {}),
+                ...(attachment.hasAnnotations ? { hasAnnotations: true } : {}),
+              })),
+          } : {}),
+          ...(() => {
+            const sticker = this.input.session.messages.find((item) => item.id === this.input.userMessageId)?.sticker;
+            return sticker ? { sticker } : {};
+          })(),
+        },
         assistantTurnId: this.input.assistantId,
         styleId: general?.currentStyleId,
         sessionId: this.input.sessionId,

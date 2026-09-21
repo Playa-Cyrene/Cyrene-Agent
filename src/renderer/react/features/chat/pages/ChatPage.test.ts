@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { shouldListenForDeferredPlanEvents } from "./conversation-run-policy";
 
 const chatPageSource = fs.readFileSync(fileURLToPath(new URL("./ChatPage.tsx", import.meta.url)), "utf8");
+const runControllerSource = fs.readFileSync(fileURLToPath(new URL("./run/AgentRunController.ts", import.meta.url)), "utf8");
 
 describe("React Code conversation run policy", () => {
   it("keeps the post-run plan listener active in both Code and Chat modes", () => {
@@ -34,5 +35,10 @@ describe("ChatPage 轨迹回退派发（CTA Phase 1）", () => {
     expect(chatPageSource).toMatch(/restartLastChatTurn\(\s*[\w.]+,\s*[\w.]+,\s*"keep_user"/);
     // 派发 input 携带轨迹回退元数据：锚点 = 通过校验的原 user 消息 ID
     expect(chatPageSource).toMatch(/transcriptRewind:\s*\{\s*anchorUserTurnId:\s*expectedUserMessageId,\s*disposition,?\s*\}/);
+  });
+
+  it("桌面四模式的 run 入口只允许结构化 currentUser，不把完整 UI 历史作为输入", () => {
+    expect(runControllerSource).toContain("currentUser");
+    expect(runControllerSource).not.toMatch(/run\(\{[\s\S]*messages:/);
   });
 });

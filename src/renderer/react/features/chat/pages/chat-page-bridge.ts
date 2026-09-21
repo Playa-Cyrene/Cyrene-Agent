@@ -3,6 +3,7 @@ import type {
   ChatSession,
   ChatSessionMeta,
   ConversationMode,
+  PendingChatAttachment,
   PendingChatMessage,
   ToolFileChange,
 } from "../../../../../shared/chat-types";
@@ -117,8 +118,14 @@ export type CandidateTextEventValue =
 
 export interface AguiApi {
   run: (input: {
-    messages: Array<{ role: "user" | "model"; content: string; at?: number }>;
-    userTurnId: string;
+    currentUser: {
+      turnId: string;
+      text: string;
+      visibleContent: string;
+      attachments?: PendingChatAttachment[];
+      sticker?: string;
+      at?: number;
+    };
     assistantTurnId: string;
     styleId?: string;
     sessionId: string;

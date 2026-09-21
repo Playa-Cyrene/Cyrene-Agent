@@ -164,7 +164,7 @@ afterEach(() => {
 });
 
 describe("AgentRunController", () => {
-  it("uses hidden channel model context when continuing a bound conversation from desktop", async () => {
+  it("只发送结构化当前 user，不上传 renderer 的完整历史", async () => {
     const api = createFakeApi({ success: true, runId: "run-1" });
     const store = createFakeStore();
     const { host } = createRecordingHost();
@@ -189,12 +189,10 @@ describe("AgentRunController", () => {
     await flush();
 
     expect(api.run).toHaveBeenCalledWith(expect.objectContaining({
-      messages: [
-        expect.objectContaining({ role: "user", content: "[QQ群发送者：伙伴]\n大家好" }),
-        expect.objectContaining({ role: "model", content: "你好" }),
-        expect.objectContaining({ role: "user", content: "继续说" }),
-      ],
+      currentUser: expect.objectContaining({ turnId: "user-1", text: "继续说", visibleContent: "继续说" }),
     }));
+    const runInput = (api.run as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as Record<string, unknown>;
+    expect(runInput).not.toHaveProperty("messages");
 
     api.emit(RUN_STARTED_EVENT);
     api.emit({ type: "RUN_FINISHED", runId: "run-1", result: { status: "success" } });
@@ -300,7 +298,7 @@ describe("AgentRunController", () => {
 
     // 派发请求带上本轮的轮次标识与会话标识
     expect(api.run).toHaveBeenCalledWith(expect.objectContaining({
-      userTurnId: "user-1",
+      currentUser: expect.objectContaining({ turnId: "user-1" }),
       assistantTurnId: "assistant-1",
       sessionId: "session-1",
     }));
@@ -972,7 +970,7 @@ describe("AgentRunController", () => {
     await flush();
 
     expect(api.run).toHaveBeenCalledWith(expect.objectContaining({
-      userTurnId: "user-1",
+      currentUser: expect.objectContaining({ turnId: "user-1" }),
       transcriptRewind: { anchorUserTurnId: "user-1", disposition: "replace_user" },
     }));
 
@@ -981,7 +979,7 @@ describe("AgentRunController", () => {
     await promise;
   });
 
-  it("发送完整会话历史，不再保留 16 条硬截断", async () => {
+  it("即使 renderer 内存有完整历史，dispatch 也不携带 messages", async () => {
     const api = createFakeApi({ success: true, runId: "run-1" });
     const store = createFakeStore();
     const { host } = createRecordingHost();
@@ -997,13 +995,9 @@ describe("AgentRunController", () => {
     const { promise } = launch(input, { api, store, host, registries: createRegistries() });
     await flush();
 
-    // 主进程默认忽略该数组，但一个版本周期的渲染端回退也要拿到完整 UI 文本历史
-    const runInput = (api.run as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as {
-      messages: Array<{ content: string }>;
-    };
-    expect(runInput.messages).toHaveLength(20);
-    expect(JSON.stringify(runInput.messages)).toContain("消息0");
-    expect(JSON.stringify(runInput.messages)).toContain("消息19");
+    const runInput = (api.run as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as Record<string, unknown>;
+    expect(runInput).not.toHaveProperty("messages");
+    expect(runInput.currentUser).toEqual(expect.objectContaining({ turnId: "user-1" }));
 
     api.emit(RUN_STARTED_EVENT);
     api.emit({ type: "RUN_FINISHED", runId: "run-1", result: { status: "success" } });

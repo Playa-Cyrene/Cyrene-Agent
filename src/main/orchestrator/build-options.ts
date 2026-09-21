@@ -121,7 +121,7 @@ export interface BuildOptionsDeps {
     getEnabledToolsForMode(mode: ConversationMode, overrides?: ToolModeOverrides): ReadonlyArray<unknown>;
   };
   normalizeChatMessages: (raw: ReadonlyArray<unknown>) => ChatMessage[];
-  /** 权威轨迹上下文构建（CTA Phase 1）：桌面 useTranscriptContext 时物化模型消息。 */
+  /** 权威轨迹上下文构建：桌面 currentUser dispatch 时物化模型消息。 */
   buildModelContext?: (
     conversationId: string,
     retainTokens: number,
@@ -166,6 +166,11 @@ export interface BuildOptionsDeps {
     channel?: string;
   }) => Promise<string>;
 }
+
+/** 内部/渠道测试仍可提供一次性消息，但桌面 currentUser 必须使用 modelContext。 */
+export type BuildOptionsInput = AguiRunInput & {
+  messages?: ReadonlyArray<unknown>;
+};
 
 /** onRunFinished 副作用所需的 deps（与 BuildOptionsDeps 部分重叠） */
 export interface OnRunFinishedDeps {
@@ -506,7 +511,7 @@ function requireBuildModelContext(
  * 与 index.ts 原 AG-UI bridge 的 buildOptions 行为完全一致。
  */
 export async function buildAgentRunOptions(
-  input: AguiRunInput,
+  input: BuildOptionsInput,
   deps: BuildOptionsDeps,
 ): Promise<{ options: CyreneRunOptions; latestUserText: string }> {
   const settings = deps.loadModelSettings(input.modelProfileId);
@@ -514,13 +519,17 @@ export async function buildAgentRunOptions(
   if (!settings.baseUrl) {
     throw new Error("还没有填写 API URL，请先在设置里保存 API 配置。");
   }
-  // 权威轨迹上下文（CTA Phase 1）：桌面端 useTranscriptContext 时模型消息来自轨迹物化，
-  // 渲染端 messages 仅作回退（显式 renderer 周期或渠道/内部调用方）。
+  // 权威轨迹上下文：桌面 bridge 在 canonical append 后传入 modelContext；
+  // 若由其它主进程入口调用，则从同一 journal reader 构建，不读取 renderer 历史。
   const retainTokens = resolveTranscriptRetainTokens(settings.contextWindowTokens ?? 256_000);
-  const transcriptContext = input.useTranscriptContext && input.sessionId
-    ? await requireBuildModelContext(deps)(input.sessionId, retainTokens)
-    : undefined;
-  const messages = transcriptContext?.messages ?? deps.normalizeChatMessages(input.messages);
+  const transcriptContext = input.modelContext
+    ?? (input.currentUser && input.sessionId
+      ? await requireBuildModelContext(deps)(input.sessionId, retainTokens)
+      : undefined);
+  const messages = transcriptContext?.messages
+    ?? (input.currentUser
+      ? [{ role: "user" as const, content: input.currentUser.text } as ChatMessage]
+      : deps.normalizeChatMessages(input.messages ?? []));
   if (messages.length === 0) {
     throw new Error("没有可发送的聊天内容。");
   }

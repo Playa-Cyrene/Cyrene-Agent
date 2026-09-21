@@ -34,6 +34,14 @@ export interface JournalUserInput {
   attachments?: PendingChatAttachment[];
 }
 
+export interface JournalRewindInput {
+  anchorUserTurnId: string;
+  disposition: "keep_user" | "replace_user";
+  runId: string;
+  at?: number;
+  replacementUser?: JournalUserInput;
+}
+
 export interface CreateRunSinkInput {
   conversationId: string;
   runId: string;
@@ -142,6 +150,45 @@ export class ConversationJournalService {
     return entry;
   }
 
+  /** 以单行 turn_rewind 原子提交 regenerate/edit，避免产生第二个 active user。 */
+  async appendRewind(conversationId: string, input: JournalRewindInput): Promise<TranscriptEntry> {
+    const snapshot = await this.store.read(conversationId);
+    const entryId = `${input.runId}:rewind:${input.anchorUserTurnId}`;
+    const existing = snapshot.entries.find((entry) => entry.id === entryId);
+    if (existing) return existing;
+    const projection = await this.readProjection(conversationId);
+    const activeUser = projection.state?.nodes.some((node) => (
+      node.kind === "user" && node.turnId === input.anchorUserTurnId
+    )) === true;
+    if (!activeUser) throw new Error("TRANSCRIPT_REWIND_ANCHOR_NOT_FOUND");
+    const revision = input.disposition === "replace_user"
+      ? snapshot.entries
+        .filter((entry) => entry.turnId === input.anchorUserTurnId && typeof entry.revision === "number")
+        .reduce((max, entry) => Math.max(max, entry.revision ?? 0), 0) + 1
+      : undefined;
+    const entry = await this.store.append(conversationId, {
+      id: entryId,
+      at: input.at ?? Date.now(),
+      kind: "turn_rewind",
+      runId: input.runId,
+      turnId: input.anchorUserTurnId,
+      ...(revision !== undefined ? { revision } : {}),
+      payload: {
+        anchorUserTurnId: input.anchorUserTurnId,
+        disposition: input.disposition,
+        reason: input.disposition === "replace_user" ? "edit" : "regenerate",
+        ...(input.disposition === "replace_user" && input.replacementUser ? {
+          replacementUser: {
+            text: input.replacementUser.text,
+            ...(input.replacementUser.attachments?.length ? { attachments: input.replacementUser.attachments } : {}),
+          },
+        } : {}),
+      },
+    });
+    await this.refreshProjection(conversationId);
+    return entry;
+  }
+
   createRunSink(input: CreateRunSinkInput): TranscriptSink {
     return createTranscriptSink({ store: this.store, ...input });
   }
@@ -212,7 +259,7 @@ export class ConversationJournalService {
 
   /** 启动对账按会话/队列稳定顺序续做；单条 journal 失败保留 pending 并继续其它条目。 */
   async reconcilePendingWithdrawals(): Promise<void> {
-    if (!this.pendingStore) return;
+    if (!this.pendingStore || typeof this.pendingStore.listPendingWithdrawals !== "function") return;
     const records = await this.pendingStore.listPendingWithdrawals();
     for (const record of records) {
       try {

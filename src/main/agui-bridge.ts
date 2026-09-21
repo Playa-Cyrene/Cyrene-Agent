@@ -37,11 +37,13 @@ import type { PendingTurnLifecycle } from "./plugin-host/pending-turn-lifecycle"
 import * as chatsStore from "./chats/chats-store";
 import { createRunAdjustmentPoller } from "./chats/pending-adjustment";
 import { broadcastChatsChanged } from "./chats/chats-ipc";
-import type { ConversationMode } from "../shared/chat-types";
+import type { ChatMessage, ConversationMode, PendingChatAttachment } from "../shared/chat-types";
 import { prepareTranscriptDispatch, type TranscriptRewindRequest } from "./orchestrator/conversation-transcript-coordinator";
 import { getConversationTranscriptStore } from "./orchestrator/conversation-transcript-store";
 import { createConversationSessionMigration } from "./orchestrator/conversation-session-migration";
-import { createTranscriptSink } from "./orchestrator/transcript-sink";
+import { ConversationJournalService } from "./orchestrator/conversation-journal-service";
+import type { MaterializedTranscript } from "./orchestrator/conversation-transcript-projection";
+import type { TranscriptPresentationPatch } from "./orchestrator/conversation-transcript-types";
 import {
   requestUserClarification,
   cancelPendingChoicesForRun,
@@ -92,10 +94,45 @@ function extractTerminalFromRunFinished(baseEvent: unknown): CyreneRunTerminalRe
   return { status: "success", externalEffectsMayContinue: false };
 }
 
-/** 渲染进程发起 run 时传的输入。 */
+/** 当前轮的结构化用户事实；renderer 不再上传完整历史。 */
+export interface AguiCurrentUserInput {
+  turnId: string;
+  text: string;
+  visibleContent: string;
+  attachments?: PendingChatAttachment[];
+  sticker?: string;
+  at?: number;
+}
+
+function normalizeCurrentUserAttachments(value: unknown): PendingChatAttachment[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const attachments = value.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const raw = item as Record<string, unknown>;
+    const kind = raw.kind === "image" || raw.kind === "document" ? raw.kind : null;
+    if (!kind || typeof raw.name !== "string" || typeof raw.filePath !== "string") return [];
+    return [{
+      kind: kind as "image" | "document",
+      name: raw.name,
+      filePath: raw.filePath,
+      ...(typeof raw.mime === "string" ? { mime: raw.mime } : {}),
+      ...(typeof raw.caption === "string" ? { caption: raw.caption } : {}),
+      ...(raw.hasAnnotations === true ? { hasAnnotations: true } : {}),
+    }];
+  });
+  return attachments.length > 0 ? attachments : undefined;
+}
+
+/** 渲染进程发起 run 时传的控制输入。 */
 export interface AguiRunInput {
-  messages: unknown[];   // 原始 {role, content}[]，主进程会 normalize
-  /** Renderer 已落库的稳定 turn ID；用于 Chat 社交原子的证据锚点。 */
+  sessionId: string;
+  /** 仅渠道/插件旧入口使用；AG-UI renderer 类型不暴露此字段，bridge 会丢弃。 */
+  messages?: unknown[];
+  currentUser?: AguiCurrentUserInput;
+  mode?: ConversationMode;
+  /** 主进程在 append 后构建的权威模型上下文，renderer 无法构造。 */
+  modelContext?: MaterializedTranscript;
+  /** 仅旧内部调用兼容；renderer 新协议只放在 currentUser.turnId。 */
   userTurnId?: string;
   /** 本轮 assistant 占位消息的稳定 turn ID。 */
   assistantTurnId?: string;
@@ -103,7 +140,6 @@ export interface AguiRunInput {
   style?: string;
   /** 本轮表达风格，与 executionMode 正交。 */
   styleId?: StyleId | string;
-  sessionId?: string;    // 会话 ID；桌面运行模式只信任该会话持久化的 mode
   /** 主进程内部使用：为共享上下文指定工作区绑定来源；null 表示本轮不加载任何工作区。 */
   workspaceBindingSessionId?: string | null;
   /** 外部渠道入口。桌面聊天不传；微信/飞书用于注入渠道语气规则。 */
@@ -114,8 +150,6 @@ export interface AguiRunInput {
   promptChannel?: string;
   /** @deprecated 仅保留 Renderer 兼容；主进程按 ChatSession.mode 分流并忽略该值。 */
   executionMode?: ConversationMode | "soul-only" | "collaboration";
-  /** 主进程内部使用：由 ChatSession.mode 注入，用于选择对应模式的 system prompt。 */
-  mode?: ConversationMode;
   /** 本轮附件（文本内容，临时注入系统上下文，不存历史）。 */
   attachments?: { name: string; text: string }[];
   /** 本轮图片附件。主进程会安全读取并转成 OpenAI-compatible image_url content block。 */
@@ -130,8 +164,6 @@ export interface AguiRunInput {
   modelProfileId?: string;
   /** 桌面 edit / regenerate 的轨迹回退锚点（主进程写 turn_rewind；渲染端只传锚点元数据）。 */
   transcriptRewind?: TranscriptRewindRequest;
-  /** 主进程内部字段：本轮模型上下文改用权威轨迹构建；外部渠道与插件不设置。 */
-  useTranscriptContext?: boolean;
 }
 
 /** 调用方（index.ts）注入：把输入转成 agent 需要的 options（含 system prompt 拼接）。 */
@@ -140,13 +172,6 @@ export type BuildOptionsFn = (input: AguiRunInput) => Promise<{
   /** 跑完后副作用需要的信息。 */
   latestUserText: string;
 }>;
-
-/** 轨迹上下文源开关：显式 "renderer" 才回退渲染端消息（仅一个版本周期的逃生舱）。 */
-export function resolveTranscriptContextSource(
-  value = process.env.CYRENE_TRANSCRIPT_CONTEXT_SOURCE,
-): "transcript" | "renderer" {
-  return value === "renderer" ? "renderer" : "transcript";
-}
 
 /** 调用方注入：agent 跑完后的副作用（记忆/sticker/表情/广播）。 */
 export interface RunFinishedEffects {
@@ -365,15 +390,19 @@ export function registerAgUiIpc(
   buildOptionsFn = buildOptions;
   getChatWindowFn = getChatWindow;
   const sessionMigration = createConversationSessionMigration(app.getPath("userData"));
+  const transcriptStore = getConversationTranscriptStore(app.getPath("userData"));
+  // Journal（会话日志服务）与 migration（迁移器）共享同一底层 store；
+  // pending withdrawal 对账复用 Task 5 的持久状态，不创建旁路协议。
+  const journal = new ConversationJournalService({ store: transcriptStore, pendingStore: chatsStore });
   const loadComposedSession = async (sessionId: string) => {
-    // 测试/旧装配若没有 metadata reader，保留原同步 v1 fallback；正式主进程始终
-    // 具备该 reader，因此 v1/v2 都经过同一迁移 + pending reconcile + projection 边界。
     const recordReader = (chatsStore as typeof chatsStore & {
       getSessionRecord?: (id: string) => ReturnType<typeof chatsStore.getSessionRecord>;
     }).getSessionRecord;
-    if (typeof recordReader !== "function" || !recordReader(sessionId)) {
-      return chatsStore.getSession(sessionId);
-    }
+    const migrated = typeof recordReader === "function"
+      ? await sessionMigration.ensureConversationMigrated(sessionId)
+      : null;
+    await journal.reconcilePendingWithdrawals();
+    if (!migrated) return chatsStore.getSession(sessionId);
     return sessionMigration.loadComposedSession(sessionId);
   };
 
@@ -497,21 +526,128 @@ export function registerAgUiIpc(
       clearTimeout(settleTimeout);
     }
 
-    // ── 轨迹派发（CTA Phase 1）：模型请求启动前原子提交 user / rewind ──
-    // 桌面渲染端 dispatch 总带 userTurnId（AgentRunController 已落库锚点）；
-    // 缺 userTurnId 的非标准调用按渲染端消息走，不写轨迹。
-    // 回退开关只切换读取源（useTranscriptContext）：renderer 回退期间桌面双写仍持续，
-    // 否则已过 backfill boundary 的会话重新切回 transcript 后，回退期间的历史永久缺失。
-    const transcriptSource = resolveTranscriptContextSource();
-    if (input.userTurnId) {
+    // ── 轨迹派发：canonical user/rewind → presentation → model context ──
+    // renderer 的 messages（即使恶意/旧版载荷仍携带）永远不参与模型上下文。
+    const currentUser = input.currentUser ?? (input.userTurnId
+      ? (() => {
+          const message = session.messages.find((candidate) => candidate.id === input.userTurnId && candidate.role === "user");
+          return message ? {
+            turnId: message.id,
+            text: message.content,
+            visibleContent: message.content,
+            at: message.at,
+            ...(message.attachments ? { attachments: message.attachments } : {}),
+            ...(message.sticker ? { sticker: message.sticker } : {}),
+          } : undefined;
+        })()
+      : undefined);
+    if (input.currentUser && (!input.currentUser.turnId || typeof input.currentUser.text !== "string"
+      || typeof input.currentUser.visibleContent !== "string")) {
+      lifecycle?.onConversationEnded();
+      throw new Error("AGUI_RUN_INVALID_CURRENT_USER");
+    }
+    if (input.userTurnId && !currentUser) {
+      lifecycle?.onConversationEnded();
+      throw new Error("TRANSCRIPT_USER_TURN_NOT_FOUND");
+    }
+    const currentUserAttachments = currentUser
+      ? normalizeCurrentUserAttachments(currentUser.attachments)
+      : undefined;
+    let modelContext: MaterializedTranscript | undefined;
+    if (currentUser) {
       try {
-        await prepareTranscriptDispatch({
-          store: getConversationTranscriptStore(app.getPath("userData")),
-          session,
-          userTurnId: input.userTurnId,
-          runId,
-          rewind: input.transcriptRewind,
-        });
+        const currentMessage: ChatMessage = {
+          id: currentUser.turnId,
+          role: "user" as const,
+          content: currentUser.text,
+          at: currentUser.at ?? Date.now(),
+          ...(currentUserAttachments ? {
+            attachments: currentUserAttachments.map((attachment) => attachment.kind === "image"
+              ? {
+                  kind: "image" as const,
+                  name: attachment.name,
+                  filePath: attachment.filePath,
+                  mime: attachment.mime ?? "application/octet-stream",
+                  ...(attachment.caption ? { caption: attachment.caption } : {}),
+                  status: "pending" as const,
+                  ...(attachment.hasAnnotations ? { hasAnnotations: true } : {}),
+                }
+              : {
+                  kind: "document" as const,
+                  name: attachment.name,
+                  filePath: attachment.filePath,
+                  status: "pending" as const,
+                }),
+          } : {}),
+          ...(currentUser.sticker ? { sticker: currentUser.sticker } : {}),
+        };
+        const sessionRecord = (chatsStore as typeof chatsStore & {
+          getSessionRecord?: (id: string) => ReturnType<typeof chatsStore.getSessionRecord>;
+        }).getSessionRecord?.(sessionId);
+        const migrated = sessionRecord?.schemaVersion === 2
+          || (session as unknown as { schemaVersion?: number }).schemaVersion === 2;
+        let presentationRevision: number = 1;
+        if (migrated && input.transcriptRewind) {
+          const rewindEntry = await journal.appendRewind(sessionId, {
+            anchorUserTurnId: input.transcriptRewind.anchorUserTurnId,
+            disposition: input.transcriptRewind.disposition,
+            runId,
+            at: currentMessage.at,
+            ...(input.transcriptRewind.disposition === "replace_user" ? {
+              replacementUser: {
+                turnId: currentUser.turnId,
+                text: currentUser.text,
+                attachments: currentUserAttachments,
+              },
+            } : {}),
+          });
+          presentationRevision = rewindEntry.revision ?? 1;
+        } else if (migrated) {
+          await journal.appendUser(sessionId, {
+            id: `user:v1:${currentUser.turnId}:r1`,
+            turnId: currentUser.turnId,
+            text: currentUser.text,
+            attachments: currentUserAttachments,
+            at: currentMessage.at,
+            revision: 1,
+          });
+        } else {
+          // v1 记录仍复用 Task 3 的确定性回填协调器；迁移完成后不会再次走这里。
+          await prepareTranscriptDispatch({
+            store: transcriptStore,
+            session: {
+              ...session,
+              messages: [
+                ...session.messages.filter((message) => message.id !== currentUser.turnId),
+                currentMessage,
+              ],
+            },
+            userTurnId: currentUser.turnId,
+            runId,
+            rewind: input.transcriptRewind,
+          });
+        }
+        const presentationMessageId = input.transcriptRewind
+          ? `${runId}:rewind:${input.transcriptRewind.anchorUserTurnId}`
+          : `user:v1:${currentUser.turnId}:r1`;
+        // v2 pending claim 的 reconcile 可能已写入 revision 1 sticker patch；
+        // 续派展示补丁递增 revision，避免被同 ID 幂等写吞掉。
+        if (!input.transcriptRewind && session.pendingDispatch?.messageId === currentUser.turnId) {
+          presentationRevision = 2;
+        }
+        const presentation: Record<string, unknown> = {};
+        if (currentUser.visibleContent !== currentUser.text) presentation.content = currentUser.visibleContent;
+        if (currentUser.sticker) presentation.sticker = currentUser.sticker;
+        const canPresent = !input.transcriptRewind || input.transcriptRewind.disposition === "replace_user";
+        if (canPresent && Object.keys(presentation).length > 0) {
+          await journal.appendPresentation(
+            sessionId,
+            presentationMessageId,
+            presentationRevision,
+            presentation as TranscriptPresentationPatch,
+          );
+        }
+        modelContext = await journal.buildModelContext(sessionId);
       } catch (error) {
         // 轨迹写入失败即阻断模型启动（fail-closed），复位守卫与插话标记后上抛
         perf.dump();
@@ -522,18 +658,24 @@ export function registerAgUiIpc(
         throw error;
       }
     }
-    // 读取源是主进程的权威决策：显式覆盖 rawInput 可能携带的内部字段——
-    // renderer 回退强制 false（不留"渲染端传 true 绕过回退开关"的口子），
-    // 兼容调用（缺 userTurnId）同样强制 false（按渲染端消息走）。
-    input.useTranscriptContext = Boolean(input.userTurnId) && transcriptSource === "transcript";
 
     // ── Chat / Work / Learn / Code：共用 CyreneAgent 外壳 ──
     const agentExecutionMode: AgentExecutionMode = mode === "chat" ? "chat" : "work";
     let built;
     try {
+    const { messages: _ignoredRendererMessages, ...safeInput } = input as AguiRunInput & {
+      messages?: unknown;
+    };
     built = await perf.track("build_options", () => buildOptionsFn!({
-      ...input,
+      ...safeInput,
       mode,
+      ...(currentUser ? {
+        currentUser: {
+          ...currentUser,
+          ...(currentUserAttachments ? { attachments: currentUserAttachments } : {}),
+        },
+        modelContext,
+      } : {}),
       modelProfileId: session.modelProfileId,
       executionMode: agentExecutionMode,
     }));
@@ -563,12 +705,11 @@ export function registerAgUiIpc(
     // 缺 userTurnId 的兼容调用按渲染端消息走，sink 与插话轨迹端口都不注入，
     // 否则模型回写没有对应 user 的孤立 assistant 条目。
     // renderer 回退只切换读取源，不影响这里（带 userTurnId 时双写持续）。
-    const transcriptEnabled = Boolean(input.userTurnId);
+    const transcriptEnabled = Boolean(currentUser);
     // 轨迹提交端（CTA）：每 run 一个 sink，entryId 全程确定性，canonical assistant /
     // tool_result 经它写入权威轨迹。
     // 渲染端 assistantTurnId 存在时透传（ChatLoop 单轮路径的 assistant 条目锚点）。
-    options.transcriptSink = transcriptEnabled ? createTranscriptSink({
-      store: getConversationTranscriptStore(app.getPath("userData")),
+    options.transcriptSink = transcriptEnabled ? journal.createRunSink({
       conversationId: sessionId,
       runId,
       ...(input.assistantTurnId ? { assistantTurnId: input.assistantTurnId } : {}),

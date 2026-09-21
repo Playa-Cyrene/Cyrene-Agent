@@ -968,6 +968,7 @@ export function ChatPage() {
         assistantId,
         session: truncatedSession,
         attachments: (nextUserMessage.attachments ?? []).map((attachment) => ({ ...attachment })),
+        visibleContent: nextUserMessage.content,
         // 轨迹回退锚点：主进程据此写 turn_rewind（edit=replace_user / regenerate=keep_user）
         transcriptRewind: { anchorUserTurnId: expectedUserMessageId, disposition },
       });

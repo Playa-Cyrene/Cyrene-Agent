@@ -544,8 +544,7 @@ describe("AgentRuntime 轨迹上下文注入（CTA Phase 1）", () => {
       const runtime = createAgentRuntime(createFullDeps());
       const built = await runtime.buildOptions({
         sessionId: "conversation-authoritative",
-        useTranscriptContext: true,
-        messages: [{ role: "user", content: "stale renderer" }],
+        currentUser: { turnId: "turn-2", text: "next", visibleContent: "next" },
       } as never);
 
       // 模型消息来自轨迹物化，渲染端陈旧消息不进入模型上下文

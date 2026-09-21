@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   getPendingDispatch: vi.fn(),
   composeSession: vi.fn(),
   getPendingMessages: vi.fn(),
+  listPendingWithdrawals: vi.fn(() => []),
   markPendingAdjust: vi.fn(),
   resetPendingAdjustByRun: vi.fn(),
   runCyreneAgent: vi.fn(),
@@ -112,6 +113,7 @@ vi.mock("./chats/chats-store", () => ({
   getPendingDispatch: mocks.getPendingDispatch,
   composeSession: mocks.composeSession,
   getPendingMessages: mocks.getPendingMessages,
+  listPendingWithdrawals: mocks.listPendingWithdrawals,
   markPendingAdjust: mocks.markPendingAdjust,
   resetPendingAdjustByRun: mocks.resetPendingAdjustByRun,
 }));
@@ -1499,9 +1501,9 @@ describe("agui-bridge session run guard", () => {
     ]);
 
     // 守卫注册在同步代码块内完成（get 与 set 之间无 await）→ 同 tick 竞态下恰一个赢
-    expect(first.status).toBe("fulfilled");
-    expect(second.status).toBe("rejected");
-    expect((second as PromiseRejectedResult).reason.message).toMatch(/^SESSION_RUN_ACTIVE:/);
+    expect([first.status, second.status].sort()).toEqual(["fulfilled", "rejected"]);
+    const rejected = first.status === "rejected" ? first : second as PromiseRejectedResult;
+    expect((rejected as PromiseRejectedResult).reason.message).toMatch(/^SESSION_RUN_ACTIVE:/);
   });
 });
 
@@ -1756,8 +1758,16 @@ describe("agui-bridge transcript dispatch", () => {
       userTurnId: "u1",
     });
 
-    // buildOptions 收到轨迹上下文标记（主进程内部字段）
-    expect(seenInputs[0]).toMatchObject({ useTranscriptContext: true });
+    // buildOptions 收到主进程刚构建的权威模型上下文；不再有 renderer 回退开关
+    expect(seenInputs[0]).toMatchObject({
+      currentUser: { turnId: "u1", text: "当前输入", visibleContent: "当前输入" },
+      modelContext: { messages: [
+        { role: "user", content: "旧问题" },
+        { role: "assistant", content: "旧回答" },
+        { role: "user", content: "当前输入" },
+      ] },
+    });
+    expect(seenInputs[0]).not.toHaveProperty("messages");
 
     // 派发前轨迹已落盘：回填边界 + 当前 user
     const { getConversationTranscriptStore } = await import("./orchestrator/conversation-transcript-store");
@@ -1766,6 +1776,53 @@ describe("agui-bridge transcript dispatch", () => {
     expect(entries.some((entry) => entry.kind === "user" && entry.turnId === "u1")).toBe(true);
     expect(entries.some((entry) => entry.kind === "assistant" && entry.payload.content === "旧回答")).toBe(true);
     mocks.userDataRoot = "";
+  });
+
+  it("在 append 前先完成 migration 与 pending reconcile，再构建模型上下文", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-bridge-order-"));
+    roots.push(root);
+    mocks.userDataRoot = root;
+    const session = { id: "order-session", mode: "chat" as const, messages: [] };
+    const record = {
+      id: "order-session",
+      title: "order",
+      identityId: null,
+      createdAt: 1,
+      updatedAt: 1,
+      schemaVersion: 2,
+      messageCount: 0,
+      mode: "chat" as const,
+    };
+    mocks.getSession.mockReturnValue(session);
+    const { runHandler } = await setupBridge();
+    mocks.getSessionRecord.mockReturnValue(record);
+    const { ConversationSessionMigration } = await import("./orchestrator/conversation-session-migration");
+    const { ConversationJournalService } = await import("./orchestrator/conversation-journal-service");
+    const order: string[] = [];
+    const migration = vi.spyOn(ConversationSessionMigration.prototype, "ensureConversationMigrated")
+      .mockImplementation(async () => { order.push("migration"); return null; });
+    const reconcile = vi.spyOn(ConversationJournalService.prototype, "reconcilePendingWithdrawals")
+      .mockImplementation(async () => { order.push("reconcile"); });
+    const append = vi.spyOn(ConversationJournalService.prototype, "appendUser")
+      .mockImplementation(async () => { order.push("append"); });
+    const context = vi.spyOn(ConversationJournalService.prototype, "buildModelContext")
+      .mockImplementation(async () => {
+        order.push("context");
+        return { conversationId: "order-session", messages: [] } as any;
+      });
+    try {
+      await runHandler({ sender: makeSender() }, {
+        sessionId: "order-session",
+        currentUser: { turnId: "u1", text: "next", visibleContent: "next" },
+      });
+      expect(order).toEqual(["migration", "reconcile", "append", "context"]);
+    } finally {
+      migration.mockRestore();
+      reconcile.mockRestore();
+      append.mockRestore();
+      context.mockRestore();
+      mocks.userDataRoot = "";
+    }
   });
 
   it("keeps callers without userTurnId on supplied messages without transcript context", async () => {
@@ -1778,9 +1835,9 @@ describe("agui-bridge transcript dispatch", () => {
       sessionId: "chat-plain",
     });
 
-    // 无 userTurnId 的调用方（渠道/内部路径语义）：不写轨迹、不用轨迹上下文
-    // （即使 rawInput 携带 true 也被主进程强制覆盖为 false）
-    expect(seenInputs[0].useTranscriptContext).toBe(false);
+    // 无 currentUser 的兼容调用不写轨迹，也不把 raw messages 传给 build-options
+    expect(seenInputs[0]).not.toHaveProperty("modelContext");
+    expect(seenInputs[0]).not.toHaveProperty("messages");
     const onFinishedNotStarted = mocks.runCyreneAgent;
     expect(onFinishedNotStarted).toHaveBeenCalled();
     // 轨迹提交端同样不得注入：否则模型回写没有对应 user 的孤立 assistant 条目
@@ -1792,7 +1849,7 @@ describe("agui-bridge transcript dispatch", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-bridge-fail-"));
     roots.push(root);
     mocks.userDataRoot = root;
-    // userTurnId 指向的消息不存在 → prepareTranscriptDispatch 拒绝（fail-closed）
+    // 旧 userTurnId 指向的消息不存在 → 兼容锚点拒绝（fail-closed）
     mocks.getSession.mockReturnValue({
       id: "chat-fail",
       mode: "chat",
@@ -1802,7 +1859,6 @@ describe("agui-bridge transcript dispatch", () => {
     const sender = makeSender();
 
     await expect(runHandler({ sender }, {
-      messages: [{ role: "user", content: "输入" }],
       sessionId: "chat-fail",
       userTurnId: "missing-turn",
     })).rejects.toThrow("TRANSCRIPT_USER_TURN_NOT_FOUND");
@@ -1813,7 +1869,7 @@ describe("agui-bridge transcript dispatch", () => {
     mocks.userDataRoot = "";
   });
 
-  it("renderer 回退开关只切换读取源，桌面双写持续（一个版本周期）", async () => {
+  it("桌面 dispatch 始终使用 journal 上下文，环境变量不能切换 renderer 回退", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-bridge-rollback-"));
     roots.push(root);
     mocks.userDataRoot = root;
@@ -1827,30 +1883,191 @@ describe("agui-bridge transcript dispatch", () => {
     });
     const { runHandler, seenInputs } = await setupBridge();
     const sender = makeSender();
-    const previous = process.env.CYRENE_TRANSCRIPT_CONTEXT_SOURCE;
-    process.env.CYRENE_TRANSCRIPT_CONTEXT_SOURCE = "renderer";
     try {
       await runHandler({ sender }, {
-        messages: [{ role: "user", content: "当前输入" }],
         sessionId: "chat-rollback",
-        userTurnId: "u1",
-        // 模拟 rawInput 携带内部字段：主进程必须显式覆盖，不能让 true 绕过回退开关
-        useTranscriptContext: true,
+        currentUser: { turnId: "u1", text: "当前输入", visibleContent: "当前输入" },
       });
 
-      // 回退周期内：读取源被主进程强制覆盖为 false（模型上下文读取源回退渲染端消息），
-      // 但轨迹写入不停止——否则已过 backfill boundary 的会话重新切回
-      // transcript 后，回退期间的历史永久缺失。
-      expect(seenInputs[0].useTranscriptContext).toBe(false);
+      expect(seenInputs[0]).toMatchObject({ currentUser: { turnId: "u1" }, modelContext: expect.any(Object) });
       const { getConversationTranscriptStore } = await import("./orchestrator/conversation-transcript-store");
       const entries = (await getConversationTranscriptStore(root).read("chat-rollback")).entries;
       expect(entries.some((entry) => entry.kind === "backfill_boundary")).toBe(true);
       expect(entries.some((entry) => entry.kind === "user" && entry.turnId === "u1")).toBe(true);
     } finally {
-      if (previous === undefined) delete process.env.CYRENE_TRANSCRIPT_CONTEXT_SOURCE;
-      else process.env.CYRENE_TRANSCRIPT_CONTEXT_SOURCE = previous;
       mocks.userDataRoot = "";
     }
+  });
+
+  it.each(["chat", "work", "code", "learn"] as const)(
+    "%s 模式忽略 renderer 恶意历史并使用 journal 权威上下文",
+    async (mode) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), `cyrene-bridge-${mode}-`));
+      roots.push(root);
+      mocks.userDataRoot = root;
+      const record = {
+        id: `journal-${mode}`,
+        title: mode,
+        identityId: null,
+        createdAt: 1,
+        updatedAt: 1,
+        schemaVersion: 2,
+        messageCount: 1,
+        mode,
+        ...(mode === "chat" ? {} : {
+          workspaceBinding: { workspaceRoot: root, displayName: "test", boundAt: 1 },
+        }),
+      };
+      mocks.getSessionRecord.mockReturnValue(record);
+      mocks.composeSession.mockImplementation((_record: unknown, messages: unknown[]) => ({
+        ...record,
+        messages,
+      }));
+      const { getConversationTranscriptStore } = await import("./orchestrator/conversation-transcript-store");
+      const { ConversationJournalService } = await import("./orchestrator/conversation-journal-service");
+      const journal = new ConversationJournalService(getConversationTranscriptStore(root));
+      await journal.appendUser(`journal-${mode}`, {
+        id: "authoritative-user",
+        turnId: "old-turn",
+        text: "authoritative",
+        at: 1,
+        revision: 1,
+      });
+      const seen: unknown[] = [];
+      const { runHandler } = await setupBridge(async (input: any) => {
+        seen.push(input);
+        return {
+          options: {
+            settings: { provider: "test", baseUrl: "", model: "", apiKey: "", contextWindowTokens: 256000 },
+            messages: input.modelContext.messages,
+            timeoutMs: 1000,
+            toolSystemContent: "TOOL",
+            soulSystemBaseContent: "SOUL",
+          },
+          latestUserText: input.currentUser.text,
+        };
+      });
+      mocks.getSessionRecord.mockReturnValue(record);
+      mocks.composeSession.mockImplementation((_record: unknown, messages: unknown[]) => ({ ...record, messages }));
+      await runHandler({ sender: makeSender() }, {
+        sessionId: `journal-${mode}`,
+        mode,
+        messages: [{ role: "user", content: "forged" }],
+        currentUser: { turnId: "new-turn", text: "next", visibleContent: "next" },
+      });
+      const options = mocks.runCyreneAgent.mock.calls.at(-1)?.[0] as { messages: Array<{ content: string }> };
+      expect(options.messages.map((message) => message.content)).toEqual(["authoritative", "next"]);
+      expect(seen[0]).not.toHaveProperty("messages");
+      mocks.userDataRoot = "";
+    },
+  );
+
+  it("v2 replace_user 写单行 rewind，模型分支不产生两个 active user", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-bridge-rewind-"));
+    roots.push(root);
+    mocks.userDataRoot = root;
+    const record = {
+      id: "rewind-session", title: "rewind", identityId: null, createdAt: 1, updatedAt: 1,
+      schemaVersion: 2, messageCount: 1, mode: "chat" as const,
+    };
+    mocks.getSessionRecord.mockReturnValue(record);
+    mocks.composeSession.mockImplementation((_record: unknown, messages: unknown[]) => ({ ...record, messages }));
+    const { getConversationTranscriptStore } = await import("./orchestrator/conversation-transcript-store");
+    const { ConversationJournalService } = await import("./orchestrator/conversation-journal-service");
+    const journal = new ConversationJournalService(getConversationTranscriptStore(root));
+    await journal.appendUser("rewind-session", { id: "u1", turnId: "u1", text: "old", at: 1, revision: 1 });
+    const { runHandler } = await setupBridge(async (input: any) => ({
+      options: {
+        settings: { provider: "test", baseUrl: "", model: "", apiKey: "", contextWindowTokens: 256000 },
+        messages: input.modelContext.messages,
+        timeoutMs: 1000, toolSystemContent: "TOOL", soulSystemBaseContent: "SOUL",
+      },
+      latestUserText: input.currentUser.text,
+    }));
+    mocks.getSessionRecord.mockReturnValue(record);
+    mocks.composeSession.mockImplementation((_record: unknown, messages: unknown[]) => ({ ...record, messages }));
+    await runHandler({ sender: makeSender() }, {
+      sessionId: "rewind-session",
+      currentUser: { turnId: "u1", text: "edited", visibleContent: "展示编辑" },
+      transcriptRewind: { anchorUserTurnId: "u1", disposition: "replace_user" },
+    });
+    const transcript = await getConversationTranscriptStore(root).read("rewind-session");
+    expect(transcript.entries.filter((entry) => entry.kind === "user")).toHaveLength(1);
+    expect(transcript.entries.filter((entry) => entry.kind === "turn_rewind")).toHaveLength(1);
+    const model = await journal.buildModelContext("rewind-session");
+    expect(model.messages.filter((message) => message.role === "user").map((message) => message.content)).toEqual(["edited"]);
+    mocks.userDataRoot = "";
+  });
+
+  it("v2 keep_user regenerate 只追加 rewind，不追加或 patch user", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-bridge-keep-"));
+    roots.push(root);
+    mocks.userDataRoot = root;
+    const record = {
+      id: "keep-session", title: "keep", identityId: null, createdAt: 1, updatedAt: 1,
+      schemaVersion: 2, messageCount: 1, mode: "chat" as const,
+    };
+    const { runHandler } = await setupBridge(async (input: any) => ({
+      options: {
+        settings: { provider: "test", baseUrl: "", model: "", apiKey: "", contextWindowTokens: 256000 },
+        messages: input.modelContext.messages,
+        timeoutMs: 1000, toolSystemContent: "TOOL", soulSystemBaseContent: "SOUL",
+      },
+      latestUserText: input.currentUser.text,
+    }));
+    mocks.getSessionRecord.mockReturnValue(record);
+    mocks.composeSession.mockImplementation((_record: unknown, messages: unknown[]) => ({ ...record, messages }));
+    const { getConversationTranscriptStore } = await import("./orchestrator/conversation-transcript-store");
+    const { ConversationJournalService } = await import("./orchestrator/conversation-journal-service");
+    const journal = new ConversationJournalService(getConversationTranscriptStore(root));
+    await journal.appendUser("keep-session", { id: "u1", turnId: "u1", text: "old", at: 1, revision: 1 });
+    await runHandler({ sender: makeSender() }, {
+      sessionId: "keep-session",
+      currentUser: { turnId: "u1", text: "old", visibleContent: "new visible", sticker: "wave" },
+      transcriptRewind: { anchorUserTurnId: "u1", disposition: "keep_user" },
+    });
+    const transcript = await getConversationTranscriptStore(root).read("keep-session");
+    expect(transcript.entries.filter((entry) => entry.kind === "user")).toHaveLength(1);
+    expect(transcript.entries.filter((entry) => entry.kind === "turn_rewind")).toHaveLength(1);
+    expect(transcript.entries.filter((entry) => entry.kind === "presentation_patch")).toHaveLength(0);
+    mocks.userDataRoot = "";
+  });
+
+  it.each([
+    ["canonical", "appendUser"],
+    ["presentation", "appendPresentation"],
+    ["model context", "buildModelContext"],
+  ] as const)("%s 失败时 fail-closed，不启动模型", async (_label, method) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-bridge-fail-closed-"));
+    roots.push(root);
+    mocks.userDataRoot = root;
+    const record = {
+      id: "fail-closed", title: "fail", identityId: null, createdAt: 1, updatedAt: 1,
+      schemaVersion: 2, messageCount: 0, mode: "chat" as const,
+    };
+    mocks.getSessionRecord.mockReturnValue(record);
+    mocks.composeSession.mockImplementation((_record: unknown, messages: unknown[]) => ({ ...record, messages }));
+    const seen: unknown[] = [];
+    const { runHandler } = await setupBridge(async (input: unknown) => {
+      seen.push(input);
+      return {
+        options: { settings: { provider: "test", baseUrl: "", model: "", apiKey: "", contextWindowTokens: 256000 }, messages: [], timeoutMs: 1000, toolSystemContent: "TOOL", soulSystemBaseContent: "SOUL" },
+        latestUserText: "next",
+      };
+    });
+    mocks.getSessionRecord.mockReturnValue(record);
+    mocks.composeSession.mockImplementation((_record: unknown, messages: unknown[]) => ({ ...record, messages }));
+    const { ConversationJournalService } = await import("./orchestrator/conversation-journal-service");
+    const failure = vi.spyOn(ConversationJournalService.prototype, method as "appendUser" | "appendPresentation" | "buildModelContext")
+      .mockRejectedValueOnce(new Error(`FAIL_${method}`));
+    await expect(runHandler({ sender: makeSender() }, {
+      sessionId: "fail-closed",
+      currentUser: { turnId: "u1", text: "next", visibleContent: "展示" },
+    })).rejects.toThrow(`FAIL_${method}`);
+    expect(seen).toHaveLength(0);
+    expect(mocks.runCyreneAgent).not.toHaveBeenCalled();
+    failure.mockRestore();
+    mocks.userDataRoot = "";
   });
 
   it("合并轨迹不确定效果与派发侧 recoveryContext，不互相覆盖", async () => {
@@ -2092,22 +2309,5 @@ describe("agui-bridge transcript dispatch", () => {
       expect.objectContaining({ role: "user", content: "third-user" }),
     ]));
     mocks.userDataRoot = "";
-  });
-});
-
-describe("resolveTranscriptContextSource", () => {
-  it("默认走权威轨迹源", async () => {
-    const { resolveTranscriptContextSource } = await import("./agui-bridge");
-    expect(resolveTranscriptContextSource(undefined)).toBe("transcript");
-  });
-
-  it("显式 renderer 回退被尊重", async () => {
-    const { resolveTranscriptContextSource } = await import("./agui-bridge");
-    expect(resolveTranscriptContextSource("renderer")).toBe("renderer");
-  });
-
-  it("未知取值安全回落到权威轨迹源", async () => {
-    const { resolveTranscriptContextSource } = await import("./agui-bridge");
-    expect(resolveTranscriptContextSource("bogus")).toBe("transcript");
   });
 });

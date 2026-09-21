@@ -1043,7 +1043,7 @@ describe("权威轨迹上下文源（CTA Phase 1）", () => {
 
     const built = await buildAgentRunOptions({
       sessionId: "c1",
-      useTranscriptContext: true,
+      currentUser: { turnId: "turn-1", text: "next", visibleContent: "next" },
       messages: [{ role: "user" as const, content: "stale renderer" }],
     } as never, deps)
 
@@ -1075,7 +1075,7 @@ describe("权威轨迹上下文源（CTA Phase 1）", () => {
     const deps = createBuildDeps()
     await expect(buildAgentRunOptions({
       sessionId: "missing-dep",
-      useTranscriptContext: true,
+      currentUser: { turnId: "turn-1", text: "hi", visibleContent: "hi" },
       messages: [{ role: "user" as const, content: "hi" }],
     } as never, deps)).rejects.toThrow("buildModelContext")
   })
@@ -1096,7 +1096,7 @@ describe("权威轨迹上下文源（CTA Phase 1）", () => {
 
     const built = await buildAgentRunOptions({
       sessionId: "uncertain",
-      useTranscriptContext: true,
+      currentUser: { turnId: "turn-1", text: "继续", visibleContent: "继续" },
       messages: [{ role: "user" as const, content: "继续" }],
     } as never, deps)
 

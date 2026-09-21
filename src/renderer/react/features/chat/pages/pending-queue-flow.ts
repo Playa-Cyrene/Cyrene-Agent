@@ -336,6 +336,7 @@ export function createPendingQueueFlow(getHost: () => PendingQueueFlowHost): Pen
       assistantId,
       session: claim.session,
       attachments,
+      visibleContent: claim.visibleContent,
       ...(claim.resumeFromRunId ? { resumeFromRunId: claim.resumeFromRunId } : {}),
       claimedPendingMessageId: claim.userMessage.id,
     });
