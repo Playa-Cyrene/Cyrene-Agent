@@ -125,6 +125,22 @@ describe("prepareTranscriptDispatch", () => {
     expect(users.filter((entry) => entry.turnId === "u1")).toHaveLength(1);
   });
 
+  it("re-dispatches the same user turn under a new runId without idempotency conflict", async () => {
+    // 首次写入成功但模型启动失败：重试获得新 runId，同一 userTurnId 必须幂等吸收，
+    // 不能因运行标识不同触发 TRANSCRIPT_IDEMPOTENCY_CONFLICT 而无法再次派发。
+    const { store } = createStore();
+    const session = makeSession();
+    await prepareTranscriptDispatch({ store, session, userTurnId: "u-current", runId: "run-1" });
+    await prepareTranscriptDispatch({ store, session, userTurnId: "u-current", runId: "run-2" });
+
+    const users = (await store.read(session.id)).entries
+      .filter((entry) => entry.kind === "user" && entry.turnId === "u-current");
+    expect(users).toHaveLength(1);
+    // 稳定 ID 显式包含 revision，不含运行标识
+    expect(users[0]?.id).toBe("user:v1:u-current:r1");
+    expect(users[0]).not.toHaveProperty("runId");
+  });
+
   it("rejects a missing or non-user turn id", async () => {
     const { store } = createStore();
     const session = makeSession();

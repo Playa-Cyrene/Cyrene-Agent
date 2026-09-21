@@ -140,14 +140,16 @@ export async function prepareTranscriptDispatch(input: {
     return;
   }
 
-  // ── 正常派发：追加当前 user（revision 1，确定性 entryId 吸收 IPC 重试）──
+  // ── 正常派发：追加当前 user（revision 1）──
+  // entryId 基于 turnId + revision 且不含运行标识：首次写入后若模型启动失败，
+  // 重试会换 runId 但同 userTurnId 命中同一条目，主键幂等直接跳过；
+  // user 条目也不写 runId（运行标识与轨迹内容无关，写入会破坏次级幂等的语义比较）。
   await store.append(session.id, {
-    id: `${runId}:user:${userTurnId}`,
+    id: `user:v1:${userTurnId}:r1`,
     at: currentUser.at,
     kind: "user",
     turnId: userTurnId,
     revision: 1,
-    runId,
     payload: { text: modelText(currentUser), attachments: stableAttachments(currentUser) },
   });
 }
