@@ -24,6 +24,8 @@ import {
   type TranscriptSnapshotV2,
 } from "./conversation-transcript-types";
 import type { ChatMessage as CanonicalChatMessage } from "./vendors/types";
+import { isContextUsageSnapshot } from "../../shared/context-usage";
+import { normalizeMusicCardData } from "../../shared/music-card";
 
 const ROOT_DIR_NAME = "transcripts";
 const JSONL_FILE_NAME = "transcript.jsonl";
@@ -285,13 +287,15 @@ export class ConversationTranscriptStore {
           !Array.isArray(parsed.seenUserRevisions) ||
           !parsed.seenEntryIds.every((id) => typeof id === "string") ||
           !parsed.seenUserRevisions.every((key) => typeof key === "string") ||
+          parsed.archives.length !== 0 ||
           !parsed.archives.every((archive) => (
             isRecord(archive) &&
             Number.isInteger(archive.fromSeq) && archive.fromSeq >= 0 &&
             Number.isInteger(archive.throughSeq) && archive.throughSeq >= archive.fromSeq &&
             typeof archive.file === "string" &&
             typeof archive.sha256 === "string"
-          ))
+          )) ||
+          !snapshotEntriesAreConsistent(parsed.entries, parsed.throughSeq, parsed.seenEntryIds, parsed.seenUserRevisions)
         ) throw new Error("TRANSCRIPT_CORRUPT_SNAPSHOT");
         return parsed;
       }
@@ -395,7 +399,9 @@ function isValidTranscriptPayload(entry: Partial<TranscriptEntry>): boolean {
   if (!isRecord(entry.payload)) return false;
   switch (entry.kind) {
     case "user":
-      return typeof entry.payload.text === "string" &&
+      return typeof entry.turnId === "string" && entry.turnId.length > 0 &&
+        Number.isInteger(entry.revision) && (entry.revision ?? 0) >= 1 &&
+        typeof entry.payload.text === "string" &&
         (entry.payload.attachments === undefined || Array.isArray(entry.payload.attachments));
     case "assistant":
       return isValidCanonicalChatMessage(entry.payload, "assistant");
@@ -411,10 +417,15 @@ function isValidTranscriptPayload(entry: Partial<TranscriptEntry>): boolean {
       return typeof entry.payload.anchorUserTurnId === "string" &&
         ["keep_user", "replace_user"].includes(entry.payload.disposition as string) &&
         ["edit", "regenerate"].includes(entry.payload.reason as string) &&
+        (entry.payload.disposition !== "replace_user" || (
+          typeof entry.turnId === "string" && entry.turnId.length > 0 &&
+          Number.isInteger(entry.revision) && (entry.revision ?? 0) >= 1
+        )) &&
         (entry.payload.replacementUser === undefined || (
           isRecord(entry.payload.replacementUser) &&
           typeof entry.payload.replacementUser.text === "string"
-        ));
+        )) &&
+        (entry.payload.disposition !== "replace_user" || !!entry.payload.replacementUser);
     case "backfill_boundary":
       return typeof entry.payload.note === "string";
     case "compaction_checkpoint":
@@ -426,7 +437,7 @@ function isValidTranscriptPayload(entry: Partial<TranscriptEntry>): boolean {
     case "presentation_patch":
       return typeof entry.payload.messageId === "string" &&
         Number.isInteger(entry.payload.patchRevision) && entry.payload.patchRevision >= 1 &&
-        isRecord(entry.payload.patch);
+        isValidPresentationPatch(entry.payload.patch);
     case "turn_tombstone":
       return typeof entry.payload.targetUserTurnId === "string" && entry.payload.reason === "pending_withdrawn";
     case "delivery_receipt":
@@ -437,6 +448,104 @@ function isValidTranscriptPayload(entry: Partial<TranscriptEntry>): boolean {
     default:
       return false;
   }
+}
+
+function snapshotEntriesAreConsistent(
+  entries: TranscriptEntry[],
+  throughSeq: number,
+  seenEntryIds: string[],
+  seenUserRevisions: string[],
+): boolean {
+  let previousSeq = 0;
+  const entryIds: string[] = [];
+  const userRevisions: string[] = [];
+  for (const entry of entries) {
+    validateLoadedTranscriptEntry(entry);
+    if (entry.seq <= previousSeq) return false;
+    previousSeq = entry.seq;
+    entryIds.push(entry.id);
+    if (entry.kind === "user") {
+      if (typeof entry.turnId !== "string" || !Number.isInteger(entry.revision)) {
+        throw new Error("TRANSCRIPT_CORRUPT_ROW");
+      }
+      userRevisions.push(userRevisionKey(entry.turnId, entry.revision as number));
+    }
+  }
+  if (entries.length === 0) return throughSeq === 0 && seenEntryIds.length === 0 && seenUserRevisions.length === 0;
+  if (previousSeq !== throughSeq) return false;
+  return sameStringSet(entryIds, seenEntryIds) && sameStringSet(userRevisions, seenUserRevisions);
+}
+
+function sameStringSet(left: string[], right: string[]): boolean {
+  if (left.length !== right.length || new Set(left).size !== left.length || new Set(right).size !== right.length) {
+    return false;
+  }
+  const rightSet = new Set(right);
+  return left.every((value) => rightSet.has(value));
+}
+
+function isValidPresentationPatch(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  const allowed = new Set([
+    "content", "reasoning", "reasoningBlocks", "processMessages", "agentRounds",
+    "taskDelegations", "channelSource", "sticker", "toolExecutions", "runActivity",
+    "runSnapshot", "ttsCacheKey", "ttsCacheVersion", "musicCard", "contextUsage",
+  ]);
+  if (Object.keys(value).some((key) => !allowed.has(key))) return false;
+  for (const [key, field] of Object.entries(value)) {
+    if (key === "content" || key === "reasoning" || key === "ttsCacheKey" || key === "ttsCacheVersion") {
+      if (typeof field !== "string") return false;
+    } else if (key === "sticker") {
+      if (field !== null && typeof field !== "string") return false;
+    } else if (key === "channelSource") {
+      if (!isRecord(field) || !["wechat", "feishu", "qq", "qqbot"].includes(field.channel as string) ||
+        (field.chatType !== undefined && !["private", "group"].includes(field.chatType as string)) ||
+        (field.senderName !== undefined && typeof field.senderName !== "string")) return false;
+    } else if (["reasoningBlocks", "processMessages", "agentRounds", "taskDelegations", "toolExecutions"].includes(key)) {
+      if (!Array.isArray(field)) return false;
+      if (key === "reasoningBlocks" && !field.every((item) => isRecord(item) && typeof item.id === "string" && typeof item.content === "string" &&
+        (item.streaming === undefined || typeof item.streaming === "boolean") && validOptionalSequenceFields(item))) return false;
+      if (key === "processMessages" && !field.every((item) => isRecord(item) && typeof item.id === "string" && typeof item.content === "string" &&
+        (item.interrupted === undefined || typeof item.interrupted === "boolean") && validOptionalSequenceFields(item))) return false;
+      if (key === "agentRounds" && !field.every((item) => isRecord(item) && typeof item.id === "string" &&
+        ["running", "completed"].includes(item.status as string) && typeof item.startedAt === "number" && validOptionalNumber(item.completedAt))) return false;
+      if (key === "taskDelegations" && !field.every((item) => isRecord(item) && typeof item.invocationId === "string" &&
+        typeof item.taskId === "string" && typeof item.description === "string" && typeof item.nickname === "string" &&
+        typeof item.assetFileName === "string" && ["running", "completed", "failed", "cancelled"].includes(item.status as string))) return false;
+      if (key === "toolExecutions" && !field.every((item) => isRecord(item) && typeof item.id === "string" && typeof item.name === "string" &&
+        ["running", "success", "error"].includes(item.status as string) &&
+        (item.result === undefined || typeof item.result === "string") && (item.argsText === undefined || typeof item.argsText === "string"))) return false;
+    } else if (key === "runActivity") {
+      if (!isRecord(field) || typeof field.startedAt !== "number" || typeof field.reasoningMs !== "number" ||
+        !validOptionalNumber(field.completedAt) || !validOptionalNumber(field.activeReasoningStartedAt) ||
+        (field.keepExpanded !== undefined && typeof field.keepExpanded !== "boolean")) return false;
+    } else if (key === "runSnapshot") {
+      if (!isRecord(field) || !["running", "waiting_user", "interrupted", "terminal"].includes(field.status as string) ||
+        typeof field.updatedAt !== "number" || (field.runId !== undefined && typeof field.runId !== "string") ||
+        (field.terminalStatus !== undefined && !["success", "cancelled", "timeout", "runtime_error"].includes(field.terminalStatus as string))) return false;
+    } else if (key === "musicCard") {
+      if (!isRecord(field) || normalizeMusicCardData(field) === null) return false;
+      const tracks = field.tracks;
+      if (!Array.isArray(tracks) || !tracks.every((track) => isRecord(track) && typeof track.id === "string" && typeof track.name === "string" &&
+        Array.isArray(track.artists) && track.artists.every((artist) => typeof artist === "string") &&
+        (track.album === undefined || typeof track.album === "string") && (track.coverUrl === undefined || typeof track.coverUrl === "string"))) return false;
+    } else if (key === "contextUsage") {
+      if (!isContextUsageSnapshot(field)) return false;
+    } else {
+      return false;
+    }
+  }
+  return true;
+}
+
+function validOptionalNumber(value: unknown): boolean {
+  return value === undefined || (typeof value === "number" && Number.isFinite(value));
+}
+
+function validOptionalSequenceFields(value: Record<string, unknown>): boolean {
+  return (value.afterToolCount === undefined || (typeof value.afterToolCount === "number" && Number.isInteger(value.afterToolCount))) &&
+    (value.roundId === undefined || typeof value.roundId === "string") &&
+    (value.seq === undefined || (typeof value.seq === "number" && Number.isInteger(value.seq)));
 }
 
 function isValidCanonicalChatMessage(value: unknown, expectedRole?: CanonicalChatMessage["role"]): value is CanonicalChatMessage {

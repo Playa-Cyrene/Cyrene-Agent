@@ -202,6 +202,32 @@ describe("ConversationTranscriptStore", () => {
     await expect(store.read("c1")).rejects.toThrow("TRANSCRIPT_CORRUPT_ROW");
   });
 
+  it("rejects canonical rows that violate user, rewind, or presentation protocol fields", async () => {
+    const { store, jsonlPath } = createStore();
+    await store.append("c1", userDraft("e1", "u1", 1, "one"));
+    const malformedRows = [
+      {
+        seq: 1, id: "e1", at: 1_000, kind: "user", payload: { text: "one" },
+      },
+      {
+        seq: 1, id: "e1", at: 1_000, kind: "turn_rewind", turnId: "u2", revision: 2,
+        payload: { anchorUserTurnId: "u1", disposition: "replace_user", reason: "edit" },
+      },
+      {
+        seq: 1, id: "e1", at: 1_000, kind: "presentation_patch",
+        payload: { messageId: "u1", patchRevision: 1, patch: { sticker: 42 } },
+      },
+      {
+        seq: 1, id: "e1", at: 1_000, kind: "presentation_patch",
+        payload: { messageId: "u1", patchRevision: 1, patch: { unknownField: true } },
+      },
+    ];
+    for (const row of malformedRows) {
+      await fs.promises.writeFile(jsonlPath("c1"), `${JSON.stringify(row)}\n`, "utf8");
+      await expect(store.read("c1")).rejects.toThrow("TRANSCRIPT_CORRUPT_ROW");
+    }
+  });
+
   it("fails closed on malformed v2 snapshot metadata", async () => {
     const { store, snapshotPath } = createStore();
     await store.append("c1", userDraft("e1", "u1", 1, "one"));
@@ -222,6 +248,22 @@ describe("ConversationTranscriptStore", () => {
       await fs.promises.writeFile(snapshotPath("c1"), JSON.stringify(corrupt), "utf8");
       await expect(store.read("c1")).rejects.toThrow("TRANSCRIPT_CORRUPT_SNAPSHOT");
     }
+  });
+
+  it("fails closed when snapshot throughSeq does not match its canonical entries", async () => {
+    const { store, snapshotPath, jsonlPath } = createStore();
+    await store.append("c1", userDraft("e1", "u1", 1, "one"));
+    await store.checkpoint("c1");
+    await store.append("c1", userDraft("e2", "u2", 1, "two"));
+    const snapshot = JSON.parse(await fs.promises.readFile(snapshotPath("c1"), "utf8")) as {
+      entries: unknown[];
+      throughSeq: number;
+    };
+    snapshot.throughSeq = 2;
+    snapshot.entries = snapshot.entries.slice(0, 1);
+    await fs.promises.writeFile(snapshotPath("c1"), JSON.stringify(snapshot), "utf8");
+    expect((await fs.promises.readFile(jsonlPath("c1"), "utf8")).split("\n").filter(Boolean)).toHaveLength(2);
+    await expect(store.read("c1")).rejects.toThrow("TRANSCRIPT_CORRUPT_SNAPSHOT");
   });
 
   it("hashes conversation ids that contain path separators", async () => {
