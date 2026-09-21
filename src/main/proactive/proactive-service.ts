@@ -8,7 +8,8 @@ import {
   markUserActivity,
 } from "./proactive-policy";
 import type { ProactiveModelResult } from "./proactive-model";
-import type { ProactiveCandidate, ProactiveCommitIntent, ProactiveRuntimeSnapshot, ProactiveState } from "./proactive-types";
+import type { ProactiveBlockReason, ProactiveCandidate, ProactiveCommitIntent, ProactiveRuntimeSnapshot, ProactiveState } from "./proactive-types";
+import type { ProactiveDeliveryTarget } from "../../shared/preferences";
 
 export interface ProactiveFallback {
   text: string;
@@ -25,6 +26,8 @@ export interface ProactiveCommitInput {
   generationEpoch: number;
   /** Stable intent timestamp captured before model generation. */
   intentAt?: number;
+  /** Frozen delivery route selected at evaluation start. */
+  deliveryTarget?: ProactiveDeliveryTarget;
 }
 
 export type ProactiveCommitResult =
@@ -41,6 +44,8 @@ export interface ProactiveChatServiceDeps {
   commitMessage: (input: ProactiveCommitInput) => Promise<ProactiveCommitResult>;
   /** Local journal commits require a durable intent; legacy external channels do not. */
   requiresDurableIntent?: () => boolean;
+  /** Read once per evaluation so a settings change cannot reroute its commit. */
+  getDeliveryTarget?: () => ProactiveDeliveryTarget;
   canStartDelivery?: () => boolean;
   log?: (event: string, detail?: unknown) => void;
 }
@@ -82,13 +87,28 @@ export function createProactiveChatService(deps: ProactiveChatServiceDeps): Proa
   };
 
   const persistMutation = (mutate: (state: ProactiveState) => void): void => {
-    const state = deps.loadState();
+    const state = cloneState(deps.loadState());
     mutate(state);
     deps.saveState(state);
   };
 
   const clearPendingIntent = (state: ProactiveState, intentId: string): void => {
     if (state.pendingCommitIntent?.intentId === intentId) delete state.pendingCommitIntent;
+  };
+
+  const pendingCommitDecision = (
+    snapshot: ProactiveRuntimeSnapshot,
+    state: ProactiveState,
+    intent: ProactiveCommitIntent,
+  ): { allowed: boolean; reason: ProactiveBlockReason } => {
+    const decision = canCommitProactiveMessage(snapshot, state, intent.candidate, intent.generationEpoch);
+    // A durable local intent is already an accepted business decision. Once the
+    // epoch is still valid, cooldown/unanswered gates must not strand it after a
+    // legacy external delivery happened while the local target was unavailable.
+    if (["global_cooldown", "scene_cooldown", "followup_cooldown", "followup_same_scene", "followup_score_too_low", "unanswered_limit"].includes(decision.reason)) {
+      return { allowed: true, reason: "allowed" };
+    }
+    return decision;
   };
 
   const finalizeDelivery = (
@@ -128,7 +148,7 @@ export function createProactiveChatService(deps: ProactiveChatServiceDeps): Proa
     return result;
   };
 
-  const deliverIntent = async (intent: ProactiveCommitIntent): Promise<ProactiveCommitResult> => {
+  const deliverIntent = async (intent: ProactiveCommitIntent, deliveryTarget: ProactiveDeliveryTarget = "local"): Promise<ProactiveCommitResult> => {
     const result = await deps.commitMessage({
       intentId: intent.intentId,
       candidate: intent.candidate,
@@ -137,6 +157,7 @@ export function createProactiveChatService(deps: ProactiveChatServiceDeps): Proa
       ...(intent.fallbackPayload !== undefined ? { fallbackPayload: intent.fallbackPayload } : {}),
       generationEpoch: intent.generationEpoch,
       intentAt: intent.intentAt,
+      deliveryTarget,
     });
     return finalizeDelivery(result, intent.candidate, intent.source, intent.generationEpoch, intent.intentAt, intent.intentId);
   };
@@ -147,15 +168,13 @@ export function createProactiveChatService(deps: ProactiveChatServiceDeps): Proa
       const rawInitialSnapshot = deps.getSnapshot();
       const initialSnapshot = { ...rawInitialSnapshot, generationBusy: rawInitialSnapshot.generationBusy || generating };
 
-      const requiresDurableIntent = deps.requiresDurableIntent?.() ?? true;
+      const frozenDeliveryTarget = deps.getDeliveryTarget?.();
+      const requiresDurableIntent = frozenDeliveryTarget
+        ? frozenDeliveryTarget === "local"
+        : (deps.requiresDurableIntent?.() ?? true);
       const pendingIntent = requiresDurableIntent ? initialState.pendingCommitIntent : undefined;
       if (pendingIntent) {
-        const pendingDecision = canCommitProactiveMessage(
-          initialSnapshot,
-          initialState,
-          pendingIntent.candidate,
-          pendingIntent.generationEpoch,
-        );
+        const pendingDecision = pendingCommitDecision(initialSnapshot, initialState, pendingIntent);
         if (!pendingDecision.allowed) {
           if (pendingDecision.reason === "stale_epoch") {
             const staleState = deps.loadState();
@@ -171,7 +190,7 @@ export function createProactiveChatService(deps: ProactiveChatServiceDeps): Proa
         }
         generating = true;
         try {
-          await deliverIntent(pendingIntent);
+          await deliverIntent(pendingIntent, "local");
         } finally {
           generating = false;
         }
@@ -240,7 +259,7 @@ export function createProactiveChatService(deps: ProactiveChatServiceDeps): Proa
           return;
         }
 
-        if (!(deps.requiresDurableIntent?.() ?? true)) {
+        if (!requiresDurableIntent) {
           const directResult = await deps.commitMessage({
             candidate,
             text,
@@ -248,6 +267,7 @@ export function createProactiveChatService(deps: ProactiveChatServiceDeps): Proa
             ...(fallbackPayload !== undefined ? { fallbackPayload } : {}),
             generationEpoch,
             intentAt: commitSnapshot.now,
+            ...(frozenDeliveryTarget ? { deliveryTarget: frozenDeliveryTarget } : {}),
           });
           finalizeDelivery(directResult, candidate, source, generationEpoch, commitSnapshot.now);
           return;
@@ -269,7 +289,7 @@ export function createProactiveChatService(deps: ProactiveChatServiceDeps): Proa
         commitStateBeforeIntent.pendingCommitIntent = intent;
         // Persist the exact business intent before crossing into any delivery adapter.
         persistPendingIntent(commitStateBeforeIntent, intent);
-        await deliverIntent(intent);
+        await deliverIntent(intent, "local");
       } finally {
         generating = false;
       }

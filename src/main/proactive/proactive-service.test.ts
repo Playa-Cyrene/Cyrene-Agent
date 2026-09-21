@@ -182,6 +182,50 @@ describe("proactive chat service", () => {
     expect(ctx.state.proactiveCommitSequence).toBeUndefined();
   });
 
+  it("freezes a local target before model completion", async () => {
+    let target: "local" | "wechat" = "local";
+    const commitMessage = vi.fn(async () => ({ kind: "committed" as const }));
+    const ctx = setup({
+      commitMessage,
+      getDeliveryTarget: () => target,
+      runModel: vi.fn(async () => {
+        target = "wechat";
+        return { kind: "send" as const, text: "固定本地消息" };
+      }),
+    });
+
+    await ctx.service.evaluateCandidate(candidate);
+
+    expect(commitMessage).toHaveBeenCalledWith(expect.objectContaining({ deliveryTarget: "local", intentId: "proactive-intent-1" }));
+    expect(ctx.state.pendingCommitIntent).toBeUndefined();
+  });
+
+  it("does not consume a local pending intent while target is external, then replays it when local returns", async () => {
+    let target: "local" | "wechat" = "local";
+    let first = true;
+    const commitMessage = vi.fn(async () => {
+      if (first) {
+        first = false;
+        throw new Error("local journal unavailable");
+      }
+      return { kind: "committed" as const };
+    });
+    const ctx = setup({ commitMessage, getDeliveryTarget: () => target });
+
+    await expect(ctx.service.evaluateCandidate(candidate)).rejects.toThrow("local journal unavailable");
+    const pendingId = ctx.state.pendingCommitIntent?.intentId;
+    target = "wechat";
+    await ctx.service.evaluateCandidate({ ...candidate, score: 90 });
+    expect(commitMessage.mock.calls[1][0]).toMatchObject({ deliveryTarget: "wechat" });
+    expect(commitMessage.mock.calls[1][0].intentId).toBeUndefined();
+    expect(ctx.state.pendingCommitIntent?.intentId).toBe(pendingId);
+
+    target = "local";
+    await ctx.service.evaluateCandidate(candidate);
+    expect(commitMessage.mock.calls.at(-1)?.[0]).toMatchObject({ deliveryTarget: "local", intentId: pendingId });
+    expect(ctx.state.pendingCommitIntent).toBeUndefined();
+  });
+
   it("allocates a fresh intent identity for a later same-scene trigger", async () => {
     const ctx = setup();
     await ctx.service.evaluateCandidate(candidate);

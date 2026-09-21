@@ -147,6 +147,7 @@ export function toUiMessages(session: ChatSession): ChatMessageItem[] {
       attachments: message.attachments,
       contextUsage: message.contextUsage,
       runId: message.runSnapshot?.runId,
+      runSnapshot: message.runSnapshot,
     };
     return message.runSnapshot ? recoverInterruptedMessage(item, message.runSnapshot) : item;
   });

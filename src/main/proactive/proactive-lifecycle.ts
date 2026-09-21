@@ -138,15 +138,27 @@ export function createProactiveLifecycle(options: ProactiveLifecycleOptions): Pr
     normalConversationBusyCount = Math.max(0, normalConversationBusyCount + delta);
   }
 
+  function bestEffortConversationStateUpdate(label: string, update: () => void): void {
+    try {
+      update();
+    } catch (error) {
+      // Conversation delivery remains authoritative; a telemetry/cooldown state
+      // write failure must not replace the original AG-UI or channel error.
+      console.warn(`[Proactive] ${label} state update failed`, error);
+    }
+  }
+
   const proactiveConversationLifecycle = {
-    onUserMessage: () => proactiveChatService?.invalidateForUserMessage(),
+    onUserMessage: () => bestEffortConversationStateUpdate("user_message", () => proactiveChatService?.invalidateForUserMessage()),
     onConversationStarted: () => {
       updateNormalConversationBusy(1);
-      proactiveChatService?.normalConversationStarted();
+      bestEffortConversationStateUpdate("conversation_started", () => proactiveChatService?.normalConversationStarted());
     },
     onConversationEnded: () => {
       updateNormalConversationBusy(-1);
-      if (normalConversationBusyCount === 0) proactiveChatService?.normalConversationEnded();
+      if (normalConversationBusyCount === 0) {
+        bestEffortConversationStateUpdate("conversation_ended", () => proactiveChatService?.normalConversationEnded());
+      }
     },
   };
 
@@ -204,7 +216,7 @@ export function createProactiveLifecycle(options: ProactiveLifecycleOptions): Pr
 
   async function commitSelectedProactiveMessage(input: ProactiveCommitInput): Promise<ProactiveCommitResult> {
     const settings = options.loadGeneralSettings();
-    const target = settings.proactiveDeliveryTarget;
+    const target = input.deliveryTarget ?? settings.proactiveDeliveryTarget;
     const result = await routeProactiveDelivery(target, {
       commitLocal: () => commitLocalProactiveMessage(input),
       commitChannel: async (channel) => {
@@ -260,6 +272,7 @@ export function createProactiveLifecycle(options: ProactiveLifecycleOptions): Pr
         return target === "local" || canStartProactiveChannelDelivery(target, channelManager);
       },
       requiresDurableIntent: () => options.loadGeneralSettings().proactiveDeliveryTarget === "local",
+      getDeliveryTarget: () => options.loadGeneralSettings().proactiveDeliveryTarget,
       commitMessage: commitSelectedProactiveMessage,
       log: (event, detail) => console.log(`[Proactive] ${event}`, detail ?? ""),
     });

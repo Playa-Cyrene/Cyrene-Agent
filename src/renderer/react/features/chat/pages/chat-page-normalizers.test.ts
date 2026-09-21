@@ -48,6 +48,38 @@ describe("chat page normalizers", () => {
     expect(toUiMessages(session)[0].modelContext).toBe("[QQ群发送者：伙伴]\n大家好");
   });
 
+  it("hydrates reload messages with the same run snapshot as the live reducer", () => {
+    const runSnapshot = { runId: "scheduler-run-1", status: "terminal" as const, terminalStatus: "success" as const, updatedAt: 42 };
+    const toolExecutions = [{ id: "tool-1", name: "disk_usage", status: "success" as const, result: "C: 80%" }];
+    const session: ChatSession = {
+      id: "conversation-1",
+      title: "调度会话",
+      identityId: null,
+      mode: "work",
+      schemaVersion: 1,
+      createdAt: 1,
+      updatedAt: 2,
+      messages: [{
+        id: "scheduler-reply-scheduler-run-1",
+        role: "model",
+        content: "disk_usage：完成",
+        at: 2,
+        toolExecutions,
+        runSnapshot,
+      }],
+    };
+    const [reloaded] = toUiMessages(session);
+    const live = {
+      id: "scheduler-reply-scheduler-run-1",
+      content: "disk_usage：完成",
+      toolExecutions,
+      runSnapshot,
+    };
+
+    expect({ id: reloaded.id, content: reloaded.content, toolExecutions: reloaded.toolExecutions, runSnapshot: reloaded.runSnapshot })
+      .toEqual(live);
+  });
+
   it("drops invalid persisted channel metadata during hydration", () => {
     const session: ChatSession = {
       id: "conversation-1",
