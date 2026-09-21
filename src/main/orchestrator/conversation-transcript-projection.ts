@@ -37,8 +37,15 @@ export interface ConversationProjectionNodeState {
   revision?: number;
 }
 
+export interface ConversationProjectionPatchState {
+  messageId: string;
+  patchRevision: number;
+  patch: TranscriptPresentationPatch;
+}
+
 export interface ConversationProjectionState {
   nodes: ConversationProjectionNodeState[];
+  patches?: ConversationProjectionPatchState[];
 }
 
 export interface ConversationProjection {
@@ -237,14 +244,6 @@ function failedDeliveryNotes(
   return notes;
 }
 
-function latestCompaction(entries: TranscriptEntry[]): Extract<TranscriptEntry, { kind: "compaction_checkpoint" }> | undefined {
-  let latest: Extract<TranscriptEntry, { kind: "compaction_checkpoint" }> | undefined;
-  for (const entry of entries) {
-    if (entry.kind === "compaction_checkpoint" && (!latest || entry.seq > latest.seq)) latest = entry;
-  }
-  return latest;
-}
-
 function checkpointCoversActiveBranch(
   entries: TranscriptEntry[],
   active: ActiveTranscript,
@@ -370,6 +369,13 @@ function projectSeedDelta(
 
   const activeEntries = entries.filter((entry) => entry.seq > seed.throughSeq);
   const patches = new Map<string, { revision: number; seq: number; patch: TranscriptPresentationPatch }>();
+  for (const record of seed.state?.patches ?? []) {
+    patches.set(record.messageId, {
+      revision: record.patchRevision,
+      seq: Number.NEGATIVE_INFINITY,
+      patch: record.patch,
+    });
+  }
   for (const entry of activeEntries) {
     if (entry.kind !== "presentation_patch") continue;
     const current = patches.get(entry.payload.messageId);
@@ -484,7 +490,16 @@ function projectSeedDelta(
   return {
     throughSeq: Math.max(seed.throughSeq, ...activeEntries.map((entry) => entry.seq), 0),
     messages: messages.map((item) => item.message),
-    state,
+    state: {
+      ...state,
+      patches: [...patches.entries()]
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([messageId, record]) => ({
+          messageId,
+          patchRevision: record.revision,
+          patch: record.patch,
+        })),
+    },
   };
 }
 
@@ -556,7 +571,16 @@ function projectionFromActive(
   return {
     throughSeq: Math.max(seed?.throughSeq ?? 0, active.throughSeq),
     messages: resultMessages,
-    state: { nodes: active.nodes.map(nodeStateFromActive) },
+    state: {
+      nodes: active.nodes.map(nodeStateFromActive),
+      patches: [...allPatches.entries()]
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([messageId, record]) => ({
+          messageId,
+          patchRevision: record.revision,
+          patch: record.patch,
+        })),
+    },
   };
 }
 

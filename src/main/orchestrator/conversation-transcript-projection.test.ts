@@ -227,6 +227,29 @@ describe("conversation transcript projection", () => {
       .toEqual(["first", "answer"]);
   });
 
+  it("does not let a post-seed older patch revision overwrite revision five", () => {
+    nextSeq = 0;
+    const first = user("u1", "first");
+    const seed = reduceTranscriptProjection([first, patch("user-1", 5, "revision five")]);
+    const olderPatch = patch("user-1", 4, "revision four");
+    expect(reduceTranscriptProjection([olderPatch], seed).messages[0].content).toBe("revision five");
+  });
+
+  it("keeps a patch-before-canonical pending across a seed boundary", () => {
+    nextSeq = 0;
+    const pending = patch("late", 2, "pending display");
+    const seed = reduceTranscriptProjection([pending]);
+    const canonical: TranscriptEntry = {
+      seq: ++nextSeq,
+      id: "late",
+      at: nextSeq,
+      kind: "assistant",
+      turnId: "a1",
+      payload: { role: "assistant", content: "canonical" },
+    };
+    expect(reduceTranscriptProjection([canonical], seed).messages[0].content).toBe("pending display");
+  });
+
   it("delivery receipt failure adds an internal context note without changing history", () => {
     nextSeq = 0;
     const assistantEntry = assistant("a1", "answer");
