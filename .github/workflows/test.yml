@@ -46,6 +46,25 @@ jobs:
       - name: Check plugin schema contract
         run: npm run check:plugin-schema
 
-      # 全量测试：vitest.config.ts 的 include 即权威测试集，新增测试自动纳入门禁
-      - name: Run full test suite
-        run: npm test -- --reporter=dot
+      # 分块测试：与 vitest.config.ts 的 include 对应，各步骤之和不重不漏覆盖全部测试文件
+      # （已用 vitest list 逐一核对；filter 带尾斜杠、exclude 用根相对路径避免前缀误匹配）。
+      # 拆成多个独立步骤是为了 CI 上出现 fork worker 崩溃时能一眼定位目录
+      # （此前单步骤只有 “Worker exited unexpectedly”，无法判断死在哪）。
+      - name: Test · src / plugins + shared + cli
+        run: npx vitest run src/plugins src/shared src/cli
+      - name: Test · src / renderer
+        run: npx vitest run src/renderer
+      - name: Test · main / orchestrator
+        run: npx vitest run src/main/orchestrator
+      - name: Test · main / moments + music
+        run: npx vitest run src/main/moments src/main/music
+      - name: Test · main / memory + rag
+        run: npx vitest run src/main/memory src/main/rag
+      - name: Test · main / channels
+        run: npx vitest run src/main/channels
+      - name: Test · main / platform（app / plugins / tts / cita / skills / scheduler / proactive / chats）
+        run: npx vitest run src/main/tts/ src/main/plugin-host/ src/main/application/ src/main/cita/ src/main/skills/ src/main/scheduler/ src/main/proactive/ src/main/chats/
+      - name: Test · main / core（其余）
+        run: npx vitest run src/main --exclude "src/main/orchestrator/**" --exclude "src/main/moments/**" --exclude "src/main/music/**" --exclude "src/main/memory/**" --exclude "src/main/rag/**" --exclude "src/main/channels/**" --exclude "src/main/tts/**" --exclude "src/main/plugin-host/**" --exclude "src/main/application/**" --exclude "src/main/cita/**" --exclude "src/main/skills/**" --exclude "src/main/scheduler/**" --exclude "src/main/proactive/**" --exclude "src/main/chats/**"
+      - name: Test · packages + skills + poc
+        run: npx vitest run --exclude "src/**"

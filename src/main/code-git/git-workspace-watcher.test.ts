@@ -1,8 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { createCodeGitIgnoredPredicate, createGitWorkspaceWatcher, type WorkspaceFsWatcher } from "./git-workspace-watcher";
+
+/** 解析为规范长路径：CI 的临时目录含 Windows 短路径（RUNNER~1），
+ *  短路径直接交给递归 fs.watch 会触发 libuv fs-event 断言，进程无输出直接退出。 */
+function makeLongTempDir(prefix: string): string {
+  return realpathSync.native(mkdtempSync(path.join(tmpdir(), prefix)));
+}
 
 function createWatcherHarness() {
   const listeners = new Map<string, (value?: unknown) => void>();
@@ -89,7 +95,7 @@ describe("GitWorkspaceWatcher 原生递归监视（真实文件系统）", () =>
   const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
   itNative("工作区文件变化触发一次防抖通知，忽略目录内的变化不触发", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "cyrene-watch-"));
+    const root = makeLongTempDir("cyrene-watch-");
     const gitDir = path.join(root, ".git");
     mkdirSync(path.join(gitDir, "refs", "heads"), { recursive: true });
     writeFileSync(path.join(gitDir, "HEAD"), "ref: refs/heads/main\n");
@@ -129,7 +135,7 @@ describe("GitWorkspaceWatcher 原生递归监视（真实文件系统）", () =>
   });
 
   itNative("worktree 场景：gitDir 在仓库外时元数据变化仍能触发", async () => {
-    const base = mkdtempSync(path.join(tmpdir(), "cyrene-worktree-"));
+    const base = makeLongTempDir("cyrene-worktree-");
     const root = path.join(base, "worktree");
     const gitDir = path.join(base, "mainrepo", ".git");
     mkdirSync(root, { recursive: true });
@@ -158,7 +164,7 @@ describe("GitWorkspaceWatcher 原生递归监视（真实文件系统）", () =>
   });
 
   itNative("dispose 后句柄关闭，不再产生通知", async () => {
-    const root = mkdtempSync(path.join(tmpdir(), "cyrene-watch-"));
+    const root = makeLongTempDir("cyrene-watch-");
     const gitDir = path.join(root, ".git");
     mkdirSync(gitDir, { recursive: true });
     const changed = vi.fn();
