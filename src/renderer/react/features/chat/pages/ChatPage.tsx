@@ -210,7 +210,6 @@ export function ChatPage() {
   const sessionSelectionGeneration = useRef(0);
 
   const activeRunsBySession = useRef<Record<string, { assistantId: string; runId?: string; mode: ConversationMode }>>({});
-  const presentationRevisionByMessageRef = useRef<Record<string, number>>({});
   const runCheckpointBySessionRef = useRef<Record<string, (status: "running" | "waiting_user") => void>>({});
   // bootstrap 标志：只由 cold-start finally 写入；模式切换 effect 仅检查
   const [bootstrapCompleted, setBootstrapCompleted] = useState(false);
@@ -671,9 +670,8 @@ export function ChatPage() {
     converterVersion: string,
   ) {
     updateMessage(sessionId, messageId, { ttsCacheKey: cacheKey, ttsCacheVersion: converterVersion });
-    const nextRevision = (presentationRevisionByMessageRef.current[`${sessionId}:${messageId}`] ?? 0) + 1;
-    presentationRevisionByMessageRef.current[`${sessionId}:${messageId}`] = nextRevision;
-    void chatStore()?.checkpointPresentation(sessionId, messageId, nextRevision, {
+    const mutationKey = `tts:${messageId}:${encodeURIComponent(cacheKey)}:${encodeURIComponent(converterVersion)}`;
+    void chatStore()?.checkpointPresentation(sessionId, messageId, mutationKey, {
       ttsCacheKey: cacheKey,
       ttsCacheVersion: converterVersion,
     }).then((result) => {

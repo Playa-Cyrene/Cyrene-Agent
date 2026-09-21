@@ -187,7 +187,6 @@ export class AgentRunController {
   private assistantAt = 0;
   private checkpointTimer: number | undefined;
   private checkpointChain: Promise<boolean> = Promise.resolve(true);
-  private presentationRevision = 0;
   private readonly activeReasoningStarts = new Map<string, number>();
   private currentReasoningId: string | undefined;
   private earlyTtsQueue: EarlyTtsPlaybackQueue | undefined;
@@ -486,8 +485,6 @@ export class AgentRunController {
       taskDelegations: this.taskDelegations,
       runActivity: this.runActivity,
       at: this.assistantAt,
-      // 关联本轮回答的用户消息：残留认领的恢复判定只认这条锚点
-      answersUserMessageId: this.input.userMessageId,
       sticker: this.sticker,
       toolExecutions: this.toolExecutions,
       contextUsage: this.contextUsage,
@@ -506,14 +503,27 @@ export class AgentRunController {
   /** 把检查点写入会话存储；串到链上保证与之前的写盘顺序一致。 */
   private writeCheckpoint(status: "running" | "waiting_user" | "terminal"): Promise<boolean> {
     const snapshot = this.buildCheckpoint(status);
-    const { id: _id, role: _role, at: _at, ...patch } = snapshot;
-    const patchRevision = ++this.presentationRevision;
+    const patch = {
+      content: snapshot.content,
+      ...(snapshot.reasoning !== undefined ? { reasoning: snapshot.reasoning } : {}),
+      reasoningBlocks: snapshot.reasoningBlocks,
+      processMessages: snapshot.processMessages,
+      agentRounds: snapshot.agentRounds,
+      taskDelegations: snapshot.taskDelegations,
+      ...(snapshot.runActivity !== undefined ? { runActivity: snapshot.runActivity } : {}),
+      runSnapshot: snapshot.runSnapshot,
+      ...(snapshot.sticker !== undefined ? { sticker: snapshot.sticker } : {}),
+      toolExecutions: snapshot.toolExecutions,
+      ...(snapshot.contextUsage !== undefined ? { contextUsage: snapshot.contextUsage } : {}),
+    };
+    const keySnapshot = { ...patch, runSnapshot: patch.runSnapshot ? { ...patch.runSnapshot, updatedAt: 0 } : undefined };
+    const mutationKey = `run:${this.input.assistantId}:${status}:${encodeURIComponent(JSON.stringify(keySnapshot))}`;
     this.checkpointChain = this.checkpointChain
       .then(async () => {
         const result = await this.deps.store!.checkpointPresentation(
           this.input.sessionId,
           this.input.assistantId,
-          patchRevision,
+          mutationKey,
           patch,
         );
         if (!result.ok) throw new Error(result.error);

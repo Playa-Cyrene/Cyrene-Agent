@@ -1,4 +1,3 @@
-import { randomUUID } from "crypto";
 import { powerMonitor } from "electron";
 import * as chatsStore from "../chats/chats-store";
 import { broadcastChatsChanged } from "../chats/chats-ipc";
@@ -174,20 +173,24 @@ export function createProactiveLifecycle(options: ProactiveLifecycleOptions): Pr
       title: "昔涟的主动消息",
       identityId: null,
     });
-    const runId = `proactive:${randomUUID()}`;
+    // Stable business identity makes a retry after a derived snapshot failure
+    // resolve the same canonical assistant entry instead of duplicating it.
+    const commitKey = `proactive:${input.candidate.sceneId}:${input.generationEpoch}:${input.source}:${encodeURIComponent(input.text)}`;
+    const runId = commitKey;
     const sink = conversationJournal.createRunSink({ conversationId: session.id, runId });
     try {
-      await sink.appendAssistant({
+      const assistantEntryId = await sink.appendAssistant({
         message: { role: "assistant", content: input.text },
         roundId: "proactive",
       });
+      await conversationJournal.appendPresentationNext(
+        session.id,
+        assistantEntryId,
+        `${commitKey}:presentation`,
+        { content: input.text, runSnapshot: { runId, status: "terminal", updatedAt: Date.now() } },
+      );
       await sink.checkpoint();
     } catch (error) {
-      try {
-        await sink.closeInterruption({ reason: "user_cancel", runSession: null });
-      } catch (closureError) {
-        console.error("[Proactive] failed to close journal after persistence error", closureError);
-      }
       throw error;
     }
     broadcastChatsChanged();

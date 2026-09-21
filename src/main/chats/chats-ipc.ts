@@ -31,7 +31,7 @@ import { getRunReviewTracker } from "../orchestrator/review/run-review-tracker";
 import { activeChatTargetRegistry } from "../plugin-host/active-chat-target";
 import type { LlmClient } from "../services/llm/llm-client";
 import { enqueueLLMTask } from "../llm-queue";
-import type { TranscriptPresentationPatch } from "../orchestrator/conversation-transcript-types";
+import { assertValidPresentationPatch, type TranscriptPresentationPatch } from "../orchestrator/conversation-transcript-types";
 import {
   createConversationTitleService,
   type ConversationTitleService,
@@ -136,24 +136,34 @@ export function registerChatsIpc(
     async (_event, payload: {
       sessionId?: unknown;
       messageId?: unknown;
-      patchRevision?: unknown;
+      mutationKey?: unknown;
       patch?: unknown;
     }) => {
       if (
         typeof payload?.sessionId !== "string" || !payload.sessionId
         || typeof payload.messageId !== "string" || !payload.messageId
-        || !Number.isInteger(payload.patchRevision) || (payload.patchRevision as number) < 1
-        || !payload.patch || typeof payload.patch !== "object" || Array.isArray(payload.patch)
+        || typeof payload.mutationKey !== "string" || !payload.mutationKey
       ) {
         return { ok: false as const, error: "invalid-payload" as const };
       }
-      await conversationJournal.appendPresentation(
-        payload.sessionId,
-        payload.messageId,
-        payload.patchRevision as number,
-        payload.patch as TranscriptPresentationPatch,
-      );
-      return { ok: true as const };
+      try {
+        assertValidPresentationPatch(payload.patch);
+        await conversationJournal.appendPresentationNext(
+          payload.sessionId,
+          payload.messageId,
+          payload.mutationKey,
+          payload.patch as TranscriptPresentationPatch,
+        );
+        return { ok: true as const };
+      } catch (error) {
+        const code = error instanceof Error ? error.message : "TRANSCRIPT_PRESENTATION_WRITE_FAILED";
+        return {
+          ok: false as const,
+          error: code === "TRANSCRIPT_INVALID_PRESENTATION_PATCH" || code === "TRANSCRIPT_CORRUPT_ROW"
+            ? "invalid-presentation-patch"
+            : code,
+        };
+      }
     },
   );
 

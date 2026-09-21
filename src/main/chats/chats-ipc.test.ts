@@ -75,7 +75,7 @@ describe("chats IPC mode filtering", () => {
     await expect(checkpoint(event, {
       sessionId: session.id,
       messageId: "assistant-1",
-      patchRevision: 4,
+      mutationKey: "run:checkpoint-1",
       patch: { content: "final", toolExecutions: [] },
     })).resolves.toEqual(expect.objectContaining({ ok: true }));
 
@@ -83,7 +83,7 @@ describe("chats IPC mode filtering", () => {
     expect(snapshot.entries).toEqual(expect.arrayContaining([
       expect.objectContaining({
         kind: "presentation_patch",
-        payload: expect.objectContaining({ messageId: "assistant-1", patchRevision: 4 }),
+        payload: expect.objectContaining({ messageId: "assistant-1", patchRevision: 1, mutationKey: "run:checkpoint-1" }),
       }),
     ]));
   });
@@ -91,10 +91,17 @@ describe("chats IPC mode filtering", () => {
   it("returns a stable retired error for formal message IPC", async () => {
     const { registerChatsIpc } = await import("./chats-ipc");
     registerChatsIpc();
-    const upsert = mocks.handlers.get(IPC.CHATS_UPSERT);
-    if (!upsert) throw new Error("retired message IPC handler was not registered");
-    expect(upsert({ sender: {} }, { id: "session-1", message: { id: "m1" } }))
-      .toEqual({ ok: false, error: "chat-message-store-retired" });
+    const retired = [IPC.CHATS_APPEND, IPC.CHATS_UPSERT, IPC.CHATS_SET_MESSAGE_TTS_CACHE, IPC.CHATS_REPLACE_MESSAGES, IPC.CHATS_REPLACE_TAIL];
+    const transcriptDir = path.join(mocks.userDataDir, "transcripts");
+    const before = fs.existsSync(transcriptDir) ? fs.readdirSync(transcriptDir).sort() : [];
+    for (const channel of retired) {
+      const handler = mocks.handlers.get(channel);
+      if (!handler) throw new Error(`retired message IPC handler missing: ${channel}`);
+      expect(await handler({ sender: {} }, { id: "session-1", message: { id: "m1" } }))
+        .toEqual({ ok: false, error: "chat-message-store-retired" });
+    }
+    const after = fs.existsSync(transcriptDir) ? fs.readdirSync(transcriptDir).sort() : [];
+    expect(after).toEqual(before);
   });
 
   it("accepts a TTS cache update as a presentation-only patch", async () => {
@@ -117,14 +124,34 @@ describe("chats IPC mode filtering", () => {
     await expect(checkpoint(event, {
       sessionId: session.id,
       messageId: "assistant-tts",
-      patchRevision: 2,
+      mutationKey: "tts:minimax-key:v1",
       patch: { ttsCacheKey: "minimax-key", ttsCacheVersion: "v1" },
     })).resolves.toEqual({ ok: true });
     const patchEntry = (await transcript.read(session.id)).entries.at(-1);
     expect(patchEntry).toEqual(expect.objectContaining({
       kind: "presentation_patch",
-      payload: { messageId: "assistant-tts", patchRevision: 2, patch: { ttsCacheKey: "minimax-key", ttsCacheVersion: "v1" } },
+      payload: { messageId: "assistant-tts", patchRevision: 1, mutationKey: "tts:minimax-key:v1", patch: { ttsCacheKey: "minimax-key", ttsCacheVersion: "v1" } },
     }));
+  });
+
+  it("fails closed for unknown or empty presentation fields without touching disk", async () => {
+    const { registerChatsIpc } = await import("./chats-ipc");
+    const { getConversationTranscriptStore } = await import("../orchestrator/conversation-transcript-store");
+    registerChatsIpc();
+    const create = mocks.handlers.get(IPC.CHATS_CREATE);
+    const checkpoint = mocks.handlers.get(IPC.CTA_PRESENTATION_CHECKPOINT);
+    if (!create || !checkpoint) throw new Error("presentation checkpoint IPC handler was not registered");
+    const session = await create({ sender: {} }, { mode: "chat" }) as { id: string };
+    const transcript = getConversationTranscriptStore(mocks.userDataDir);
+    await transcript.append(session.id, { id: "assistant-invalid", at: 1, kind: "assistant", payload: { role: "assistant", content: "draft" } });
+    await expect(checkpoint({ sender: {} }, {
+      sessionId: session.id, messageId: "assistant-invalid", mutationKey: "invalid:unknown",
+      patch: { answersUserMessageId: "u1" },
+    })).resolves.toEqual({ ok: false, error: "invalid-presentation-patch" });
+    await expect(checkpoint({ sender: {} }, {
+      sessionId: session.id, messageId: "assistant-invalid", mutationKey: "invalid:empty", patch: {},
+    })).resolves.toEqual({ ok: false, error: "invalid-presentation-patch" });
+    expect((await transcript.read(session.id)).entries.filter((entry) => entry.kind === "presentation_patch")).toHaveLength(0);
   });
 
   it("先迁移再从轨迹 projection 组合 CHATS_GET 与 CHATS_GET_PAGE", async () => {

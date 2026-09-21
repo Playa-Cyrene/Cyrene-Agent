@@ -683,8 +683,8 @@ const chatStoreApi = {
     ipcRenderer.invoke(IPC.CHATS_GET_PAGE, { id, before, limit }),
   create: (payload?: { title?: string; identityId?: string | null; mode?: "chat" | "work" | "code" | "learn" }) =>
     ipcRenderer.invoke(IPC.CHATS_CREATE, payload ?? {}),
-  checkpointPresentation: (sessionId: string, messageId: string, patchRevision: number, patch: unknown) =>
-    ipcRenderer.invoke(IPC.CTA_PRESENTATION_CHECKPOINT, { sessionId, messageId, patchRevision, patch }),
+  checkpointPresentation: (sessionId: string, messageId: string, mutationKey: string, patch: unknown) =>
+    ipcRenderer.invoke(IPC.CTA_PRESENTATION_CHECKPOINT, { sessionId, messageId, mutationKey, patch }),
   // 主动压缩：把模型窗口内旧消息摘要成一条记忆（上下文容量菜单小人点击触发）
   compactConversation: (sessionId: string) =>
     ipcRenderer.invoke(IPC.CHATS_COMPACT, { sessionId }) as Promise<{

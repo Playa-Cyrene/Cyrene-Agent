@@ -17,6 +17,7 @@ import fs from "node:fs";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import {
+  assertValidPresentationPatch,
   assertValidTranscriptDraft,
   userRevisionKey,
   type TranscriptAppendInput,
@@ -143,6 +144,54 @@ export class ConversationTranscriptStore {
       // seq 只在队列内分配：现有最大 seq + 1（快照基线 + 已重放增量）
       const entry = { ...input, seq: state.maxSeq + 1, at: input.at ?? this.now() } as TranscriptEntry;
       validateLoadedTranscriptEntry(entry);
+      await fs.promises.mkdir(state.dir, { recursive: true });
+      await fs.promises.appendFile(path.join(state.dir, JSONL_FILE_NAME), `${JSON.stringify(entry)}\n`, "utf8");
+      return entry;
+    });
+  }
+
+  /** Append a derived presentation patch with queue-assigned revision and stable idempotency. */
+  appendPresentationNext(
+    conversationId: string,
+    messageId: string,
+    mutationKey: string,
+    patch: import("./conversation-transcript-types").TranscriptPresentationPatch,
+  ): Promise<Extract<TranscriptEntry, { kind: "presentation_patch" }>> {
+    if (!messageId || !mutationKey || /[\u0000-\u001f\u007f]/.test(mutationKey)) {
+      return Promise.reject(new Error("TRANSCRIPT_INVALID_PRESENTATION_PATCH"));
+    }
+    assertValidPresentationPatch(patch);
+    return this.enqueue<Extract<TranscriptEntry, { kind: "presentation_patch" }>>(conversationId, async () => {
+      const state = await this.loadState(conversationId);
+      const existing = state.entries.find((entry): entry is Extract<TranscriptEntry, { kind: "presentation_patch" }> => (
+        entry.kind === "presentation_patch" && entry.payload.mutationKey === mutationKey
+      ));
+      if (existing) {
+        if (existing.payload.messageId !== messageId || !deepEqual(existing.payload.patch, patch)) {
+          throw new Error("TRANSCRIPT_IDEMPOTENCY_CONFLICT");
+        }
+        return existing;
+      }
+      const nextRevision = state.entries
+        .filter((entry): entry is Extract<TranscriptEntry, { kind: "presentation_patch" }> =>
+          entry.kind === "presentation_patch" && entry.payload.messageId === messageId)
+        .reduce((max, entry) => Math.max(max, entry.payload.patchRevision), 0) + 1;
+      const keyDigest = createHash("sha256").update(mutationKey, "utf8").digest("hex");
+      const input: TranscriptAppendInput = {
+        kind: "presentation_patch",
+        id: `presentation:${messageId}:m${keyDigest}`,
+        at: this.now(),
+        payload: { messageId, patchRevision: nextRevision, mutationKey, patch },
+      };
+      const entry = { ...input, seq: state.maxSeq + 1 } as Extract<TranscriptEntry, { kind: "presentation_patch" }>;
+      try {
+        validateLoadedTranscriptEntry(entry);
+      } catch (error) {
+        if (error instanceof Error && error.message === "TRANSCRIPT_CORRUPT_ROW") {
+          throw new Error("TRANSCRIPT_INVALID_PRESENTATION_PATCH");
+        }
+        throw error;
+      }
       await fs.promises.mkdir(state.dir, { recursive: true });
       await fs.promises.appendFile(path.join(state.dir, JSONL_FILE_NAME), `${JSON.stringify(entry)}\n`, "utf8");
       return entry;
@@ -437,6 +486,7 @@ function isValidTranscriptPayload(entry: Partial<TranscriptEntry>): boolean {
     case "presentation_patch":
       return typeof entry.payload.messageId === "string" &&
         Number.isInteger(entry.payload.patchRevision) && entry.payload.patchRevision >= 1 &&
+        (entry.payload.mutationKey === undefined || (typeof entry.payload.mutationKey === "string" && entry.payload.mutationKey.length > 0)) &&
         isValidPresentationPatch(entry.payload.patch);
     case "turn_tombstone":
       return typeof entry.payload.targetUserTurnId === "string" && entry.payload.reason === "pending_withdrawn";
@@ -487,6 +537,7 @@ function sameStringSet(left: string[], right: string[]): boolean {
 
 function isValidPresentationPatch(value: unknown): boolean {
   if (!isRecord(value)) return false;
+  if (Object.keys(value).length === 0) return false;
   const allowed = new Set([
     "content", "reasoning", "reasoningBlocks", "processMessages", "agentRounds",
     "taskDelegations", "channelSource", "sticker", "toolExecutions", "runActivity",

@@ -47,6 +47,8 @@ export interface TranscriptSink {
   }): Promise<void>;
   /** 快照检查点：只在快照写失败时 reject，永不改写 JSONL。 */
   checkpoint(): Promise<void>;
+  /** Last canonical assistant entry, used by derived presentation writers. */
+  getLastAssistantEntryId?(): string | undefined;
 }
 
 export function createTranscriptSink(input: {
@@ -60,6 +62,7 @@ export function createTranscriptSink(input: {
   const assistantEntryOfCall = new Map<string, string>();
   // 无 roundId 的 assistant 追加序号（ChatLoop 单轮路径）
   let assistantCounter = 0;
+  let lastAssistantEntryId: string | undefined;
 
   return {
     async appendAssistant({ message, roundId }) {
@@ -76,6 +79,7 @@ export function createTranscriptSink(input: {
         ...(roundId ? { roundId } : {}),
         payload: message,
       });
+      lastAssistantEntryId = entry.id;
       return entry.id;
     },
 
@@ -152,6 +156,9 @@ export function createTranscriptSink(input: {
 
     async checkpoint() {
       await store.checkpoint(conversationId);
+    },
+    getLastAssistantEntryId() {
+      return lastAssistantEntryId;
     },
   };
 }

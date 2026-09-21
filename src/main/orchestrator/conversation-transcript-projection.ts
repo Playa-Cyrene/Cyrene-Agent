@@ -384,7 +384,7 @@ function projectSeedDelta(
       patches.set(entry.payload.messageId, {
         revision: entry.payload.patchRevision,
         seq: entry.seq,
-        patch: entry.payload.patch,
+        patch: { ...(current?.patch ?? {}), ...entry.payload.patch },
       });
     }
   }
@@ -520,7 +520,7 @@ function projectionFromActive(
       allPatches.set(entry.payload.messageId, {
         revision: entry.payload.patchRevision,
         seq: entry.seq,
-        patch: entry.payload.patch,
+        patch: { ...(current?.patch ?? {}), ...entry.payload.patch },
       });
     }
   }

@@ -116,10 +116,12 @@ describe("createSchedulerRunner lifecycle events", () => {
       appendAssistant: vi.fn(async () => "assistant-entry"),
       appendToolResult: vi.fn(async () => undefined),
       closeInterruption: vi.fn(async () => undefined),
+      getLastAssistantEntryId: vi.fn(() => "assistant-entry"),
     };
     const journal = {
       appendUser: vi.fn(async () => undefined),
       createRunSink: vi.fn(() => sink),
+      appendPresentationNext: vi.fn(async () => undefined),
     };
     let active = { sessionId: "session-1", mode: "work" as const };
     const send = vi.fn();
@@ -145,6 +147,12 @@ describe("createSchedulerRunner lifecycle events", () => {
     expect(journal.appendUser).toHaveBeenCalledWith("session-1", expect.objectContaining({ text: "整理资料" }));
     expect(journal.createRunSink).toHaveBeenCalledWith({ conversationId: "session-1", runId: "hist-1" });
     expect(sink.checkpoint).toHaveBeenCalledTimes(1);
+    expect(journal.appendPresentationNext).toHaveBeenCalledWith(
+      "session-1",
+      "assistant-entry",
+      expect.stringContaining("scheduler:hist-1:reply"),
+      expect.objectContaining({ content: "调度回复" }),
+    );
     expect(send).toHaveBeenCalledWith("scheduler:event", expect.objectContaining({ conversationId: "session-1" }));
     expect(publishLifecycle.publishTurnStarted).toHaveBeenCalledWith(expect.objectContaining({ conversationId: "session-1" }));
     expect(publishLifecycle.publishTurnFinished).toHaveBeenCalledWith(expect.objectContaining({ conversationId: "session-1" }));
@@ -170,7 +178,7 @@ describe("createSchedulerRunner lifecycle events", () => {
     const result = await runner.runScheduledTask(makeTask(), new Date(), false);
 
     expect(result.ok).toBe(false);
-    expect(sink.closeInterruption).toHaveBeenCalledWith({ reason: "user_cancel", runSession: null });
+    expect(sink.closeInterruption).not.toHaveBeenCalled();
   });
 
   it("成功执行发布 started/finished/scheduler:finished 且不伪造 conversationId", async () => {

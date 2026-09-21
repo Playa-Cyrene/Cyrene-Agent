@@ -114,7 +114,7 @@ export function installFakeBridges(options: FakeBridgeOptions): FakeBridgeRuntim
     list: async () => [perfSessionMeta(session)],
     get: async (id) => (id === session.id ? cloneSession(session) : null),
     create: async () => cloneSession(session),
-    checkpointPresentation: async (id, messageId, _patchRevision, patch) => {
+      checkpointPresentation: async (id, messageId, _mutationKey, patch) => {
       if (id !== session.id) return { ok: false, error: "session not found" };
       const target = session.messages.find((item) => item.id === messageId);
       if (target) {

@@ -45,6 +45,38 @@ export type TranscriptPresentationPatch = Partial<Pick<UiChatMessage,
   "ttsCacheVersion" | "musicCard" | "contextUsage"
 >>;
 
+/** Runtime gate for renderer-originated derived presentation data. */
+export function assertValidPresentationPatch(value: unknown): asserts value is TranscriptPresentationPatch {
+  if (!isRecord(value) || Object.keys(value).length === 0) {
+    throw new Error("TRANSCRIPT_INVALID_PRESENTATION_PATCH");
+  }
+  const allowed = new Set([
+    "content", "reasoning", "reasoningBlocks", "processMessages", "agentRounds",
+    "taskDelegations", "channelSource", "sticker", "toolExecutions", "runActivity",
+    "runSnapshot", "ttsCacheKey", "ttsCacheVersion", "musicCard", "contextUsage",
+  ]);
+  if (Object.keys(value).some((key) => !allowed.has(key))) {
+    throw new Error("TRANSCRIPT_INVALID_PRESENTATION_PATCH");
+  }
+  // The store remains the final boundary; keep this shared gate deliberately
+  // strict for scalar fields and collection/object shape.
+  for (const [key, field] of Object.entries(value)) {
+    if (["content", "reasoning", "ttsCacheKey", "ttsCacheVersion"].includes(key)) {
+      if (typeof field !== "string") throw new Error("TRANSCRIPT_INVALID_PRESENTATION_PATCH");
+    } else if (key === "sticker") {
+      if (field !== null && typeof field !== "string") throw new Error("TRANSCRIPT_INVALID_PRESENTATION_PATCH");
+    } else if (["reasoningBlocks", "processMessages", "agentRounds", "taskDelegations", "toolExecutions"].includes(key)) {
+      if (!Array.isArray(field)) throw new Error("TRANSCRIPT_INVALID_PRESENTATION_PATCH");
+    } else if (!isRecord(field)) {
+      throw new Error("TRANSCRIPT_INVALID_PRESENTATION_PATCH");
+    }
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
 export type TranscriptCompactionCheckpointPayload = {
   baseThroughSeq: number;
   sourceThroughSeq: number;
@@ -89,7 +121,7 @@ export type TranscriptEntry =
       payload: TranscriptCompactionCheckpointPayload;
     })
   | (TranscriptEnvelopeBase & { kind: "presentation_patch"; payload: {
-      messageId: string; patchRevision: number; patch: TranscriptPresentationPatch;
+      messageId: string; patchRevision: number; mutationKey?: string; patch: TranscriptPresentationPatch;
     }})
   | (TranscriptEnvelopeBase & { kind: "turn_tombstone"; payload: {
       targetUserTurnId: string; reason: "pending_withdrawn";

@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import {
   AgentRunController,
   type AgentRunDeps,
@@ -10,6 +13,8 @@ import type { AguiApi, AguiEvent, ChatStoreApi } from "../chat-page-bridge";
 import type { ChatSession } from "../../../../../../shared/chat-types";
 import type { TodoStateBySession } from "../session-runtime-state";
 import type { EarlyTtsPlaybackQueue } from "../../tts/early-tts-queue";
+import { ConversationTranscriptStore } from "../../../../../../main/orchestrator/conversation-transcript-store";
+import { ConversationJournalService } from "../../../../../../main/orchestrator/conversation-journal-service";
 
 /**
  * AgentRunController 全流程单测：注入假桥、记录型宿主与真实注册表，
@@ -199,7 +204,9 @@ describe("AgentRunController", () => {
     const store = createFakeStore();
     const { host } = createRecordingHost();
     store.checkpointPresentation.mockImplementation(async (...args: unknown[]) => {
-      if (Number(args[2]) >= 3) throw new Error("journal unavailable");
+      if ((args[3] as { runSnapshot?: { status?: string } })?.runSnapshot?.status === "terminal") {
+        throw new Error("journal unavailable");
+      }
       return { ok: true };
     });
     const { promise } = launch(createInput(), { api, store, host, registries: createRegistries() });
@@ -212,6 +219,37 @@ describe("AgentRunController", () => {
 
     await expect(promise).rejects.toThrow("journal unavailable");
     expect(api.reportRunPersisted).not.toHaveBeenCalled();
+  });
+
+  it("writes the first running checkpoint to the real journal before invoking api.run", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "cta-controller-journal-"));
+    try {
+      const transcript = new ConversationTranscriptStore(root, { now: () => 1_000 });
+      const journal = new ConversationJournalService(transcript);
+      const api = createFakeApi({ success: true, runId: "run-real" });
+      (api.run as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+        const snapshot = await journal.readProjection("session-1");
+        expect(snapshot.messages.find((message) => message.id === "assistant-1")?.runSnapshot?.status).toBe("running");
+        return { success: true, runId: "run-real" };
+      });
+      const realStore = {
+        checkpointPresentation: async (sessionId: string, messageId: string, mutationKey: string, patch: Record<string, unknown>) => {
+          await journal.appendPresentationNext(sessionId, messageId, mutationKey, patch as never);
+          return { ok: true as const };
+        },
+        pendingCompleteDispatch: vi.fn(async () => ({ ok: true })),
+      } as unknown as ChatStoreApi;
+      const { host } = createRecordingHost();
+      const { promise } = launch(createInput(), { api, store: realStore, host, registries: createRegistries() });
+      await flush();
+      api.emit(RUN_STARTED_EVENT);
+      api.emit({ type: "RUN_FINISHED", runId: "run-real", result: { status: "success" } });
+      await promise;
+      expect(api.run).toHaveBeenCalledTimes(1);
+      expect((await transcript.read("session-1")).entries.filter((entry) => entry.kind === "presentation_patch").length).toBeGreaterThan(0);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("只发送结构化当前 user，不上传 renderer 的完整历史", async () => {
@@ -355,9 +393,9 @@ describe("AgentRunController", () => {
     // runId 随 ack 写入注册表（cancel 依赖此行为），mid-run 落盘的快照会带上它
     const runIds = store.upsert.mock.calls.map((call) => call[1].runSnapshot?.runId);
     expect(runIds).toContain("run-1");
-    // 检查点携带关联锚点：残留认领的恢复判定据此对账「认领 ↔ 对应模型运行」
+    // 展示补丁只允许 presentation 白名单字段，不回写 canonical-only 锚点。
     for (const call of store.upsert.mock.calls) {
-      expect(call[1].answersUserMessageId).toBe("user-1");
+      expect(call[1].answersUserMessageId).toBeUndefined();
     }
     // 流式内容逐步发布，chat 模式整段直发
     expect(host.patchMessage).toHaveBeenCalledWith("session-1", "assistant-1", expect.objectContaining({

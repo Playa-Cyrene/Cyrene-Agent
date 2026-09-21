@@ -173,6 +173,38 @@ describe("ConversationJournalService", () => {
     expect((await journal.readProjectionPage("c1", 1, 1)).messages[0].sticker).toBe("calm");
   });
 
+  it("由主进程队列分配单调 presentation revision 并按 mutation key 幂等", async () => {
+    const { journal } = createJournal();
+    await journal.appendUser("c1", userInput("u1", "hello"));
+    const first = await journal.appendPresentationNext("c1", "user:u1", "run:r1", { sticker: "calm" });
+    const retry = await journal.appendPresentationNext("c1", "user:u1", "run:r1", { sticker: "calm" });
+    const [tts, activity] = await Promise.all([
+      journal.appendPresentationNext("c1", "user:u1", "tts:k1:v1", { ttsCacheKey: "k1", ttsCacheVersion: "v1" }),
+      journal.appendPresentationNext("c1", "user:u1", "run:activity", { reasoning: "thinking" }),
+    ]);
+    expect(first.payload.patchRevision).toBe(1);
+    expect(retry.id).toBe(first.id);
+    expect([tts.payload.patchRevision, activity.payload.patchRevision].sort()).toEqual([2, 3]);
+    await expect(journal.appendPresentationNext("c1", "user:u1", "run:r1", { sticker: "different" }))
+      .rejects.toThrow("TRANSCRIPT_IDEMPOTENCY_CONFLICT");
+    expect((await journal.readProjection("c1")).messages[0]).toMatchObject({
+      sticker: "calm",
+      ttsCacheKey: "k1",
+      ttsCacheVersion: "v1",
+      reasoning: "thinking",
+    });
+  });
+
+  it("拒绝空展示补丁和未知字段而不写入轨迹", async () => {
+    const { journal } = createJournal();
+    await journal.appendUser("c1", userInput("u1", "hello"));
+    await expect(journal.appendPresentationNext("c1", "user:u1", "bad-empty", {}))
+      .rejects.toThrow("TRANSCRIPT_INVALID_PRESENTATION_PATCH");
+    await expect(journal.appendPresentationNext("c1", "user:u1", "bad-field", { answersUserMessageId: "u1" } as never))
+      .rejects.toThrow("TRANSCRIPT_INVALID_PRESENTATION_PATCH");
+    expect((await journal.readProjection("c1")).messages[0]).toMatchObject({ content: "hello" });
+  });
+
   it("使用绝对 before 游标分页时连续返回完整投影尾部", async () => {
     const { journal } = createJournal();
     for (let index = 1; index <= 5; index++) {

@@ -44,7 +44,7 @@ export interface ChatStoreApi {
   checkpointPresentation: (
     sessionId: string,
     messageId: string,
-    patchRevision: number,
+    mutationKey: string,
     patch: Partial<ChatMessage>,
   ) => Promise<{ ok: true } | { ok: false; error: string }>;
   rename: (id: string, title: string) => Promise<ChatSession | null>;

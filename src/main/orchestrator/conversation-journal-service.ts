@@ -22,6 +22,7 @@ import type {
   TranscriptPresentationPatch,
   TranscriptSnapshotV2,
 } from "./conversation-transcript-types";
+import { assertValidPresentationPatch } from "./conversation-transcript-types";
 import { createTranscriptSink, type TranscriptSink } from "./transcript-sink";
 
 export interface JournalUserInput {
@@ -140,12 +141,24 @@ export class ConversationJournalService {
     if (!messageId || !Number.isInteger(patchRevision) || patchRevision < 1) {
       throw new Error("TRANSCRIPT_INVALID_PRESENTATION_PATCH");
     }
+    assertValidPresentationPatch(patch);
     const entry = await this.store.append(conversationId, {
       kind: "presentation_patch",
       id: `presentation:${messageId}:r${patchRevision}`,
       at: Date.now(),
       payload: { messageId, patchRevision, patch },
     });
+    await this.refreshProjection(conversationId);
+    return entry;
+  }
+
+  async appendPresentationNext(
+    conversationId: string,
+    messageId: string,
+    mutationKey: string,
+    patch: TranscriptPresentationPatch,
+  ): Promise<TranscriptEntry> {
+    const entry = await this.store.appendPresentationNext(conversationId, messageId, mutationKey, patch);
     await this.refreshProjection(conversationId);
     return entry;
   }

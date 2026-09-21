@@ -159,6 +159,18 @@ export function createSchedulerRunner(deps: RunnerDeps) {
       const durationMs = finishedAt.getTime() - startedAt.getTime();
       // Observable 在超时等非成功终态下也会正常 complete：事件状态以 agent 终态为准
       const status: PluginTurnStatus = agent.lastResult?.terminal?.status ?? "success";
+      if (conversationId && transcriptSink) {
+        const messageId = transcriptSink.getLastAssistantEntryId?.();
+        if (messageId) {
+          await deps.conversationJournal!.appendPresentationNext(
+            conversationId,
+            messageId,
+            `scheduler:${historyId}:reply:${encodeURIComponent(reply)}`,
+            { content: reply, runSnapshot: { runId: historyId, status: "terminal", updatedAt: Date.now() } },
+          );
+        }
+        await transcriptSink.checkpoint();
+      }
       deps.recordHistory({
         id: historyId,
         taskId: task.id,
@@ -166,11 +178,10 @@ export function createSchedulerRunner(deps: RunnerDeps) {
         firedAt: startedAt.toISOString(),
         finishedAt: finishedAt.toISOString(),
         durationMs,
-        status: "success",
+        status: status === "success" ? "success" : "failed",
         outputPreview: reply.slice(0, 160),
         effectiveToolIds,
       });
-      if (conversationId && transcriptSink) await transcriptSink.checkpoint();
       deps.publishLifecycle?.publishTurnFinished({
         source: "scheduler",
         runId: historyId,
@@ -200,13 +211,6 @@ export function createSchedulerRunner(deps: RunnerDeps) {
       }
       return { ok: true, historyId, reply, effectiveToolIds };
     } catch (err) {
-      if (transcriptSink) {
-        try {
-          await transcriptSink.closeInterruption({ reason: "user_cancel", runSession: null });
-        } catch (closureError) {
-          console.error("[Scheduler] failed to close journal after persistence error", closureError);
-        }
-      }
       const finishedAt = deps.now();
       const message = err instanceof Error ? err.message : String(err);
       const durationMs = finishedAt.getTime() - startedAt.getTime();
@@ -225,6 +229,7 @@ export function createSchedulerRunner(deps: RunnerDeps) {
         schedulerRunId: historyId,
         status: "runtime_error",
         durationMs,
+        ...(conversationId ? { conversationId } : {}),
       });
       deps.recordHistory({
         id: historyId,
