@@ -368,7 +368,9 @@ describe("长尾延迟分桶", () => {
     return counts.map((count) => count / delays.length);
   }
 
-  it("角色表态延迟：桶占比约 50/30/15/5，延迟在 3 分钟 ~ 4 小时内", () => {
+  // 10 万样本的统计压测在 CI 的 4 核 runner 上可能超过默认 5s，
+  // 超时会导致 vitest 杀掉整个 fork worker（波及同 worker 的其他文件）
+  it("角色表态延迟：桶占比约 50/30/15/5，延迟在 3 分钟 ~ 4 小时内", { timeout: 60_000 }, () => {
     const random = createSeededRandom(42);
     const delays = Array.from({ length: SAMPLES }, () => computeCharacterPostDelayMs(random));
 
@@ -387,7 +389,7 @@ describe("长尾延迟分桶", () => {
     expect(ratios[3]).toBeLessThan(0.07);
   });
 
-  it("角色回复延迟：桶占比约 50/30/20，延迟在 5 ~ 60 分钟内", () => {
+  it("角色回复延迟：桶占比约 50/30/20，延迟在 5 ~ 60 分钟内", { timeout: 60_000 }, () => {
     const random = createSeededRandom(7);
     const delays = Array.from({ length: SAMPLES }, () => computeCharacterReplyDelayMs(random));
 
@@ -404,7 +406,7 @@ describe("长尾延迟分桶", () => {
     expect(ratios[2]).toBeLessThan(0.22);
   });
 
-  it("昔涟在线：表态 1~8 分钟、回复 1~5 分钟", () => {
+  it("昔涟在线：表态 1~8 分钟、回复 1~5 分钟", { timeout: 30_000 }, () => {
     const random = createSeededRandom(99);
     for (let i = 0; i < 10_000; i++) {
       const post = computeCyrenePostDelayMs(true, random);
@@ -416,7 +418,7 @@ describe("长尾延迟分桶", () => {
     }
   });
 
-  it("昔涟离线：表态与回复都落在 1~40 分钟，回复整体比表态偏快", () => {
+  it("昔涟离线：表态与回复都落在 1~40 分钟，回复整体比表态偏快", { timeout: 30_000 }, () => {
     const random = createSeededRandom(1234);
     const posts: number[] = [];
     const replies: number[] = [];
