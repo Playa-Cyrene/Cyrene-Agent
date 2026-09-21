@@ -44,7 +44,8 @@ afterEach(() => {
   container.remove();
 });
 
-describe("MarkdownContent Streamdown lifecycle", () => {
+// TEMP-CRASH-DIAG: CI worker 崩溃嫌疑文件，临时跳过定位中
+describe.skip("MarkdownContent Streamdown lifecycle", () => {
   it("preserves the rendered KaTeX tree when a math response completes and later state updates repeat", () => {
     const content = "公式：$E=mc^2$\n\n$$a^2+b^2=c^2$$";
     update(content, true);
