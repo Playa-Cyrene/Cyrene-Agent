@@ -486,9 +486,10 @@ export function registerAgUiIpc(
     // ── 轨迹派发（CTA Phase 1）：模型请求启动前原子提交 user / rewind ──
     // 桌面渲染端 dispatch 总带 userTurnId（AgentRunController 已落库锚点）；
     // 缺 userTurnId 的非标准调用按渲染端消息走，不写轨迹。
-    // 回退开关：显式 CYRENE_TRANSCRIPT_CONTEXT_SOURCE=renderer 时跳过轨迹源（仅一个版本周期）。
+    // 回退开关只切换读取源（useTranscriptContext）：renderer 回退期间桌面双写仍持续，
+    // 否则已过 backfill boundary 的会话重新切回 transcript 后，回退期间的历史永久缺失。
     const transcriptSource = resolveTranscriptContextSource();
-    if (transcriptSource === "transcript" && input.userTurnId) {
+    if (input.userTurnId) {
       try {
         await prepareTranscriptDispatch({
           store: getConversationTranscriptStore(app.getPath("userData")),
@@ -506,7 +507,9 @@ export function registerAgUiIpc(
         lifecycle?.onConversationEnded();
         throw error;
       }
-      input.useTranscriptContext = true;
+      if (transcriptSource === "transcript") {
+        input.useTranscriptContext = true;
+      }
     }
 
     // ── Chat / Work / Learn / Code：共用 CyreneAgent 外壳 ──

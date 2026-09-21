@@ -1696,7 +1696,7 @@ describe("agui-bridge transcript dispatch", () => {
     mocks.userDataRoot = "";
   });
 
-  it("renderer 回退开关跳过轨迹源（一个版本周期）", async () => {
+  it("renderer 回退开关只切换读取源，桌面双写持续（一个版本周期）", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-bridge-rollback-"));
     roots.push(root);
     mocks.userDataRoot = root;
@@ -1719,11 +1719,14 @@ describe("agui-bridge transcript dispatch", () => {
         userTurnId: "u1",
       });
 
-      // 回退周期内：不标记轨迹上下文，也不写轨迹（渲染端消息照旧）
+      // 回退周期内：不标记轨迹上下文（模型上下文读取源回退渲染端消息），
+      // 但轨迹写入不停止——否则已过 backfill boundary 的会话重新切回
+      // transcript 后，回退期间的历史永久缺失。
       expect(seenInputs[0]).not.toHaveProperty("useTranscriptContext");
       const { getConversationTranscriptStore } = await import("./orchestrator/conversation-transcript-store");
       const entries = (await getConversationTranscriptStore(root).read("chat-rollback")).entries;
-      expect(entries).toHaveLength(0);
+      expect(entries.some((entry) => entry.kind === "backfill_boundary")).toBe(true);
+      expect(entries.some((entry) => entry.kind === "user" && entry.turnId === "u1")).toBe(true);
     } finally {
       if (previous === undefined) delete process.env.CYRENE_TRANSCRIPT_CONTEXT_SOURCE;
       else process.env.CYRENE_TRANSCRIPT_CONTEXT_SOURCE = previous;
