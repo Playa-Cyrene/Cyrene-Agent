@@ -34,6 +34,7 @@ import type {
   HarnessConfig,
   HarnessInput,
   HarnessResult,
+  RunAdjustmentMessage,
 } from "./types";
 import type { ToolOutputRef } from "./tool-output/tool-output-store";
 import { INITIAL_HARNESS_CACHE_STATE, DEFAULT_HARNESS_CONFIG } from "./types";
@@ -111,12 +112,18 @@ export async function runCyreneHarness(input: HarnessInput): Promise<HarnessResu
     }
 
     // ── 插话注入（下一次模型请求前）──
-    // 工具批次或上一轮模型请求已结束：把标记插入当前运行的待发消息提交为
-    // 正式用户消息并按入队顺序追加进 transcript。无标记时保持同步直达，
+    // 工具批次或上一轮模型请求已结束：把标记插入当前运行的待发消息双写
+    // （权威轨迹 → 聊天历史）后按入队顺序追加进上下文。无标记时保持同步直达，
     // 不引入 await 挂起点（与压缩的门控方式一致）。
     const adjustmentPoll = input.pollRunAdjustments?.();
     if (adjustmentPoll) {
-      const adjustments = await adjustmentPoll;
+      let adjustments: RunAdjustmentMessage[];
+      try {
+        adjustments = await adjustmentPoll;
+      } catch (error) {
+        // 双写任一步失败（fail-closed）：pending 保留，终止运行，不假装注入成功
+        return finishRun(run, `插话提交失败：${errorMessage(error)}`, true, "error");
+      }
       if (adjustments.length > 0) {
         for (const adjustment of adjustments) {
           run.messages.push({ role: "user", content: adjustment.rawContent });
@@ -223,8 +230,15 @@ export async function runCyreneHarness(input: HarnessInput): Promise<HarnessResu
       : "";
     // ── 最终结算前的插话检查 ──
     // 模型准备结束当前运行：若仍有待插入的调整消息，本轮回复转为中间过程
-    // （progress_text），插话进上下文后继续循环处理，不在结算前丢弃插话。
-    const endAdjustments = await input.pollRunAdjustments?.() ?? [];
+    // （progress_text），插话双写（权威轨迹 → 聊天历史）进入上下文后继续循环处理，
+    // 不在结算前丢弃插话。
+    let endAdjustments: RunAdjustmentMessage[];
+    try {
+      endAdjustments = await input.pollRunAdjustments?.() ?? [];
+    } catch (error) {
+      // 双写任一步失败（fail-closed）：pending 保留，终止运行，不假装注入成功
+      return finishRun(run, `插话提交失败：${errorMessage(error)}`, true, "error");
+    }
     if (endAdjustments.length > 0) {
       const intermediate = run.streamController.commitProgressBuffer() + truncatedSuffix;
       input.onEvent?.({ type: "round_end", roundId });

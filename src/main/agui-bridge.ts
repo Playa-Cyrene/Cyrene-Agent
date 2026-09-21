@@ -561,8 +561,23 @@ export function registerAgUiIpc(
     options.signal = runAbortController.signal;
     // 插话轮询：把"插入当前运行下一步"的待发条目在模型请求边界提交并注入。
     // Chat 无工具链路是单请求运行，没有安全的下一步，不接轮询（IPC 侧同步拒绝）。
+    // 双写顺序在 poller 内：先以稳定 ID 写权威轨迹（含附件元数据），
+    // 再提交聊天历史；任一步失败 pending 保留并上抛（fail-closed）。
     if (mode !== "chat") {
-      options.pollRunAdjustments = createRunAdjustmentPoller(sessionId, runId);
+      const transcriptStore = getConversationTranscriptStore(app.getPath("userData"));
+      options.pollRunAdjustments = createRunAdjustmentPoller(sessionId, runId, chatsStore, {
+        // 稳定 entryId 规则与正常派发一致（user:v1:turnId:r1）：重试时幂等命中
+        appendUser: async ({ turnId, text, attachments }) => {
+          await transcriptStore.append(sessionId, {
+            id: `user:v1:${turnId}:r1`,
+            at: Date.now(),
+            kind: "user",
+            turnId,
+            revision: 1,
+            payload: { text, ...(attachments ? { attachments } : {}) },
+          });
+        },
+      });
     }
     options.requestUserClarification = (card) => requestUserClarification(card, (cardData) => {
       send({ type: "CUSTOM", name: "cyrene.choice", value: cardData, threadId, runId });

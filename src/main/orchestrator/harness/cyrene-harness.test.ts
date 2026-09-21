@@ -1379,6 +1379,37 @@ describe("CyreneHarness run adjustments", () => {
     expect(poll).toHaveBeenCalledTimes(1);
   });
 
+  it("插话双写失败（poll 抛错）：fail-closed 终止运行，不注入、不再请求模型", async () => {
+    const { fn: fetchMock } = fakeFetchSequencer([
+      assistantResponse({ toolCalls: [mutationToolCall("call-1")] }),
+      assistantResponse({ text: "不应被请求。" }),
+    ]);
+    vi.stubGlobal("fetch", fetchMock);
+    mockedDispatch.mockImplementation(async () => successDispatchResult("call-1"));
+    // 模拟插话双写失败（轨迹或聊天历史任一步写失败，poller 上抛）：
+    // round-0 请求前无标记同步直达；工具轮结束后第二次轮询 reject
+    let pollCount = 0;
+    const poll = vi.fn((): Promise<RunAdjustmentMessage[]> | undefined => {
+      pollCount++;
+      return pollCount === 1
+        ? undefined
+        : Promise.reject(new Error("PENDING_ADJUST_COMMIT_FAILED:q-adj:write-failed"));
+    });
+
+    const result = await runCyreneHarness({
+      systemPrompt: "you are a test agent",
+      messages: [{ role: "user", content: "创建一个文件" }],
+      tools: [mutationTool()],
+      vendorConfig,
+      pollRunAdjustments: poll,
+    });
+
+    // fail-closed：pending 保留、运行终止，不得带着失败插话继续执行
+    expect(result.terminateReason).toBe("error");
+    expect(result.finalAnswer).toContain("插话提交失败");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("插话注入后 checkpoint 失败：按既有的状态保存失败语义熔断，不得静默继续", async () => {
     const { fn: fetchMock } = fakeFetchSequencer([
       assistantResponse({ toolCalls: [mutationToolCall("call-1")] }),
