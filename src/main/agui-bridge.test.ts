@@ -1669,6 +1669,9 @@ describe("agui-bridge transcript dispatch", () => {
     expect(seenInputs[0]).not.toHaveProperty("useTranscriptContext");
     const onFinishedNotStarted = mocks.runCyreneAgent;
     expect(onFinishedNotStarted).toHaveBeenCalled();
+    // 轨迹提交端同样不得注入：否则模型回写没有对应 user 的孤立 assistant 条目
+    const sink = (mocks.runCyreneAgent.mock.calls.at(-1)?.[0] as { transcriptSink?: unknown }).transcriptSink;
+    expect(sink).toBeUndefined();
   });
 
   it("does not start the model when the transcript write fails", async () => {

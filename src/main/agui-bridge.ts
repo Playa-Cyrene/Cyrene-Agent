@@ -545,15 +545,20 @@ export function registerAgUiIpc(
     // 一路传到 Agent / Harness adapter / ToolContext / 所有 AG-UI 事件。
     // ack.runId 与 RUN_STARTED.runId 必须一致。
     options.runId = runId;
+    // 轨迹写入总开关（CTA）：桌面 dispatch 带 userTurnId 才写轨迹——
+    // 缺 userTurnId 的兼容调用按渲染端消息走，sink 与插话轨迹端口都不注入，
+    // 否则模型回写没有对应 user 的孤立 assistant 条目。
+    // renderer 回退只切换读取源，不影响这里（带 userTurnId 时双写持续）。
+    const transcriptEnabled = Boolean(input.userTurnId);
     // 轨迹提交端（CTA）：每 run 一个 sink，entryId 全程确定性，canonical assistant /
-    // tool_result 经它写入权威轨迹。无条件创建——renderer 回退只切换读取源，双写不得停止。
+    // tool_result 经它写入权威轨迹。
     // 渲染端 assistantTurnId 存在时透传（ChatLoop 单轮路径的 assistant 条目锚点）。
-    options.transcriptSink = createTranscriptSink({
+    options.transcriptSink = transcriptEnabled ? createTranscriptSink({
       store: getConversationTranscriptStore(app.getPath("userData")),
       conversationId: sessionId,
       runId,
       ...(input.assistantTurnId ? { assistantTurnId: input.assistantTurnId } : {}),
-    });
+    }) : undefined;
     // AbortController 已在会话守卫注册前创建（守卫的 abort 需要引用它）。
     // signal 一路传到 Agent / harness；AGUI_CANCEL / takeover 调用 abort()，
     // 触发 harness 返回 cancelled，CyreneAgent 发出 RUN_FINISHED(result.status="cancelled")，
@@ -564,20 +569,26 @@ export function registerAgUiIpc(
     // 双写顺序在 poller 内：先以稳定 ID 写权威轨迹（含附件元数据），
     // 再提交聊天历史；任一步失败 pending 保留并上抛（fail-closed）。
     if (mode !== "chat") {
-      const transcriptStore = getConversationTranscriptStore(app.getPath("userData"));
-      options.pollRunAdjustments = createRunAdjustmentPoller(sessionId, runId, chatsStore, {
-        // 稳定 entryId 规则与正常派发一致（user:v1:turnId:r1）：重试时幂等命中
-        appendUser: async ({ turnId, text, attachments }) => {
-          await transcriptStore.append(sessionId, {
-            id: `user:v1:${turnId}:r1`,
-            at: Date.now(),
-            kind: "user",
-            turnId,
-            revision: 1,
-            payload: { text, ...(attachments ? { attachments } : {}) },
-          });
-        },
-      });
+      // 插话轨迹端口只在轨迹开启时注入：兼容调用缺省，poller 退化为只提交聊天历史
+      options.pollRunAdjustments = createRunAdjustmentPoller(
+        sessionId,
+        runId,
+        chatsStore,
+        transcriptEnabled ? {
+          // 稳定 entryId 规则与正常派发一致（user:v1:turnId:r1）：重试时幂等命中
+          appendUser: async ({ turnId, text, attachments }) => {
+            const transcriptStore = getConversationTranscriptStore(app.getPath("userData"));
+            await transcriptStore.append(sessionId, {
+              id: `user:v1:${turnId}:r1`,
+              at: Date.now(),
+              kind: "user",
+              turnId,
+              revision: 1,
+              payload: { text, ...(attachments ? { attachments } : {}) },
+            });
+          },
+        } : undefined,
+      );
     }
     options.requestUserClarification = (card) => requestUserClarification(card, (cardData) => {
       send({ type: "CUSTOM", name: "cyrene.choice", value: cardData, threadId, runId });

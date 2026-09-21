@@ -208,6 +208,18 @@ describe("createRunAdjustmentPoller", () => {
     expect(transcript.calls.map((call) => call.turnId)).toEqual(["q-1", "q-1"]);
   });
 
+  it("无轨迹端口（缺 userTurnId 的兼容调用）：只提交聊天历史，不写轨迹", async () => {
+    const fake = createFakeStore();
+    fake.queue.set("s1", [makeItem("q-1", "run-1")]);
+    // 兼容调用不传轨迹端口：插话仍注入并提交聊天历史（CTA 之前的旧行为），轨迹零写入
+    const poll = createRunAdjustmentPoller("s1", "run-1", fake.store, undefined);
+
+    const injected = await poll();
+    expect(injected.map((item) => item.id)).toEqual(["q-1"]);
+    expect(fake.commits).toEqual([{ sessionId: "s1", messageId: "q-1", runId: "run-1" }]);
+    expect(fake.queue.get("s1")).toEqual([]);
+  });
+
   it("提交成功后条目已移出：再次轮询无标记（绝不重复注入）", async () => {
     const fake = createFakeStore();
     const transcript = createFakeTranscript();

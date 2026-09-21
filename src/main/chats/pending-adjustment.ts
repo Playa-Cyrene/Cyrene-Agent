@@ -36,12 +36,13 @@ export interface TranscriptUserWritePort {
  * harness 不产生 await 挂起点）；返回 Promise 表示有待提交的插话，
  * resolve 值为已按入队顺序双写成功的消息；任一步写失败则 reject
  * （pending 标记保留，等下个边界重试），由 harness fail-closed 终止运行。
+ * transcript 端口缺省（缺 userTurnId 的兼容调用）：不写轨迹，只提交聊天历史。
  */
 export function createRunAdjustmentPoller(
   sessionId: string,
   runId: string,
   store: PendingAdjustmentStore = chatsStore,
-  transcript: TranscriptUserWritePort,
+  transcript?: TranscriptUserWritePort,
 ): () => Promise<RunAdjustmentMessage[]> | undefined {
   return () => {
     const queue = store.getPendingMessages(sessionId);
@@ -52,12 +53,14 @@ export function createRunAdjustmentPoller(
       const injected: RunAdjustmentMessage[] = [];
       for (const item of marked) {
         // ① 权威轨迹先写（稳定 turnId + 附件元数据，同 entryId 重试幂等吸收）。
-        //    写失败上抛：聊天历史不动，pending 保留。
-        await transcript.appendUser({
-          turnId: item.id,
-          text: item.rawContent,
-          ...(item.attachments?.length ? { attachments: item.attachments } : {}),
-        });
+        //    写失败上抛：聊天历史不动，pending 保留。兼容调用无端口时跳过。
+        if (transcript) {
+          await transcript.appendUser({
+            turnId: item.id,
+            text: item.rawContent,
+            ...(item.attachments?.length ? { attachments: item.attachments } : {}),
+          });
+        }
         // ② 聊天历史后写。失败同样上抛：pending 保留，下次轮询时轨迹幂等命中、只重试本步。
         const commit = store.commitPendingAdjust(sessionId, item.id, runId);
         if (!commit.ok) {
