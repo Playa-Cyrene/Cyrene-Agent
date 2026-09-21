@@ -508,10 +508,11 @@ export function registerAgUiIpc(
         lifecycle?.onConversationEnded();
         throw error;
       }
-      if (transcriptSource === "transcript") {
-        input.useTranscriptContext = true;
-      }
     }
+    // 读取源是主进程的权威决策：显式覆盖 rawInput 可能携带的内部字段——
+    // renderer 回退强制 false（不留"渲染端传 true 绕过回退开关"的口子），
+    // 兼容调用（缺 userTurnId）同样强制 false（按渲染端消息走）。
+    input.useTranscriptContext = Boolean(input.userTurnId) && transcriptSource === "transcript";
 
     // ── Chat / Work / Learn / Code：共用 CyreneAgent 外壳 ──
     const agentExecutionMode: AgentExecutionMode = mode === "chat" ? "chat" : "work";

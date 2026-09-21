@@ -1666,7 +1666,8 @@ describe("agui-bridge transcript dispatch", () => {
     });
 
     // 无 userTurnId 的调用方（渠道/内部路径语义）：不写轨迹、不用轨迹上下文
-    expect(seenInputs[0]).not.toHaveProperty("useTranscriptContext");
+    // （即使 rawInput 携带 true 也被主进程强制覆盖为 false）
+    expect(seenInputs[0].useTranscriptContext).toBe(false);
     const onFinishedNotStarted = mocks.runCyreneAgent;
     expect(onFinishedNotStarted).toHaveBeenCalled();
     // 轨迹提交端同样不得注入：否则模型回写没有对应 user 的孤立 assistant 条目
@@ -1720,12 +1721,14 @@ describe("agui-bridge transcript dispatch", () => {
         messages: [{ role: "user", content: "当前输入" }],
         sessionId: "chat-rollback",
         userTurnId: "u1",
+        // 模拟 rawInput 携带内部字段：主进程必须显式覆盖，不能让 true 绕过回退开关
+        useTranscriptContext: true,
       });
 
-      // 回退周期内：不标记轨迹上下文（模型上下文读取源回退渲染端消息），
+      // 回退周期内：读取源被主进程强制覆盖为 false（模型上下文读取源回退渲染端消息），
       // 但轨迹写入不停止——否则已过 backfill boundary 的会话重新切回
       // transcript 后，回退期间的历史永久缺失。
-      expect(seenInputs[0]).not.toHaveProperty("useTranscriptContext");
+      expect(seenInputs[0].useTranscriptContext).toBe(false);
       const { getConversationTranscriptStore } = await import("./orchestrator/conversation-transcript-store");
       const entries = (await getConversationTranscriptStore(root).read("chat-rollback")).entries;
       expect(entries.some((entry) => entry.kind === "backfill_boundary")).toBe(true);
