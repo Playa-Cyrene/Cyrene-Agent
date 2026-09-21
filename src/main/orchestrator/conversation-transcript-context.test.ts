@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ConversationTranscriptStore } from "./conversation-transcript-store";
 import {
+  buildFullModelContext,
   buildModelContext,
   materializeTranscript,
   resolveTranscriptRetainTokens,
@@ -60,6 +61,20 @@ function outcomeFor(messages: ChatMessage[], toolCallId: string): string {
 // ── 活动视图与 rewind 语义 ─────────────────────────────────
 
 describe("materializeTranscript", () => {
+  it("exposes the split canonical materializer without presentation fields", () => {
+    const e = createEntries();
+    const entries: TranscriptEntry[] = [
+      e.user("u1", "turn-1", 1, "canonical"),
+      ({
+        seq: 2, id: "patch-1", at: 1_000, kind: "presentation_patch",
+        payload: { messageId: "u1", patchRevision: 1, patch: { content: "rendered" } },
+      }),
+    ];
+    expect(buildFullModelContext(entries, noRuns).messages).toEqual([
+      { role: "user", content: "canonical" },
+    ]);
+  });
+
   it("applies repeated replace_user against the highest active revision", () => {
     const e = createEntries();
     const active = materializeTranscript([
