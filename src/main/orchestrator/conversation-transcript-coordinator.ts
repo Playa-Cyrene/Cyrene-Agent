@@ -15,7 +15,11 @@
 
 import type { ChatMessage as UiChatMessage, ChatSession, PendingChatAttachment } from "../../shared/chat-types";
 import type { ConversationTranscriptStore } from "./conversation-transcript-store";
-import type { TranscriptAppendInput, TranscriptEntry } from "./conversation-transcript-types";
+import type {
+  TranscriptAppendInput,
+  TranscriptEntry,
+  TranscriptPresentationPatch,
+} from "./conversation-transcript-types";
 
 export interface TranscriptRewindRequest {
   anchorUserTurnId: string;
@@ -23,12 +27,12 @@ export interface TranscriptRewindRequest {
 }
 
 /** UI 消息的模型侧文本：优先 modelContext（拼入模型上下文的版本），兜底气泡文本。 */
-function modelText(message: UiChatMessage): string {
+export function modelText(message: UiChatMessage): string {
   return message.modelContext?.trim() || message.content;
 }
 
 /** UI 附件只保留稳定元数据；previewUrl / status 等瞬态字段不落轨迹。 */
-function stableAttachments(message: UiChatMessage): PendingChatAttachment[] | undefined {
+export function stableAttachments(message: UiChatMessage): PendingChatAttachment[] | undefined {
   const items = message.attachments?.map(({ kind, name, filePath, ...rest }) => ({
     kind,
     name,
@@ -38,6 +42,45 @@ function stableAttachments(message: UiChatMessage): PendingChatAttachment[] | un
     ...(kind === "image" && "hasAnnotations" in rest && rest.hasAnnotations ? { hasAnnotations: true } : {}),
   }));
   return items?.length ? items : undefined;
+}
+
+export interface LegacyBackfillDraft {
+  message: UiChatMessage;
+  text: string;
+  attachments?: PendingChatAttachment[];
+  presentationPatch: TranscriptPresentationPatch;
+}
+
+/**
+ * 统一旧 UI 历史的模型文本、稳定附件与展示补丁口径。
+ * migration 与首次 dispatch 都只消费这个结果，不各自复制筛选规则。
+ */
+export function buildLegacyBackfillDrafts(
+  messages: UiChatMessage[],
+  excludedTurnId?: string,
+): LegacyBackfillDraft[] {
+  const patchKeys: Array<keyof TranscriptPresentationPatch> = [
+    "content", "reasoning", "reasoningBlocks", "processMessages", "agentRounds",
+    "taskDelegations", "channelSource", "sticker", "toolExecutions", "runActivity",
+    "runSnapshot", "ttsCacheKey", "ttsCacheVersion", "musicCard", "contextUsage",
+  ];
+  return messages
+    .filter((message) => (message.role === "user" || message.role === "model")
+      && typeof message.content === "string")
+    .filter((message) => message.id !== excludedTurnId)
+    .map((message) => {
+      const presentationPatch = Object.fromEntries(
+        patchKeys
+          .filter((key) => message[key] !== undefined)
+          .map((key) => [key, message[key]]),
+      ) as TranscriptPresentationPatch;
+      return {
+        message,
+        text: modelText(message),
+        attachments: stableAttachments(message),
+        presentationPatch,
+      };
+    });
 }
 
 /** 派发前提交：回填（如需）→ rewind 或当前 user。全程 fail-closed，失败即上抛。 */
@@ -63,26 +106,27 @@ export async function prepareTranscriptDispatch(input: {
   // ── 首次回填：boundary 不存在时确定性续传（崩溃后按行幂等恢复）──
   if (!seenIds.has(boundaryId)) {
     // 无 rewind 时跳过当前 user（由 dispatch 路径写入）；有 rewind 时保留它作锚点基准
-    for (const message of session.messages) {
-      if (!rewind && message.id === userTurnId) continue;
+    for (const draft of buildLegacyBackfillDrafts(session.messages, rewind ? undefined : userTurnId)) {
+      const { message } = draft;
       const entryId = `backfill:v1:${message.id}`;
       if (seenIds.has(entryId)) continue;
-      const draft: TranscriptAppendInput = message.role === "user"
+      const entry: TranscriptAppendInput = message.role === "user"
         ? {
             id: entryId,
             at: message.at,
             kind: "user",
             turnId: message.id,
             revision: 1,
-            payload: { text: modelText(message), attachments: stableAttachments(message) },
+            payload: { text: draft.text, attachments: draft.attachments },
           }
         : {
             id: entryId,
             at: message.at,
             kind: "assistant",
-            payload: { role: "assistant", content: modelText(message) },
+            turnId: message.id,
+            payload: { role: "assistant", content: draft.text },
           };
-      const appended = await store.append(session.id, draft);
+      const appended = await store.append(session.id, entry);
       seenIds.add(appended.id);
       localEntries.push(appended);
     }

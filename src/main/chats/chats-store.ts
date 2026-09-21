@@ -19,6 +19,8 @@ import {
   CHAT_SCHEMA_VERSION,
   type ChatMessage,
   type ChatSession,
+  type ChatSessionRecord,
+  type ChatSessionRecordV2,
   type ChatSessionMeta,
   type ChatSessionPurpose,
   type ConversationMode,
@@ -93,7 +95,7 @@ function readIndexFromDisk(): ChatSessionMeta[] {
         (meta.purpose === undefined || meta.purpose === "proactive-chat")
       );
       if (!valid) continue;
-      const session = readSessionFile(meta.id!);
+      const session = readSessionRecordFile(meta.id!);
       const indexedMode = meta.mode;
       const mode = normalizePersistedMode(indexedMode ?? session?.mode, meta.purpose ?? session?.purpose);
       const workspaceRoot = typeof meta.workspaceRoot === "string"
@@ -141,13 +143,19 @@ function sessionPath(id: string): string {
   return path.join(sessionsDir, id + ".json");
 }
 
-function readSessionFile(id: string): ChatSession | null {
+function readSessionRecordFile(id: string): ChatSessionRecord | null {
   const filePath = sessionPath(id);
   if (!fs.existsSync(filePath)) return null;
   try {
     const raw = fs.readFileSync(filePath, "utf8");
-    const parsed = JSON.parse(raw) as ChatSession;
-    if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.messages)) {
+    const parsed = JSON.parse(raw) as ChatSessionRecord;
+    if (!parsed || typeof parsed !== "object") {
+      return null;
+    }
+    if (parsed.schemaVersion === 2) {
+      if (Array.isArray((parsed as unknown as { messages?: unknown }).messages)
+        || typeof (parsed as ChatSessionRecordV2).messageCount !== "number") return null;
+    } else if (parsed.schemaVersion !== 1 || !Array.isArray((parsed as ChatSession).messages)) {
       return null;
     }
     parsed.mode = normalizePersistedMode(parsed.mode, parsed.purpose);
@@ -159,8 +167,17 @@ function readSessionFile(id: string): ChatSession | null {
   }
 }
 
+function readSessionFile(id: string): ChatSession | null {
+  const record = readSessionRecordFile(id);
+  return record?.schemaVersion === 1 ? record : null;
+}
+
 function writeSessionFile(session: ChatSession): void {
   atomicWriteJson(sessionPath(session.id), session);
+}
+
+function writeSessionRecordFile(record: ChatSessionRecordV2): void {
+  atomicWriteJson(sessionPath(record.id), record);
 }
 
 /**
@@ -215,14 +232,14 @@ function migrateLegacySessions(): void {
   }
 }
 
-function metaFromSession(session: ChatSession): ChatSessionMeta {
+function metaFromSession(session: ChatSession | ChatSessionRecordV2): ChatSessionMeta {
   return {
     id: session.id,
     title: session.title,
     identityId: session.identityId,
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
-    messageCount: session.messages.length,
+    messageCount: session.schemaVersion === 2 ? session.messageCount : session.messages.length,
     purpose: session.purpose,
     mode: isConversationMode(session.mode) ? session.mode : inferLegacyMode(session.purpose),
     workspaceRoot: session.workspaceBinding?.workspaceRoot,
@@ -284,6 +301,35 @@ export function listSessions(options?: { mode?: ConversationMode }): ChatSession
 
 export function getSession(id: string): ChatSession | null {
   return readSessionFile(id);
+}
+
+/** 同步读取磁盘元数据；v2 记录没有正式 messages。 */
+export function getSessionRecord(id: string): ChatSessionRecord | null {
+  return readSessionRecordFile(id);
+}
+
+/** 迁移器的原子提交点：只接受 v1 → v2 的一次性元数据改写。 */
+export function writeMigratedSession(record: ChatSessionRecordV2): ChatSessionRecordV2 {
+  const current = readSessionRecordFile(record.id);
+  if (current?.schemaVersion === 2) return current;
+  writeSessionRecordFile(record);
+  upsertMeta(metaFromSession(record));
+  return record;
+}
+
+/** 将 v2 元数据与轨迹投影组合成既有 ChatSession 返回形状。 */
+export function composeSession(record: ChatSessionRecord, messages: ChatMessage[]): ChatSession {
+  if (record.schemaVersion === 1) return { ...record, messages: [...messages] };
+  const { messageCount: _messageCount, schemaVersion: _schemaVersion, ...metadata } = record;
+  const restoredMessages = messages.map((message) => {
+    if (message.role !== "user" || !message.id.startsWith("migration:v2:")
+      || !message.id.endsWith(":canonical")) return message;
+    return {
+      ...message,
+      id: message.id.slice("migration:v2:".length, -":canonical".length),
+    };
+  });
+  return { ...metadata, messages: restoredMessages, schemaVersion: CHAT_SCHEMA_VERSION };
 }
 
 export function getSessionPage(id: string, before: number | null, limit: number): {

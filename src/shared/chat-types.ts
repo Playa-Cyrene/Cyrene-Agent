@@ -291,6 +291,17 @@ export interface ChatSession {
   pendingDispatch?: PendingDispatchState;
 }
 
+/**
+ * v2 会话磁盘记录：正式消息由 ConversationJournalService（会话轨迹服务）保存，
+ * chats-store 只保留元数据与可恢复的 pending（待发）状态。
+ */
+export interface ChatSessionRecordV2 extends Omit<ChatSession, "messages" | "schemaVersion"> {
+  schemaVersion: 2;
+  messageCount: number;
+}
+
+export type ChatSessionRecord = ChatSession | ChatSessionRecordV2;
+
 // index.json 里的轻量元数据（列表渲染用）。
 export interface ChatSessionMeta {
   id: string;

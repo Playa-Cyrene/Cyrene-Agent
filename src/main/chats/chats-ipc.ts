@@ -26,6 +26,8 @@ import { getDefaultModelProfile, loadModelSettings, resolveModelSettingsProfile 
 import { FileToolOutputStore } from "../orchestrator/harness/tool-output/file-tool-output-store";
 import { getHarnessRunStore } from "../orchestrator/harness/run-store";
 import { getConversationTranscriptStore } from "../orchestrator/conversation-transcript-store";
+import { ConversationJournalService } from "../orchestrator/conversation-journal-service";
+import { ConversationSessionMigration } from "../orchestrator/conversation-session-migration";
 import { getRunReviewTracker } from "../orchestrator/review/run-review-tracker";
 import { getAdapterForConfig } from "../orchestrator/vendors";
 import { activeChatTargetRegistry } from "../plugin-host/active-chat-target";
@@ -83,6 +85,11 @@ export function registerChatsIpc(
       })
     : undefined);
   chatsStore.initialize();
+  const transcriptStore = getConversationTranscriptStore(app.getPath("userData"));
+  const conversationJournal = new ConversationJournalService(
+    transcriptStore,
+  );
+  const sessionMigration = new ConversationSessionMigration({ journal: conversationJournal, store: transcriptStore });
   // 进程刚启动时没有任何存活运行：磁盘上遗留的插话标记都是陈旧的，清回普通队列
   chatsStore.clearStalePendingAdjustMarks();
 
@@ -91,10 +98,29 @@ export function registerChatsIpc(
     (_event, options?: { mode?: ConversationMode }) => chatsStore.listSessions(options),
   );
 
-  ipc.handle(IPC.CHATS_GET, (_event, id: string) => chatsStore.getSession(id));
-  ipc.handle(IPC.CHATS_GET_PAGE, (_event, payload: { id: string; before?: number | null; limit?: number }) => {
+  ipc.handle(IPC.CHATS_GET, async (_event, id: string) => {
+    if (!id) return null;
+    const record = await sessionMigration.ensureConversationMigrated(id);
+    if (!record) return null;
+    const projection = await conversationJournal.readProjection(id);
+    return chatsStore.composeSession(record, projection.messages);
+  });
+  ipc.handle(IPC.CHATS_GET_PAGE, async (_event, payload: { id: string; before?: number | null; limit?: number }) => {
     if (!payload?.id) return null;
-    return chatsStore.getSessionPage(payload.id, payload.before ?? null, payload.limit ?? 80);
+    const record = await sessionMigration.ensureConversationMigrated(payload.id);
+    if (!record) return null;
+    const page = await conversationJournal.readProjectionPage(
+      payload.id,
+      payload.before ?? null,
+      payload.limit ?? 80,
+    );
+    const composed = chatsStore.composeSession(record, page.messages);
+    const { messages: _messages, ...session } = composed;
+    return {
+      session: { ...session, messageCount: page.messageCount },
+      messages: page.messages,
+      hasMore: page.hasMore,
+    };
   });
 
   ipc.handle(

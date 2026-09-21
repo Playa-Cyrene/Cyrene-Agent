@@ -56,6 +56,31 @@ describe("chats IPC mode filtering", () => {
     ]);
   });
 
+  it("先迁移再从轨迹 projection 组合 CHATS_GET 与 CHATS_GET_PAGE", async () => {
+    const { registerChatsIpc } = await import("./chats-ipc");
+    registerChatsIpc();
+    const create = mocks.handlers.get(IPC.CHATS_CREATE);
+    const get = mocks.handlers.get(IPC.CHATS_GET);
+    const getPage = mocks.handlers.get(IPC.CHATS_GET_PAGE);
+    const append = mocks.handlers.get(IPC.CHATS_APPEND);
+    if (!create || !get || !getPage || !append) throw new Error("chat IPC handlers were not registered");
+    const event = { sender: {} };
+    const session = await create(event, { mode: "work" }) as { id: string };
+    await append(event, { id: session.id, message: { id: "u1", role: "user", content: "hello", at: 1 } });
+    await append(event, { id: session.id, message: { id: "a1", role: "model", content: "world", at: 2 } });
+
+    const full = await get(event, session.id) as { schemaVersion: number; messages: Array<{ id: string }> };
+    expect(full.schemaVersion).toBe(1);
+    expect(full.messages.map((message) => message.id)).toEqual(["u1", "a1"]);
+
+    const page = await getPage(event, { id: session.id, limit: 1 }) as {
+      session: { messageCount: number };
+      messages: Array<{ id: string }>;
+    };
+    expect(page.session.messageCount).toBe(2);
+    expect(page.messages.map((message) => message.id)).toEqual(["a1"]);
+  });
+
   it("validates and forwards CHATS_UPSERT for run checkpoints", async () => {
     const { registerChatsIpc } = await import("./chats-ipc");
     registerChatsIpc();
