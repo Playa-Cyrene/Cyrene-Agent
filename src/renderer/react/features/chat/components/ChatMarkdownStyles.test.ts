@@ -63,4 +63,46 @@ describe("chat Markdown style integration", () => {
     expect(getComputedStyle(divider).borderTopWidth).toBe("0px");
     expect(getComputedStyle(divider).backgroundImage).toContain("linear-gradient");
   });
+
+  it("polishes file links, display math, lists, and task controls", () => {
+    const stylesheet = readFileSync(resolve(componentDirectory, "ChatMessageList.css"), "utf8");
+    const style = document.createElement("style");
+    style.textContent = stylesheet;
+    document.head.append(style);
+
+    const markdown = document.createElement("div");
+    markdown.className = "cy-message-markdown";
+    const fileLink = document.createElement("button");
+    fileLink.className = "cy-file-link";
+    const formula = document.createElement("p");
+    const katex = document.createElement("span");
+    katex.className = "katex";
+    formula.append(katex);
+    const list = document.createElement("ul");
+    list.dataset.streamdown = "unordered-list";
+    const listItem = document.createElement("li");
+    listItem.dataset.streamdown = "list-item";
+    const taskItem = document.createElement("li");
+    taskItem.dataset.streamdown = "list-item";
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = true;
+    checkbox.disabled = true;
+    taskItem.append(checkbox);
+    list.append(listItem, taskItem);
+    markdown.append(fileLink, formula, list);
+    document.body.append(markdown);
+
+    expect(getComputedStyle(fileLink).borderTopWidth).toBe("0px");
+    expect(getComputedStyle(fileLink).backgroundColor).toBe("rgba(0, 0, 0, 0)");
+    expect(getComputedStyle(fileLink).fontWeight).toBe("600");
+    expect(getComputedStyle(formula).fontSize).toBe("16.24px");
+    expect(getComputedStyle(formula).marginBottom).toBe("18px");
+    expect(getComputedStyle(list).listStylePosition).toBe("outside");
+    expect(getComputedStyle(list).paddingInlineStart).toBe("22px");
+    expect(getComputedStyle(listItem).marginTop).toBe("4px");
+    expect(getComputedStyle(checkbox).appearance).toBe("none");
+    expect(getComputedStyle(checkbox).opacity).toBe("1");
+    expect(getComputedStyle(taskItem).listStyleType).toBe("none");
+  });
 });

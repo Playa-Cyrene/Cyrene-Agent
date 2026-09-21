@@ -794,29 +794,31 @@
   overflow-x: auto;
 }
 
-/* 正文里的文件引用 chip：file:/// 链接指向工作区内文件时渲染成可点行内按钮，
-   点击打开右侧预览并定位行号；越界链接渲染 is-plain 纯文本（无任何可点暗示） */
+/* 工作区文件引用保持为轻量行内链接：用品牌粉强调，不用 chip 底色打断正文。 */
 .cy-file-link {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
   margin: 0 1px;
-  padding: 1px 6px 1px 5px;
-  border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
-  border-radius: 5px;
-  background: color-mix(in srgb, currentColor 6%, transparent);
-  color: inherit;
-  font: inherit;
-  font-size: 0.93em;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--cy-accent);
+  font-family: inherit;
+  font-size: 0.96em;
+  font-weight: 600;
   line-height: 1.45;
   cursor: pointer;
   vertical-align: baseline;
-  transition: background 0.15s, border-color 0.15s;
+  text-decoration: none;
+  text-underline-offset: 2px;
+  transition: color 0.15s ease;
 }
 
 .cy-file-link:hover {
-  background: color-mix(in srgb, currentColor 12%, transparent);
-  border-color: color-mix(in srgb, currentColor 30%, transparent);
+  color: color-mix(in srgb, var(--cy-accent) 82%, #8f3657);
+  text-decoration: underline;
 }
 
 .cy-file-link__icon {
@@ -837,7 +839,10 @@
   padding: 0;
   border: none;
   background: none;
+  color: inherit;
+  font-weight: inherit;
   cursor: auto;
+  text-decoration: none;
 }
 
 /* Mermaid 图卡片：自适应宽度、横向滚动兜底 */
@@ -964,11 +969,72 @@
   word-break: break-word;
 }
 
-.cy-message-markdown .katex-display {
+/* 独占一行的公式建立清晰的阅读层级；行内公式仍跟随正文尺寸。 */
+.cy-message-markdown .katex-display,
+.cy-message-markdown p:has(> .katex:only-child) {
+  display: block;
   max-width: 100%;
+  margin: 12px 0 18px;
+  padding: 3px 0 5px;
   overflow-x: auto;
   overflow-y: hidden;
-  padding-block: 4px;
+  color: #33272d;
+  font-size: 1.16em;
+  line-height: 1.6;
+}
+
+/* Streamdown 默认把列表标记放在内容内部，中文正文会显得挤；改为常规外置缩进。 */
+.cy-message-markdown :is(
+  ul[data-streamdown="unordered-list"],
+  ol[data-streamdown="ordered-list"]
+) {
+  margin: 8px 0 12px;
+  padding-inline-start: 22px;
+  list-style-position: outside;
+}
+
+.cy-message-markdown li[data-streamdown="list-item"] {
+  margin: 4px 0;
+  padding-block: 0;
+}
+
+.cy-message-markdown li[data-streamdown="list-item"]::marker {
+  color: #bd6d8a;
+}
+
+/* GFM 任务列表使用产品色复选框，禁用态也保持清晰，不再回落成系统灰。 */
+.cy-message-markdown li[data-streamdown="list-item"]:has(input[type="checkbox"]) {
+  list-style-type: none;
+}
+
+.cy-message-markdown input[type="checkbox"] {
+  appearance: none;
+  position: relative;
+  width: 14px;
+  height: 14px;
+  margin: 0 7px 0 0;
+  border: 1px solid #d7c8ce;
+  border-radius: 3px;
+  background: #fff;
+  opacity: 1;
+  vertical-align: -2px;
+}
+
+.cy-message-markdown input[type="checkbox"]:checked {
+  border-color: var(--cy-accent);
+  background: var(--cy-accent);
+}
+
+.cy-message-markdown input[type="checkbox"]:checked::after {
+  content: "";
+  position: absolute;
+  top: 1px;
+  left: 4px;
+  width: 4px;
+  height: 7px;
+  border: solid #fff;
+  border-width: 0 1.5px 1.5px 0;
+  transform: rotate(45deg);
 }
 
 .cy-message-markdown > :first-child {

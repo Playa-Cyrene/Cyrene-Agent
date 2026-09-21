@@ -56,6 +56,14 @@ describe("StreamdownMessageContent", () => {
     const markup = render("行内 $E=mc^2$ 与块级：\n\n$$a^2+b^2=c^2$$", true);
 
     expect(markup).toContain("katex");
+    expect(markup).toMatch(/<p><span class="katex">/);
+  });
+
+  it("preserves checked and unchecked GFM task states", () => {
+    const markup = render("- [x] 已完成\n- [ ] 待完成", false);
+
+    expect(markup).toMatch(/type="checkbox"[^>]*checked/);
+    expect(markup.match(/type="checkbox"/g)).toHaveLength(2);
   });
 
   it("keeps incomplete code fences renderable during streaming", () => {
