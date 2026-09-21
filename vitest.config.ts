@@ -13,14 +13,14 @@ export default defineConfig({
       "scripts/cline-poc/**/*.test.ts",
       "packages/*/src/**/*.test.ts",
     ],
-    // 单 fork 单 worker，避免 Windows 下 libuv fs-event 断言崩溃
+    // 2026-09-21：windows-2025 镜像更新后，单 fork 串行模式下 vitest worker 在 CI 上
+    // 确定性崩溃（libuv fs-event 断言，进程无输出直接死）。改用 4 路并发 fork：
+    // 每个文件独立进程，单文件崩溃不再拖垮整轮；本地与 CI 已验证并发模式稳定。
     pool: "forks",
-    singleFork: true,
-    maxWorkers: 1,
+    maxWorkers: 4,
     minWorkers: 1,
-    // 明确禁用 watch/cache，减少 fs 事件
     watch: false,
     cache: false,
-    fileParallelism: false,
+    fileParallelism: true,
   },
 });
