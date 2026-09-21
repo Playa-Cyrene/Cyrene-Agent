@@ -728,6 +728,57 @@ describe("chats pending edit & adjust", () => {
     expect(store.getPendingMessages(sessionId)?.[0].rawContent).toBe("消息甲");
   });
 
+  it("撤回已标记插入当前运行的条目被拒：already-adjusting，复位后可撤回", async () => {
+    const { store, sessionId } = await seedTwoMessages();
+    expect(store.markPendingAdjust(sessionId, "q-a", "run-1")).toEqual(expect.objectContaining({ ok: true }));
+
+    const result = store.removePendingMessage(sessionId, "q-a");
+    expect(result).toEqual(expect.objectContaining({ ok: false, error: "already-adjusting" }));
+    // 附带最新权威队列，调用方据此刷新投影、不覆盖新状态
+    if (!result.ok) {
+      expect(result.queue?.map((item) => item.id)).toEqual(["q-a", "q-b"]);
+    }
+    // 条目原样保留（标记未被清除）
+    expect(store.getPendingMessages(sessionId)?.[0]).toMatchObject({ id: "q-a", adjustRunId: "run-1" });
+
+    // 运行终止复位标记后，条目回到普通队列，此时可正常撤回
+    store.resetPendingAdjustByRun(sessionId, "run-1");
+    expect(store.removePendingMessage(sessionId, "q-a")).toEqual({ ok: true, removed: true });
+    expect(store.getPendingMessages(sessionId)?.map((item) => item.id)).toEqual(["q-b"]);
+  });
+
+  it("撤回与插话双写的并发窗口：轨迹写入挂起期间撤回被拒，恢复后双写完成", async () => {
+    const { store, sessionId } = await seedTwoMessages();
+    const { createRunAdjustmentPoller } = await import("./pending-adjustment");
+    expect(store.markPendingAdjust(sessionId, "q-a", "run-1")).toEqual(expect.objectContaining({ ok: true }));
+
+    // 挂起的轨迹端口：appendUser 在手动放行前不返回，模拟双写第一步进行中
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const appendedTurnIds: string[] = [];
+    const poll = createRunAdjustmentPoller(sessionId, "run-1", store, {
+      appendUser: async (input) => {
+        appendedTurnIds.push(input.turnId);
+        await gate;
+      },
+    });
+    const polling = poll()!;
+    expect(polling).toBeInstanceOf(Promise);
+
+    // 窗口内撤回：already-adjusting 拒绝，条目保留
+    expect(store.removePendingMessage(sessionId, "q-a")).toEqual(
+      expect.objectContaining({ ok: false, error: "already-adjusting" }),
+    );
+    expect(store.getPendingMessages(sessionId)?.[0].id).toBe("q-a");
+
+    // 恢复写入：双写完成，条目转正移出队列
+    release();
+    const injected = await polling;
+    expect(injected.map((item) => item.id)).toEqual(["q-a"]);
+    expect(appendedTurnIds).toEqual(["q-a"]);
+    expect(store.getPendingMessages(sessionId)?.map((item) => item.id)).toEqual(["q-b"]);
+  });
+
   it("编辑不存在的条目与会话：not-found / session-not-found", async () => {
     const { store, sessionId } = await seedTwoMessages();
 

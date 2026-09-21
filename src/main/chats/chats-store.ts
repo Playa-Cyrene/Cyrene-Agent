@@ -500,7 +500,7 @@ export type EnqueuePendingResult =
 /** 删除结果：removed=false 表示条目本就不在（幂等成功，未写盘）。 */
 export type RemovePendingResult =
   | { ok: true; removed: boolean }
-  | { ok: false; error: "session-not-found" | "write-failed" };
+  | { ok: false; error: "session-not-found" | "already-adjusting" | "write-failed"; queue?: PendingChatMessage[] };
 
 /** 入队载荷：id 由页面生成（稳定标识）；enqueuedAt 由主进程写入。 */
 export type PendingChatMessageInput = Omit<PendingChatMessage, "enqueuedAt">;
@@ -621,7 +621,14 @@ export function removePendingMessage(sessionId: string, messageId: string): Remo
   const session = readSessionFile(sessionId);
   if (!session) return { ok: false, error: "session-not-found" };
   const queue = session.pendingMessages ?? [];
-  if (!queue.some((item) => item.id === messageId)) return { ok: true, removed: false };
+  const target = queue.find((item) => item.id === messageId);
+  if (!target) return { ok: true, removed: false };
+  // 已标记插入当前运行：双写可能进行到一半（轨迹已写、聊天历史未提交），
+  // 此刻撤回会让权威轨迹留下 UI 不存在的隐藏 user——拒绝并附带最新权威队列，
+  // 等运行终止复位标记或双写完成后再撤。
+  if (target.adjustRunId) {
+    return { ok: false, error: "already-adjusting", queue: queue.map((item) => ({ ...item })) };
+  }
   session.pendingMessages = queue.filter((item) => item.id !== messageId);
   try {
     writeSessionFile(session);
