@@ -9,9 +9,13 @@
  *   不得从展示事件或 preview 重建协议消息。
  */
 
-import type { PendingChatAttachment } from "../../shared/chat-types";
+import type {
+  ChatMessage as UiChatMessage,
+  ChatMessageChannel,
+  PendingChatAttachment,
+} from "../../shared/chat-types";
 import type { ToolCallOutcome } from "./harness/types";
-import type { ChatMessage } from "./vendors/types";
+import type { ChatMessage as CanonicalChatMessage } from "./vendors/types";
 
 export interface TranscriptEnvelopeBase {
   /** 会话内单调递增序号，快照/重放协议依据。 */
@@ -34,16 +38,38 @@ export type TranscriptUserPayload = {
   attachments?: PendingChatAttachment[];
 };
 
+export type TranscriptPresentationPatch = Partial<Pick<UiChatMessage,
+  "content" | "reasoning" | "reasoningBlocks" | "processMessages" |
+  "agentRounds" | "taskDelegations" | "channelSource" | "sticker" |
+  "toolExecutions" | "runActivity" | "runSnapshot" | "ttsCacheKey" |
+  "ttsCacheVersion" | "musicCard" | "contextUsage"
+>>;
+
+export type TranscriptCompactionCheckpointPayload = {
+  baseThroughSeq: number;
+  sourceThroughSeq: number;
+  sourceDigest: string;
+  replacement: CanonicalChatMessage;
+  trigger: "automatic" | "manual";
+};
+
+export type TranscriptArchiveRef = {
+  fromSeq: number;
+  throughSeq: number;
+  file: string;
+  sha256: string;
+};
+
 export type TranscriptEntry =
   | (TranscriptEnvelopeBase & { kind: "user"; payload: TranscriptUserPayload })
-  | (TranscriptEnvelopeBase & { kind: "assistant"; payload: ChatMessage })
+  | (TranscriptEnvelopeBase & { kind: "assistant"; payload: CanonicalChatMessage })
   | (TranscriptEnvelopeBase & {
       kind: "tool_result";
       payload: {
         assistantEntryId: string;
         toolCallId: string;
         outcome: ToolCallOutcome;
-        message: ChatMessage;
+        message: CanonicalChatMessage;
         fullRef?: string;
       };
     })
@@ -58,7 +84,20 @@ export type TranscriptEntry =
       };
     })
   | (TranscriptEnvelopeBase & { kind: "backfill_boundary"; payload: { note: string } })
-  | (TranscriptEnvelopeBase & { kind: "compaction_checkpoint"; payload: { ref: string } });
+  | (TranscriptEnvelopeBase & {
+      kind: "compaction_checkpoint";
+      payload: TranscriptCompactionCheckpointPayload;
+    })
+  | (TranscriptEnvelopeBase & { kind: "presentation_patch"; payload: {
+      messageId: string; patchRevision: number; patch: TranscriptPresentationPatch;
+    }})
+  | (TranscriptEnvelopeBase & { kind: "turn_tombstone"; payload: {
+      targetUserTurnId: string; reason: "pending_withdrawn";
+    }})
+  | (TranscriptEnvelopeBase & { kind: "delivery_receipt"; payload: {
+      assistantTurnId: string; channel: ChatMessageChannel;
+      status: "delivered" | "failed"; errorCode?: string;
+    }});
 
 /** Omit 不分发联合，这里手动分发以保留 kind 判别信息。 */
 type DistributiveOmit<T, K extends keyof any> = T extends unknown ? Omit<T, K> : never;
@@ -72,6 +111,16 @@ export interface TranscriptSnapshot {
   throughSeq: number;
   entries: TranscriptEntry[];
   /** 幂等索引：快照恢复后旧 entryId 重试仍可被识别。 */
+  seenEntryIds: string[];
+  seenUserRevisions: string[];
+}
+
+export interface TranscriptSnapshotV2 {
+  schemaVersion: 2;
+  throughSeq: number;
+  entries: TranscriptEntry[];
+  projection: { throughSeq: number; messages: UiChatMessage[] };
+  archives: TranscriptArchiveRef[];
   seenEntryIds: string[];
   seenUserRevisions: string[];
 }

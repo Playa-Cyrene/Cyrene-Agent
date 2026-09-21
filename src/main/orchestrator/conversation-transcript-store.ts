@@ -14,25 +14,38 @@
  */
 
 import fs from "node:fs";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import {
   assertValidTranscriptDraft,
   userRevisionKey,
   type TranscriptAppendInput,
   type TranscriptEntry,
-  type TranscriptSnapshot,
+  type TranscriptSnapshotV2,
 } from "./conversation-transcript-types";
 
 const ROOT_DIR_NAME = "transcripts";
 const JSONL_FILE_NAME = "transcript.jsonl";
 const SNAPSHOT_FILE_NAME = "snapshot.json";
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
+const V1_SCHEMA_VERSION = 1;
+const IDENTITY_FILE_NAME = "identity.json";
+
+type TranscriptIdentity = { schemaVersion: 1; conversationId: string };
+type TranscriptSnapshotV1OnDisk = {
+  schemaVersion: 1;
+  throughSeq: number;
+  entries: TranscriptEntry[];
+  seenEntryIds: string[];
+  seenUserRevisions: string[];
+};
 
 export interface ConversationTranscriptStoreOptions {
   now?: () => number;
 }
 
 interface LoadedConversationState {
+  dir: string;
   entries: TranscriptEntry[];
   /** 快照基线（无快照为 0）。 */
   throughSeq: number;
@@ -40,16 +53,29 @@ interface LoadedConversationState {
   maxSeq: number;
   seenEntryIds: Set<string>;
   seenUserRevisions: Set<string>;
+  projection: TranscriptSnapshotV2["projection"];
+  archives: TranscriptSnapshotV2["archives"];
 }
 
 function validConversationId(conversationId: string): boolean {
   return (
+    typeof conversationId === "string" &&
     conversationId.length > 0 &&
-    !conversationId.includes("/") &&
-    !conversationId.includes("\\") &&
-    conversationId !== "." &&
-    conversationId !== ".."
+    !conversationId.includes("\u0000")
   );
+}
+
+/** Legacy raw-ID directories are considered only when their names are safe on every platform. */
+function validLegacyConversationId(conversationId: string): boolean {
+  return validConversationId(conversationId) &&
+    conversationId !== "." &&
+    conversationId !== ".." &&
+    !/[<>:"|?*\\/\u0000-\u001f]/.test(conversationId);
+}
+
+export function transcriptStorageKey(conversationId: string): string {
+  if (!validConversationId(conversationId)) throw new Error("TRANSCRIPT_INVALID_CONVERSATION_ID");
+  return `v2-${createHash("sha256").update(conversationId, "utf8").digest("hex")}`;
 }
 
 /** 深度等价（键顺序无关），用于幂等语义比较。 */
@@ -113,37 +139,40 @@ export class ConversationTranscriptStore {
 
       // seq 只在队列内分配：现有最大 seq + 1（快照基线 + 已重放增量）
       const entry = { ...input, seq: state.maxSeq + 1, at: input.at ?? this.now() } as TranscriptEntry;
-      const dir = this.conversationDir(conversationId);
-      await fs.promises.mkdir(dir, { recursive: true });
-      await fs.promises.appendFile(path.join(dir, JSONL_FILE_NAME), `${JSON.stringify(entry)}\n`, "utf8");
+      await fs.promises.mkdir(state.dir, { recursive: true });
+      await fs.promises.appendFile(path.join(state.dir, JSONL_FILE_NAME), `${JSON.stringify(entry)}\n`, "utf8");
       return entry;
     });
   }
 
-  read(conversationId: string): Promise<TranscriptSnapshot> {
+  read(conversationId: string): Promise<TranscriptSnapshotV2> {
     return this.enqueue(conversationId, async () => {
       const state = await this.loadState(conversationId);
       return {
         schemaVersion: SCHEMA_VERSION,
         throughSeq: state.maxSeq,
         entries: state.entries,
+        projection: state.projection,
+        archives: state.archives,
         seenEntryIds: [...state.seenEntryIds],
         seenUserRevisions: [...state.seenUserRevisions],
       };
     });
   }
 
-  checkpoint(conversationId: string): Promise<TranscriptSnapshot> {
+  checkpoint(conversationId: string): Promise<TranscriptSnapshotV2> {
     return this.enqueue(conversationId, async () => {
       const state = await this.loadState(conversationId);
-      const snapshot: TranscriptSnapshot = {
+      const snapshot: TranscriptSnapshotV2 = {
         schemaVersion: SCHEMA_VERSION,
         throughSeq: state.maxSeq,
         entries: state.entries,
+        projection: state.projection,
+        archives: state.archives,
         seenEntryIds: [...state.seenEntryIds],
         seenUserRevisions: [...state.seenUserRevisions],
       };
-      const dir = this.conversationDir(conversationId);
+      const dir = state.dir;
       await fs.promises.mkdir(dir, { recursive: true });
       // 原子写：temp + rename，JSONL 保持不动
       const tempFile = path.join(dir, `${SNAPSHOT_FILE_NAME}.${process.pid}.tmp`);
@@ -160,16 +189,9 @@ export class ConversationTranscriptStore {
 
   deleteConversation(conversationId: string): Promise<void> {
     return this.enqueue(conversationId, async () => {
-      await fs.promises.rm(this.conversationDir(conversationId), { recursive: true, force: true });
+      const dir = await this.resolveConversationDir(conversationId, false);
+      await fs.promises.rm(dir, { recursive: true, force: true });
     });
-  }
-
-  /** 会话目录（含路径穿越校验）。 */
-  private conversationDir(conversationId: string): string {
-    if (!validConversationId(conversationId)) {
-      throw new Error("TRANSCRIPT_INVALID_CONVERSATION_ID");
-    }
-    return path.join(this.root, conversationId);
   }
 
   /** 串行队列：同一会话的文件操作依次执行；前序失败不阻塞后续操作。 */
@@ -185,7 +207,7 @@ export class ConversationTranscriptStore {
 
   /** 加载会话状态：尾行修复 + 快照基线 + seq > throughSeq 的 JSONL 增量重放。 */
   private async loadState(conversationId: string): Promise<LoadedConversationState> {
-    const dir = this.conversationDir(conversationId);
+    const dir = await this.resolveConversationDir(conversationId, true);
     const jsonlFile = path.join(dir, JSONL_FILE_NAME);
 
     let text = "";
@@ -230,18 +252,86 @@ export class ConversationTranscriptStore {
     }
 
     const maxSeq = entries.reduce((max, entry) => Math.max(max, entry.seq), throughSeq);
-    return { entries, throughSeq, maxSeq, seenEntryIds, seenUserRevisions };
+    return {
+      dir,
+      entries,
+      throughSeq,
+      maxSeq,
+      seenEntryIds,
+      seenUserRevisions,
+      projection: snapshot?.schemaVersion === SCHEMA_VERSION
+        ? snapshot.projection
+        : { throughSeq: 0, messages: [] },
+      archives: snapshot?.schemaVersion === SCHEMA_VERSION ? snapshot.archives : [],
+    };
   }
 
-  private async readSnapshotFile(dir: string): Promise<TranscriptSnapshot | null> {
+  private async readSnapshotFile(dir: string): Promise<TranscriptSnapshotV2 | TranscriptSnapshotV1OnDisk | null> {
     try {
       const raw = await fs.promises.readFile(path.join(dir, SNAPSHOT_FILE_NAME), "utf8");
-      const parsed = JSON.parse(raw) as TranscriptSnapshot;
-      return parsed?.schemaVersion === SCHEMA_VERSION ? parsed : null;
+      const parsed = JSON.parse(raw) as TranscriptSnapshotV2;
+      if (parsed?.schemaVersion === SCHEMA_VERSION) return parsed;
+      if (parsed?.schemaVersion === V1_SCHEMA_VERSION) return parsed as unknown as TranscriptSnapshotV1OnDisk;
+      return null;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       return null;
     }
+  }
+
+  /** Resolve v2 hash directory first, then migrate a safe legacy raw-ID directory in this queue. */
+  private async resolveConversationDir(conversationId: string, create: boolean): Promise<string> {
+    const key = transcriptStorageKey(conversationId);
+    const hashedDir = path.join(this.root, key);
+    if (await pathExists(hashedDir)) {
+      await this.validateIdentity(hashedDir, conversationId);
+      return hashedDir;
+    }
+
+    const legacyDir = validLegacyConversationId(conversationId)
+      ? path.join(this.root, conversationId)
+      : null;
+    if (legacyDir && await pathExists(legacyDir)) {
+      await fs.promises.mkdir(this.root, { recursive: true });
+      await fs.promises.rename(legacyDir, hashedDir);
+      await this.writeIdentity(hashedDir, conversationId);
+      return hashedDir;
+    }
+
+    if (create) {
+      await fs.promises.mkdir(hashedDir, { recursive: true });
+      await this.writeIdentity(hashedDir, conversationId);
+    }
+    return hashedDir;
+  }
+
+  private async writeIdentity(dir: string, conversationId: string): Promise<void> {
+    const identity: TranscriptIdentity = { schemaVersion: 1, conversationId };
+    await fs.promises.writeFile(path.join(dir, IDENTITY_FILE_NAME), JSON.stringify(identity), "utf8");
+  }
+
+  private async validateIdentity(dir: string, conversationId: string): Promise<void> {
+    try {
+      const raw = await fs.promises.readFile(path.join(dir, IDENTITY_FILE_NAME), "utf8");
+      const identity = JSON.parse(raw) as Partial<TranscriptIdentity>;
+      if (
+        identity.schemaVersion !== 1 ||
+        identity.conversationId !== conversationId
+      ) throw new Error("TRANSCRIPT_IDENTITY_MISMATCH");
+    } catch (error) {
+      if (error instanceof Error && error.message === "TRANSCRIPT_IDENTITY_MISMATCH") throw error;
+      throw new Error("TRANSCRIPT_IDENTITY_MISMATCH");
+    }
+  }
+}
+
+async function pathExists(target: string): Promise<boolean> {
+  try {
+    await fs.promises.access(target);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
   }
 }
 

@@ -2,8 +2,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { ConversationTranscriptStore } from "./conversation-transcript-store";
-import type { TranscriptAppendInput } from "./conversation-transcript-types";
+import { ConversationTranscriptStore, transcriptStorageKey } from "./conversation-transcript-store";
+import type { TranscriptAppendInput, TranscriptEntry } from "./conversation-transcript-types";
 
 // 测试根目录回收列表
 const roots: string[] = [];
@@ -15,7 +15,7 @@ function createStore() {
     root,
     store: new ConversationTranscriptStore(root, { now: () => 1_000 }),
     jsonlPath: (conversationId: string) =>
-      path.join(root, "transcripts", conversationId, "transcript.jsonl"),
+      path.join(root, "transcripts", transcriptStorageKey(conversationId), "transcript.jsonl"),
   };
 }
 
@@ -24,11 +24,77 @@ function userDraft(id: string, turnId: string, revision: number, text: string): 
   return { id, at: 1_000, kind: "user", turnId, revision, payload: { text } };
 }
 
+async function writeV1Snapshot(
+  root: string,
+  conversationId: string,
+  input: { throughSeq: number; entries: TranscriptEntry[] },
+): Promise<void> {
+  const dir = path.join(root, "transcripts", conversationId);
+  await fs.promises.mkdir(dir, { recursive: true });
+  await fs.promises.writeFile(
+    path.join(dir, "snapshot.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      ...input,
+      seenEntryIds: input.entries.map((entry) => entry.id),
+      seenUserRevisions: input.entries
+        .filter((entry) => entry.kind === "user" && entry.turnId && entry.revision)
+        .map((entry) => `${entry.turnId}\u0000${entry.revision}`),
+    }),
+    "utf8",
+  );
+}
+
 afterEach(() => {
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 
 describe("ConversationTranscriptStore", () => {
+  it("同一逻辑会话得到稳定且 Windows 安全的目录键", () => {
+    expect(transcriptStorageKey("channel:wechat:user/42"))
+      .toMatch(/^v2-[a-f0-9]{64}$/);
+    expect(transcriptStorageKey("channel:wechat:user/42"))
+      .toBe(transcriptStorageKey("channel:wechat:user/42"));
+  });
+
+  it("读取 v1 快照后仍从原 throughSeq 继续追加", async () => {
+    const { root, store } = createStore();
+    const seedEntries: TranscriptEntry[] = [
+      { seq: 1, id: "e1", at: 1_000, kind: "user", turnId: "u-1", revision: 1, payload: { text: "one" } },
+      { seq: 2, id: "e2", at: 1_000, kind: "user", turnId: "u-2", revision: 1, payload: { text: "two" } },
+    ];
+    await writeV1Snapshot(root, "desktop-1", { throughSeq: 2, entries: seedEntries });
+    const appended = await store.append("desktop-1", userDraft("e3", "u-3", 1, "three"));
+    expect(appended.seq).toBe(3);
+  });
+
+  it("冒号渠道 ID 不直接成为目录名", async () => {
+    const { store, root } = createStore();
+    await store.append("channel:wechat:abc", userDraft("e1", "u-1", 1, "one"));
+    expect(fs.existsSync(path.join(root, "transcripts", "channel:wechat:abc"))).toBe(false);
+  });
+
+  it("哈希目录身份不匹配时拒绝打开", async () => {
+    const { store, root } = createStore();
+    await store.append("desktop-identity", userDraft("e1", "u-1", 1, "one"));
+    await fs.promises.writeFile(
+      path.join(root, "transcripts", transcriptStorageKey("desktop-identity"), "identity.json"),
+      JSON.stringify({ schemaVersion: 1, conversationId: "another-conversation" }),
+      "utf8",
+    );
+    await expect(store.read("desktop-identity")).rejects.toThrow("TRANSCRIPT_IDENTITY_MISMATCH");
+  });
+
+  it("哈希目录优先于同名 legacy 目录且保留 legacy 审计副本", async () => {
+    const { store, root } = createStore();
+    await store.append("desktop-priority", userDraft("e1", "u-1", 1, "one"));
+    const legacyDir = path.join(root, "transcripts", "desktop-priority");
+    await fs.promises.mkdir(legacyDir, { recursive: true });
+    await fs.promises.writeFile(path.join(legacyDir, "audit.txt"), "legacy", "utf8");
+    expect((await store.read("desktop-priority")).entries.map((entry) => entry.id)).toEqual(["e1"]);
+    expect(fs.existsSync(path.join(legacyDir, "audit.txt"))).toBe(true);
+  });
+
   it("assigns monotonic seq and deduplicates entryId plus user turn revision", async () => {
     const { store } = createStore();
     const first = await store.append("c1", userDraft("e1", "u1", 1, "hello"));
@@ -70,10 +136,13 @@ describe("ConversationTranscriptStore", () => {
     expect((await store.append("c1", userDraft("e1", "u1", 1, "retry"))).id).toBe("e1");
   });
 
-  it("rejects conversation ids that escape the transcripts root", async () => {
-    const { store } = createStore();
-    await expect(store.append("../escape", userDraft("e1", "u1", 1, "x"))).rejects.toThrow();
-    await expect(store.append("a/b", userDraft("e1", "u1", 1, "x"))).rejects.toThrow();
+  it("hashes conversation ids that contain path separators", async () => {
+    const { store, root } = createStore();
+    await store.append("../escape", userDraft("e1", "u1", 1, "x"));
+    await store.append("a/b", userDraft("e2", "u2", 1, "y"));
+    expect(fs.existsSync(path.join(root, "transcripts", "..", "escape"))).toBe(false);
+    expect(fs.existsSync(path.join(root, "transcripts", transcriptStorageKey("../escape")))).toBe(true);
+    expect(fs.existsSync(path.join(root, "transcripts", transcriptStorageKey("a/b")))).toBe(true);
   });
 
   it("deletes only the targeted conversation directory", async () => {
