@@ -169,6 +169,58 @@ describe("chats store", () => {
     expect(disk).not.toHaveProperty("messages");
   });
 
+  it("用稳定 withdrawal id 原子标记并提交 v1/v2 pending 撤回", async () => {
+    const store = await import("./chats-store");
+    store.initialize();
+    const v1 = store.createSession({ title: "v1" });
+    const v2 = store.createSession({ title: "v2" });
+    const v2File = path.join(store.getRootDir(), "sessions", `${v2.id}.json`);
+    const v2Disk = JSON.parse(fs.readFileSync(v2File, "utf8")) as Record<string, unknown>;
+    delete v2Disk.messages;
+    v2Disk.schemaVersion = 2;
+    v2Disk.messageCount = 0;
+    fs.writeFileSync(v2File, JSON.stringify(v2Disk));
+
+    for (const session of [v1, v2]) {
+      expect(store.enqueuePendingMessage(session.id, {
+        id: `withdraw-${session.id}`,
+        rawContent: "待撤回",
+        visibleContent: "待撤回",
+      })).toEqual(expect.objectContaining({ ok: true }));
+      const first = store.beginPendingWithdrawal(session.id, `withdraw-${session.id}`);
+      expect(first).toEqual(expect.objectContaining({ ok: true, withdrawalId: expect.any(String) }));
+      expect(store.beginPendingWithdrawal(session.id, `withdraw-${session.id}`)).toEqual(first);
+      expect(store.getPendingMessages(session.id)?.[0].withdrawal).toEqual(expect.objectContaining({
+        id: (first as { withdrawalId: string }).withdrawalId,
+        status: "withdrawing",
+        startedAt: expect.any(Number),
+      }));
+      expect(store.claimPendingMessage(session.id)).toEqual({ ok: false, error: "withdrawal-in-progress" });
+      expect(store.editPendingMessage(session.id, `withdraw-${session.id}`, {
+        rawContent: "不能改", visibleContent: "不能改",
+      })).toEqual(expect.objectContaining({ ok: false, error: "withdrawal-in-progress" }));
+      expect(store.markPendingAdjust(session.id, `withdraw-${session.id}`, "run-1")).toEqual(
+        expect.objectContaining({ ok: false, error: "withdrawal-in-progress" }),
+      );
+      expect(store.commitPendingWithdrawal(
+        session.id,
+        `withdraw-${session.id}`,
+        (first as { withdrawalId: string }).withdrawalId,
+      )).toEqual({ ok: true, removed: true });
+      expect(store.commitPendingWithdrawal(
+        session.id,
+        `withdraw-${session.id}`,
+        (first as { withdrawalId: string }).withdrawalId,
+      )).toEqual({ ok: true, removed: false });
+      expect(store.getPendingMessages(session.id)).toEqual([]);
+      const persisted = JSON.parse(fs.readFileSync(
+        path.join(store.getRootDir(), "sessions", `${session.id}.json`),
+        "utf8",
+      )) as Record<string, unknown>;
+      if (session.id === v2.id) expect(persisted).not.toHaveProperty("messages");
+    }
+  });
+
   it("includes the immutable session mode in every list item", async () => {
     const { createSession, initialize, listSessions } = await import("./chats-store");
     initialize();

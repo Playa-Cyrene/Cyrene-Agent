@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ConversationJournalService,
   type JournalUserInput,
@@ -46,6 +46,92 @@ afterEach(() => {
 });
 
 describe("ConversationJournalService", () => {
+  it("待发撤回先落 withdrawing，墓碑后崩溃可由重启对账完成", async () => {
+    const { root, journal } = createJournal();
+    await journal.appendUser("c1", userInput("p1", "hidden ghost"));
+    let withdrawing = false;
+    const pendingStore = {
+      beginPendingWithdrawal: async () => {
+        withdrawing = true;
+        return { ok: true as const, withdrawalId: "withdraw:c1:p1" };
+      },
+      commitPendingWithdrawal: async () => {
+        withdrawing = false;
+        return { ok: true as const, removed: true };
+      },
+      listPendingWithdrawals: async () => withdrawing ? [{
+        sessionId: "c1", messageId: "p1", withdrawalId: "withdraw:c1:p1",
+      }] : [],
+    };
+    const coordinator = new ConversationJournalService({
+      store: new ConversationTranscriptStore(root, { now: () => 1_000 }),
+      pendingStore,
+    });
+    coordinator.failAfterTombstoneOnce();
+    await expect(coordinator.withdrawPendingMessage("c1", "p1")).rejects.toThrow("TEST_CRASH");
+    expect((await coordinator.readProjection("c1")).messages).toEqual([]);
+    const reopened = new ConversationJournalService({
+      store: new ConversationTranscriptStore(root, { now: () => 1_000 }),
+      pendingStore,
+    });
+    await reopened.reconcilePendingWithdrawals();
+    expect(withdrawing).toBe(false);
+    expect(await reopened.withdrawPendingMessage("c1", "p1")).toEqual({ ok: true, removed: true });
+  });
+
+  it("canonical user 不存在时不预埋墓碑但仍提交 pending", async () => {
+    const { root } = createJournal();
+    let removed = false;
+    const pendingStore = {
+      beginPendingWithdrawal: () => ({ ok: true as const, withdrawalId: "withdraw:c1:p1" }),
+      commitPendingWithdrawal: () => {
+        removed = true;
+        return { ok: true as const, removed: true };
+      },
+      listPendingWithdrawals: () => [],
+    };
+    const coordinator = new ConversationJournalService({
+      store: new ConversationTranscriptStore(root, { now: () => 1_000 }),
+      pendingStore,
+    });
+    expect(await coordinator.withdrawPendingMessage("c1", "p1")).toEqual({ ok: true, removed: true });
+    expect(removed).toBe(true);
+    expect((await coordinator.readProjection("c1")).messages).toEqual([]);
+    expect((await new ConversationTranscriptStore(root, { now: () => 1_000 }).read("c1")).entries).toEqual([]);
+  });
+
+  it("journal 失败时保留 withdrawing，重复撤回共享确定结果", async () => {
+    const { root } = createJournal();
+    let begun = 0;
+    let committed = 0;
+    const pendingStore = {
+      beginPendingWithdrawal: () => {
+        begun++;
+        return { ok: true as const, withdrawalId: "withdraw:c1:p1" };
+      },
+      commitPendingWithdrawal: () => {
+        committed++;
+        return { ok: true as const, removed: true };
+      },
+      listPendingWithdrawals: () => [],
+    };
+    const coordinator = new ConversationJournalService({
+      store: new ConversationTranscriptStore(root, { now: () => 1_000 }),
+      pendingStore,
+    });
+    vi.spyOn(coordinator, "withdrawUserTurn").mockRejectedValue(new Error("journal down"));
+    expect(await coordinator.withdrawPendingMessage("c1", "p1")).toEqual({ ok: false, error: "write-failed" });
+    expect(await Promise.all([
+      coordinator.withdrawPendingMessage("c1", "p1"),
+      coordinator.withdrawPendingMessage("c1", "p1"),
+    ])).toEqual([
+      { ok: false, error: "write-failed" },
+      { ok: false, error: "write-failed" },
+    ]);
+    expect(begun).toBe(2);
+    expect(committed).toBe(0);
+  });
+
   it("投影快照损坏时从日志重建且模型上下文不变", async () => {
     const { root, journal } = createJournal();
     await journal.appendUser("c1", userInput("u1", "hello"));

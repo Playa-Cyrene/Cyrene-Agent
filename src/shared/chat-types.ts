@@ -244,6 +244,15 @@ export interface PendingChatMessage {
   adjustRunId?: string;
   /** 入队时间戳（主进程写入）：数组顺序是派发顺序的权威依据，此字段作审计。 */
   enqueuedAt: number;
+  /** 撤回事务的可恢复中间态；存在时条目对认领、编辑与插话调整只读。 */
+  withdrawal?: PendingWithdrawalState;
+}
+
+export interface PendingWithdrawalState {
+  /** 由会话与消息标识确定性派生，重试与重启保持不变。 */
+  id: string;
+  status: "withdrawing";
+  startedAt: number;
 }
 
 /** 可重放的待发用户事实；v2 认领时与 pendingDispatch 一起原子落盘。 */

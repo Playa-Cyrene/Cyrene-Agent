@@ -190,6 +190,41 @@ describe("chats IPC mode filtering", () => {
     }]);
   });
 
+  it("pending remove 先写 journal 墓碑，不能绕过轨迹直接删除", async () => {
+    const { registerChatsIpc } = await import("./chats-ipc");
+    const { getConversationTranscriptStore } = await import("../orchestrator/conversation-transcript-store");
+    registerChatsIpc();
+    const create = mocks.handlers.get(IPC.CHATS_CREATE);
+    const enqueue = mocks.handlers.get(IPC.CHATS_PENDING_ENQUEUE);
+    const remove = mocks.handlers.get(IPC.CHATS_PENDING_REMOVE);
+    if (!create || !enqueue || !remove) throw new Error("pending withdrawal IPC handlers were not registered");
+    const event = { sender: {} };
+    const session = await create(event, { mode: "work" }) as { id: string };
+    const transcript = getConversationTranscriptStore(mocks.userDataDir);
+    await transcript.append(session.id, {
+      id: "canonical-p1",
+      at: 1,
+      kind: "user",
+      turnId: "p1",
+      revision: 1,
+      payload: { text: "待撤回" },
+    });
+    await enqueue(event, {
+      sessionId: session.id,
+      entry: { id: "p1", rawContent: "待撤回", visibleContent: "待撤回" },
+    });
+
+    expect(await remove(event, { sessionId: session.id, messageId: "p1" })).toEqual({ ok: true, removed: true });
+    expect((await transcript.read(session.id)).entries).toEqual([
+      expect.objectContaining({ kind: "user", id: "canonical-p1" }),
+      expect.objectContaining({
+        kind: "turn_tombstone",
+        payload: { targetUserTurnId: "p1", reason: "pending_withdrawn" },
+      }),
+    ]);
+    expect(await remove(event, { sessionId: session.id, messageId: "p1" })).toEqual({ ok: true, removed: false });
+  });
+
   it("does not register the removed Cline plan/act IPC", async () => {
     const { registerChatsIpc } = await import("./chats-ipc");
     registerChatsIpc();

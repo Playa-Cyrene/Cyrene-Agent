@@ -86,12 +86,18 @@ export function registerChatsIpc(
     : undefined);
   chatsStore.initialize();
   const transcriptStore = getConversationTranscriptStore(app.getPath("userData"));
-  const conversationJournal = new ConversationJournalService(
-    transcriptStore,
-  );
+  const conversationJournal = new ConversationJournalService({
+    store: transcriptStore,
+    pendingStore: chatsStore,
+  });
   const sessionMigration = new ConversationSessionMigration({ journal: conversationJournal, store: transcriptStore });
   // 进程刚启动时没有任何存活运行：磁盘上遗留的插话标记都是陈旧的，清回普通队列
   chatsStore.clearStalePendingAdjustMarks();
+  // 撤回对账是启动异步边界；显式吸收错误，且 journal 失败时不删除 pending。
+  const pendingWithdrawalReconciliation = conversationJournal.reconcilePendingWithdrawals()
+    .catch((error) => {
+      console.error("[ChatsIpc] pending withdrawal reconciliation failed", error);
+    });
 
   ipc.handle(
     IPC.CHATS_LIST,
@@ -375,11 +381,18 @@ export function registerChatsIpc(
   // 删除按稳定标识处理竞争：条目恰好已被认领/移除时幂等成功（removed=false 不广播）。
   ipc.handle(
     IPC.CHATS_PENDING_REMOVE,
-    (event, payload: { sessionId?: unknown; messageId?: unknown }) => {
+    async (event, payload: { sessionId?: unknown; messageId?: unknown }) => {
       const sessionId = typeof payload?.sessionId === "string" ? payload.sessionId : "";
       const messageId = typeof payload?.messageId === "string" ? payload.messageId : "";
       if (!sessionId || !messageId) return { ok: false, error: "invalid-payload" };
-      const result = chatsStore.removePendingMessage(sessionId, messageId);
+      await pendingWithdrawalReconciliation;
+      let result;
+      try {
+        result = await conversationJournal.withdrawPendingMessage(sessionId, messageId);
+      } catch (error) {
+        console.error("[ChatsIpc] pending withdrawal failed", { sessionId, messageId, error });
+        return { ok: false, error: "write-failed" } as const;
+      }
       if (result.ok && result.removed) broadcastChanged(event.sender);
       return result;
     },
@@ -391,6 +404,7 @@ export function registerChatsIpc(
     if (typeof sessionId !== "string" || !sessionId) {
       return { ok: false, error: "invalid-payload" };
     }
+    await pendingWithdrawalReconciliation;
     const result = await sessionMigration.claimPendingMessage(sessionId);
     if (result.ok && result.claimed) {
       broadcastChanged(event.sender);
@@ -418,7 +432,7 @@ export function registerChatsIpc(
   // 条目标识、入队时间、顺序与附件保持不变。冲突与失败返回最新权威队列。
   ipc.handle(
     IPC.CHATS_PENDING_EDIT,
-    (
+    async (
       event,
       payload: {
         sessionId?: unknown;
@@ -433,6 +447,7 @@ export function registerChatsIpc(
       if (!sessionId || !messageId || typeof payload.rawContent !== "string") {
         return { ok: false, error: "invalid-payload" };
       }
+      await pendingWithdrawalReconciliation;
       const result = chatsStore.editPendingMessage(sessionId, messageId, {
         rawContent: payload.rawContent,
         visibleContent: typeof payload.visibleContent === "string" ? payload.visibleContent : payload.rawContent,

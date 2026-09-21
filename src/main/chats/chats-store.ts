@@ -28,6 +28,7 @@ import {
   type PendingChatMessage,
   type PendingDispatchState,
   type PendingDispatchUserSnapshot,
+  type PendingWithdrawalState,
 } from "../../shared/chat-types";
 import type { ContextUsageSnapshot } from "../../shared/context-usage";
 
@@ -587,7 +588,101 @@ export type EnqueuePendingResult =
 /** 删除结果：removed=false 表示条目本就不在（幂等成功，未写盘）。 */
 export type RemovePendingResult =
   | { ok: true; removed: boolean }
-  | { ok: false; error: "session-not-found" | "already-adjusting" | "write-failed"; queue?: PendingChatMessage[] };
+  | { ok: false; error: "session-not-found" | "already-adjusting" | "withdrawal-in-progress" | "write-failed"; queue?: PendingChatMessage[] };
+
+export type PendingWithdrawalError =
+  | "session-not-found"
+  | "not-found"
+  | "already-adjusting"
+  | "withdrawal-in-progress"
+  | "write-failed";
+
+export type BeginPendingWithdrawalResult =
+  | { ok: true; withdrawalId: string }
+  | { ok: false; error: PendingWithdrawalError };
+
+export type CommitPendingWithdrawalResult =
+  | { ok: true; removed: boolean }
+  | { ok: false; error: PendingWithdrawalError };
+
+export interface PendingWithdrawalRecord {
+  sessionId: string;
+  messageId: string;
+  withdrawalId: string;
+}
+
+function pendingWithdrawalId(sessionId: string, messageId: string): string {
+  return `withdrawal:${sessionId}:${messageId}`;
+}
+
+/** 原子标记 pending 撤回；重复 begin 返回原 withdrawal id，不刷新 startedAt。 */
+export function beginPendingWithdrawal(
+  sessionId: string,
+  messageId: string,
+): BeginPendingWithdrawalResult {
+  const session = readSessionRecordFile(sessionId);
+  if (!session) return { ok: false, error: "session-not-found" };
+  const queue = session.pendingMessages ?? [];
+  const index = queue.findIndex((item) => item.id === messageId);
+  if (index === -1) return { ok: false, error: "not-found" };
+  const target = queue[index];
+  if (target.withdrawal?.status === "withdrawing") {
+    return { ok: true, withdrawalId: target.withdrawal.id };
+  }
+  if (target.adjustRunId) return { ok: false, error: "already-adjusting" };
+  const withdrawal: PendingWithdrawalState = {
+    id: pendingWithdrawalId(sessionId, messageId),
+    status: "withdrawing",
+    startedAt: Date.now(),
+  };
+  session.pendingMessages = queue.map((item, itemIndex) => (
+    itemIndex === index ? { ...item, withdrawal } : item
+  ));
+  try {
+    writeWritableSession(session);
+  } catch (err) {
+    console.warn("[chats-store] 待发撤回标记落盘失败:", sessionId, err);
+    return { ok: false, error: "write-failed" };
+  }
+  return { ok: true, withdrawalId: withdrawal.id };
+}
+
+/** 原子提交 pending 撤回；重复 commit 视为已移除，标识不匹配则拒绝覆盖其他状态。 */
+export function commitPendingWithdrawal(
+  sessionId: string,
+  messageId: string,
+  withdrawalId: string,
+): CommitPendingWithdrawalResult {
+  const session = readSessionRecordFile(sessionId);
+  if (!session) return { ok: false, error: "session-not-found" };
+  const queue = session.pendingMessages ?? [];
+  const target = queue.find((item) => item.id === messageId);
+  if (!target) return { ok: true, removed: false };
+  if (target.withdrawal?.id !== withdrawalId || target.withdrawal.status !== "withdrawing") {
+    return { ok: false, error: "not-found" };
+  }
+  session.pendingMessages = queue.filter((item) => item.id !== messageId);
+  try {
+    writeWritableSession(session);
+  } catch (err) {
+    console.warn("[chats-store] 待发撤回提交落盘失败:", sessionId, err);
+    return { ok: false, error: "write-failed" };
+  }
+  return { ok: true, removed: true };
+}
+
+/** 列出所有可恢复撤回；仅由启动对账消费，不修改磁盘。 */
+export function listPendingWithdrawals(): PendingWithdrawalRecord[] {
+  const records: PendingWithdrawalRecord[] = [];
+  for (const meta of indexCache) {
+    const session = readSessionRecordFile(meta.id);
+    for (const item of session?.pendingMessages ?? []) {
+      if (item.withdrawal?.status !== "withdrawing") continue;
+      records.push({ sessionId: meta.id, messageId: item.id, withdrawalId: item.withdrawal.id });
+    }
+  }
+  return records;
+}
 
 /** 入队载荷：id 由页面生成（稳定标识）；enqueuedAt 由主进程写入。 */
 export type PendingChatMessageInput = Omit<PendingChatMessage, "enqueuedAt">;
@@ -710,6 +805,9 @@ export function removePendingMessage(sessionId: string, messageId: string): Remo
   const queue = session.pendingMessages ?? [];
   const target = queue.find((item) => item.id === messageId);
   if (!target) return { ok: true, removed: false };
+  if (target.withdrawal?.status === "withdrawing") {
+    return { ok: false, error: "withdrawal-in-progress", queue: queue.map((item) => ({ ...item })) };
+  }
   // 已标记插入当前运行：双写可能进行到一半（轨迹已写、聊天历史未提交），
   // 此刻撤回会让权威轨迹留下 UI 不存在的隐藏 user——拒绝并附带最新权威队列，
   // 等运行终止复位标记或双写完成后再撤。
@@ -743,7 +841,7 @@ export type ClaimPendingResult =
       session: ChatSession;
     }
   | { ok: true; claimed: false }
-  | { ok: false; error: "session-not-found" | "already-dispatching" | "write-failed" | "transcript-write-failed" };
+  | { ok: false; error: "session-not-found" | "already-dispatching" | "withdrawal-in-progress" | "write-failed" | "transcript-write-failed" };
 
 function pendingUserMessageFromSnapshot(snapshot: PendingDispatchUserSnapshot): ChatMessage {
   return {
@@ -807,6 +905,9 @@ export function claimPendingMessage(sessionId: string): ClaimPendingResult {
   const queue = record.pendingMessages ?? [];
   if (queue.length === 0) return { ok: true, claimed: false };
   const head = queue[0];
+  if (head.withdrawal?.status === "withdrawing") {
+    return { ok: false, error: "withdrawal-in-progress" };
+  }
   const claimedAt = Date.now();
   const userMessage = pendingUserMessage(head, claimedAt);
   const remaining = queue.slice(1);
@@ -904,7 +1005,7 @@ export type EditPendingResult =
   | { ok: true; queue: PendingChatMessage[] }
   | {
       ok: false;
-      error: "session-not-found" | "not-found" | "already-claimed" | "already-adjusting" | "empty-content" | "write-failed";
+      error: "session-not-found" | "not-found" | "already-claimed" | "already-adjusting" | "withdrawal-in-progress" | "empty-content" | "write-failed";
       queue?: PendingChatMessage[];
     };
 
@@ -932,6 +1033,9 @@ export function editPendingMessage(
   const index = queue.findIndex((item) => item.id === messageId);
   if (index === -1) return { ok: false, error: "not-found", queue: beforeWrite };
   const target = queue[index];
+  if (target.withdrawal?.status === "withdrawing") {
+    return { ok: false, error: "withdrawal-in-progress", queue: beforeWrite };
+  }
   // 已标记插入当前运行：条目正在注入流程中，编辑会造成注入内容与记录不一致
   if (target.adjustRunId) return { ok: false, error: "already-adjusting", queue: beforeWrite };
   if (typeof update?.rawContent !== "string" || !update.rawContent.trim()) {
@@ -964,7 +1068,7 @@ export type MarkPendingAdjustResult =
   | { ok: true; queue: PendingChatMessage[] }
   | {
       ok: false;
-      error: "session-not-found" | "not-found" | "already-claimed" | "already-adjusting" | "has-attachments" | "write-failed";
+      error: "session-not-found" | "not-found" | "already-claimed" | "already-adjusting" | "withdrawal-in-progress" | "has-attachments" | "write-failed";
       queue?: PendingChatMessage[];
     };
 
@@ -988,6 +1092,9 @@ export function markPendingAdjust(
   const index = queue.findIndex((item) => item.id === messageId);
   if (index === -1) return { ok: false, error: "not-found", queue: snapshot() };
   const target = queue[index];
+  if (target.withdrawal?.status === "withdrawing") {
+    return { ok: false, error: "withdrawal-in-progress", queue: snapshot() };
+  }
   // 同一运行重复请求：幂等成功，不写盘
   if (target.adjustRunId === runId) return { ok: true, queue: snapshot() };
   if (target.adjustRunId) return { ok: false, error: "already-adjusting", queue: snapshot() };

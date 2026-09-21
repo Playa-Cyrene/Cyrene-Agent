@@ -49,16 +49,42 @@ export interface ProjectionPage {
 
 export interface ConversationJournalServiceOptions {
   runReader?: TranscriptRunReader;
+  pendingStore?: ConversationPendingWithdrawalStore;
+}
+
+type PendingWithdrawalOperationResult =
+  | { ok: true; withdrawalId: string }
+  | { ok: false; error: "session-not-found" | "not-found" | "already-adjusting" | "withdrawal-in-progress" | "write-failed" };
+
+type PendingWithdrawalCommitResult =
+  | { ok: true; removed: boolean }
+  | { ok: false; error: "session-not-found" | "not-found" | "already-adjusting" | "withdrawal-in-progress" | "write-failed" };
+
+export interface ConversationPendingWithdrawalRecord {
+  sessionId: string;
+  messageId: string;
+  withdrawalId: string;
+}
+
+/** chats-store 的窄接口：协调器只复用既有原子 metadata 读写，不创建第二套存储。 */
+export interface ConversationPendingWithdrawalStore {
+  beginPendingWithdrawal(sessionId: string, messageId: string): PendingWithdrawalOperationResult | Promise<PendingWithdrawalOperationResult>;
+  commitPendingWithdrawal(sessionId: string, messageId: string, withdrawalId: string): PendingWithdrawalCommitResult | Promise<PendingWithdrawalCommitResult>;
+  listPendingWithdrawals(): ConversationPendingWithdrawalRecord[] | Promise<ConversationPendingWithdrawalRecord[]>;
 }
 
 interface ConversationJournalServiceInput {
   store: ConversationTranscriptStore;
   runReader?: TranscriptRunReader;
+  pendingStore?: ConversationPendingWithdrawalStore;
 }
 
 export class ConversationJournalService {
   private readonly store: ConversationTranscriptStore;
   private readonly runReader: TranscriptRunReader;
+  private readonly pendingStore?: ConversationPendingWithdrawalStore;
+  private readonly withdrawalLocks = new Map<string, Promise<PendingWithdrawalCommitResult>>();
+  private crashAfterTombstone = false;
 
   constructor(
     storeOrInput: ConversationTranscriptStore | ConversationJournalServiceInput,
@@ -70,6 +96,13 @@ export class ConversationJournalService {
     this.runReader = options.runReader
       ?? (storeOrInput instanceof ConversationTranscriptStore ? undefined : storeOrInput.runReader)
       ?? { get: () => null };
+    this.pendingStore = options.pendingStore
+      ?? (storeOrInput instanceof ConversationTranscriptStore ? undefined : storeOrInput.pendingStore);
+  }
+
+  /** 测试与故障演练入口：模拟墓碑成功后、pending 提交前的进程退出。 */
+  failAfterTombstoneOnce(): void {
+    this.crashAfterTombstone = true;
   }
 
   async appendUser(conversationId: string, input: JournalUserInput): Promise<TranscriptEntry> {
@@ -128,6 +161,71 @@ export class ConversationJournalService {
     });
     await this.refreshProjection(conversationId);
     return "written";
+  }
+
+  /**
+   * 可恢复的 pending 撤回三步协议：原子 begin → journal 墓碑 → 原子 commit。
+   * begin/commit 与 journal 均按稳定 ID 幂等；墓碑失败时保留 withdrawing，供重启对账。
+   */
+  async withdrawPendingMessage(
+    sessionId: string,
+    messageId: string,
+  ): Promise<PendingWithdrawalCommitResult> {
+    if (!this.pendingStore) throw new Error("PENDING_WITHDRAWAL_STORE_UNAVAILABLE");
+    const key = `${sessionId}\u0000${messageId}`;
+    const previous = this.withdrawalLocks.get(key);
+    if (previous) return previous;
+    const operation = this.performPendingWithdrawal(sessionId, messageId);
+    this.withdrawalLocks.set(key, operation);
+    return operation.finally(() => {
+      if (this.withdrawalLocks.get(key) === operation) this.withdrawalLocks.delete(key);
+    });
+  }
+
+  private async performPendingWithdrawal(
+    sessionId: string,
+    messageId: string,
+  ): Promise<PendingWithdrawalCommitResult> {
+    const pendingStore = this.pendingStore;
+    if (!pendingStore) throw new Error("PENDING_WITHDRAWAL_STORE_UNAVAILABLE");
+    const begun = await pendingStore.beginPendingWithdrawal(sessionId, messageId);
+    // 条目已被认领/删除时，撤回请求本身仍是幂等成功；不存在的会话仍需报错。
+    if (!begun.ok && begun.error === "not-found") return { ok: true, removed: false };
+    if (!begun.ok) return begun;
+    try {
+      await this.withdrawUserTurn(sessionId, messageId);
+    } catch (error) {
+      console.error("[ConversationJournalService] pending withdrawal journal write failed", {
+        sessionId,
+        messageId,
+        withdrawalId: begun.withdrawalId,
+        error,
+      });
+      return { ok: false, error: "write-failed" };
+    }
+    if (this.crashAfterTombstone) {
+      this.crashAfterTombstone = false;
+      throw new Error("TEST_CRASH");
+    }
+    return pendingStore.commitPendingWithdrawal(sessionId, messageId, begun.withdrawalId);
+  }
+
+  /** 启动对账按会话/队列稳定顺序续做；单条 journal 失败保留 pending 并继续其它条目。 */
+  async reconcilePendingWithdrawals(): Promise<void> {
+    if (!this.pendingStore) return;
+    const records = await this.pendingStore.listPendingWithdrawals();
+    for (const record of records) {
+      try {
+        await this.withdrawPendingMessage(record.sessionId, record.messageId);
+      } catch (error) {
+        console.error("[ConversationJournalService] pending withdrawal reconciliation failed", {
+          sessionId: record.sessionId,
+          messageId: record.messageId,
+          withdrawalId: record.withdrawalId,
+          error,
+        });
+      }
+    }
   }
 
   async readProjection(conversationId: string): Promise<ConversationProjection> {
