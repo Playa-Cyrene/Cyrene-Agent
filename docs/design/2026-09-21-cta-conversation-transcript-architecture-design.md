@@ -345,7 +345,9 @@ interface TranscriptEnvelope {
 **自动化回归（全部通过）：**
 
 - 定向回归（`npx vitest run` 7 文件：chats-pending-queue / pending-adjustment / chats-store / chats-ipc、agui-bridge、cyrene-harness、cyrene-harness-cancel）→ **179 测试全部通过**；
-- `npm run build:main` → 通过（每项修复后各跑一次）。
+- `npm run build:main` → 通过（每项修复后各跑一次）；
+- `npm test` → **全部通过：498 个测试文件，4492 通过 / 1 跳过 / 0 失败（exit 0）**；
+- 附带收尾：agui-bridge.ts 行尾统一为 LF 入库（`0fe4970f`，`git diff --ignore-cr-at-eol` 验证零内容差异）——此前 index 中 CRLF/LF 混合是历史遗留，与 src 其余 LF 文件不一致。
 
 ---
 
