@@ -1805,7 +1805,6 @@ describe("agui-bridge transcript dispatch", () => {
       }));
       const { getConversationTranscriptStore } = await import("./orchestrator/conversation-transcript-store");
       const { buildModelContext, resolveTranscriptRetainTokens } = await import("./orchestrator/conversation-transcript-context");
-      const { createTranscriptSink } = await import("./orchestrator/transcript-sink");
       const retainTokens = resolveTranscriptRetainTokens(256_000);
       const noRuns = { get: () => null };
       materialize = async () => (await buildModelContext({
@@ -1817,8 +1816,9 @@ describe("agui-bridge transcript dispatch", () => {
       const sender = makeSender();
       const lastModelRequestMessages = () =>
         (mocks.runCyreneAgent.mock.calls.at(-1)?.[0] as { messages: Array<Record<string, unknown>> }).messages;
-      const currentRunId = () =>
-        (mocks.runCyreneAgent.mock.calls.at(-1)?.[0] as { runId: string }).runId;
+      // bridge 实际注入的轨迹提交端（生产接线断言，不手工绕路）
+      const sinkOfLastCall = () =>
+        (mocks.runCyreneAgent.mock.calls.at(-1)?.[0] as { transcriptSink?: import("./orchestrator/transcript-sink").TranscriptSink }).transcriptSink;
 
       // 第一轮：当前 user 落盘，run 级提交端写入 canonical assistant
       await runHandler({ sender }, {
@@ -1826,13 +1826,10 @@ describe("agui-bridge transcript dispatch", () => {
         sessionId: conversationId,
         userTurnId: "turn-1",
       });
-      const firstSink = createTranscriptSink({
-        store: getConversationTranscriptStore(root),
-        conversationId,
-        runId: currentRunId(),
-      });
+      const firstSink = sinkOfLastCall();
+      expect(firstSink).toBeDefined();
       // work/code/learn：第一轮含工具调用与 canonical 工具结果；chat：纯文本（ChatLoop 单轮路径）
-      const assistantEntryId = await firstSink.appendAssistant({
+      const assistantEntryId = await firstSink!.appendAssistant({
         message: mode === "chat"
           ? { role: "assistant", content: "first-assistant" }
           : {
@@ -1903,7 +1900,6 @@ describe("agui-bridge transcript dispatch", () => {
     }));
     const { getConversationTranscriptStore } = await import("./orchestrator/conversation-transcript-store");
     const { buildModelContext, resolveTranscriptRetainTokens } = await import("./orchestrator/conversation-transcript-context");
-    const { createTranscriptSink } = await import("./orchestrator/transcript-sink");
     const retainTokens = resolveTranscriptRetainTokens(256_000);
     materialize = async () => (await buildModelContext({
       store: getConversationTranscriptStore(root),
@@ -1914,9 +1910,9 @@ describe("agui-bridge transcript dispatch", () => {
     const sender = makeSender();
     const lastModelRequestMessages = () =>
       (mocks.runCyreneAgent.mock.calls.at(-1)?.[0] as { messages: Array<Record<string, unknown>> }).messages;
-    const currentRunId = () =>
-      (mocks.runCyreneAgent.mock.calls.at(-1)?.[0] as { runId: string }).runId;
-    const store = getConversationTranscriptStore(root);
+    // bridge 实际注入的轨迹提交端（生产接线断言，不手工绕路）
+    const sinkOfLastCall = () =>
+      (mocks.runCyreneAgent.mock.calls.at(-1)?.[0] as { transcriptSink?: import("./orchestrator/transcript-sink").TranscriptSink }).transcriptSink;
 
     // 轮次 1：无工具（ChatLoop 单请求路径，assistant 无 roundId）
     await runHandler({ sender }, {
@@ -1924,8 +1920,9 @@ describe("agui-bridge transcript dispatch", () => {
       sessionId: conversationId,
       userTurnId: "turn-1",
     });
-    await createTranscriptSink({ store, conversationId, runId: currentRunId() })
-      .appendAssistant({ message: { role: "assistant", content: "first-assistant" } });
+    const chatSink = sinkOfLastCall();
+    expect(chatSink).toBeDefined();
+    await chatSink!.appendAssistant({ message: { role: "assistant", content: "first-assistant" } });
 
     // 轮次 2：启用工具（Harness 路径，含工具调用与 canonical 结果）
     mocks.getSession.mockReturnValue(sessionShape([
@@ -1938,8 +1935,9 @@ describe("agui-bridge transcript dispatch", () => {
       sessionId: conversationId,
       userTurnId: "turn-2",
     });
-    const harnessSink = createTranscriptSink({ store, conversationId, runId: currentRunId() });
-    const harnessAssistantEntryId = await harnessSink.appendAssistant({
+    const harnessSink = sinkOfLastCall();
+    expect(harnessSink).toBeDefined();
+    const harnessAssistantEntryId = await harnessSink!.appendAssistant({
       message: {
         role: "assistant",
         content: "second-assistant",

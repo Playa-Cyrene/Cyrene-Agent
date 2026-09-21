@@ -40,6 +40,7 @@ import { broadcastChatsChanged } from "./chats/chats-ipc";
 import type { ConversationMode } from "../shared/chat-types";
 import { prepareTranscriptDispatch, type TranscriptRewindRequest } from "./orchestrator/conversation-transcript-coordinator";
 import { getConversationTranscriptStore } from "./orchestrator/conversation-transcript-store";
+import { createTranscriptSink } from "./orchestrator/transcript-sink";
 import {
   requestUserClarification,
   cancelPendingChoicesForRun,
@@ -544,6 +545,15 @@ export function registerAgUiIpc(
     // 一路传到 Agent / Harness adapter / ToolContext / 所有 AG-UI 事件。
     // ack.runId 与 RUN_STARTED.runId 必须一致。
     options.runId = runId;
+    // 轨迹提交端（CTA）：每 run 一个 sink，entryId 全程确定性，canonical assistant /
+    // tool_result 经它写入权威轨迹。无条件创建——renderer 回退只切换读取源，双写不得停止。
+    // 渲染端 assistantTurnId 存在时透传（ChatLoop 单轮路径的 assistant 条目锚点）。
+    options.transcriptSink = createTranscriptSink({
+      store: getConversationTranscriptStore(app.getPath("userData")),
+      conversationId: sessionId,
+      runId,
+      ...(input.assistantTurnId ? { assistantTurnId: input.assistantTurnId } : {}),
+    });
     // AbortController 已在会话守卫注册前创建（守卫的 abort 需要引用它）。
     // signal 一路传到 Agent / harness；AGUI_CANCEL / takeover 调用 abort()，
     // 触发 harness 返回 cancelled，CyreneAgent 发出 RUN_FINISHED(result.status="cancelled")，
