@@ -266,6 +266,23 @@ describe("ConversationTranscriptStore", () => {
     await expect(store.read("c1")).rejects.toThrow("TRANSCRIPT_CORRUPT_SNAPSHOT");
   });
 
+  it("fails closed on a v2 snapshot sequence gap even when indexes are self-consistent", async () => {
+    const { store, snapshotPath, jsonlPath } = createStore();
+    await store.append("c1", userDraft("e1", "u1", 1, "one"));
+    await store.checkpoint("c1");
+    await store.append("c1", userDraft("e2", "u2", 1, "two"));
+    await store.append("c1", userDraft("e3", "u3", 1, "three"));
+    const current = await store.read("c1");
+    const snapshot = JSON.parse(await fs.promises.readFile(snapshotPath("c1"), "utf8")) as Record<string, unknown>;
+    snapshot.throughSeq = 3;
+    snapshot.entries = [current.entries[0], current.entries[2]];
+    snapshot.seenEntryIds = ["e1", "e3"];
+    snapshot.seenUserRevisions = ["u1\u00001", "u3\u00001"];
+    await fs.promises.writeFile(snapshotPath("c1"), JSON.stringify(snapshot), "utf8");
+    expect((await fs.promises.readFile(jsonlPath("c1"), "utf8")).split("\n").filter(Boolean)).toHaveLength(3);
+    await expect(store.read("c1")).rejects.toThrow("TRANSCRIPT_CORRUPT_SNAPSHOT");
+  });
+
   it("hashes conversation ids that contain path separators", async () => {
     const { store, root } = createStore();
     await store.append("../escape", userDraft("e1", "u1", 1, "x"));

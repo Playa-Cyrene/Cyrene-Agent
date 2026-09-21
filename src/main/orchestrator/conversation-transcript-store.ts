@@ -462,6 +462,7 @@ function snapshotEntriesAreConsistent(
   for (const entry of entries) {
     validateLoadedTranscriptEntry(entry);
     if (entry.seq <= previousSeq) return false;
+    if (entry.seq !== entryIds.length + 1) return false;
     previousSeq = entry.seq;
     entryIds.push(entry.id);
     if (entry.kind === "user") {
