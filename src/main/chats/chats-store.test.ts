@@ -132,6 +132,43 @@ describe("chats store", () => {
     }));
   });
 
+  it("v2 claim 持久化完整 user 快照以供轨迹恢复", async () => {
+    const store = await import("./chats-store");
+    store.initialize();
+    const session = store.createSession({ title: "可恢复 claim" });
+    const file = path.join(store.getRootDir(), "sessions", `${session.id}.json`);
+    const persisted = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
+    delete persisted.messages;
+    persisted.schemaVersion = 2;
+    persisted.messageCount = 0;
+    fs.writeFileSync(file, JSON.stringify(persisted));
+
+    store.enqueuePendingMessage(session.id, {
+      id: "pending-durable",
+      rawContent: "原始输入",
+      visibleContent: "展示输入",
+      userSticker: "wave",
+      attachments: [{ kind: "document", name: "notes.txt", filePath: "C:/notes.txt" }],
+    });
+    const claim = store.claimPendingMessage(session.id);
+    expect(claim).toEqual(expect.objectContaining({ ok: true, claimed: true }));
+
+    const disk = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, any>;
+    expect(disk.pendingDispatch).toEqual(expect.objectContaining({
+      messageId: "pending-durable",
+      claimedAt: expect.any(Number),
+      userMessage: {
+        id: "pending-durable",
+        at: expect.any(Number),
+        text: "原始输入",
+        visibleContent: "展示输入",
+        sticker: "wave",
+        attachments: [{ kind: "document", name: "notes.txt", filePath: "C:/notes.txt" }],
+      },
+    }));
+    expect(disk).not.toHaveProperty("messages");
+  });
+
   it("includes the immutable session mode in every list item", async () => {
     const { createSession, initialize, listSessions } = await import("./chats-store");
     initialize();

@@ -26,6 +26,8 @@ import {
   type ConversationMode,
   type PendingChatAttachment,
   type PendingChatMessage,
+  type PendingDispatchState,
+  type PendingDispatchUserSnapshot,
 } from "../../shared/chat-types";
 import type { ContextUsageSnapshot } from "../../shared/context-usage";
 
@@ -350,11 +352,21 @@ export function composeSession(record: ChatSessionRecord, messages: ChatMessage[
   if (record.schemaVersion === 1) return { ...record, messages: [...messages] };
   const { messageCount: _messageCount, schemaVersion: _schemaVersion, ...metadata } = record;
   const restoredMessages = messages.map((message) => {
-    if (message.role !== "user" || !message.id.startsWith("migration:v2:")
-      || !message.id.endsWith(":canonical")) return message;
+    if (message.role !== "user") return message;
+    if (message.id.startsWith("migration:v2:") && message.id.endsWith(":canonical")) {
+      return {
+        ...message,
+        id: message.id.slice("migration:v2:".length, -":canonical".length),
+      };
+    }
+    if (message.id.startsWith("user:v1:") && message.id.endsWith(":r1")) {
+      return {
+        ...message,
+        id: message.id.slice("user:v1:".length, -":r1".length),
+      };
+    }
     return {
       ...message,
-      id: message.id.slice("migration:v2:".length, -":canonical".length),
     };
   });
   return { ...metadata, messages: restoredMessages, schemaVersion: CHAT_SCHEMA_VERSION };
@@ -731,17 +743,17 @@ export type ClaimPendingResult =
       session: ChatSession;
     }
   | { ok: true; claimed: false }
-  | { ok: false; error: "session-not-found" | "already-dispatching" | "write-failed" };
+  | { ok: false; error: "session-not-found" | "already-dispatching" | "write-failed" | "transcript-write-failed" };
 
-function pendingUserMessage(head: PendingChatMessage, at: number): ChatMessage {
+function pendingUserMessageFromSnapshot(snapshot: PendingDispatchUserSnapshot): ChatMessage {
   return {
-    id: head.id,
+    id: snapshot.id,
     role: "user",
-    content: head.rawContent,
-    at,
-    ...(head.userSticker ? { sticker: head.userSticker } : {}),
-    ...(head.attachments && head.attachments.length > 0 ? {
-      attachments: head.attachments.map((attachment) => attachment.kind === "image" ? {
+    content: snapshot.text,
+    at: snapshot.at,
+    ...(snapshot.sticker ? { sticker: snapshot.sticker } : {}),
+    ...(snapshot.attachments && snapshot.attachments.length > 0 ? {
+      attachments: snapshot.attachments.map((attachment) => attachment.kind === "image" ? {
         kind: "image" as const,
         name: attachment.name,
         filePath: attachment.filePath,
@@ -757,6 +769,28 @@ function pendingUserMessage(head: PendingChatMessage, at: number): ChatMessage {
       }),
     } : {}),
   };
+}
+
+function pendingUserMessage(head: PendingChatMessage, at: number): ChatMessage {
+  return pendingUserMessageFromSnapshot({
+    id: head.id,
+    at,
+    text: head.rawContent,
+    visibleContent: head.visibleContent,
+    ...(head.attachments?.length ? { attachments: head.attachments } : {}),
+    ...(head.userSticker ? { sticker: head.userSticker } : {}),
+  });
+}
+
+/** 将 v2 durable claim 快照恢复成既有 pending claim 返回形状。 */
+export function pendingDispatchUserMessage(snapshot: PendingDispatchUserSnapshot): ChatMessage {
+  return pendingUserMessageFromSnapshot(snapshot);
+}
+
+/** 读取待恢复的认领意图；旧记录缺快照时仍原样返回，交由 async loader fail-closed。 */
+export function getPendingDispatch(sessionId: string): PendingDispatchState | null {
+  const session = readSessionRecordFile(sessionId);
+  return session?.pendingDispatch ? { ...session.pendingDispatch } : null;
 }
 
 /**
@@ -779,7 +813,18 @@ export function claimPendingMessage(sessionId: string): ClaimPendingResult {
 
   if (record.schemaVersion === 2) {
     record.pendingMessages = remaining;
-    record.pendingDispatch = { messageId: head.id, claimedAt };
+    record.pendingDispatch = {
+      messageId: head.id,
+      claimedAt,
+      userMessage: {
+        id: head.id,
+        at: claimedAt,
+        text: head.rawContent,
+        visibleContent: head.visibleContent,
+        ...(head.attachments?.length ? { attachments: head.attachments } : {}),
+        ...(head.userSticker ? { sticker: head.userSticker } : {}),
+      },
+    };
     try {
       writeSessionRecordFile(record);
     } catch (err) {

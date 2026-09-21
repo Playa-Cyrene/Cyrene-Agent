@@ -40,6 +40,7 @@ import { broadcastChatsChanged } from "./chats/chats-ipc";
 import type { ConversationMode } from "../shared/chat-types";
 import { prepareTranscriptDispatch, type TranscriptRewindRequest } from "./orchestrator/conversation-transcript-coordinator";
 import { getConversationTranscriptStore } from "./orchestrator/conversation-transcript-store";
+import { createConversationSessionMigration } from "./orchestrator/conversation-session-migration";
 import { createTranscriptSink } from "./orchestrator/transcript-sink";
 import {
   requestUserClarification,
@@ -363,6 +364,18 @@ export function registerAgUiIpc(
   const ipc = ipcOption ?? createIpcScope();
   buildOptionsFn = buildOptions;
   getChatWindowFn = getChatWindow;
+  const sessionMigration = createConversationSessionMigration(app.getPath("userData"));
+  const loadComposedSession = async (sessionId: string) => {
+    // 测试/旧装配若没有 metadata reader，保留原同步 v1 fallback；正式主进程始终
+    // 具备该 reader，因此 v1/v2 都经过同一迁移 + pending reconcile + projection 边界。
+    const recordReader = (chatsStore as typeof chatsStore & {
+      getSessionRecord?: (id: string) => ReturnType<typeof chatsStore.getSessionRecord>;
+    }).getSessionRecord;
+    if (typeof recordReader !== "function" || !recordReader(sessionId)) {
+      return chatsStore.getSession(sessionId);
+    }
+    return sessionMigration.loadComposedSession(sessionId);
+  };
 
   // 渲染端落盘确认（单向通知）：ChatPage 在 checkpointRun("terminal", true) 成功后上报。
   // 协调器据此在"终态 + 落盘确认"双条件满足时发布桌面 turn:finished。
@@ -432,7 +445,7 @@ export function registerAgUiIpc(
       lifecycle?.onConversationEnded();
       throw new Error("AGUI_RUN 缺少 sessionId");
     }
-    const session = chatsStore.getSession(sessionId);
+    const session = await loadComposedSession(sessionId);
     if (!session) {
       lifecycle?.onConversationEnded();
       throw new Error(`AGUI_RUN 会话不存在: ${sessionId}`);
@@ -1011,12 +1024,12 @@ export function registerAgUiIpc(
   // 绑定会话当前活跃运行（会话级运行守卫是唯一可信来源）。
   // 无活跃运行、Chat 模式（单请求运行没有安全的下一步）、条目带附件、
   // 已被认领或已标记其他运行时明确拒绝，消息留在普通队列并返回最新权威队列。
-  ipc.handle(IPC.CHATS_PENDING_ADJUST, (event: IpcMainInvokeEvent, payload: unknown) => {
+  ipc.handle(IPC.CHATS_PENDING_ADJUST, async (event: IpcMainInvokeEvent, payload: unknown) => {
     const body = payload as { sessionId?: unknown; messageId?: unknown };
     const sessionId = typeof body?.sessionId === "string" ? body.sessionId : "";
     const messageId = typeof body?.messageId === "string" ? body.messageId : "";
     if (!sessionId || !messageId) return { ok: false, error: "invalid-payload" };
-    const session = chatsStore.getSession(sessionId);
+    const session = await loadComposedSession(sessionId);
     if (!session) return { ok: false, error: "session-not-found" };
     const active = sessionActiveRuns.get(sessionId);
     if (!active) {

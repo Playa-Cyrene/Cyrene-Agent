@@ -9,6 +9,9 @@ const mocks = vi.hoisted(() => ({
   handlers: new Map<string, (...args: any[]) => unknown>(),
   listeners: new Map<string, (...args: any[]) => void>(),
   getSession: vi.fn(),
+  getSessionRecord: vi.fn(),
+  getPendingDispatch: vi.fn(),
+  composeSession: vi.fn(),
   getPendingMessages: vi.fn(),
   markPendingAdjust: vi.fn(),
   resetPendingAdjustByRun: vi.fn(),
@@ -105,6 +108,9 @@ vi.mock("./orchestrator/tools/history-tools", () => ({
 
 vi.mock("./chats/chats-store", () => ({
   getSession: mocks.getSession,
+  getSessionRecord: mocks.getSessionRecord,
+  getPendingDispatch: mocks.getPendingDispatch,
+  composeSession: mocks.composeSession,
   getPendingMessages: mocks.getPendingMessages,
   markPendingAdjust: mocks.markPendingAdjust,
   resetPendingAdjustByRun: mocks.resetPendingAdjustByRun,
@@ -131,6 +137,9 @@ describe("agui-bridge sticker event ordering", () => {
     mocks.skipDefaultRunFinished = false;
     mocks.neverComplete = false;
     mocks.completeOnAbort = false;
+    mocks.getSessionRecord.mockReset();
+    mocks.getPendingDispatch.mockReset();
+    mocks.composeSession.mockReset();
   });
 
   it("成功桌面对话把来源、模式和 canonical runId 交给收尾回调", async () => {
@@ -170,6 +179,70 @@ describe("agui-bridge sticker event ordering", () => {
         runId: ack.runId,
       },
     );
+  });
+
+  it("v2 pending claim 通过 composed loader 恢复 canonical user 后可启动 AGUI_RUN", async () => {
+    vi.resetModules();
+    mocks.handlers.clear();
+    const transcriptRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-bridge-v2-claim-"));
+    mocks.userDataRoot = transcriptRoot;
+    const pendingDispatch = {
+      messageId: "pending-user",
+      claimedAt: 10,
+      userMessage: {
+        id: "pending-user",
+        at: 10,
+        text: "崩溃前输入",
+        visibleContent: "崩溃前输入",
+        sticker: "calm",
+      },
+    };
+    const record = {
+      id: "v2-claim",
+      title: "待恢复",
+      identityId: null,
+      createdAt: 1,
+      updatedAt: 10,
+      schemaVersion: 2,
+      messageCount: 0,
+      mode: "chat",
+      pendingDispatch,
+    };
+    mocks.getSession.mockReturnValue(null);
+    mocks.getSessionRecord.mockReturnValue(record);
+    mocks.getPendingDispatch.mockReturnValue(pendingDispatch);
+    mocks.composeSession.mockImplementation((_record: unknown, messages: Array<{ id: string }>) => ({
+      ...record,
+      schemaVersion: 1,
+      messages: messages.map((message) => message.id === "user:v1:pending-user:r1"
+        ? { ...message, id: "pending-user" }
+        : message),
+    }));
+    const { registerAgUiIpc } = await import("./agui-bridge");
+    registerAgUiIpc(async () => ({
+      options: {
+        settings: { provider: "test", baseUrl: "", model: "", apiKey: "", contextWindowTokens: 256000 },
+        messages: [], timeoutMs: 1000, toolSystemContent: "TOOL", soulSystemBaseContent: "SOUL",
+      },
+      latestUserText: "崩溃前输入",
+    }), async () => ({}), () => null);
+    const handler = mocks.handlers.get(IPC.AGUI_RUN);
+    if (!handler) throw new Error("AGUI_RUN handler was not registered");
+    const ack = await handler({ sender: { isDestroyed: () => false, send: () => {} } }, {
+      sessionId: "v2-claim",
+      userTurnId: "pending-user",
+      messages: [{ role: "user", content: "崩溃前输入" }],
+    }) as { runId: string };
+    expect(ack.runId).toEqual(expect.any(String));
+    const { ConversationTranscriptStore } = await import("./orchestrator/conversation-transcript-store");
+    const transcript = await new ConversationTranscriptStore(transcriptRoot).read("v2-claim");
+    expect(transcript.entries.filter((entry) => entry.kind === "user")).toHaveLength(1);
+    expect(transcript.entries[0]).toEqual(expect.objectContaining({
+      id: "user:v1:pending-user:r1",
+      turnId: "pending-user",
+    }));
+    fs.rmSync(transcriptRoot, { recursive: true, force: true });
+    mocks.userDataRoot = "";
   });
 
   it("桌面轮次事件走协调器：开始登记、终态结算、落盘确认后发布一次", async () => {
@@ -1197,6 +1270,9 @@ describe("agui-bridge session run guard", () => {
     mocks.skipDefaultRunFinished = false;
     mocks.neverComplete = false;
     mocks.completeOnAbort = false;
+    mocks.getSessionRecord.mockReset();
+    mocks.getPendingDispatch.mockReset();
+    mocks.composeSession.mockReset();
   });
 
   async function setupBridge(buildOptions = defaultBuildOptions) {
@@ -1456,6 +1532,9 @@ describe("agui-bridge pending adjust IPC", () => {
     mocks.getPendingMessages.mockReset();
     mocks.markPendingAdjust.mockReset();
     mocks.resetPendingAdjustByRun.mockReset();
+    mocks.getSessionRecord.mockReset();
+    mocks.getPendingDispatch.mockReset();
+    mocks.composeSession.mockReset();
   });
 
   async function setupBridge(buildOptions = defaultBuildOptions) {
@@ -1544,6 +1623,37 @@ describe("agui-bridge pending adjust IPC", () => {
     });
   });
 
+  it("v2 会话的 pending adjust 通过 composed loader，不因同步 getSession 为空而误报不存在", async () => {
+    mocks.getSession.mockReturnValue(null);
+    const record = {
+      id: "adj-v2",
+      title: "v2 调整",
+      identityId: null,
+      createdAt: 1,
+      updatedAt: 1,
+      schemaVersion: 2,
+      messageCount: 0,
+      mode: "work",
+      workspaceBinding: { workspaceRoot: "C:\\workspace", displayName: "workspace", boundAt: 1 },
+    };
+    mocks.getSessionRecord.mockReturnValue(record);
+    mocks.getPendingDispatch.mockReturnValue(null);
+    mocks.composeSession.mockImplementation((_record: unknown, messages: unknown[]) => ({ ...record, schemaVersion: 1, messages }));
+    mocks.getPendingMessages.mockReturnValue([]);
+    const { bridge, adjustHandler, runHandler } = await setupBridge();
+    const sender = makeSender();
+    mocks.skipDefaultRunFinished = true;
+    mocks.neverComplete = true;
+    const ack = await runHandler({ sender }, {
+      messages: [{ role: "user", content: "执行任务" }], sessionId: "adj-v2",
+    }) as { runId: string };
+    mocks.markPendingAdjust.mockReturnValue({ ok: true, queue: [{ id: "q-v2", adjustRunId: ack.runId }] });
+    const result = await adjustHandler({ sender }, { sessionId: "adj-v2", messageId: "q-v2" });
+    expect(bridge.__getSessionActiveRunForTest("adj-v2")).toBe(ack.runId);
+    expect(mocks.markPendingAdjust).toHaveBeenCalledWith("adj-v2", "q-v2", ack.runId);
+    expect(result).toEqual(expect.objectContaining({ ok: true }));
+  });
+
   it("运行结束复位：run 结算后已标记未注入的条目清标记回普通队列", async () => {
     mocks.getSession.mockReturnValue({
       id: "adj-4",
@@ -1597,6 +1707,9 @@ describe("agui-bridge transcript dispatch", () => {
     vi.resetModules();
     mocks.handlers.clear();
     mocks.runCyreneAgent.mockClear();
+    mocks.getSessionRecord.mockReset();
+    mocks.getPendingDispatch.mockReset();
+    mocks.composeSession.mockReset();
     const seenInputs: unknown[] = [];
     const bridge = await import("./agui-bridge");
     bridge.registerAgUiIpc(

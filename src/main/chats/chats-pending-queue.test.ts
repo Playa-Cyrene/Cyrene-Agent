@@ -898,6 +898,45 @@ describe("chats pending edit & adjust", () => {
     expect(store.listSessions().find((item) => item.id === session.id)?.messageCount).toBe(2);
   });
 
+  it("v2 调整轮询先写 user:v1 轨迹再 commit，恢复后只保留一条 user 且磁盘无 messages", async () => {
+    const store = await import("./chats-store");
+    const { ConversationTranscriptStore } = await import("../orchestrator/conversation-transcript-store");
+    const { ConversationJournalService } = await import("../orchestrator/conversation-journal-service");
+    const { createRunAdjustmentPoller } = await import("./pending-adjustment");
+    store.initialize();
+    const session = store.createSession({ mode: "work" });
+    const file = path.join(store.getRootDir(), "sessions", `${session.id}.json`);
+    const persisted = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
+    delete persisted.messages;
+    persisted.schemaVersion = 2;
+    persisted.messageCount = 0;
+    fs.writeFileSync(file, JSON.stringify(persisted));
+    store.enqueuePendingMessage(session.id, entry({ id: "adjust-v2", rawContent: "插话内容" }));
+    expect(store.markPendingAdjust(session.id, "adjust-v2", "run-v2")).toEqual(expect.objectContaining({ ok: true }));
+
+    const transcriptStore = new ConversationTranscriptStore(mocks.userDataDir);
+    const journal = new ConversationJournalService(transcriptStore);
+    const order: string[] = [];
+    const poll = createRunAdjustmentPoller(session.id, "run-v2", store, {
+      appendUser: async ({ turnId, text, attachments }) => {
+        order.push("transcript");
+        await journal.appendUser(session.id, {
+          id: `user:v1:${turnId}:r1`, turnId, text, attachments,
+        });
+      },
+    });
+    const injected = await poll();
+    order.push("commit-returned");
+    expect(injected?.map((item) => item.id)).toEqual(["adjust-v2"]);
+    expect(order).toEqual(["transcript", "commit-returned"]);
+    const projection = await journal.readProjection(session.id);
+    expect(projection.messages.filter((message) => message.role === "user")).toHaveLength(1);
+    expect(projection.messages[0]).toEqual(expect.objectContaining({ id: "user:v1:adjust-v2:r1" }));
+    const disk = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
+    expect(disk.schemaVersion).toBe(2);
+    expect(disk).not.toHaveProperty("messages");
+  });
+
   it("提交调整的运行匹配与防重复：run-mismatch 拒绝；再提交已移出的条目 not-found", async () => {
     const { store, sessionId } = await seedTwoMessages();
     store.markPendingAdjust(sessionId, "q-a", "run-1");
@@ -1120,5 +1159,53 @@ describe("chats pending queue IPC", () => {
     expect(await claim(event, session.id)).toEqual({ ok: true, claimed: false });
     // 会话不存在
     expect(await claim(event, "missing")).toEqual({ ok: false, error: "session-not-found" });
+  });
+
+  it("v2 claim 轨迹写失败不谎报成功，重试可幂等恢复并在 complete 后保持 metadata-only", async () => {
+    const { registerChatsIpc } = await import("./chats-ipc");
+    const { IPC } = await import("../../shared/ipc-channels");
+    const chatsStore = await import("./chats-store");
+    const { ConversationTranscriptStore } = await import("../orchestrator/conversation-transcript-store");
+    registerChatsIpc();
+
+    const create = mocks.handlers.get(IPC.CHATS_CREATE);
+    const enqueue = mocks.handlers.get(IPC.CHATS_PENDING_ENQUEUE);
+    const claim = mocks.handlers.get(IPC.CHATS_PENDING_CLAIM);
+    const complete = mocks.handlers.get(IPC.CHATS_PENDING_COMPLETE_DISPATCH);
+    if (!create || !enqueue || !claim || !complete) throw new Error("v2 claim handlers were not registered");
+    const event = { sender: {} };
+    const session = await create(event, { mode: "chat" }) as { id: string };
+    const file = path.join(chatsStore.getRootDir(), "sessions", `${session.id}.json`);
+    const persisted = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
+    delete persisted.messages;
+    persisted.schemaVersion = 2;
+    persisted.messageCount = 0;
+    fs.writeFileSync(file, JSON.stringify(persisted));
+    await enqueue(event, {
+      sessionId: session.id,
+      entry: entry({ id: "v2-ipc-claim", rawContent: "耐久消息", visibleContent: "耐久消息" }),
+    });
+
+    const append = vi.spyOn(ConversationTranscriptStore.prototype, "append")
+      .mockRejectedValueOnce(new Error("journal unavailable"));
+    expect(await claim(event, session.id)).toEqual({
+      ok: false,
+      error: "transcript-write-failed",
+    });
+    const failedDisk = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, any>;
+    expect(failedDisk.pendingDispatch?.userMessage?.text).toBe("耐久消息");
+    expect(failedDisk).not.toHaveProperty("messages");
+
+    append.mockRestore();
+    const recovered = await claim(event, session.id) as Record<string, any>;
+    expect(recovered).toEqual(expect.objectContaining({ ok: true, claimed: true }));
+    expect(recovered.userMessage).toEqual(expect.objectContaining({ id: "v2-ipc-claim" }));
+    expect(await complete(event, { sessionId: session.id, messageId: "v2-ipc-claim" })).toEqual({
+      ok: true,
+      cleared: true,
+    });
+    const completedDisk = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
+    expect(completedDisk.schemaVersion).toBe(2);
+    expect(completedDisk).not.toHaveProperty("messages");
   });
 });

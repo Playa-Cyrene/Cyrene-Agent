@@ -4,7 +4,12 @@
  */
 
 import * as chatsStore from "../chats/chats-store";
-import type { ChatSession, ChatSessionRecordV2 } from "../../shared/chat-types";
+import type {
+  ChatMessage,
+  ChatSession,
+  ChatSessionRecordV2,
+  PendingDispatchState,
+} from "../../shared/chat-types";
 import { ConversationJournalService } from "./conversation-journal-service";
 import { ConversationTranscriptStore } from "./conversation-transcript-store";
 import { buildLegacyBackfillDrafts } from "./conversation-transcript-coordinator";
@@ -16,6 +21,13 @@ export interface ConversationSessionMigrationOptions {
 }
 
 type MigrationSessionStore = Pick<typeof chatsStore, "getSessionRecord" | "writeMigratedSession">;
+
+export interface ComposedSessionPage {
+  session: Omit<ChatSession, "messages"> & { messageCount: number };
+  messages: ChatMessage[];
+  hasMore: boolean;
+  nextBefore: number | null;
+}
 
 export class ConversationSessionMigration {
   private readonly journal: ConversationJournalService;
@@ -53,6 +65,112 @@ export class ConversationSessionMigration {
 
   getJournal(): ConversationJournalService {
     return this.journal;
+  }
+
+  /** 先迁移/恢复 pending intent，再把 metadata 与同一 journal projection 组合。 */
+  async loadComposedSession(sessionId: string): Promise<ChatSession | null> {
+    const record = await this.loadCurrentRecord(sessionId);
+    if (!record) return null;
+    const projection = await this.journal.readProjection(sessionId);
+    return chatsStore.composeSession(record, projection.messages);
+  }
+
+  /** 与 CHATS_GET_PAGE 共用的分页组合边界，避免返回未组合的 canonical ID。 */
+  async loadComposedSessionPage(
+    sessionId: string,
+    before: number | null,
+    limit: number,
+  ): Promise<ComposedSessionPage | null> {
+    const record = await this.loadCurrentRecord(sessionId);
+    if (!record) return null;
+    const page = await this.journal.readProjectionPage(sessionId, before, limit);
+    const composed = chatsStore.composeSession(record, page.messages);
+    const { messages: _messages, ...session } = composed;
+    return {
+      session: { ...session, messageCount: page.messageCount },
+      messages: composed.messages,
+      hasMore: page.hasMore,
+      nextBefore: page.nextBefore,
+    };
+  }
+
+  /**
+   * v2 claim 的 durable intent 恢复：canonical user 与 presentation patch 都使用
+   * 稳定 entry ID，journal 的主键/次级幂等保证重试不产生第二条 user。
+   */
+  async reconcilePendingDispatch(sessionId: string): Promise<boolean> {
+    const record = this.sessionStore.getSessionRecord(sessionId);
+    if (!record || record.schemaVersion !== 2) return false;
+    const pending = chatsStore.getPendingDispatch(sessionId);
+    const snapshot = pending?.userMessage;
+    if (!pending || !snapshot) return false;
+    if (snapshot.id !== pending.messageId) {
+      throw new Error("PENDING_DISPATCH_SNAPSHOT_MISMATCH");
+    }
+    const canonicalId = `user:v1:${snapshot.id}:r1`;
+    await this.journal.appendUser(sessionId, {
+      id: canonicalId,
+      turnId: snapshot.id,
+      at: snapshot.at,
+      text: snapshot.text,
+      attachments: snapshot.attachments,
+      revision: 1,
+    });
+    if (snapshot.sticker) {
+      await this.journal.appendPresentation(sessionId, canonicalId, 1, { sticker: snapshot.sticker });
+    }
+    return true;
+  }
+
+  /** claim 的 async IPC 边界：journal 写成功后才向 renderer 报 claimed。 */
+  async claimPendingMessage(sessionId: string): Promise<chatsStore.ClaimPendingResult> {
+    const record = this.sessionStore.getSessionRecord(sessionId);
+    const existing = record?.schemaVersion === 2 ? chatsStore.getPendingDispatch(sessionId) : null;
+    if (existing?.userMessage) {
+      try {
+        await this.reconcilePendingDispatch(sessionId);
+      } catch {
+        return { ok: false, error: "transcript-write-failed" };
+      }
+      return this.buildRecoveredClaim(sessionId, existing);
+    }
+
+    const claimed = chatsStore.claimPendingMessage(sessionId);
+    if (!claimed.ok || !claimed.claimed) return claimed;
+    const afterClaim = this.sessionStore.getSessionRecord(sessionId);
+    if (afterClaim?.schemaVersion !== 2) return claimed;
+    try {
+      await this.reconcilePendingDispatch(sessionId);
+    } catch {
+      return { ok: false, error: "transcript-write-failed" };
+    }
+    const composed = await this.loadComposedSession(sessionId);
+    return composed ? { ...claimed, session: composed } : claimed;
+  }
+
+  private async loadCurrentRecord(sessionId: string): Promise<ChatSessionRecordV2 | null> {
+    const migrated = await this.ensureConversationMigrated(sessionId);
+    if (!migrated) return null;
+    await this.reconcilePendingDispatch(sessionId);
+    const current = this.sessionStore.getSessionRecord(sessionId);
+    return current?.schemaVersion === 2 ? current : migrated;
+  }
+
+  private async buildRecoveredClaim(
+    sessionId: string,
+    pending: PendingDispatchState,
+  ): Promise<chatsStore.ClaimPendingResult> {
+    if (!pending.userMessage) return { ok: false, error: "already-dispatching" };
+    const session = await this.loadComposedSession(sessionId);
+    if (!session) return { ok: false, error: "session-not-found" };
+    return {
+      ok: true,
+      claimed: true,
+      userMessage: chatsStore.pendingDispatchUserMessage(pending.userMessage),
+      visibleContent: pending.userMessage.visibleContent ?? pending.userMessage.text,
+      remainingQueue: (chatsStore.getPendingMessages(sessionId) ?? []).map((item) => ({ ...item })),
+      session,
+    };
   }
 
   ensureConversationMigrated(sessionId: string): Promise<ChatSessionRecordV2 | null> {

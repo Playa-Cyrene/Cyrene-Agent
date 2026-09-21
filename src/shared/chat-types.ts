@@ -246,16 +246,34 @@ export interface PendingChatMessage {
   enqueuedAt: number;
 }
 
+/** 可重放的待发用户事实；v2 认领时与 pendingDispatch 一起原子落盘。 */
+export interface PendingDispatchUserSnapshot {
+  /** 对外可见的 renderer userTurnId。 */
+  id: string;
+  /** 认领时生成的稳定消息时间戳。 */
+  at: number;
+  /** 送入模型/轨迹的原始文本。 */
+  text: string;
+  /** 页面展示文本；旧记录缺省时回退 text。 */
+  visibleContent?: string;
+  /** 认领时冻结的稳定附件元数据。 */
+  attachments?: PendingChatAttachment[];
+  /** 用户表情包标识。 */
+  sticker?: string;
+}
+
 /**
- * 待发派发状态：队首已被认领（一次写入内转成正式用户消息并移出队列），
- * 但模型运行尚未被主进程确认接受。run ack 成功后清除；
- * 启动失败 / 页面刷新 / 进程退出时残留，恢复逻辑据此续派（不重复追加用户消息）。
+ * 待发派发状态：队首已被认领，但模型运行尚未被主进程确认接受。
+ * v2 同时保留完整 user 快照，使轨迹写入可在进程重启后恢复；旧记录仍兼容
+ * 仅有 messageId/claimedAt 的形态，并在缺快照时 fail-closed（封闭失败）。
  */
 export interface PendingDispatchState {
   /** 被认领的用户消息 id（即待发条目稳定标识）。 */
   messageId: string;
   /** 认领时间戳。 */
   claimedAt: number;
+  /** v2 durable user intent；旧 v1 pendingDispatch 缺省。 */
+  userMessage?: PendingDispatchUserSnapshot;
 }
 
 export interface ChatSession {

@@ -100,28 +100,15 @@ export function registerChatsIpc(
 
   ipc.handle(IPC.CHATS_GET, async (_event, id: string) => {
     if (!id) return null;
-    const record = await sessionMigration.ensureConversationMigrated(id);
-    if (!record) return null;
-    const projection = await conversationJournal.readProjection(id);
-    return chatsStore.composeSession(record, projection.messages);
+    return sessionMigration.loadComposedSession(id);
   });
   ipc.handle(IPC.CHATS_GET_PAGE, async (_event, payload: { id: string; before?: number | null; limit?: number }) => {
     if (!payload?.id) return null;
-    const record = await sessionMigration.ensureConversationMigrated(payload.id);
-    if (!record) return null;
-    const page = await conversationJournal.readProjectionPage(
+    return sessionMigration.loadComposedSessionPage(
       payload.id,
       payload.before ?? null,
       payload.limit ?? 80,
     );
-    const composed = chatsStore.composeSession(record, page.messages);
-    const { messages: _messages, ...session } = composed;
-    return {
-      session: { ...session, messageCount: page.messageCount },
-      messages: composed.messages,
-      hasMore: page.hasMore,
-      nextBefore: page.nextBefore,
-    };
   });
 
   ipc.handle(
@@ -400,11 +387,11 @@ export function registerChatsIpc(
 
   // 认领队首：单次会话文件写入完成待发条目 → 正式用户消息 + 派发状态。
   // 认领产生真实历史消息，广播刷新；队列空/认领冲突原样透传。
-  ipc.handle(IPC.CHATS_PENDING_CLAIM, (event, sessionId: unknown) => {
+  ipc.handle(IPC.CHATS_PENDING_CLAIM, async (event, sessionId: unknown) => {
     if (typeof sessionId !== "string" || !sessionId) {
       return { ok: false, error: "invalid-payload" };
     }
-    const result = chatsStore.claimPendingMessage(sessionId);
+    const result = await sessionMigration.claimPendingMessage(sessionId);
     if (result.ok && result.claimed) {
       broadcastChanged(event.sender);
       titleService?.schedule({

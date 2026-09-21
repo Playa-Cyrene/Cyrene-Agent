@@ -144,4 +144,74 @@ describe("ConversationSessionMigration", () => {
     expect(await pending).toBeNull();
     expect(store.getSessionRecord(session.id)).toBeNull();
   });
+
+  it("v2 pendingDispatch 快照在 composed load 时补写 canonical user 且重启幂等", async () => {
+    const store = await import("../chats/chats-store");
+    store.initialize();
+    const session = store.createSession({ title: "待恢复" });
+    const file = path.join(store.getRootDir(), "sessions", `${session.id}.json`);
+    const persisted = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
+    delete persisted.messages;
+    persisted.schemaVersion = 2;
+    persisted.messageCount = 0;
+    fs.writeFileSync(file, JSON.stringify(persisted));
+    store.enqueuePendingMessage(session.id, {
+      id: "recover-user",
+      rawContent: "崩溃前输入",
+      visibleContent: "崩溃前输入",
+      userSticker: "calm",
+    });
+    expect(store.claimPendingMessage(session.id)).toEqual(expect.objectContaining({ claimed: true }));
+
+    const { ConversationTranscriptStore } = await import("./conversation-transcript-store");
+    const { ConversationJournalService } = await import("./conversation-journal-service");
+    const { ConversationSessionMigration } = await import("./conversation-session-migration");
+    const transcriptStore = new ConversationTranscriptStore(mocks.userDataDir);
+    const migration = new ConversationSessionMigration({
+      journal: new ConversationJournalService(transcriptStore),
+      store: transcriptStore,
+    });
+    const composed = await migration.loadComposedSession(session.id);
+    expect(composed?.messages).toEqual([
+      expect.objectContaining({ id: "recover-user", role: "user", content: "崩溃前输入", sticker: "calm" }),
+    ]);
+
+    const restarted = new ConversationSessionMigration({
+      journal: new ConversationJournalService(new ConversationTranscriptStore(mocks.userDataDir)),
+      store: new ConversationTranscriptStore(mocks.userDataDir),
+    });
+    const again = await restarted.loadComposedSession(session.id);
+    expect(again?.messages.filter((message) => message.id === "recover-user")).toHaveLength(1);
+    const entries = await new ConversationTranscriptStore(mocks.userDataDir).read(session.id);
+    expect(entries.entries.filter((entry) => entry.kind === "user")).toHaveLength(1);
+    const disk = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
+    expect(disk.schemaVersion).toBe(2);
+    expect(disk).not.toHaveProperty("messages");
+  });
+
+  it("旧 v2 pendingDispatch 缺快照时 fail-closed，不猜测用户内容", async () => {
+    const store = await import("../chats/chats-store");
+    store.initialize();
+    const session = store.createSession({ title: "旧认领状态" });
+    const file = path.join(store.getRootDir(), "sessions", `${session.id}.json`);
+    const persisted = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
+    delete persisted.messages;
+    persisted.schemaVersion = 2;
+    persisted.messageCount = 0;
+    persisted.pendingDispatch = { messageId: "legacy-claim", claimedAt: 1 };
+    fs.writeFileSync(file, JSON.stringify(persisted));
+
+    const { ConversationTranscriptStore } = await import("./conversation-transcript-store");
+    const { ConversationJournalService } = await import("./conversation-journal-service");
+    const { ConversationSessionMigration } = await import("./conversation-session-migration");
+    const transcriptStore = new ConversationTranscriptStore(mocks.userDataDir);
+    const migration = new ConversationSessionMigration({
+      journal: new ConversationJournalService(transcriptStore),
+      store: transcriptStore,
+    });
+    const composed = await migration.loadComposedSession(session.id);
+    expect(composed?.messages).toEqual([]);
+    expect((await transcriptStore.read(session.id)).entries).toEqual([]);
+    expect(store.getPendingDispatch(session.id)).toEqual({ messageId: "legacy-claim", claimedAt: 1 });
+  });
 });
