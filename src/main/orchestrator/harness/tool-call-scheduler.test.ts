@@ -380,6 +380,51 @@ describe("scheduleToolCalls", () => {
     expect(skipped).toEqual(["d:aborted_before_dispatch"]);
   });
 
+  it("cancel during an exclusive call: keeps the started call open and closes only un-dispatched calls", async () => {
+    // 已启动的独占工具（如发邮件）中途被取消：execute 已进入（runStore 已记 started、
+    // 外部副作用可能已派发）。当前调用必须保留 started 交取消闭合写 unknown，
+    // 不能改写成 aborted_before_dispatch（否则丢失非幂等副作用的 unknown 事实）。
+    const calls = [call("send_email"), call("read_file")];
+    const controller = new AbortController();
+    const executed: string[] = [];
+    const commits: Array<{ name: string; result: unknown }> = [];
+    const skipped: string[] = [];
+
+    const scheduled = scheduleToolCalls({
+      calls,
+      maxParallel: 2,
+      signal: controller.signal,
+      classify: () => "exclusive",
+      execute: ({ call: toolCall }) => {
+        executed.push(toolCall.name);
+        // 模拟 raceWithSignal：abort 后以取消错误拒绝
+        return new Promise((_resolve, reject) => {
+          controller.signal.addEventListener("abort", () => reject(new Error("aborted")));
+        });
+      },
+      commit: async ({ call: toolCall }, result) => {
+        commits.push({ name: toolCall.name, result });
+        return "continue";
+      },
+      notExecuted: async ({ call: toolCall }, reason) => {
+        skipped.push(`${toolCall.name}:${reason}`);
+        return `synthetic:${reason}`;
+      },
+    });
+
+    await Promise.resolve();
+    expect(executed).toEqual(["send_email"]);
+    controller.abort();
+
+    const result = await scheduled;
+
+    expect(result).toEqual({ cancelled: true, halted: false });
+    // send_email 已派发：保留 started（由 closeInterruption 闭合为 unknown），
+    // 只有从未派发的 read_file 被记为 aborted_before_dispatch。
+    expect(skipped).toEqual(["read_file:aborted_before_dispatch"]);
+    expect(commits).toEqual([{ name: "read_file", result: "synthetic:aborted_before_dispatch" }]);
+  });
+
   it("execute error on an exclusive call: commits a synthetic failure and closes the rest before rethrowing", async () => {
     const calls = [call("a"), call("b")];
     const boom = new Error("exclusive infrastructure failure");

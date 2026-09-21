@@ -97,7 +97,10 @@ export async function scheduleToolCalls<T>(
         result = await options.execute(execution);
       } catch (error) {
         if (options.signal?.aborted) {
-          await commitNotStarted(index, "aborted_before_dispatch");
+          // 当前调用已进入 execute（runStore 已记 started、非幂等副作用可能已派发）：
+          // 不能闭合为 not_executed，保留 started 交取消闭合写 unknown + uncertainEffects；
+          // 只有 index 之后真正未派发的调用才记 aborted_before_dispatch。
+          await commitNotStarted(index + 1, "aborted_before_dispatch");
           return { cancelled: true, halted: false };
         }
         // 与并行组一致：execute 抛错的槽位以合成失败结果提交（transcript 闭合），
