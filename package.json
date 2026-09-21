@@ -84,7 +84,7 @@
     "@lancedb/lancedb": "^0.30.0",
     "@larksuiteoapi/node-sdk": "^1.68.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "@node-rs/jieba": "^2.0.3",
+    "@node-rs/jieba": "^2.0.1",
     "@nut-tree-fork/nut-js": "^4.2.6",
     "@playwright/mcp": "0.0.79",
     "@streamdown/math": "^1.0.2",
