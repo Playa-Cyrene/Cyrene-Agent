@@ -214,4 +214,52 @@ describe("ConversationSessionMigration", () => {
     expect((await transcriptStore.read(session.id)).entries).toEqual([]);
     expect(store.getPendingDispatch(session.id)).toEqual({ messageId: "legacy-claim", claimedAt: 1 });
   });
+
+  it("两个 factory loader 并发恢复同一 pending intent 只写一条 canonical user", async () => {
+    const store = await import("../chats/chats-store");
+    store.initialize();
+    const session = store.createSession({ title: "并发恢复" });
+    const file = path.join(store.getRootDir(), "sessions", `${session.id}.json`);
+    const persisted = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
+    delete persisted.messages;
+    persisted.schemaVersion = 2;
+    persisted.messageCount = 0;
+    fs.writeFileSync(file, JSON.stringify(persisted));
+    store.enqueuePendingMessage(session.id, {
+      id: "race-user",
+      rawContent: "并发恢复输入",
+      visibleContent: "并发恢复输入",
+    });
+    expect(store.claimPendingMessage(session.id)).toEqual(expect.objectContaining({ claimed: true }));
+
+    const { ConversationTranscriptStore } = await import("./conversation-transcript-store");
+    const { createConversationSessionMigration } = await import("./conversation-session-migration");
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let appendCalls = 0;
+    let bothStarted!: () => void;
+    const both = new Promise<void>((resolve) => { bothStarted = resolve; });
+    const originalAppend = ConversationTranscriptStore.prototype.append;
+    const appendSpy = vi.spyOn(ConversationTranscriptStore.prototype, "append")
+      .mockImplementation(function (this: ConversationTranscriptStore, conversationId, input) {
+        appendCalls += 1;
+        if (appendCalls === 2) bothStarted();
+        return gate.then(() => originalAppend.call(this, conversationId, input));
+      });
+
+    const first = createConversationSessionMigration(mocks.userDataDir);
+    const second = createConversationSessionMigration(mocks.userDataDir);
+    const firstLoad = first.loadComposedSession(session.id);
+    const secondLoad = second.loadComposedSession(session.id);
+    await both;
+    release();
+    const [firstComposed, secondComposed] = await Promise.all([firstLoad, secondLoad]);
+    appendSpy.mockRestore();
+
+    expect(firstComposed?.messages.filter((message) => message.id === "race-user")).toHaveLength(1);
+    expect(secondComposed?.messages.filter((message) => message.id === "race-user")).toHaveLength(1);
+    const transcript = await new ConversationTranscriptStore(mocks.userDataDir).read(session.id);
+    expect(transcript.entries.filter((entry) => entry.kind === "user")).toHaveLength(1);
+    expect(transcript.entries.filter((entry) => entry.id === "user:v1:race-user:r1")).toHaveLength(1);
+  });
 });

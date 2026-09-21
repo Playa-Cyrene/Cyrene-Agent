@@ -11,7 +11,7 @@ import type {
   PendingDispatchState,
 } from "../../shared/chat-types";
 import { ConversationJournalService } from "./conversation-journal-service";
-import { ConversationTranscriptStore } from "./conversation-transcript-store";
+import { getConversationTranscriptStore, type ConversationTranscriptStore } from "./conversation-transcript-store";
 import { buildLegacyBackfillDrafts } from "./conversation-transcript-coordinator";
 
 export interface ConversationSessionMigrationOptions {
@@ -256,7 +256,7 @@ export function createConversationSessionMigration(
   userDataRoot: string,
   sessionStore: MigrationSessionStore = chatsStore,
 ): ConversationSessionMigration {
-  const transcriptStore = new ConversationTranscriptStore(userDataRoot);
+  const transcriptStore = getConversationTranscriptStore(userDataRoot);
   return new ConversationSessionMigration({
     journal: new ConversationJournalService(transcriptStore),
     store: transcriptStore,
