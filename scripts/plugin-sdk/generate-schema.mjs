@@ -19,7 +19,8 @@ const schema = createGenerator({
 const target = path.join(repoRoot, "src/plugins/manifest.schema.json");
 const content = `${JSON.stringify(schema, null, 2)}\n`;
 if (checkMode) {
-  const existing = await readFile(target, "utf8");
+  // CI 的 Windows runner 可能以 CRLF 检出文件（git autocrlf），比对前归一化行尾
+  const existing = (await readFile(target, "utf8")).replace(/\r\n/g, "\n");
   if (existing !== content) {
     console.error("manifest.schema.json 与 PluginManifestInput 类型不一致，请运行 npm run generate:plugin-schema");
     process.exit(1);
