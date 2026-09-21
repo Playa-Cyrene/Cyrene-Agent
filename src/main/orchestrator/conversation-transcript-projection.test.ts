@@ -104,6 +104,52 @@ describe("conversation transcript projection", () => {
     expect(reduceTranscriptProjection(entries).messages).toHaveLength(4);
   });
 
+  it.each([
+    ["rewind", "keep_user"],
+    ["tombstone", "tombstone"],
+  ] as const)("discards a compaction checkpoint invalidated by a later %s", (_name, mutation) => {
+    nextSeq = 0;
+    const entries: TranscriptEntry[] = [
+      user("u1", "first"),
+      assistant("a1", "answer"),
+      user("u2", "second"),
+      assistant("a2", "second answer"),
+    ];
+    const checkpointSeq = ++nextSeq;
+    entries.push({
+      seq: checkpointSeq,
+      id: "checkpoint-1",
+      at: checkpointSeq,
+      kind: "compaction_checkpoint",
+      payload: {
+        baseThroughSeq: 0,
+        sourceThroughSeq: checkpointSeq - 1,
+        sourceDigest: "digest",
+        replacement: { role: "system", content: "stale summary" },
+        trigger: "automatic",
+      },
+    });
+    const mutationSeq = ++nextSeq;
+    entries.push(mutation === "keep_user"
+      ? {
+        seq: mutationSeq,
+        id: "rewind-1",
+        at: mutationSeq,
+        kind: "turn_rewind",
+        turnId: "u1",
+        payload: { anchorUserTurnId: "u1", disposition: "keep_user", reason: "regenerate" },
+      }
+      : {
+        seq: mutationSeq,
+        id: "tombstone-1",
+        at: mutationSeq,
+        kind: "turn_tombstone",
+        payload: { targetUserTurnId: "u2", reason: "pending_withdrawn" },
+      });
+    expect(buildModelContextFromCompactedView(entries, noRuns).messages.map((message) => message.content))
+      .toEqual(mutation === "keep_user" ? ["first"] : ["first", "answer"]);
+  });
+
   it("compaction keeps uncertain effects from the compacted canonical prefix", () => {
     nextSeq = 0;
     const oldCall = assistant("a1", "send", [{ id: "mail-1", name: "send_email", arguments: "{}" }], "run-1");
@@ -196,5 +242,59 @@ describe("conversation transcript projection", () => {
     expect(model.messages).toHaveLength(2);
     expect(model.messages[0]).toEqual(assistantEntry.payload);
     expect(model.messages[1]).toEqual(expect.objectContaining({ role: "system", internal: expect.any(Object) }));
+  });
+
+  it("keeps a failed receipt for an active assistant before the compaction boundary", () => {
+    nextSeq = 0;
+    const assistantEntry = assistant("a1", "answer");
+    const checkpointSeq = ++nextSeq;
+    const receiptSeq = ++nextSeq;
+    const entries: TranscriptEntry[] = [
+      assistantEntry,
+      {
+        seq: checkpointSeq,
+        id: "checkpoint-1",
+        at: checkpointSeq,
+        kind: "compaction_checkpoint",
+        payload: {
+          baseThroughSeq: 0,
+          sourceThroughSeq: checkpointSeq - 1,
+          sourceDigest: "digest",
+          replacement: { role: "system", content: "summary" },
+          trigger: "automatic",
+        },
+      },
+      {
+        seq: receiptSeq,
+        id: "receipt-1",
+        at: receiptSeq,
+        kind: "delivery_receipt",
+        payload: { assistantTurnId: "a1", channel: "wechat", status: "failed" },
+      },
+    ];
+    const model = buildModelContextFromCompactedView(entries, noRuns);
+    expect(model.messages.filter((message) => message.role === "system")).toHaveLength(2);
+    expect(model.messages.at(-1)).toEqual(expect.objectContaining({ visibility: "internal" }));
+  });
+
+  it("applies a tombstone to seeded messages and preserves original assistant aliases", () => {
+    nextSeq = 0;
+    const seededEntries: TranscriptEntry[] = [
+      user("u1", "first"), assistant("a1", "answer"),
+      user("u2", "second"), assistant("a2", "second answer"),
+    ];
+    const seed = reduceTranscriptProjection(seededEntries);
+    const tombstoneEntry = tombstone("u2");
+    const result = reduceTranscriptProjection([tombstoneEntry], seed);
+    expect(result.messages.map((message) => message.content)).toEqual(["first", "answer"]);
+
+    const patchEntry: TranscriptEntry = {
+      seq: ++nextSeq,
+      id: "patch-after-seed",
+      at: nextSeq,
+      kind: "presentation_patch",
+      payload: { messageId: "assistant-2", patchRevision: 2, patch: { content: "patched" } },
+    };
+    expect(reduceTranscriptProjection([patchEntry], seed).messages[1].content).toBe("patched");
   });
 });

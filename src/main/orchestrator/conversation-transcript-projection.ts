@@ -29,9 +29,23 @@ export interface MaterializedTranscript {
   throughSeq: number;
 }
 
+export interface ConversationProjectionNodeState {
+  kind: "user" | "assistant";
+  entryId: string;
+  messageId: string;
+  turnId?: string;
+  revision?: number;
+}
+
+export interface ConversationProjectionState {
+  nodes: ConversationProjectionNodeState[];
+}
+
 export interface ConversationProjection {
   throughSeq: number;
   messages: UiChatMessage[];
+  /** JSON-safe reducer state needed for incremental branch mutations. */
+  state?: ConversationProjectionState;
 }
 
 type UserEntry = Extract<TranscriptEntry, { kind: "user" }>;
@@ -231,6 +245,30 @@ function latestCompaction(entries: TranscriptEntry[]): Extract<TranscriptEntry, 
   return latest;
 }
 
+function checkpointCoversActiveBranch(
+  entries: TranscriptEntry[],
+  active: ActiveTranscript,
+  checkpoint: Extract<TranscriptEntry, { kind: "compaction_checkpoint" }>,
+): boolean {
+  const sourceThroughSeq = checkpoint.payload.sourceThroughSeq;
+  const beforeCheckpoint = reduceActiveTranscript(
+    entries.filter((entry) => entry.seq <= sourceThroughSeq),
+  ).nodes;
+  const finalCovered = active.nodes.filter((node) => node.entry.seq <= sourceThroughSeq);
+  return beforeCheckpoint.length === finalCovered.length
+    && beforeCheckpoint.every((node, index) => node.entry.id === finalCovered[index]?.entry.id);
+}
+
+function latestValidCompaction(
+  entries: TranscriptEntry[],
+  active: ActiveTranscript,
+): Extract<TranscriptEntry, { kind: "compaction_checkpoint" }> | undefined {
+  return entries
+    .filter((entry): entry is Extract<TranscriptEntry, { kind: "compaction_checkpoint" }> => entry.kind === "compaction_checkpoint")
+    .sort((left, right) => right.seq - left.seq)
+    .find((checkpoint) => checkpointCoversActiveBranch(entries, active, checkpoint));
+}
+
 function contentToText(content: ChatMessageContent | undefined): string {
   if (typeof content === "string") return content;
   if (!content) return "";
@@ -266,6 +304,188 @@ function applyPatch(
   patch: TranscriptPresentationPatch,
 ): void {
   Object.assign(target.message, patch);
+}
+
+function nodeStateFromActive(node: ActiveNode): ConversationProjectionNodeState {
+  return node.kind === "user"
+    ? {
+      kind: "user",
+      entryId: node.entry.id,
+      messageId: node.entry.id,
+      ...(node.entry.turnId ? { turnId: node.entry.turnId } : {}),
+      ...(node.entry.revision !== undefined ? { revision: node.entry.revision } : {}),
+    }
+    : {
+      kind: "assistant",
+      entryId: node.entry.id,
+      messageId: node.entry.turnId ?? node.entry.id,
+      ...(node.entry.turnId ? { turnId: node.entry.turnId } : {}),
+    };
+}
+
+function findSeedUserIndex(nodes: ConversationProjectionNodeState[], turnId: string): number {
+  let best = -1;
+  let bestRevision = -Infinity;
+  for (let index = 0; index < nodes.length; index++) {
+    const node = nodes[index];
+    if (node.kind !== "user" || node.turnId !== turnId) continue;
+    const revision = node.revision ?? 0;
+    if (revision > bestRevision) {
+      best = index;
+      bestRevision = revision;
+    }
+  }
+  return best;
+}
+
+function projectSeedDelta(
+  entries: TranscriptEntry[],
+  seed: ConversationProjection,
+): ConversationProjection {
+  const messages: CanonicalUiMessage[] = seed.messages.map((message) => ({
+    message: { ...message },
+    aliases: new Set([message.id]),
+  }));
+  const byAlias = new Map<string, CanonicalUiMessage>();
+  for (const item of messages) byAlias.set(item.message.id, item);
+  const state: ConversationProjectionState = {
+    nodes: (seed.state?.nodes ?? seed.messages.map((message) => ({
+      kind: message.role === "user" ? "user" : "assistant",
+      entryId: message.id,
+      messageId: message.id,
+    }))).map((node) => ({ ...node })),
+  };
+
+  // Restore aliases for canonical assistant entries that were folded into one
+  // UI message in the seed. This is what lets a later patch address the
+  // original assistant entry id.
+  for (const node of state.nodes) {
+    const target = byAlias.get(node.messageId);
+    if (!target) continue;
+    target.aliases.add(node.entryId);
+    if (node.turnId) target.aliases.add(node.turnId);
+    byAlias.set(node.entryId, target);
+    if (node.turnId) byAlias.set(node.turnId, target);
+  }
+
+  const activeEntries = entries.filter((entry) => entry.seq > seed.throughSeq);
+  const patches = new Map<string, { revision: number; seq: number; patch: TranscriptPresentationPatch }>();
+  for (const entry of activeEntries) {
+    if (entry.kind !== "presentation_patch") continue;
+    const current = patches.get(entry.payload.messageId);
+    if (!current || entry.payload.patchRevision > current.revision
+      || (entry.payload.patchRevision === current.revision && entry.seq > current.seq)) {
+      patches.set(entry.payload.messageId, {
+        revision: entry.payload.patchRevision,
+        seq: entry.seq,
+        patch: entry.payload.patch,
+      });
+    }
+  }
+
+  const retainMessagesForState = (): void => {
+    const retained = new Set(state.nodes.map((node) => node.messageId));
+    for (let index = messages.length - 1; index >= 0; index--) {
+      if (!retained.has(messages[index].message.id)) messages.splice(index, 1);
+    }
+    byAlias.clear();
+    for (const item of messages) byAlias.set(item.message.id, item);
+    for (const node of state.nodes) {
+      const target = byAlias.get(node.messageId);
+      if (!target) continue;
+      target.aliases.add(node.entryId);
+      if (node.turnId) target.aliases.add(node.turnId);
+      byAlias.set(node.entryId, target);
+      if (node.turnId) byAlias.set(node.turnId, target);
+    }
+  };
+
+  for (const entry of activeEntries) {
+    switch (entry.kind) {
+      case "user": {
+        const node: ConversationProjectionNodeState = {
+          kind: "user", entryId: entry.id, messageId: entry.id,
+          ...(entry.turnId ? { turnId: entry.turnId } : {}),
+          ...(entry.revision !== undefined ? { revision: entry.revision } : {}),
+        };
+        state.nodes.push(node);
+        const item: CanonicalUiMessage = {
+          message: { id: entry.id, role: "user", content: entry.payload.text, at: entry.at },
+          aliases: new Set([entry.id, ...(entry.turnId ? [entry.turnId] : [])]),
+        };
+        messages.push(item);
+        byAlias.set(entry.id, item);
+        if (entry.turnId) byAlias.set(entry.turnId, item);
+        break;
+      }
+      case "assistant": {
+        const messageId = entry.turnId ?? entry.id;
+        const node: ConversationProjectionNodeState = {
+          kind: "assistant", entryId: entry.id, messageId,
+          ...(entry.turnId ? { turnId: entry.turnId } : {}),
+        };
+        state.nodes.push(node);
+        const existing = byAlias.get(messageId);
+        if (existing && existing.message.role === "model") {
+          existing.message.content = contentToText(entry.payload.content);
+          existing.message.at = entry.at;
+          existing.aliases.add(entry.id);
+          byAlias.set(entry.id, existing);
+        } else {
+          const item: CanonicalUiMessage = {
+            message: { id: messageId, role: "model", content: contentToText(entry.payload.content), at: entry.at },
+            aliases: new Set([entry.id, messageId]),
+          };
+          messages.push(item);
+          byAlias.set(entry.id, item);
+          byAlias.set(messageId, item);
+        }
+        break;
+      }
+      case "turn_rewind": {
+        const anchorIndex = findSeedUserIndex(state.nodes, entry.payload.anchorUserTurnId);
+        if (entry.payload.disposition === "keep_user") {
+          if (anchorIndex >= 0) state.nodes.length = anchorIndex + 1;
+        } else {
+          if (anchorIndex >= 0) state.nodes.length = anchorIndex;
+          state.nodes.push({
+            kind: "user", entryId: entry.id, messageId: entry.id,
+            ...(entry.turnId ? { turnId: entry.turnId } : {}),
+            ...(entry.revision !== undefined ? { revision: entry.revision } : {}),
+          });
+        }
+        retainMessagesForState();
+        if (entry.payload.disposition === "replace_user") {
+          const item: CanonicalUiMessage = {
+            message: { id: entry.id, role: "user", content: entry.payload.replacementUser?.text ?? "", at: entry.at },
+            aliases: new Set([entry.id, ...(entry.turnId ? [entry.turnId] : [])]),
+          };
+          messages.push(item);
+          byAlias.set(entry.id, item);
+          if (entry.turnId) byAlias.set(entry.turnId, item);
+        }
+        break;
+      }
+      case "turn_tombstone": {
+        const targetIndex = findSeedUserIndex(state.nodes, entry.payload.targetUserTurnId);
+        if (targetIndex >= 0) state.nodes.length = targetIndex;
+        retainMessagesForState();
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  for (const [messageId, record] of patches) {
+    const target = byAlias.get(messageId);
+    if (target) applyPatch(target, record.patch);
+  }
+  return {
+    throughSeq: Math.max(seed.throughSeq, ...activeEntries.map((entry) => entry.seq), 0),
+    messages: messages.map((item) => item.message),
+    state,
+  };
 }
 
 function projectionFromActive(
@@ -336,6 +556,7 @@ function projectionFromActive(
   return {
     throughSeq: Math.max(seed?.throughSeq ?? 0, active.throughSeq),
     messages: resultMessages,
+    state: { nodes: active.nodes.map(nodeStateFromActive) },
   };
 }
 
@@ -344,6 +565,7 @@ export function reduceTranscriptProjection(
   entries: TranscriptEntry[],
   seed?: ConversationProjection,
 ): ConversationProjection {
+  if (seed && seed.throughSeq > 0) return projectSeedDelta(entries, seed);
   const active = reduceActiveTranscript(entries);
   return projectionFromActive(entries, active, seed);
 }
@@ -372,7 +594,7 @@ export function buildModelContextFromCompactedView(
   runReader: TranscriptRunReader,
 ): MaterializedTranscript {
   const active = reduceActiveTranscript(entries);
-  const checkpoint = latestCompaction(entries);
+  const checkpoint = latestValidCompaction(entries, active);
   if (!checkpoint) return buildFullModelContext(entries, runReader);
 
   const suffix = active.nodes.filter((node) => node.entry.seq > checkpoint.payload.sourceThroughSeq);
@@ -385,7 +607,7 @@ export function buildModelContextFromCompactedView(
     messages: [
       checkpoint.payload.replacement,
       ...materialized.messages,
-      ...failedDeliveryNotes(entries, suffix, checkpoint.payload.sourceThroughSeq),
+      ...failedDeliveryNotes(entries, active.nodes, checkpoint.payload.sourceThroughSeq),
     ],
     uncertainEffects: allActiveMaterialized.uncertainEffects,
     throughSeq: active.throughSeq,
