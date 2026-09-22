@@ -1,4 +1,4 @@
-name: Vitest resetModules companion-file bisect B
+name: Vitest resetModules final companion isolate
 
 on:
   push:
@@ -12,22 +12,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - group: B1
-            files: >-
-              src/main/memory/memory-resolver.test.ts
-              src/main/memory/memory-scheduler.test.ts
-          - group: B2
-            files: >-
-              src/main/memory/memory-schemas.test.ts
-              src/main/memory/memory-store-dmae.test.ts
-          - group: B3
-            files: >-
-              src/main/memory/memory-store-io.test.ts
-              src/main/memory/memory-store-migrations.test.ts
-          - group: B4
-            files: >-
-              src/main/memory/memory-store.test.ts
-              src/main/memory/obsidian-exporter.test.ts
+          - group: store
+            file: src/main/memory/memory-store.test.ts
+          - group: exporter
+            file: src/main/memory/obsidian-exporter.test.ts
     steps:
       - uses: actions/checkout@v4
 
@@ -51,8 +39,8 @@ jobs:
           fs.writeFileSync(p, s)
           EOF
 
-      - name: Run target with companion group ${{ matrix.group }}
+      - name: Run target with ${{ matrix.group }}
         env:
-          FILES: ${{ matrix.files }}
+          FILE: ${{ matrix.file }}
         shell: bash
-        run: npx vitest run src/main/memory/memory-manager.test.ts $FILES
+        run: npx vitest run src/main/memory/memory-manager.test.ts $FILE
