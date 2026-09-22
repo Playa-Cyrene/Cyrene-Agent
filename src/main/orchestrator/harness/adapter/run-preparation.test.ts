@@ -114,8 +114,15 @@ describe("harness run preparation", () => {
       initialState: expect.objectContaining({ todoItems: expect.any(Array) }),
       kind: "recovery",
     }));
+    const persistedRun = runStore.create.mock.calls.at(-1)?.[0] as { messages?: Array<{ content?: unknown }> };
+    const preparedContents = prepared.runMessages.map((message) => message.content);
+    const persistedContents = (persistedRun.messages ?? []).map((message) => message.content);
     expect(prepared.runMessages).toEqual(expect.arrayContaining(authoritativeMessages));
-    expect(prepared.runMessages).not.toEqual(expect.arrayContaining([{ role: "user", content: "stale" }]));
+    expect(preparedContents).toContain("authoritative");
+    expect(preparedContents).not.toContain("stale");
+    expect(persistedRun.messages).toEqual(expect.arrayContaining(authoritativeMessages));
+    expect(persistedContents).toContain("authoritative");
+    expect(persistedContents).not.toContain("stale");
     expect(runStore.create).toHaveBeenCalledWith(expect.objectContaining({
       messages: expect.arrayContaining(authoritativeMessages),
       state: expect.objectContaining({ todoItems: expect.any(Array) }),
