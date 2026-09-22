@@ -135,6 +135,18 @@ describe("channels/dispatcher", () => {
     expect(reloadLogFromDisk).not.toHaveBeenCalled();
   });
 
+  it("turn ID 回退源中的换行会被压成空格，保证 entry ID 合法", () => {
+    // 附件/多行正文在缺少 messageId 时走时间+正文回退，换行必须被清洗
+    const withNewlines = makeChannelTurnId({
+      ...makeIncoming({ text: "第一行\n第二行\r\n第三行" }),
+    }, "user");
+    expect(withNewlines).not.toMatch(/[\r\n]/);
+    expect(withNewlines).toContain("第一行 第二行 第三行");
+    // 透传 messageId 的消息直接使用平台 ID
+    expect(makeChannelTurnId(makeIncoming({ messageId: "om_123" }), "user"))
+      .toBe("qq:chat-1:om_123:user");
+  });
+
   it("uses channel history and channel session when the chat is unbound", async () => {
     const buildAndRunAgent = vi.fn(async (_msg: IncomingMessage, input: { sessionId: string }) => {
       expect(input.sessionId).toBe(makeSessionId("qq", "chat-1"));

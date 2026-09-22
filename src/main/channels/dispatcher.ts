@@ -393,7 +393,9 @@ export class ChannelDispatcher {
 }
 
 export function makeChannelTurnId(msg: IncomingMessage, role: "user" | "assistant"): string {
-  const source = msg.messageId || `${msg.at.getTime()}:${msg.text}`;
+  // 回退源（时间+正文）可能含换行：多行/附件正文会生成非法 entry ID 被拒绝写入 journal，
+  // 这里压成单行空格，保证任何适配器都能得到合法的 turn ID
+  const source = (msg.messageId || `${msg.at.getTime()}:${msg.text}`).replace(/[\r\n]+/g, " ");
   return `${msg.channel}:${msg.chatId}:${source}:${role}`;
 }
 

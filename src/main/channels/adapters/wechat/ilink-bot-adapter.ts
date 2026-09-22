@@ -343,6 +343,8 @@ export class ILinkBotAdapter implements ChannelAdapter {
       channel: "wechat",
       senderId: msg.fromUserId,
       chatId: msg.fromUserId,
+      // 透传平台消息 ID：turn ID 由此保持稳定，同一入站消息重投不会重复执行
+      messageId: msg.msgId,
       text: voiceText || msg.content || "",
       attachments: attachments.length > 0 ? attachments : undefined,
       at: new Date(),

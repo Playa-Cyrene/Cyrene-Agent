@@ -167,6 +167,8 @@ async function normalizeLarkMessage(
     senderName: msg.senderName,
     chatId: msg.chatId,
     threadId: msg.threadId,
+    // 透传平台消息 ID：附件正文含换行，若走时间+正文回退生成 turn ID 会被拒绝写入 journal
+    messageId: msg.messageId,
     text,
     attachments: attachments.length > 0 ? attachments : undefined,
     at: new Date(msg.createTime ?? Date.now()),

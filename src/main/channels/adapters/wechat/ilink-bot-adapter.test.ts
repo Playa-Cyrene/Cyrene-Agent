@@ -261,6 +261,8 @@ describe("ILinkBotAdapter inbound media", () => {
     expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({
       channel: "wechat",
       senderId: "wx-user-1",
+      // 平台消息 ID 必须透传：重投同一条消息得到相同 turn ID，不会重复执行
+      messageId: "msg-1",
       text: "看看这个",
       attachments: [
         {
