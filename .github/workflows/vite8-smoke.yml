@@ -5,7 +5,7 @@ on:
     branches: ["chore/vite-8-smoke"]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   smoke:
@@ -23,11 +23,27 @@ jobs:
       - name: Resolve Vite 8 dependencies and lockfile
         run: npm install --foreground-scripts
 
+      - name: Commit generated lockfile
+        shell: pwsh
+        run: |
+          if (git diff --quiet -- package-lock.json) {
+            Write-Host "package-lock.json already up to date"
+            exit 0
+          }
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package-lock.json
+          git commit -m "chore: refresh lockfile for Vite 8"
+          git push origin HEAD:chore/vite-8-smoke
+
       - name: Type-check renderer
         run: npm run check:renderer
 
       - name: Build renderer
         run: npm run build:renderer
+
+      - name: Install Playwright Chromium
+        run: npx playwright install chromium
 
       - name: Run renderer performance harness
         run: npm run perf:chat-baseline
