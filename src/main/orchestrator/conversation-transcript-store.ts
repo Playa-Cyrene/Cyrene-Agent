@@ -743,7 +743,7 @@ function isValidTranscriptPayload(entry: Partial<TranscriptEntry>): boolean {
         isValidCanonicalChatMessage(entry.payload.message, "tool") &&
         (entry.payload.fullRef === undefined || typeof entry.payload.fullRef === "string");
     case "interruption":
-      return entry.payload.reason === "user_cancel";
+      return ["user_cancel", "runtime_error"].includes(entry.payload.reason);
     case "turn_rewind":
       return typeof entry.payload.anchorUserTurnId === "string" &&
         ["keep_user", "replace_user"].includes(entry.payload.disposition as string) &&

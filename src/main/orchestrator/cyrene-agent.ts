@@ -510,6 +510,15 @@ export class CyreneAgent extends AbstractAgent {
           flowLog("── 本轮完成 ────────────────────────");
 
           if (cancelled) return;
+          // timeout 属系统侧未完成（非用户取消）：写 runtime_error interruption 边界。
+          // Harness 路径已在 adapter 内按 runStore 闭合过，这里幂等重写不产生重复条目
+          if (this.lastResult.terminal?.status === "timeout") {
+            try {
+              await options.transcriptSink?.closeInterruption({ reason: "runtime_error", runSession: null });
+            } catch (closureError) {
+              console.error(LOG_PREFIX, "transcript timeout closure failed:", closureError);
+            }
+          }
           // success / timeout 都通过 RUN_FINISHED.result 上报 canonical 终态。
           // Bridge 据此决定是否跑 sticker / memory 等成功收尾副作用。
           subscriber.next({
@@ -571,6 +580,14 @@ export class CyreneAgent extends AbstractAgent {
             detachExternalAbort();
             subscriber.complete();
             return;
+          }
+          // 权威轨迹：运行失败（含 ChatLoop 抛错）同样写 runtime_error interruption
+          // 边界，下一轮上下文能区分「系统没完成」与「用户主动取消」；
+          // 闭合失败只记日志——终态本身就是失败，不再改写
+          try {
+            await options.transcriptSink?.closeInterruption({ reason: "runtime_error", runSession: null });
+          } catch (closureError) {
+            console.error(LOG_PREFIX, "transcript failure closure failed:", closureError);
           }
           const safeErr = new Error(classification.userMessage);
           finished = true;

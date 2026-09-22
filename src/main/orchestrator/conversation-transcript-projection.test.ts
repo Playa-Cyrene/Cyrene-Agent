@@ -354,6 +354,119 @@ describe("conversation transcript projection", () => {
       .toEqual(expect.objectContaining({ visibility: "internal" }));
   });
 
+  it("未闭合中断注入一次性内部提示：插在中断后第一个 user 之前，文案按 reason 区分", () => {
+    nextSeq = 0;
+    const entries: TranscriptEntry[] = [
+      user("u1", "question"),
+      assistant("a1", "partial answer"),
+      {
+        seq: ++nextSeq,
+        id: "run-1:interruption:user_cancel",
+        at: nextSeq,
+        kind: "interruption",
+        runId: "run-1",
+        payload: { reason: "user_cancel" },
+      },
+      user("u2", "换个方向"),
+    ];
+    const model = buildFullModelContext(entries, noRuns);
+    const notes = model.messages.filter((message) => message.visibility === "internal");
+    expect(notes).toHaveLength(1);
+    expect(notes[0].content).toContain("用户主动停止");
+    expect(notes[0].content).toContain("以用户最新消息为准");
+    expect(notes[0].internal).toMatchObject({
+      kind: "recovery",
+      id: "interruption-note:run-1:interruption:user_cancel",
+      runId: "run-1",
+    });
+    // 提示必须紧贴在「中断后第一个 user」之前
+    expect(model.messages[model.messages.indexOf(notes[0]) + 1]).toEqual({ role: "user", content: "换个方向" });
+  });
+
+  it("runtime_error 中断提示使用系统失败语义", () => {
+    nextSeq = 0;
+    const entries: TranscriptEntry[] = [
+      user("u1", "question"),
+      {
+        seq: ++nextSeq,
+        id: "run-1:interruption:runtime_error",
+        at: nextSeq,
+        kind: "interruption",
+        runId: "run-1",
+        payload: { reason: "runtime_error" },
+      },
+      user("u2", "再试一次"),
+    ];
+    const model = buildFullModelContext(entries, noRuns);
+    const notes = model.messages.filter((message) => message.visibility === "internal");
+    expect(notes).toHaveLength(1);
+    expect(notes[0].content).toContain("系统错误");
+    expect(notes[0].content).toContain("决定是否继续");
+    expect(notes[0].content).not.toContain("用户主动停止");
+  });
+
+  it("中断后的 user 产生 assistant 即闭合：后续轮次不再注入提示", () => {
+    nextSeq = 0;
+    const entries: TranscriptEntry[] = [
+      user("u1", "question"),
+      assistant("a1", "partial"),
+      {
+        seq: ++nextSeq,
+        id: "run-1:interruption:runtime_error",
+        at: nextSeq,
+        kind: "interruption",
+        runId: "run-1",
+        payload: { reason: "runtime_error" },
+      },
+      user("u2", "重试"),
+      assistant("a2", "complete answer"),
+      user("u3", "下一个问题"),
+    ];
+    const model = buildFullModelContext(entries, noRuns);
+    expect(model.messages.filter((message) => message.visibility === "internal")).toHaveLength(0);
+  });
+
+  it("中断前带工具调用的 assistant 不误判为闭合，取消提示仍注入", () => {
+    nextSeq = 0;
+    const entries: TranscriptEntry[] = [
+      user("u1", "帮我发邮件"),
+      assistant("a1", "正在处理", [{ id: "call-1", name: "send_email", arguments: "{}" }], "run-1"),
+      {
+        seq: ++nextSeq,
+        id: "run-1:interruption:user_cancel",
+        at: nextSeq,
+        kind: "interruption",
+        runId: "run-1",
+        payload: { reason: "user_cancel" },
+      },
+      user("u2", "算了，改成先整理要点"),
+    ];
+    const model = buildFullModelContext(entries, noRuns);
+    const notes = model.messages.filter((message) => message.visibility === "internal");
+    // 中断前的 assistant（含工具调用）不算闭合证据：提示仍要注入
+    expect(notes).toHaveLength(1);
+    expect(notes[0].content).toContain("用户主动停止");
+    expect(model.messages[model.messages.indexOf(notes[0]) + 1]).toEqual({ role: "user", content: "算了，改成先整理要点" });
+  });
+
+  it("中断后尚无新 user 时暂不注入：下一个 user 到达前的窗口保持干净", () => {
+    nextSeq = 0;
+    const entries: TranscriptEntry[] = [
+      user("u1", "question"),
+      assistant("a1", "partial"),
+      {
+        seq: ++nextSeq,
+        id: "run-1:interruption:user_cancel",
+        at: nextSeq,
+        kind: "interruption",
+        runId: "run-1",
+        payload: { reason: "user_cancel" },
+      },
+    ];
+    const model = buildFullModelContext(entries, noRuns);
+    expect(model.messages.filter((message) => message.visibility === "internal")).toHaveLength(0);
+  });
+
   it("applies a tombstone to seeded messages and preserves original assistant aliases", () => {
     nextSeq = 0;
     const seededEntries: TranscriptEntry[] = [

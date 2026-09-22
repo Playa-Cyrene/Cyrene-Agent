@@ -143,7 +143,7 @@ export async function runHarnessWithAdapter(
     ? "completed"
     : terminal.status === "cancelled" ? "cancelled" : "failed";
 
-  // ── 取消轨迹闭合（先于 runStore 终态结算）──
+  // ── 中断轨迹闭合（先于 runStore 终态结算）──
   // cancelled：为 started / planned 工具补确定性闭合条目并写 interruption 边界；
   // 闭合失败不得声称轨迹协议完整 → 转 runtime_error 终态（fail-closed）。
   if (terminal.status === "cancelled" || result.terminateReason === "cancelled") {
@@ -156,6 +156,19 @@ export async function runHarnessWithAdapter(
       console.error(`${LOG_PREFIX} transcript interruption closure failed:`, error);
       terminal = { status: "runtime_error", reason: "transcript_interruption_closure_failed", externalEffectsMayContinue: true };
       terminalRunStatus = "failed";
+    }
+  } else if (terminal.status === "timeout" || terminal.status === "runtime_error") {
+    // 失败/超时终态同样写 interruption 边界：下一轮模型上下文才能区分
+    // 「系统没完成」与「用户主动取消」。闭合失败只记日志——终态本身就是
+    // 失败，无需像取消路径那样转写 runtime_error（else-if 也保证了取消闭合
+    // 失败转出的 runtime_error 不会二次写入不同 reason 的边界）
+    try {
+      await options.transcriptSink?.closeInterruption({
+        reason: "runtime_error",
+        runSession: runStore.get(runId),
+      });
+    } catch (error) {
+      console.error(`${LOG_PREFIX} transcript failure closure failed:`, error);
     }
   }
   // 终态持久化必须先于 Review 收尾：Review 读取的是刚写入的不可变 run 结果。

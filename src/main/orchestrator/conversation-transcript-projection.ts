@@ -225,7 +225,8 @@ function materializeNodes(
   return { messages, uncertainEffects, sourceSeqs };
 }
 
-interface DeliveryNotePlacement {
+/** 模型上下文内部提示（送达失败 / 中断边界等）的插入位置：beforeSeq 前插一条。 */
+interface InternalNotePlacement {
   note: ChatMessage;
   sourceSeq: number;
   beforeSeq: number;
@@ -235,7 +236,7 @@ function failedDeliveryNotesWithSources(
   entries: TranscriptEntry[],
   activeNodes: ActiveNode[],
   minSeqExclusive = -Infinity,
-): { notes: DeliveryNotePlacement[] } {
+): { notes: InternalNotePlacement[] } {
   const latestByAssistant = new Map<string, Extract<TranscriptEntry, { kind: "delivery_receipt" }>>();
   for (const entry of entries) {
     if (entry.kind !== "delivery_receipt" || entry.seq <= minSeqExclusive) continue;
@@ -247,7 +248,7 @@ function failedDeliveryNotesWithSources(
     }
   }
 
-  const notes: DeliveryNotePlacement[] = [];
+  const notes: InternalNotePlacement[] = [];
   for (const receipt of latestByAssistant.values()) {
     if (receipt.payload.status !== "failed") continue;
     const assistantIndex = activeNodes.findIndex(
@@ -285,19 +286,79 @@ function failedDeliveryNotesWithSources(
   return { notes };
 }
 
-function insertDeliveryNotes(
+/**
+ * 未闭合中断的一次性内部提示（与送达失败提示同构，只进模型上下文，不进聊天 UI）：
+ * - 找到中断条目之后（seq 更大）的第一个活动 user，提示插在它之前；
+ * - 该 user 之后一旦出现 assistant 即视为已闭合，后续轮次不再注入；
+ * - 闭合判定必须是「中断后第一个 user 之后的 assistant」——中断前的
+ *   assistant（含带工具调用的）不算闭合证据；
+ * - 活动分支感知：user 查找走 activeNodes，rewind / 墓碑裁掉的分支里
+ *   找不到锚点自然不注入；
+ * - sourceSeq 用中断条目自身的 seq，与压缩/重放的来源映射保持一致。
+ */
+function interruptionNotesWithSources(
+  entries: TranscriptEntry[],
+  activeNodes: ActiveNode[],
+  minSeqExclusive = -Infinity,
+): { notes: InternalNotePlacement[] } {
+  const notes: InternalNotePlacement[] = [];
+  for (const entry of entries) {
+    if (entry.kind !== "interruption" || entry.seq <= minSeqExclusive) continue;
+    const nextUser = activeNodes.find(
+      (node): node is Extract<ActiveNode, { kind: "user" }> => node.kind === "user" && node.entry.seq > entry.seq,
+    );
+    if (!nextUser) continue;
+    const nextAssistant = activeNodes.find(
+      (node) => node.kind === "assistant" && node.entry.seq > nextUser.entry.seq,
+    );
+    if (nextAssistant) continue;
+    notes.push({
+      note: {
+        role: "system",
+        visibility: "internal",
+        content: entry.payload.reason === "user_cancel"
+          ? "上一轮由用户主动停止，未完整结束。不要自行延续上一轮；以用户最新消息为准。"
+          : "上一轮因系统错误未完整结束，没有生成完整回答。请结合用户最新消息决定是否继续。",
+        internal: {
+          kind: "recovery",
+          revision: 1,
+          digest: `interruption:${entry.payload.reason}`,
+          id: `interruption-note:${entry.id}`,
+          runId: entry.runId ?? "interruption",
+          createdAt: entry.at,
+        },
+      },
+      sourceSeq: entry.seq,
+      beforeSeq: nextUser.entry.seq,
+    });
+  }
+  return { notes };
+}
+
+/**
+ * 按插入点分组插入内部提示：同一 beforeSeq 可能有多条（如中断提示 + 送达失败
+ * 提示同时指向一个 user），组内按来源 seq 稳定排序，不互相覆盖。
+ */
+function insertInternalNotes(
   materialized: { messages: ChatMessage[]; sourceSeqs: number[] },
-  placements: DeliveryNotePlacement[],
+  placements: InternalNotePlacement[],
 ): { messages: ChatMessage[]; sourceSeqs: number[] } {
   if (placements.length === 0) return materialized;
-  const byBeforeSeq = new Map(placements.map((placement) => [placement.beforeSeq, placement]));
+  const byBeforeSeq = new Map<number, InternalNotePlacement[]>();
+  for (const placement of placements) {
+    const group = byBeforeSeq.get(placement.beforeSeq);
+    if (group) group.push(placement);
+    else byBeforeSeq.set(placement.beforeSeq, [placement]);
+  }
   const messages: ChatMessage[] = [];
   const sourceSeqs: number[] = [];
   for (let index = 0; index < materialized.messages.length; index += 1) {
     const before = byBeforeSeq.get(materialized.sourceSeqs[index]);
     if (before) {
-      messages.push(before.note);
-      sourceSeqs.push(before.sourceSeq);
+      for (const placement of [...before].sort((left, right) => left.sourceSeq - right.sourceSeq)) {
+        messages.push(placement.note);
+        sourceSeqs.push(placement.sourceSeq);
+      }
     }
     messages.push(materialized.messages[index]);
     sourceSeqs.push(materialized.sourceSeqs[index]);
@@ -676,12 +737,13 @@ export function buildFullModelContextWithSources(
   const active = reduceActiveTranscript(entries);
   const materialized = materializeNodes(active.nodes, runReader);
   const delivery = failedDeliveryNotesWithSources(entries, active.nodes);
-  const withDeliveryNotes = insertDeliveryNotes(materialized, delivery.notes);
+  const interruption = interruptionNotesWithSources(entries, active.nodes);
+  const withInternalNotes = insertInternalNotes(materialized, [...delivery.notes, ...interruption.notes]);
   return {
-    messages: withDeliveryNotes.messages,
+    messages: withInternalNotes.messages,
     uncertainEffects: materialized.uncertainEffects,
     throughSeq: active.throughSeq,
-    sourceSeqs: withDeliveryNotes.sourceSeqs,
+    sourceSeqs: withInternalNotes.sourceSeqs,
   };
 }
 
@@ -701,17 +763,18 @@ export function buildCompactionSourceView(
   const suffix = active.nodes.filter((node) => node.entry.seq > checkpoint.payload.sourceThroughSeq);
   const materialized = materializeNodes(suffix, runReader);
   const delivery = failedDeliveryNotesWithSources(entries, active.nodes, checkpoint.payload.sourceThroughSeq);
-  const suffixWithDeliveryNotes = insertDeliveryNotes(materialized, delivery.notes);
+  const interruption = interruptionNotesWithSources(entries, active.nodes, checkpoint.payload.sourceThroughSeq);
+  const suffixWithInternalNotes = insertInternalNotes(materialized, [...delivery.notes, ...interruption.notes]);
   return {
     messages: [
       checkpoint.payload.replacement,
-      ...suffixWithDeliveryNotes.messages,
+      ...suffixWithInternalNotes.messages,
     ],
     uncertainEffects: materialized.uncertainEffects,
     throughSeq: active.throughSeq,
     // 旧摘要对应的源边界是上一个检查点的 sourceThroughSeq：切点覆盖它时，
     // 新检查点即完整接管旧检查点所代表的历史。
-    sourceSeqs: [checkpoint.payload.sourceThroughSeq, ...suffixWithDeliveryNotes.sourceSeqs],
+    sourceSeqs: [checkpoint.payload.sourceThroughSeq, ...suffixWithInternalNotes.sourceSeqs],
     previousReplacement: checkpoint.payload.replacement,
   };
 }
@@ -753,11 +816,12 @@ export function buildModelContextFromCompactedView(
   // the compacted prefix.
   const allActiveMaterialized = materializeNodes(active.nodes, runReader);
   const delivery = failedDeliveryNotesWithSources(entries, active.nodes, checkpoint.payload.sourceThroughSeq);
-  const suffixWithDeliveryNotes = insertDeliveryNotes(materialized, delivery.notes);
+  const interruption = interruptionNotesWithSources(entries, active.nodes, checkpoint.payload.sourceThroughSeq);
+  const suffixWithInternalNotes = insertInternalNotes(materialized, [...delivery.notes, ...interruption.notes]);
   return {
     messages: [
       checkpoint.payload.replacement,
-      ...suffixWithDeliveryNotes.messages,
+      ...suffixWithInternalNotes.messages,
     ],
     uncertainEffects: allActiveMaterialized.uncertainEffects,
     throughSeq: active.throughSeq,

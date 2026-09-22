@@ -221,7 +221,10 @@ export type TranscriptEntry =
         fullRef?: string;
       };
     })
-  | (TranscriptEnvelopeBase & { kind: "interruption"; payload: { reason: "user_cancel" } })
+  | (TranscriptEnvelopeBase & {
+      kind: "interruption";
+      payload: { reason: "user_cancel" | "runtime_error" };
+    })
   | (TranscriptEnvelopeBase & {
       kind: "turn_rewind";
       payload: {

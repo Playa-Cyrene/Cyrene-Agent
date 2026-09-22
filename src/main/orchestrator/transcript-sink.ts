@@ -40,9 +40,13 @@ export interface TranscriptSink {
     fullRef?: string;
     roundId?: string;
   }): Promise<void>;
-  /** 取消终态闭合：为 started / planned 工具补合成结果并写 interruption 边界。 */
+  /**
+   * 中断终态闭合：为 started / planned 工具补合成结果并写 interruption 边界。
+   * reason 区分「用户主动取消」与「系统侧失败/超时」——下一轮模型上下文据此
+   * 选择不同姿态（不自行延续 vs 结合新消息决定是否继续）。
+   */
   closeInterruption(input: {
-    reason: "user_cancel";
+    reason: "user_cancel" | "runtime_error";
     runSession: HarnessRunSession | null;
   }): Promise<void>;
   /** 快照检查点：只在快照写失败时 reject，永不改写 JSONL。 */
@@ -115,6 +119,8 @@ export function createTranscriptSink(input: {
           }
         }
       }
+      // 文案按 reason 区分：取消 vs 系统侧失败（下一轮上下文能分辨两种语义）
+      const userCancelled = reason === "user_cancel";
       for (const call of runSession?.toolCalls ?? []) {
         if (closedToolCallIds.has(call.toolCallId)) continue;
         // started → 派发过但无结果（unknown）；planned → 从未派发（not_executed）；
@@ -134,7 +140,9 @@ export function createTranscriptSink(input: {
           content: JSON.stringify({
             outcome,
             tool: call.toolName,
-            message: outcome === "unknown" ? "工具执行中被取消，结果未知" : "取消时未开始执行",
+            message: outcome === "unknown"
+              ? (userCancelled ? "工具执行中被取消，结果未知" : "上一轮系统错误，工具已启动但结果未知")
+              : (userCancelled ? "取消时未开始执行" : "上一轮系统错误时未开始执行"),
           }),
         };
         await store.append(conversationId, {

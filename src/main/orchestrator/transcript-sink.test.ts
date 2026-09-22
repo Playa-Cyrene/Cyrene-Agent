@@ -111,6 +111,40 @@ describe("TranscriptSink", () => {
     expect((await store.read("c1")).entries).toHaveLength(entries.length);
   });
 
+  it("closes runtime_error with system-failure wording, reason kept in the boundary, retry idempotent", async () => {
+    const store = makeStore();
+    const sink = createTranscriptSink({ store, conversationId: "c1", runId: "run-1" });
+    await sink.appendAssistant({
+      message: {
+        role: "assistant",
+        content: "working",
+        toolCalls: [
+          { id: "startedCall", name: "send_email", arguments: "{}" },
+          { id: "queuedCall", name: "write_file", arguments: "{}" },
+        ],
+      },
+      roundId: "round-0",
+    });
+    const runSession = makeRunSession([
+      { toolCallId: "startedCall", toolName: "send_email", sideEffect: "non_idempotent_side_effect", status: "started", updatedAt: 0 },
+      { toolCallId: "queuedCall", toolName: "write_file", sideEffect: "idempotent_mutation", status: "planned", updatedAt: 0 },
+    ]);
+
+    await sink.closeInterruption({ reason: "runtime_error", runSession });
+
+    expect(await outcomes(store)).toEqual({ startedCall: "unknown", queuedCall: "not_executed" });
+    const entries = (await store.read("c1")).entries;
+    expect(entries.filter((entry) => entry.kind === "interruption")).toEqual([
+      expect.objectContaining({ payload: { reason: "runtime_error" } }),
+    ]);
+    // 系统错误路径的合成文案区分于取消路径（下一轮上下文可分辨两种语义）
+    const toolClose = entries.find((entry) => entry.kind === "tool_result" && entry.payload.toolCallId === "startedCall");
+    expect(String(toolClose?.payload.message.content)).toContain("上一轮系统错误");
+    // 确定性 entryId：runtime_error 重试闭合同样幂等
+    await sink.closeInterruption({ reason: "runtime_error", runSession });
+    expect((await store.read("c1")).entries).toHaveLength(entries.length);
+  });
+
   it("skips calls whose results are already committed to the transcript", async () => {
     const store = makeStore();
     const sink = createTranscriptSink({ store, conversationId: "c1", runId: "run-1" });
