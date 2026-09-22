@@ -265,4 +265,53 @@ describe("ConversationSessionMigration", () => {
     expect(transcript.entries.filter((entry) => entry.kind === "user")).toHaveLength(1);
     expect(transcript.entries.filter((entry) => entry.id === "user:v1:race-user:r1")).toHaveLength(1);
   });
+
+  it("79fad414 之前的旧格式轨迹条目：迁移跳过已落盘轮次，不再撞幂等冲突", async () => {
+    const { createSession, initialize } = await import("../chats/chats-store");
+    initialize();
+    const { ConversationTranscriptStore } = await import("./conversation-transcript-store");
+
+    const session = createSession({
+      title: "旧格式轨迹会话",
+      initialMessages: [
+        { id: "u1", role: "user", content: "拿抽查工具查我几个四则运算题", at: 1 },
+        { id: "a1", role: "model", content: "3 + 5 = 8", at: 2 },
+      ],
+    });
+
+    // 模拟 79fad414 之前落盘的旧格式：user 条目 id 为 ${runId}:user:${turnId} 且带顶层 runId 字段；
+    // assistant 为 backfill:v1 条目（turnId 与 v1 消息 id 一致）
+    const transcriptStore = new ConversationTranscriptStore(mocks.userDataDir);
+    type AppendInput = Parameters<typeof transcriptStore.append>[1];
+    await transcriptStore.append(session.id, {
+      id: "run-1789951197496-fbw3t3:user:u1",
+      at: 1,
+      kind: "user",
+      turnId: "u1",
+      revision: 1,
+      runId: "run-1789951197496-fbw3t3",
+      payload: { text: "拿抽查工具查我几个四则运算题" },
+    } as unknown as AppendInput);
+    await transcriptStore.append(session.id, {
+      id: "backfill:v1:a1:assistant",
+      at: 2,
+      kind: "assistant",
+      turnId: "a1",
+      payload: { role: "assistant", content: "3 + 5 = 8" },
+    });
+
+    const { createConversationSessionMigration } = await import("./conversation-session-migration");
+    const migration = createConversationSessionMigration(mocks.userDataDir);
+    const record = await migration.ensureConversationMigrated(session.id);
+    expect(record?.schemaVersion).toBe(2);
+
+    const transcript = await transcriptStore.read(session.id);
+    expect(transcript.entries.filter((entry) => entry.id.startsWith("migration:v2:"))).toHaveLength(0);
+    expect(transcript.entries.filter((entry) => entry.kind === "user")).toHaveLength(1);
+    expect(transcript.entries.filter((entry) => entry.kind === "assistant")).toHaveLength(1);
+
+    const journal = migration.getJournal();
+    const projection = await journal.readProjection(session.id);
+    expect(projection.messages).toHaveLength(2);
+  });
 });

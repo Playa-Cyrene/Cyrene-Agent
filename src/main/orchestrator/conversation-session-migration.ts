@@ -189,7 +189,17 @@ export class ConversationSessionMigration {
     if (current.schemaVersion === 2) return current;
 
     while (current.schemaVersion === 1) {
+      // 79fad414 之前创建的会话，消息已以旧格式落盘（backfill:v1: / ${runId}:user: 等条目，turnId 一致）。
+      // 已落盘的轮次整体跳过（canonical 条目与展示补丁都不再追加）：
+      // 既避免迁移追加撞上次级幂等键（TRANSCRIPT_IDEMPOTENCY_CONFLICT），也避免 assistant 消息重复投影。
+      const journaled = await this.store.read(sessionId);
+      const journaledTurns = new Set(
+        journaled.entries
+          .filter((entry) => (entry.kind === "user" || entry.kind === "assistant") && entry.turnId)
+          .map((entry) => entry.turnId as string),
+      );
       for (const draft of buildLegacyBackfillDrafts(current.messages)) {
+        if (journaledTurns.has(draft.message.id)) continue;
         const canonicalId = `migration:v2:${draft.message.id}:canonical`;
         if (draft.message.role === "user") {
           await this.store.append(sessionId, {
