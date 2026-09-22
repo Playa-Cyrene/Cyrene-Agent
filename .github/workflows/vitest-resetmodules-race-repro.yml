@@ -26,11 +26,11 @@ jobs:
       - name: Override Vitest version
         run: npm install --no-save --package-lock=false vitest@${{ matrix.vitest }}
 
-      - name: Run memory-manager repro repeatedly
+      - name: Run memory + rag shard repeatedly
         shell: bash
         run: |
           set -euo pipefail
-          for i in $(seq 1 20); do
-            echo "=== iteration $i / Vitest ${{ matrix.vitest }} ==="
-            npx vitest run src/main/memory/memory-manager.test.ts
+          for i in $(seq 1 3); do
+            echo "=== shard iteration $i / Vitest ${{ matrix.vitest }} ==="
+            npx vitest run src/main/memory src/main/rag
           done
