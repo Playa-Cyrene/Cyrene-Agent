@@ -110,6 +110,54 @@ describe("ConversationTranscriptStore", () => {
     await expect(store.read("desktop-identity")).rejects.toThrow("TRANSCRIPT_IDENTITY_MISMATCH");
   });
 
+  it("全新目录 identity 首写失败后重试可自愈", async () => {
+    const { root, store } = createStore();
+    const identityWrite = vi.spyOn(fs.promises, "writeFile")
+      .mockRejectedValueOnce(new Error("simulated-crash"));
+    await expect(store.append("desktop-fresh", userDraft("e1", "u-1", 1, "one")))
+      .rejects.toThrow("simulated-crash");
+    identityWrite.mockRestore();
+
+    // 重试时哈希目录已存在但没有 identity：空目录自愈补写后正常追加
+    const restarted = new ConversationTranscriptStore(root, { now: () => 1_000 });
+    const appended = await restarted.append("desktop-fresh", userDraft("e1", "u-1", 1, "one"));
+    expect(appended.seq).toBe(1);
+    expect((await restarted.read("desktop-fresh")).entries.map((entry) => entry.id))
+      .toEqual(["e1"]);
+  });
+
+  it("identity 缺失但目录已有轨迹数据时仍拒绝打开", async () => {
+    const { store, root } = createStore();
+    await store.append("desktop-missing", userDraft("e1", "u-1", 1, "one"));
+    await fs.promises.rm(
+      path.join(root, "transcripts", transcriptStorageKey("desktop-missing"), "identity.json"),
+    );
+    await expect(store.read("desktop-missing")).rejects.toThrow("TRANSCRIPT_IDENTITY_MISMATCH");
+  });
+
+  it("identity 损坏且目录无其它文件时自愈补写", async () => {
+    const { root, store } = createStore();
+    const dir = path.join(root, "transcripts", transcriptStorageKey("desktop-corrupt"));
+    await fs.promises.mkdir(dir, { recursive: true });
+    await fs.promises.writeFile(path.join(dir, "identity.json"), '{"schemaVersion":1,"conversa', "utf8");
+
+    const appended = await store.append("desktop-corrupt", userDraft("e1", "u-1", 1, "one"));
+    expect(appended.seq).toBe(1);
+    await expect(fs.promises.readFile(path.join(dir, "identity.json"), "utf8"))
+      .resolves.toBe(JSON.stringify({ schemaVersion: 1, conversationId: "desktop-corrupt" }));
+  });
+
+  it("identity 损坏且目录已有轨迹数据时仍拒绝打开", async () => {
+    const { store, root } = createStore();
+    await store.append("desktop-corrupt-data", userDraft("e1", "u-1", 1, "one"));
+    await fs.promises.writeFile(
+      path.join(root, "transcripts", transcriptStorageKey("desktop-corrupt-data"), "identity.json"),
+      '{"schemaVersion":1,"conversa',
+      "utf8",
+    );
+    await expect(store.read("desktop-corrupt-data")).rejects.toThrow("TRANSCRIPT_IDENTITY_MISMATCH");
+  });
+
   it("哈希目录优先于同名 legacy 目录且保留 legacy 审计副本", async () => {
     const { store, root } = createStore();
     await store.append("desktop-priority", userDraft("e1", "u-1", 1, "one"));

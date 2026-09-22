@@ -654,18 +654,44 @@ export class ConversationTranscriptStore {
     await fs.promises.writeFile(path.join(dir, IDENTITY_FILE_NAME), JSON.stringify(identity), "utf8");
   }
 
+  /**
+   * 校验目录身份文件；identity 缺失或损坏时仅对"空目录"自愈补写。
+   * 首次建库时 mkdir 成功但 identity 写入失败的目录会被下一次打开视为可自愈，
+   * 避免该会话的哈希目录永久不可用；目录内已有任何轨迹数据则维持 fail-closed。
+   */
   private async validateIdentity(dir: string, conversationId: string): Promise<void> {
+    let raw: string | undefined;
     try {
-      const raw = await fs.promises.readFile(path.join(dir, IDENTITY_FILE_NAME), "utf8");
-      const identity = JSON.parse(raw) as Partial<TranscriptIdentity>;
-      if (
-        identity.schemaVersion !== 1 ||
-        identity.conversationId !== conversationId
-      ) throw new Error("TRANSCRIPT_IDENTITY_MISMATCH");
-    } catch (error) {
-      if (error instanceof Error && error.message === "TRANSCRIPT_IDENTITY_MISMATCH") throw error;
+      raw = await fs.promises.readFile(path.join(dir, IDENTITY_FILE_NAME), "utf8");
+    } catch {
+      raw = undefined; // identity 缺失或不可读：落入下方空目录自愈判断
+    }
+    if (raw !== undefined) {
+      try {
+        const identity = JSON.parse(raw) as Partial<TranscriptIdentity>;
+        if (identity.schemaVersion === 1 && identity.conversationId === conversationId) return;
+        // 身份文件可解析但不属于本会话：可能是散列碰撞或人工拷贝，失败即停止
+        throw new Error("TRANSCRIPT_IDENTITY_MISMATCH");
+      } catch (error) {
+        if (error instanceof Error && error.message === "TRANSCRIPT_IDENTITY_MISMATCH") throw error;
+        // JSON 损坏：落入下方空目录自愈判断
+      }
+    }
+    if (await this.directoryHasTranscriptData(dir)) {
       throw new Error("TRANSCRIPT_IDENTITY_MISMATCH");
     }
+    await this.writeIdentity(dir, conversationId);
+  }
+
+  /** 目录内除 identity.json 外是否还有任何文件（日志/快照/manifest/segments/active）。 */
+  private async directoryHasTranscriptData(dir: string): Promise<boolean> {
+    let names: string[];
+    try {
+      names = await fs.promises.readdir(dir);
+    } catch {
+      return true; // 无法确认目录内容时按有数据失败处理
+    }
+    return names.some((name) => name !== IDENTITY_FILE_NAME);
   }
 }
 
