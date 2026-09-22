@@ -75,7 +75,7 @@ export async function runHarnessWithAdapter(
     messages: runMessages,
     runId,
     ...(recovered ? { initialState: recovered.state } : {}),
-    ...(recovered ? { initialCache: recovered.cache } : {}),
+    ...(recovered ? { initialCache: recovered.cacheState } : {}),
     tools,
     vendorConfig,
     config: {

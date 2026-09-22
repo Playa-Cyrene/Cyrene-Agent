@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { prepareHarnessRecovery } from "./run-recovery";
+import { prepareHarnessRecoveryState } from "./run-recovery";
 import type { HarnessRunSession } from "./run-store";
 
 function session(toolCalls: HarnessRunSession["toolCalls"]): HarnessRunSession {
@@ -24,38 +24,47 @@ function session(toolCalls: HarnessRunSession["toolCalls"]): HarnessRunSession {
   };
 }
 
-describe("prepareHarnessRecovery", () => {
+describe("prepareHarnessRecoveryState", () => {
   it("turns an interrupted non-idempotent invocation into an unknown fact without replaying it", () => {
-    const recovered = prepareHarnessRecovery(session([
+    const recovered = prepareHarnessRecoveryState(session([
       { toolCallId: "mail-1", toolName: "send_email", sideEffect: "non_idempotent_side_effect", status: "started", updatedAt: 2 },
     ]), { workspaceRoot: "E:\\project" });
 
     expect(recovered.state.uncertainEffects).toEqual([
       expect.objectContaining({ toolCallId: "mail-1", toolName: "send_email" }),
     ]);
-    expect(recovered.messages.at(-1)).toMatchObject({ role: "tool", toolCallId: "mail-1" });
-    expect(recovered.messages.at(-1)?.content).toContain("unknown_after_interruption");
+    expect(recovered).not.toHaveProperty("messages");
+    expect(recovered.uncertainEffects).toEqual(recovered.state.uncertainEffects);
     expect(recovered.recoveryContext).toContain("不得自动重放");
   });
 
-  it("repairs an interrupted read call as not executed so the model chooses whether to read again", () => {
-    const recovered = prepareHarnessRecovery(session([
+  it("leaves interrupted read calls out of execution recovery so the model chooses whether to read again", () => {
+    const recovered = prepareHarnessRecoveryState(session([
       { toolCallId: "read-1", toolName: "read_file", sideEffect: "read_only", status: "started", updatedAt: 2 },
     ]), { workspaceRoot: "E:\\project" });
 
     expect(recovered.state.uncertainEffects).toEqual([]);
-    expect(recovered.messages.at(-1)?.content).toContain("not_executed_after_interruption");
+    expect(recovered).not.toHaveProperty("messages");
+  });
+
+  it("does not turn planned calls into uncertain effects", () => {
+    const recovered = prepareHarnessRecoveryState(session([
+      { toolCallId: "read-1", toolName: "read_file", sideEffect: "read_only", status: "planned", updatedAt: 2 },
+    ]), { workspaceRoot: "E:\\project" });
+
+    expect(recovered.uncertainEffects).toEqual([]);
+    expect(recovered.recoveryContext).toContain("尚未启动");
   });
 
   it("rejects recovery when the bound workspace changed", () => {
-    expect(() => prepareHarnessRecovery(session([]), { workspaceRoot: "E:\\another-project" }))
+    expect(() => prepareHarnessRecoveryState(session([]), { workspaceRoot: "E:\\another-project" }))
       .toThrow("HARNESS_RECOVERY_WORKSPACE_MISMATCH");
   });
 
   it("keeps recovery explicit about a changed model and unavailable old tools", () => {
     const interrupted = session([]);
     interrupted.request.enabledToolIds = ["read_file", "removed_tool"];
-    const recovered = prepareHarnessRecovery(interrupted, {
+    const recovered = prepareHarnessRecoveryState(interrupted, {
       workspaceRoot: "E:\\project",
       provider: "anthropic",
       model: "new-model",
@@ -70,9 +79,16 @@ describe("prepareHarnessRecovery", () => {
     const interrupted = session([]);
     const originalMessages = JSON.parse(JSON.stringify(interrupted.messages));
 
-    const recovered = prepareHarnessRecovery(interrupted, { workspaceRoot: "E:\\project" });
+    const recovered = prepareHarnessRecoveryState(interrupted, { workspaceRoot: "E:\\project" });
 
-    expect(recovered.cache).toEqual({ cacheEpoch: 4, epochReason: "recovery" });
+    expect(recovered.cacheState).toEqual({ cacheEpoch: 4, epochReason: "recovery" });
     expect(interrupted.messages).toEqual(originalMessages);
+  });
+
+  it("rejects recovery when the conversation identity changed", () => {
+    expect(() => prepareHarnessRecoveryState(session([]), {
+      conversationId: "another-chat",
+      workspaceRoot: "E:\\project",
+    })).toThrow("HARNESS_RECOVERY_CONVERSATION_MISMATCH");
   });
 });

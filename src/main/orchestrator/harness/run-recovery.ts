@@ -1,92 +1,91 @@
-import type { ChatMessage, ToolCall } from "../vendors/types";
-import { parseToolCallArgs, toolCallFingerprint, type AgentState, type HarnessCacheState } from "./types";
+import { toolCallFingerprint, type AgentState, type HarnessCacheState, type UncertainEffect } from "./types";
 import type { HarnessRunSession } from "./run-store";
 
 export interface HarnessRecoveryEnvironment {
+  conversationId?: string;
   workspaceRoot?: string;
   provider?: string;
   model?: string;
   enabledToolIds?: string[];
+  promptFingerprint?: string;
+  toolSchemaFingerprint?: string;
 }
 
-export interface PreparedHarnessRecovery {
-  messages: ChatMessage[];
+export interface PreparedHarnessRecoveryState {
   state: AgentState;
-  cache: HarnessCacheState;
-  recoveryContext: string;
+  cacheState: HarnessCacheState;
+  recoveryContext?: string;
+  uncertainEffects: UncertainEffect[];
+}
+
+function clone<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
 }
 
 /**
- * Repairs an incomplete provider transcript without pretending an interrupted tool succeeded.
- * It is intentionally pure: callers decide whether the user explicitly asked to continue.
+ * 只恢复 Harness 的执行状态，不重放或修补旧 run 的消息。
+ * 会话消息始终由 journal 提供；这里仅消费 runStore 的状态、缓存和工具执行分类。
  */
-export function prepareHarnessRecovery(
+export function prepareHarnessRecoveryState(
   session: HarnessRunSession,
   environment: HarnessRecoveryEnvironment,
-): PreparedHarnessRecovery {
+): PreparedHarnessRecoveryState {
   if (session.status !== "interrupted") throw new Error("HARNESS_RECOVERY_NOT_INTERRUPTED");
+  if (environment.conversationId && environment.conversationId !== session.conversationId) {
+    throw new Error("HARNESS_RECOVERY_CONVERSATION_MISMATCH");
+  }
   if (session.request.workspaceRoot && environment.workspaceRoot !== session.request.workspaceRoot) {
     throw new Error("HARNESS_RECOVERY_WORKSPACE_MISMATCH");
   }
 
-  const messages = JSON.parse(JSON.stringify(session.messages)) as ChatMessage[];
-  const state = JSON.parse(JSON.stringify(session.state)) as AgentState;
-  const resolvedCallIds = new Set(messages.flatMap((message) => message.role === "tool" && message.toolCallId ? [message.toolCallId] : []));
-  const callById = new Map<string, ToolCall>();
-  for (const message of messages) {
-    for (const call of message.toolCalls ?? []) callById.set(call.id, call);
-  }
-
-  for (const persisted of session.toolCalls) {
-    if (resolvedCallIds.has(persisted.toolCallId) || persisted.status === "committed" || persisted.status === "not_executed") continue;
-    const isUnknown = persisted.sideEffect === "non_idempotent_side_effect";
-    const call = callById.get(persisted.toolCallId);
-    if (isUnknown) {
-      const args = call ? parseToolCallArgs(call) : {};
-      const fingerprint = toolCallFingerprint(persisted.toolName, args);
-      if (!state.uncertainEffects.some((effect) => effect.toolCallId === persisted.toolCallId)) {
-        state.uncertainEffects.push({
-          id: `${session.runId}:${persisted.toolCallId}`,
-          toolCallId: persisted.toolCallId,
-          fingerprint,
-          toolName: persisted.toolName,
-          message: "该外部副作用在应用中断时尚未确认结果",
-        });
-      }
-    }
-    messages.push({
-      role: "tool",
-      toolCallId: persisted.toolCallId,
-      content: JSON.stringify({
-        outcome: isUnknown ? "unknown_after_interruption" : "not_executed_after_interruption",
-        tool: persisted.toolName,
-        message: isUnknown
-          ? "应用在该副作用完成前中断；不得自动重放，先查证或询问用户。"
-          : "应用在工具执行完成前中断；请根据当前任务自行决定是否重新读取。",
-      }),
-    });
-  }
-
+  const state = clone(session.state);
   const differences: string[] = [];
-  if (environment.provider && environment.model
-    && (environment.provider !== session.request.provider || environment.model !== session.request.model)) {
-    differences.push(`模型已变化：原为 ${session.request.provider}/${session.request.model}，当前为 ${environment.provider}/${environment.model}。`);
+  if ((environment.provider && environment.provider !== session.request.provider)
+    || (environment.model && environment.model !== session.request.model)) {
+    differences.push(`模型已变化：原为 ${session.request.provider}/${session.request.model}，当前为 ${environment.provider ?? session.request.provider}/${environment.model ?? session.request.model}。`);
   }
-  if (environment.enabledToolIds && session.request.enabledToolIds) {
+  const previousToolIds = session.request.enabledToolIds ?? [];
+  if (environment.enabledToolIds && previousToolIds.length > 0) {
     const currentTools = new Set(environment.enabledToolIds);
-    const missing = session.request.enabledToolIds.filter((id) => !currentTools.has(id));
+    const missing = previousToolIds.filter((id) => !currentTools.has(id));
     if (missing.length > 0) differences.push(`恢复时不可用的旧工具：${missing.join(", ")}。不得假装调用成功。`);
+  }
+  if (environment.promptFingerprint && environment.promptFingerprint !== session.request.promptFingerprint) {
+    differences.push("恢复时提示词指纹已变化，缓存上下文将重新建立。");
+  }
+  if (environment.toolSchemaFingerprint && environment.toolSchemaFingerprint !== session.request.toolSchemaFingerprint) {
+    differences.push("恢复时工具目录指纹已变化，缓存上下文将重新建立。");
+  }
+
+  const plannedTools: string[] = [];
+  for (const persisted of session.toolCalls) {
+    if (persisted.status === "planned") {
+      plannedTools.push(persisted.toolName);
+      continue;
+    }
+    if (persisted.status !== "started" && persisted.status !== "unknown") continue;
+    if (persisted.sideEffect !== "non_idempotent_side_effect") continue;
+    if (!state.uncertainEffects.some((effect) => effect.toolCallId === persisted.toolCallId)) {
+      state.uncertainEffects.push({
+        id: `${session.runId}:${persisted.toolCallId}`,
+        toolCallId: persisted.toolCallId,
+        fingerprint: toolCallFingerprint(persisted.toolName, {}),
+        toolName: persisted.toolName,
+        message: "该外部副作用在应用中断时尚未确认结果",
+      });
+    }
   }
 
   return {
-    messages,
     state,
-    cache: { cacheEpoch: session.cache.cacheEpoch + 1, epochReason: "recovery" },
+    cacheState: { cacheEpoch: session.cache.cacheEpoch + 1, epochReason: "recovery" },
     recoveryContext: [
       `这是从意外中断的运行 ${session.runId} 恢复的任务。`,
       `已完成轮数：${session.rounds}；Todo 是可变工作笔记，应据真实进展更新。`,
       "中断中的外部副作用已标为未知：不得自动重放，必须先查证、询问用户，或诚实说明无法确认。",
+      ...(plannedTools.length > 0 ? [`尚未启动的工具调用（${plannedTools.join(", ")}）保持 not_executed，不自动执行。`] : []),
       ...differences,
     ].join("\n"),
+    uncertainEffects: clone(state.uncertainEffects),
   };
 }

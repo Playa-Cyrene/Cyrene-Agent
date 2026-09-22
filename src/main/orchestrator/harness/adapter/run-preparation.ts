@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { ChatMessage, VendorConfig } from "../../vendors/types";
 import type { ToolDefinition } from "../../tools/registry/tool-registry";
 import { toolRegistry } from "../../tools/registry/tool-registry";
-import { prepareHarnessRecovery } from "../run-recovery";
+import { prepareHarnessRecoveryState } from "../run-recovery";
 import { getHarnessRunStore, type HarnessRequestSnapshot } from "../run-store";
 import type { CyreneRunOptions } from "../../cyrene-agent";
 import type { PromptLayers } from "../../prompt-layers";
@@ -73,7 +73,7 @@ export interface PreparedHarnessRun {
   harnessPromptLayers: PromptLayers;
   systemPrompt: string;
   runMessages: ChatMessage[];
-  recovered?: ReturnType<typeof prepareHarnessRecovery>;
+  recovered?: ReturnType<typeof prepareHarnessRecoveryState>;
   runStore: ReturnType<typeof getHarnessRunStore>;
 }
 
@@ -112,7 +112,8 @@ export async function prepareHarnessRun(
     ? (() => {
       const previous = runStore.get(options.resumeFromRunId!);
       if (!previous || previous.conversationId !== threadId) throw new Error("HARNESS_RECOVERY_NOT_FOUND");
-      return prepareHarnessRecovery(previous, {
+      return prepareHarnessRecoveryState(previous, {
+        conversationId: threadId,
         workspaceRoot: options.resolvedWorkspaceRoot,
         provider: options.settings.provider,
         model: options.settings.model,
@@ -121,13 +122,8 @@ export async function prepareHarnessRun(
     })()
     : undefined;
 
-  const latestIncomingMessage = options.messages.at(-1);
-  const baseRunMessages = recovered
-    ? [
-      ...recovered.messages,
-      ...(latestIncomingMessage?.role === "user" ? [{ ...latestIncomingMessage }] : []),
-    ]
-    : options.messages;
+  // 消息历史始终来自 Task 6 journal；resume 只带回执行状态，不能覆盖权威轨迹。
+  const baseRunMessages = options.messages;
   const recoveryContext = [options.recoveryContext, recovered?.recoveryContext, planContextBlock]
     .filter(Boolean).join("\n\n");
   const promptLayers = buildHarnessPromptLayers(
@@ -152,7 +148,7 @@ export async function prepareHarnessRun(
     runId,
     messages: runMessages,
     request: snapshotHarnessRequest(options, harnessPromptLayers, tools),
-    ...(recovered ? { state: recovered.state, cache: recovered.cache } : {}),
+    ...(recovered ? { state: recovered.state, cache: recovered.cacheState } : {}),
     ...(options.resumeFromRunId ? { resumedFromRunId: options.resumeFromRunId } : {}),
   });
 

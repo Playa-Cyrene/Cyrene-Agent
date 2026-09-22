@@ -695,7 +695,13 @@ export function registerAgUiIpc(
       .filter((value): value is string => Boolean(value?.trim()))
       .join("\n\n");
     if (mergedRecoveryContext) options.recoveryContext = mergedRecoveryContext;
-    options.resumeFromRunId = input.resumeFromRunId;
+    // 只有明确的非空 run ID 才代表用户要求继续中断运行；普通轮次不得
+    // 因空白/旧兼容字段意外进入恢复路径，更不会自动继承 cancelled run。
+    if (typeof input.resumeFromRunId === "string" && input.resumeFromRunId.trim()) {
+      options.resumeFromRunId = input.resumeFromRunId.trim();
+    } else {
+      delete options.resumeFromRunId;
+    }
     options.conversationMode = mode;
     // 把 bridge 创建的 canonical runId 注入 CyreneRunOptions，
     // 一路传到 Agent / Harness adapter / ToolContext / 所有 AG-UI 事件。
