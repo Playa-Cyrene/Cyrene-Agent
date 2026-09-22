@@ -1,0 +1,42 @@
+name: vite8-smoke
+
+on:
+  push:
+    branches: ["chore/vite-8-smoke"]
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: windows-latest
+    env:
+      NODE_OPTIONS: --max-old-space-size=4096
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      - name: Resolve Vite 8 dependencies and lockfile
+        run: npm install --foreground-scripts
+
+      - name: Type-check renderer
+        run: npm run check:renderer
+
+      - name: Build renderer
+        run: npm run build:renderer
+
+      - name: Run renderer performance harness
+        run: npm run perf:chat-baseline
+
+      - name: Upload generated lockfile
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: vite8-lockfile
+          path: package-lock.json
+          if-no-files-found: error
+          retention-days: 1
