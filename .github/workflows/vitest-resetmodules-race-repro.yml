@@ -1,0 +1,40 @@
+name: Vitest resetModules race repro
+
+on:
+  push:
+    branches:
+      - tmp/vitest-resetmodules-race-repro
+
+jobs:
+  repro:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        vitest: ["4.1.11", "5.0.1"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install project dependencies
+        run: npm ci
+
+      - name: Override Vitest version
+        run: npm install --no-save --package-lock=false vitest@${{ matrix.vitest }}
+
+      - name: Run memory-manager repro repeatedly
+        shell: bash
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 20); do
+            echo "=== iteration $i / Vitest ${{ matrix.vitest }} ==="
+            npx vitest run src/main/memory/memory-manager.test.ts \
+              --pool=forks \
+              --maxWorkers=1 \
+              --minWorkers=1 \
+              --no-file-parallelism
+          done
