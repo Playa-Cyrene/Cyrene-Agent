@@ -686,6 +686,37 @@ export function buildFullModelContextWithSources(
 }
 
 /**
+ * 压缩输入视图：已存在有效压缩检查点时，摘要输入改为"旧摘要 + 活动后缀"，
+ * 避免二次压缩只总结后缀而静默丢弃第一次摘要所代表的更早历史。
+ * previousReplacement 返回旧摘要本体，供压缩器识别"未产生新摘要"的失败路径。
+ */
+export function buildCompactionSourceView(
+  entries: TranscriptEntry[],
+  runReader: TranscriptRunReader,
+): MaterializedTranscriptWithSources & { previousReplacement?: ChatMessage } {
+  const active = reduceActiveTranscript(entries);
+  const checkpoint = latestValidCompaction(entries, active);
+  if (!checkpoint) return buildFullModelContextWithSources(entries, runReader);
+
+  const suffix = active.nodes.filter((node) => node.entry.seq > checkpoint.payload.sourceThroughSeq);
+  const materialized = materializeNodes(suffix, runReader);
+  const delivery = failedDeliveryNotesWithSources(entries, active.nodes, checkpoint.payload.sourceThroughSeq);
+  const suffixWithDeliveryNotes = insertDeliveryNotes(materialized, delivery.notes);
+  return {
+    messages: [
+      checkpoint.payload.replacement,
+      ...suffixWithDeliveryNotes.messages,
+    ],
+    uncertainEffects: materialized.uncertainEffects,
+    throughSeq: active.throughSeq,
+    // 旧摘要对应的源边界是上一个检查点的 sourceThroughSeq：切点覆盖它时，
+    // 新检查点即完整接管旧检查点所代表的历史。
+    sourceSeqs: [checkpoint.payload.sourceThroughSeq, ...suffixWithDeliveryNotes.sourceSeqs],
+    previousReplacement: checkpoint.payload.replacement,
+  };
+}
+
+/**
  * Materialize the latest compaction replacement plus the active canonical
  * suffix. UI projection intentionally does not use this function and keeps
  * the complete active history.

@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { ConversationTranscriptStore } from "./conversation-transcript-store";
 import { ConversationTranscriptArchive } from "./conversation-transcript-archive";
 import {
-  buildFullModelContextWithSources,
+  buildCompactionSourceView,
   buildModelContextFromCompactedView,
   type TranscriptRunReader,
 } from "./conversation-transcript-projection";
@@ -99,7 +99,9 @@ export class ConversationTranscriptCompactor {
   async compact(request: ConversationCompactionRequest): Promise<ConversationCompactionResult> {
     const retainTokens = request.retainTokens ?? 1;
     const before = await this.store.read(request.conversationId);
-    const full = buildFullModelContextWithSources(before.entries, this.runReader);
+    // 已有有效检查点时输入为"旧摘要 + 后缀"，二次压缩不会丢弃第一次摘要；
+    // previousReplacement 用于识别压缩器未产出新摘要的失败路径。
+    const full = buildCompactionSourceView(before.entries, this.runReader);
     const cutIndex = findSafeCutPointForRetainedTokens(full.messages, retainTokens);
     if (cutIndex <= 0) throw createTranscriptCompactionRequiredError();
 
@@ -125,7 +127,10 @@ export class ConversationTranscriptCompactor {
       throw createTranscriptCompactionRequiredError(summaryError);
     }
     const replacement = compacted[0];
-    if (!replacement || replacement.role !== "system" || !isCompactionReplacement(replacement)) {
+    if (!replacement || replacement.role !== "system" || !isCompactionReplacement(replacement)
+      // compressForAgentLoop 在无法产出更小摘要时会原样返回输入；此时首条即旧摘要本体，
+      // 必须拒绝提交，否则新检查点会静默吞掉本应压缩的后缀历史。
+      || replacement === full.previousReplacement) {
       throw createTranscriptCompactionRequiredError();
     }
 

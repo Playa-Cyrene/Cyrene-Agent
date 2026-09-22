@@ -191,9 +191,21 @@ describe("ConversationTranscriptCompactor", () => {
     await fixture.compactor.compact({ conversationId: "c1", trigger: "manual", retainTokens: 1 });
     await fixture.journal.appendUser("c1", { turnId: "u3", id: "u3", text: "第二轮问题".repeat(30) });
     await fixture.journal.appendUser("c1", { turnId: "u4", id: "u4", text: "第三轮问题".repeat(30) });
-    const second = await fixture.compactor.compact({ conversationId: "c1", trigger: "manual", retainTokens: 1 });
+    // 记录每次摘要输入，验证二次压缩不会静默丢弃第一次摘要
+    const summarizeInputs: string[] = [];
+    const recordingCompactor = new ConversationTranscriptCompactor({
+      store: fixture.store,
+      summarize: async (history) => {
+        summarizeInputs.push(history.map((message) => String(message.content ?? "")).join("\n"));
+        return "二次摘要";
+      },
+    });
+    const second = await recordingCompactor.compact({ conversationId: "c1", trigger: "manual", retainTokens: 1 });
     expect(second.checkpointEntryId).toBeTruthy();
-    expect((await fixture.journal.buildModelContext("c1")).messages[0]?.content)
-      .toContain("<cyrene_compaction_checkpoint>");
+    // 第二次摘要输入必须包含第一次摘要文本：旧摘要代表的历史不能从模型视图消失
+    expect(summarizeInputs.at(-1)).toContain("保留的摘要");
+    const finalContext = await fixture.journal.buildModelContext("c1");
+    expect(finalContext.messages[0]?.content).toContain("<cyrene_compaction_checkpoint>");
+    expect(finalContext.messages[0]?.content).toContain("二次摘要");
   });
 });
