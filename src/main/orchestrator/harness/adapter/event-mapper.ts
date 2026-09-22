@@ -61,7 +61,8 @@ export function sendHarnessEventAsAgui(
       break;
     }
     case "reasoning_start": {
-      send({ type: EventType.REASONING_MESSAGE_START, messageId: event.messageId, role: "assistant", threadId, runId } as BaseEvent);
+      // AG-UI 规范：REASONING_MESSAGE_START 的 role 固定为 "reasoning"。
+      send({ type: EventType.REASONING_MESSAGE_START, messageId: event.messageId, role: "reasoning", threadId, runId } as BaseEvent);
       break;
     }
     case "reasoning_delta": {
