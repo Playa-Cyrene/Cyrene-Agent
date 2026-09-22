@@ -1,4 +1,4 @@
-name: Vitest resetModules mechanism isolate
+name: Vitest resetModules repetition threshold
 
 on:
   push:
@@ -11,7 +11,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        case: [mock-only, mock-import-store, mock-write-store, real-write-store]
+        repeats: [2, 4, 8, 16, 24]
     steps:
       - uses: actions/checkout@v4
 
@@ -35,116 +35,51 @@ jobs:
           fs.writeFileSync(p, s)
           EOF
 
-      - name: Create minimal companion
+      - name: Create repeated companion
         env:
-          CASE: ${{ matrix.case }}
+          REPEATS: ${{ matrix.repeats }}
         shell: bash
         run: |
-          set -euo pipefail
-          P=src/main/memory/vitest-race-companion.test.ts
-
-          if [ "$CASE" = "mock-only" ]; then
-            cat > "$P" <<'EOF'
-          import { expect, it, vi } from "vitest"
-
-          vi.mock("./obsidian-exporter", () => ({
-            notifyMemoryChanged: vi.fn(),
-          }))
-
-          it("registers exporter mock only", () => {
-            expect(true).toBe(true)
-          })
-          EOF
-          elif [ "$CASE" = "mock-import-store" ]; then
-            cat > "$P" <<'EOF'
+          cat > src/main/memory/vitest-race-companion.test.ts <<'EOF'
           import * as fs from "fs"
           import * as os from "os"
           import * as path from "path"
           import { beforeEach, expect, it, vi } from "vitest"
 
           const electronMock = vi.hoisted(() => ({ userDataDir: "" }))
+          const exporterMock = vi.hoisted(() => ({ notifyMemoryChanged: vi.fn() }))
 
           vi.mock("electron", () => ({
             app: { getPath: () => electronMock.userDataDir },
           }))
 
           vi.mock("./obsidian-exporter", () => ({
-            notifyMemoryChanged: vi.fn(),
+            notifyMemoryChanged: exporterMock.notifyMemoryChanged,
           }))
 
           beforeEach(() => {
-            electronMock.userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "race-companion-"))
+            electronMock.userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "race-repeat-"))
             vi.resetModules()
+            exporterMock.notifyMemoryChanged.mockReset()
           })
 
-          it("imports store with exporter mocked", async () => {
-            const { memoryStore } = await import("./memory-store")
-            expect(memoryStore).toBeDefined()
-          })
-          EOF
-          elif [ "$CASE" = "mock-write-store" ]; then
-            cat > "$P" <<'EOF'
-          import * as fs from "fs"
-          import * as os from "os"
-          import * as path from "path"
-          import { beforeEach, expect, it, vi } from "vitest"
+          const repeats = Number(process.env.REPEATS)
 
-          const electronMock = vi.hoisted(() => ({ userDataDir: "" }))
-
-          vi.mock("electron", () => ({
-            app: { getPath: () => electronMock.userDataDir },
-          }))
-
-          vi.mock("./obsidian-exporter", () => ({
-            notifyMemoryChanged: vi.fn(),
-          }))
-
-          beforeEach(() => {
-            electronMock.userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "race-companion-"))
-            vi.resetModules()
-          })
-
-          it("writes store with exporter mocked", async () => {
-            const { memoryStore } = await import("./memory-store")
-            const memory = await memoryStore.addL2Memory({
-              content: "companion",
-              triggerText: "companion",
-              sourceConversationId: "test",
-              isPinned: false,
+          for (let i = 0; i < repeats; i++) {
+            it(`write cycle ${i}`, async () => {
+              const { memoryStore } = await import("./memory-store")
+              const memory = await memoryStore.addL2Memory({
+                content: `companion-${i}`,
+                triggerText: "companion",
+                sourceConversationId: "test",
+                isPinned: false,
+              })
+              expect(memory.id).toBeTruthy()
             })
-            expect(memory.id).toBeTruthy()
-          })
+          }
           EOF
-          else
-            cat > "$P" <<'EOF'
-          import * as fs from "fs"
-          import * as os from "os"
-          import * as path from "path"
-          import { beforeEach, expect, it, vi } from "vitest"
 
-          const electronMock = vi.hoisted(() => ({ userDataDir: "" }))
-
-          vi.mock("electron", () => ({
-            app: { getPath: () => electronMock.userDataDir },
-          }))
-
-          beforeEach(() => {
-            electronMock.userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "race-companion-"))
-            vi.resetModules()
-          })
-
-          it("writes store with real exporter", async () => {
-            const { memoryStore } = await import("./memory-store")
-            const memory = await memoryStore.addL2Memory({
-              content: "companion",
-              triggerText: "companion",
-              sourceConversationId: "test",
-              isPinned: false,
-            })
-            expect(memory.id).toBeTruthy()
-          })
-          EOF
-          fi
-
-      - name: Run manager with minimal companion
+      - name: Run manager with repeated companion
+        env:
+          REPEATS: ${{ matrix.repeats }}
         run: npx vitest run src/main/memory/memory-manager.test.ts src/main/memory/vitest-race-companion.test.ts
