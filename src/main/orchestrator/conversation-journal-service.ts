@@ -11,6 +11,7 @@ import type { PendingChatAttachment } from "../../shared/chat-types";
 import type { ChatMessageChannel } from "../../shared/chat-types";
 import {
   buildModelContextFromCompactedView,
+  isUserTurnRewindableInModelView,
   reduceTranscriptProjection,
   type ConversationProjection,
   type MaterializedTranscript,
@@ -182,6 +183,11 @@ export class ConversationJournalService {
       node.kind === "user" && node.turnId === input.anchorUserTurnId
     )) === true;
     if (!activeUser) throw new Error("TRANSCRIPT_REWIND_ANCHOR_NOT_FOUND");
+    // 锚点必须位于模型活动分支的压缩边界之后：已归档进压缩前缀的 user 不能被
+    // 编辑/重新生成改写，否则 UI 截断旧尾部而模型视图仍保留摘要与旧回答。
+    if (!isUserTurnRewindableInModelView(snapshot.entries, input.anchorUserTurnId)) {
+      throw new Error("TRANSCRIPT_REWIND_ACROSS_COMPACTION");
+    }
     const revision = input.disposition === "replace_user"
       ? snapshot.entries
         .filter((entry) => entry.turnId === input.anchorUserTurnId && typeof entry.revision === "number")

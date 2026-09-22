@@ -6,6 +6,7 @@ import {
   ConversationJournalService,
   type JournalUserInput,
 } from "./conversation-journal-service";
+import { ConversationTranscriptCompactor } from "./conversation-transcript-compactor";
 import {
   ConversationTranscriptStore,
   transcriptStorageKey,
@@ -19,6 +20,7 @@ function createJournal() {
   const store = new ConversationTranscriptStore(root, { now: () => 1_000 });
   return {
     root,
+    store,
     journal: new ConversationJournalService(store, { runReader: { get: () => null } }),
   };
 }
@@ -230,6 +232,31 @@ describe("ConversationJournalService", () => {
     ]);
     expect(entries.map((entry) => entry.payload.patchRevision).sort()).toEqual([1, 2]);
     expect((await second.readProjection("c1")).messages[0]).toMatchObject({ reasoning: "a", reasoningBlocks: [] });
+  });
+
+  it("编辑/重新生成不能穿过已归档的压缩边界", async () => {
+    const { store, journal } = createJournal();
+    await journal.appendUser("c1", userInput("u1", "旧问题".repeat(20)));
+    const sink = journal.createRunSink({ conversationId: "c1", runId: "run-1" });
+    await sink.appendAssistant({ message: { role: "assistant", content: "旧回答".repeat(20) } });
+    await sink.checkpoint();
+    // 手动压缩并归档：u1 进入压缩前缀，热日志只剩检查点与后缀
+    const compactor = new ConversationTranscriptCompactor({ store, summarize: async () => "摘要" });
+    await compactor.compact({ conversationId: "c1", trigger: "manual", retainTokens: 1 });
+
+    // UI 投影仍保留完整历史，但锚点已位于压缩边界之前：必须拒绝，
+    // 否则 UI 截断旧尾部而模型视图仍保留摘要与旧回答，造成分支分裂
+    await expect(journal.appendRewind("c1", {
+      anchorUserTurnId: "u1", disposition: "replace_user", runId: "run-edit",
+      replacementUser: { turnId: "u1", text: "编辑后的新问题" },
+    })).rejects.toThrow("TRANSCRIPT_REWIND_ACROSS_COMPACTION");
+
+    // 压缩边界之后的新 user 轮次仍可正常编辑/重新生成
+    await journal.appendUser("c1", userInput("u2", "新问题"));
+    const rewind = await journal.appendRewind("c1", {
+      anchorUserTurnId: "u2", disposition: "keep_user", runId: "run-regenerate",
+    });
+    expect(rewind.kind).toBe("turn_rewind");
   });
 
   it("拒绝空展示补丁和未知字段而不写入轨迹", async () => {

@@ -717,6 +717,23 @@ export function buildCompactionSourceView(
 }
 
 /**
+ * rewind 锚点安全性：锚点必须存在于模型活动分支，且位于最新有效压缩边界之后。
+ * 已归档进压缩前缀的 user 轮次不能作为编辑/重新生成锚点——模型视图无法截断
+ * 压缩摘要内部的历史，强行提交会造成 UI 与模型分支分裂。
+ */
+export function isUserTurnRewindableInModelView(
+  entries: TranscriptEntry[],
+  anchorUserTurnId: string,
+): boolean {
+  const active = reduceActiveTranscript(entries);
+  const anchorIndex = findActiveUserIndex(active.nodes, anchorUserTurnId);
+  if (anchorIndex < 0) return false;
+  const checkpoint = latestValidCompaction(entries, active);
+  if (!checkpoint) return true;
+  return active.nodes[anchorIndex]!.entry.seq > checkpoint.payload.sourceThroughSeq;
+}
+
+/**
  * Materialize the latest compaction replacement plus the active canonical
  * suffix. UI projection intentionally does not use this function and keeps
  * the complete active history.
