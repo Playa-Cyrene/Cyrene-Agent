@@ -109,7 +109,7 @@ export default defineConfig({
   build: {
     outDir: perfOutDir ? resolve(__dirname, perfOutDir) : resolve(__dirname, "dist/renderer"),
     emptyOutDir: true,
-    rollupOptions: {
+    rolldownOptions: {
       input: isPerfHarnessBuild
         ? {
             "chat-perf": resolve(__dirname, "src/renderer/react-perf/index.html"),
