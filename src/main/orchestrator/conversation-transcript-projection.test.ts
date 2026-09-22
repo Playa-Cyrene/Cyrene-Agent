@@ -261,10 +261,62 @@ describe("conversation transcript projection", () => {
       kind: "delivery_receipt",
       payload: { assistantTurnId: "a1", channel: "wechat", status: "failed", errorCode: "OFFLINE" },
     };
-    const model = buildFullModelContext([assistantEntry, receipt], noRuns);
-    expect(model.messages).toHaveLength(2);
+    const nextUser = user("u2", "retry");
+    const model = buildFullModelContext([assistantEntry, receipt, nextUser], noRuns);
+    expect(model.messages).toHaveLength(3);
     expect(model.messages[0]).toEqual(assistantEntry.payload);
     expect(model.messages[1]).toEqual(expect.objectContaining({ role: "system", internal: expect.any(Object) }));
+    expect(model.messages[2]).toEqual({ role: "user", content: "retry" });
+  });
+
+  it("delivery receipt uses latest-wins and consumes the failure before the next user once", () => {
+    const entries: TranscriptEntry[] = [
+      user("u1", "question"),
+      assistant("a1", "answer"),
+      {
+        seq: 3, id: "receipt-a1-r1", at: 3, kind: "delivery_receipt",
+        revision: 1,
+        payload: { assistantTurnId: "a1", channel: "wechat", status: "failed", errorCode: "DELIVERY_UNCONFIRMED" },
+      },
+      user("u2", "next"),
+      assistant("a2", "second answer"),
+      {
+        seq: 6, id: "receipt-a2-r2", at: 6, kind: "delivery_receipt",
+        revision: 2,
+        payload: { assistantTurnId: "a2", channel: "wechat", status: "delivered" },
+      },
+      user("u3", "third"),
+    ];
+    const model = buildFullModelContext(entries, noRuns);
+    const systemMessages = model.messages.filter((message) => message.role === "system");
+    expect(systemMessages).toHaveLength(0);
+
+    const beforeSecondReply = buildFullModelContext(entries.slice(0, 4), noRuns);
+    const beforeSecondSystem = beforeSecondReply.messages.filter((message) => message.role === "system");
+    expect(beforeSecondSystem).toHaveLength(1);
+    expect(beforeSecondReply.messages.findIndex((message) => message.role === "system"))
+      .toBeLessThan(beforeSecondReply.messages.findIndex((message) => message.content === "next"));
+  });
+
+  it("同一 assistant 的多条 receipt 只保留最新 failed 状态", () => {
+    const entries: TranscriptEntry[] = [
+      user("u1", "question"),
+      assistant("a1", "answer"),
+      {
+        seq: 3, id: "receipt-a1-r1", at: 3, kind: "delivery_receipt", revision: 1,
+        payload: { assistantTurnId: "a1", channel: "wechat", status: "failed", errorCode: "DELIVERY_UNCONFIRMED" },
+      },
+      {
+        seq: 4, id: "receipt-a1-r2", at: 4, kind: "delivery_receipt", revision: 2,
+        payload: { assistantTurnId: "a1", channel: "wechat", status: "failed", errorCode: "OFFLINE" },
+      },
+      user("u2", "next"),
+    ];
+    const model = buildFullModelContext(entries, noRuns);
+    const notes = model.messages.filter((message) => message.role === "system");
+    expect(notes).toHaveLength(1);
+    expect(notes[0].content).toContain("OFFLINE");
+    expect(notes[0].content).not.toContain("DELIVERY_UNCONFIRMED");
   });
 
   it("keeps a failed receipt for an active assistant before the compaction boundary", () => {
@@ -294,10 +346,12 @@ describe("conversation transcript projection", () => {
         kind: "delivery_receipt",
         payload: { assistantTurnId: "a1", channel: "wechat", status: "failed" },
       },
+      user("u2", "retry"),
     ];
     const model = buildModelContextFromCompactedView(entries, noRuns);
     expect(model.messages.filter((message) => message.role === "system")).toHaveLength(2);
-    expect(model.messages.at(-1)).toEqual(expect.objectContaining({ visibility: "internal" }));
+    expect(model.messages.find((message) => message.visibility === "internal"))
+      .toEqual(expect.objectContaining({ visibility: "internal" }));
   });
 
   it("applies a tombstone to seeded messages and preserves original assistant aliases", () => {

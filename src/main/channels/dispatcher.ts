@@ -64,6 +64,7 @@ export interface ChannelConversationJournal {
     status: "delivered" | "failed";
     errorCode?: string;
     runId?: string;
+    revision?: number;
   }): Promise<unknown>;
 }
 
@@ -242,6 +243,22 @@ export class ChannelDispatcher {
       mobileMessageSegmentation: this.deps.loadGeneralSettings().mobileMessageSegmentation,
     });
     try {
+      // 先落盘保守状态：若进程在远端发送窗口崩溃，下一轮只能看到
+      // 未确认，不得把 assistant 的持久化误当成已送达并盲重发。
+      try {
+        await journal.appendDeliveryReceipt(target.conversationId, {
+          assistantTurnId,
+          channel: msg.channel,
+          status: "failed",
+          errorCode: "DELIVERY_UNCONFIRMED",
+          runId,
+          revision: 1,
+        });
+      } catch (error) {
+        console.warn(LOG, "写入渠道送达预回执失败，已禁止发送:", error);
+        return null;
+      }
+
       let deliveryResult: Awaited<ReturnType<ChannelDeliveryService["send"]>>;
       try {
         deliveryResult = await this.deps.delivery.send(prepared.message);
@@ -252,13 +269,18 @@ export class ChannelDispatcher {
         };
       }
       if (!deliveryResult.ok) {
-        await journal.appendDeliveryReceipt(target.conversationId, {
-          assistantTurnId,
-          channel: msg.channel,
-          status: "failed",
-          errorCode: deliveryResult.error,
-          runId,
-        });
+        try {
+          await journal.appendDeliveryReceipt(target.conversationId, {
+            assistantTurnId,
+            channel: msg.channel,
+            status: "failed",
+            errorCode: deliveryResult.error,
+            runId,
+            revision: 2,
+          });
+        } catch (error) {
+          console.warn(LOG, "写入渠道送达失败回执失败，保留未确认状态:", error);
+        }
         this.logDeliveryFailure(msg, deliveryResult.error);
         return null;
       }
@@ -276,12 +298,18 @@ export class ChannelDispatcher {
             ? { sticker: result.sticker } : {}),
         });
       }
-      await journal.appendDeliveryReceipt(target.conversationId, {
-        assistantTurnId,
-        channel: msg.channel,
-        status: "delivered",
-        runId,
-      });
+      try {
+        await journal.appendDeliveryReceipt(target.conversationId, {
+          assistantTurnId,
+          channel: msg.channel,
+          status: "delivered",
+          runId,
+          revision: 2,
+        });
+      } catch (error) {
+        // 预回执仍在盘中，保守地保留未确认状态；调用方不得据此自动重发。
+        console.warn(LOG, "写入渠道送达成功回执失败，保留未确认状态:", error);
+      }
       this.broadcastOutgoing(msg, prepared.assistantText);
       this.appendOutgoingAuditLog(msg, prepared.assistantText, prepared.message);
       return prepared.message;

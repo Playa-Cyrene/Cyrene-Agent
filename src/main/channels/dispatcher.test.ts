@@ -618,6 +618,92 @@ describe("channels/dispatcher", () => {
     }));
   });
 
+  it("预回执写失败时禁止发送", async () => {
+    const delivery = vi.fn(async () => ({ ok: true as const }));
+    const appendDeliveryReceipt = vi.fn(async () => { throw new Error("disk full"); });
+    const dispatcher = makeDispatcher({
+      journal: {
+        appendUser: vi.fn(async () => ({ id: "user-1" })),
+        appendPresentation: vi.fn(async () => undefined),
+        buildModelContext: vi.fn(async () => ({ messages: [], uncertainEffects: [], throughSeq: 0 })),
+        createRunSink: vi.fn(() => ({
+          appendAssistant: vi.fn(async () => "assistant-1"),
+          appendToolResult: vi.fn(async () => undefined),
+          closeInterruption: vi.fn(async () => undefined),
+          checkpoint: vi.fn(async () => undefined),
+        })),
+        appendDeliveryReceipt,
+      } as never,
+      delivery: { send: delivery },
+    });
+
+    await expect(dispatcher.handleIncoming(makeIncoming({ messageId: "pre-fail" }))).resolves.toBeNull();
+    expect(appendDeliveryReceipt).toHaveBeenCalledOnce();
+    expect(delivery).not.toHaveBeenCalled();
+  });
+
+  it("最终 failed receipt 写失败时保留 DELIVERY_UNCONFIRMED 保守状态", async () => {
+    const delivery = vi.fn(async () => ({ ok: false as const, error: "offline" }));
+    const appendDeliveryReceipt = vi.fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("disk full"));
+    const dispatcher = makeDispatcher({
+      journal: {
+        appendUser: vi.fn(async () => ({ id: "user-1" })),
+        appendPresentation: vi.fn(async () => undefined),
+        buildModelContext: vi.fn(async () => ({ messages: [], uncertainEffects: [], throughSeq: 0 })),
+        createRunSink: vi.fn(() => ({
+          appendAssistant: vi.fn(async () => "assistant-1"),
+          appendToolResult: vi.fn(async () => undefined),
+          closeInterruption: vi.fn(async () => undefined),
+          checkpoint: vi.fn(async () => undefined),
+        })),
+        appendDeliveryReceipt,
+      } as never,
+      delivery: { send: delivery },
+    });
+
+    await expect(dispatcher.handleIncoming(makeIncoming({ messageId: "final-fail" }))).resolves.toBeNull();
+    expect(delivery).toHaveBeenCalledOnce();
+    expect(appendDeliveryReceipt).toHaveBeenNthCalledWith(1, expect.any(String), expect.objectContaining({
+      status: "failed", errorCode: "DELIVERY_UNCONFIRMED", revision: 1,
+    }));
+    expect(appendDeliveryReceipt).toHaveBeenNthCalledWith(2, expect.any(String), expect.objectContaining({
+      status: "failed", errorCode: "offline", revision: 2,
+    }));
+  });
+
+  it("发送成功但 delivered receipt 写失败时保持保守状态且不重发", async () => {
+    const delivery = vi.fn(async () => ({ ok: true as const }));
+    const appendDeliveryReceipt = vi.fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("disk full"));
+    const dispatcher = makeDispatcher({
+      journal: {
+        appendUser: vi.fn(async () => ({ id: "user-1" })),
+        appendPresentation: vi.fn(async () => undefined),
+        buildModelContext: vi.fn(async () => ({ messages: [], uncertainEffects: [], throughSeq: 0 })),
+        createRunSink: vi.fn(() => ({
+          appendAssistant: vi.fn(async () => "assistant-1"),
+          appendToolResult: vi.fn(async () => undefined),
+          closeInterruption: vi.fn(async () => undefined),
+          checkpoint: vi.fn(async () => undefined),
+        })),
+        appendDeliveryReceipt,
+      } as never,
+      delivery: { send: delivery },
+    });
+
+    await expect(dispatcher.handleIncoming(makeIncoming({ messageId: "success-final-fail" }))).resolves.toEqual(expect.objectContaining({ targetId: "chat-1" }));
+    expect(delivery).toHaveBeenCalledOnce();
+    expect(appendDeliveryReceipt).toHaveBeenNthCalledWith(1, expect.any(String), expect.objectContaining({
+      status: "failed", errorCode: "DELIVERY_UNCONFIRMED", revision: 1,
+    }));
+    expect(appendDeliveryReceipt).toHaveBeenNthCalledWith(2, expect.any(String), expect.objectContaining({
+      status: "delivered", revision: 2,
+    }));
+  });
+
   it("canonical user 条目保留附件和渠道来源展示补丁", async () => {
     const appendUser = vi.fn(async (_conversationId: string, input: { id?: string }) => ({ id: input.id ?? "user-1" }));
     const appendPresentation = vi.fn(async () => undefined);

@@ -244,7 +244,7 @@ export type TranscriptEntry =
     }})
   | (TranscriptEnvelopeBase & { kind: "delivery_receipt"; payload: {
       assistantTurnId: string; channel: ChatMessageChannel;
-      status: "delivered" | "failed"; errorCode?: string;
+      status: "delivered" | "failed"; errorCode?: string; revision?: number;
     }});
 
 /** Omit 不分发联合，这里手动分发以保留 kind 判别信息。 */

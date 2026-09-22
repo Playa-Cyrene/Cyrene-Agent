@@ -342,18 +342,22 @@ export class ConversationJournalService {
       errorCode?: string;
       runId?: string;
       at?: number;
+      revision?: number;
     },
   ): Promise<TranscriptEntry> {
+    const revision = input.revision ?? (input.errorCode === "DELIVERY_UNCONFIRMED" ? 1 : 2);
     return this.store.append(conversationId, {
       kind: "delivery_receipt",
-      id: `delivery:${input.assistantTurnId}:${input.channel}:${input.status}`,
+      id: `delivery:${input.assistantTurnId}:${input.channel}:r${revision}`,
       at: input.at ?? Date.now(),
       ...(input.runId ? { runId: input.runId } : {}),
       turnId: input.assistantTurnId,
+      revision,
       payload: {
         assistantTurnId: input.assistantTurnId,
         channel: input.channel,
         status: input.status,
+        revision,
         ...(input.errorCode ? { errorCode: input.errorCode } : {}),
       },
     });

@@ -225,49 +225,84 @@ function materializeNodes(
   return { messages, uncertainEffects, sourceSeqs };
 }
 
-function failedDeliveryNotes(
-  entries: TranscriptEntry[],
-  activeNodes: ActiveNode[],
-  minSeqExclusive = -Infinity,
-): ChatMessage[] {
-  return failedDeliveryNotesWithSources(entries, activeNodes, minSeqExclusive).notes;
+interface DeliveryNotePlacement {
+  note: ChatMessage;
+  sourceSeq: number;
+  beforeSeq: number;
 }
 
 function failedDeliveryNotesWithSources(
   entries: TranscriptEntry[],
   activeNodes: ActiveNode[],
   minSeqExclusive = -Infinity,
-): { notes: ChatMessage[]; sourceSeqs: number[] } {
-  const notes: ChatMessage[] = [];
-  const sourceSeqs: number[] = [];
-  const activeAssistantTurns = new Set(
-    activeNodes
-      .filter((node): node is Extract<ActiveNode, { kind: "assistant" }> => node.kind === "assistant")
-      .map((node) => node.entry.turnId)
-      .filter((turnId): turnId is string => Boolean(turnId)),
-  );
+): { notes: DeliveryNotePlacement[] } {
+  const latestByAssistant = new Map<string, Extract<TranscriptEntry, { kind: "delivery_receipt" }>>();
   for (const entry of entries) {
-    if (entry.kind !== "delivery_receipt" || entry.seq <= minSeqExclusive || entry.payload.status !== "failed") {
-      continue;
+    if (entry.kind !== "delivery_receipt" || entry.seq <= minSeqExclusive) continue;
+    const previous = latestByAssistant.get(entry.payload.assistantTurnId);
+    const revision = entry.payload.revision ?? entry.revision ?? 0;
+    const previousRevision = previous?.payload.revision ?? previous?.revision ?? 0;
+    if (!previous || revision > previousRevision || (revision === previousRevision && entry.seq > previous.seq)) {
+      latestByAssistant.set(entry.payload.assistantTurnId, entry);
     }
-    if (!activeAssistantTurns.has(entry.payload.assistantTurnId)) continue;
-    const detail = entry.payload.errorCode ? `（错误码：${entry.payload.errorCode}）` : "";
-    notes.push({
-      role: "system",
-      visibility: "internal",
-      content: `上一回复未送达（${entry.payload.channel}）${detail}`,
-      internal: {
-        kind: "recovery",
-        revision: 1,
-        digest: `${entry.payload.assistantTurnId}:${entry.payload.channel}:${entry.payload.errorCode ?? "failed"}`,
-        id: `delivery-failure:${entry.id}`,
-        runId: entry.runId ?? "delivery",
-        createdAt: entry.at,
-      },
-    });
-    sourceSeqs.push(entry.seq);
   }
-  return { notes, sourceSeqs };
+
+  const notes: DeliveryNotePlacement[] = [];
+  for (const receipt of latestByAssistant.values()) {
+    if (receipt.payload.status !== "failed") continue;
+    const assistantIndex = activeNodes.findIndex(
+      (node) => node.kind === "assistant" && node.entry.turnId === receipt.payload.assistantTurnId,
+    );
+    if (assistantIndex < 0) continue;
+    const nextUser = activeNodes.slice(assistantIndex + 1).find(
+      (node): node is Extract<ActiveNode, { kind: "user" }> => node.kind === "user" && node.entry.seq > receipt.seq,
+    );
+    if (!nextUser) continue;
+    const nextAssistant = activeNodes.slice(assistantIndex + 1).find(
+      (node) => node.kind === "assistant" && node.entry.seq > nextUser.entry.seq,
+    );
+    // The next assistant round has already consumed this recovery note.
+    if (nextAssistant) continue;
+    const detail = receipt.payload.errorCode ? `（错误码：${receipt.payload.errorCode}）` : "";
+    notes.push({
+      note: {
+        role: "system",
+        visibility: "internal",
+        content: `上一回复未送达（${receipt.payload.channel}）${detail}`,
+        internal: {
+          kind: "recovery",
+          revision: 1,
+          digest: `${receipt.payload.assistantTurnId}:${receipt.payload.channel}:${receipt.payload.errorCode ?? "failed"}`,
+          id: `delivery-failure:${receipt.id}`,
+          runId: receipt.runId ?? "delivery",
+          createdAt: receipt.at,
+        },
+      },
+      sourceSeq: receipt.seq,
+      beforeSeq: nextUser.entry.seq,
+    });
+  }
+  return { notes };
+}
+
+function insertDeliveryNotes(
+  materialized: { messages: ChatMessage[]; sourceSeqs: number[] },
+  placements: DeliveryNotePlacement[],
+): { messages: ChatMessage[]; sourceSeqs: number[] } {
+  if (placements.length === 0) return materialized;
+  const byBeforeSeq = new Map(placements.map((placement) => [placement.beforeSeq, placement]));
+  const messages: ChatMessage[] = [];
+  const sourceSeqs: number[] = [];
+  for (let index = 0; index < materialized.messages.length; index += 1) {
+    const before = byBeforeSeq.get(materialized.sourceSeqs[index]);
+    if (before) {
+      messages.push(before.note);
+      sourceSeqs.push(before.sourceSeq);
+    }
+    messages.push(materialized.messages[index]);
+    sourceSeqs.push(materialized.sourceSeqs[index]);
+  }
+  return { messages, sourceSeqs };
 }
 
 function checkpointCoversActiveBranch(
@@ -641,11 +676,12 @@ export function buildFullModelContextWithSources(
   const active = reduceActiveTranscript(entries);
   const materialized = materializeNodes(active.nodes, runReader);
   const delivery = failedDeliveryNotesWithSources(entries, active.nodes);
+  const withDeliveryNotes = insertDeliveryNotes(materialized, delivery.notes);
   return {
-    messages: [...materialized.messages, ...delivery.notes],
+    messages: withDeliveryNotes.messages,
     uncertainEffects: materialized.uncertainEffects,
     throughSeq: active.throughSeq,
-    sourceSeqs: [...materialized.sourceSeqs, ...delivery.sourceSeqs],
+    sourceSeqs: withDeliveryNotes.sourceSeqs,
   };
 }
 
@@ -668,11 +704,12 @@ export function buildModelContextFromCompactedView(
   // Phase 1 guard semantics even when their originating tool round is inside
   // the compacted prefix.
   const allActiveMaterialized = materializeNodes(active.nodes, runReader);
+  const delivery = failedDeliveryNotesWithSources(entries, active.nodes, checkpoint.payload.sourceThroughSeq);
+  const suffixWithDeliveryNotes = insertDeliveryNotes(materialized, delivery.notes);
   return {
     messages: [
       checkpoint.payload.replacement,
-      ...materialized.messages,
-      ...failedDeliveryNotes(entries, active.nodes, checkpoint.payload.sourceThroughSeq),
+      ...suffixWithDeliveryNotes.messages,
     ],
     uncertainEffects: allActiveMaterialized.uncertainEffects,
     throughSeq: active.throughSeq,

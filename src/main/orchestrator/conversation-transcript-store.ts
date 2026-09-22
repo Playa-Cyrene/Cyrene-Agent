@@ -750,7 +750,8 @@ function isValidTranscriptPayload(entry: Partial<TranscriptEntry>): boolean {
       return typeof entry.payload.assistantTurnId === "string" &&
         ["wechat", "feishu", "qq", "qqbot"].includes(entry.payload.channel as string) &&
         ["delivered", "failed"].includes(entry.payload.status as string) &&
-        (entry.payload.errorCode === undefined || typeof entry.payload.errorCode === "string");
+        (entry.payload.errorCode === undefined || typeof entry.payload.errorCode === "string") &&
+        (entry.payload.revision === undefined || (Number.isInteger(entry.payload.revision) && entry.payload.revision >= 1));
     default:
       return false;
   }
