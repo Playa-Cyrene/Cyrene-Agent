@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { ConversationTranscriptStore } from "./conversation-transcript-store";
+import { ConversationTranscriptArchive } from "./conversation-transcript-archive";
 import {
   buildFullModelContextWithSources,
   buildModelContextFromCompactedView,
@@ -30,6 +31,7 @@ export interface ConversationTranscriptCompactorOptions {
   store: ConversationTranscriptStore;
   summarize: (history: CanonicalChatMessage[]) => Promise<string>;
   runReader?: TranscriptRunReader;
+  archive?: ConversationTranscriptArchive;
   now?: () => number;
 }
 
@@ -83,12 +85,14 @@ export class ConversationTranscriptCompactor {
   private readonly store: ConversationTranscriptStore;
   private readonly summarize: ConversationTranscriptCompactorOptions["summarize"];
   private readonly runReader: TranscriptRunReader;
+  private readonly archive: ConversationTranscriptArchive;
   private readonly now: () => number;
 
   constructor(options: ConversationTranscriptCompactorOptions) {
     this.store = options.store;
     this.summarize = options.summarize;
     this.runReader = options.runReader ?? { get: () => null };
+    this.archive = options.archive ?? new ConversationTranscriptArchive(options.store);
     this.now = options.now ?? (() => Date.now());
   }
 
@@ -149,6 +153,10 @@ export class ConversationTranscriptCompactor {
       },
     };
     const checkpoint = await this.store.appendCompactionCheckpoint(request.conversationId, checkpointInput);
+    // The checkpoint is committed before archival. A crash in the generation
+    // commit therefore leaves the complete canonical log readable and lets a
+    // later attempt safely retry the hot-prefix archive.
+    await this.archive.archiveThrough(request.conversationId, sourceThroughSeq);
     const finalSnapshot = await this.store.read(request.conversationId);
     const finalContext = buildModelContextFromCompactedView(finalSnapshot.entries, this.runReader);
     return {

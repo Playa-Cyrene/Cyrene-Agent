@@ -31,6 +31,7 @@ import { normalizeMusicCardData } from "../../shared/music-card";
 const ROOT_DIR_NAME = "transcripts";
 const JSONL_FILE_NAME = "transcript.jsonl";
 const SNAPSHOT_FILE_NAME = "snapshot.json";
+const GENERATION_MANIFEST_FILE_NAME = "generation.json";
 const SCHEMA_VERSION = 2;
 const V1_SCHEMA_VERSION = 1;
 const IDENTITY_FILE_NAME = "identity.json";
@@ -50,6 +51,8 @@ export interface ConversationTranscriptStoreOptions {
 
 interface LoadedConversationState {
   dir: string;
+  /** Manifest-selected active file. Legacy conversations use transcript.jsonl. */
+  activeFile: string;
   entries: TranscriptEntry[];
   /** 快照基线（无快照为 0）。 */
   throughSeq: number;
@@ -58,6 +61,12 @@ interface LoadedConversationState {
   seenEntryIds: Set<string>;
   seenUserRevisions: Set<string>;
   projection: TranscriptSnapshotV2["projection"];
+  archives: TranscriptSnapshotV2["archives"];
+}
+
+interface TranscriptGenerationManifest {
+  schemaVersion: 1;
+  activeFile: string;
   archives: TranscriptSnapshotV2["archives"];
 }
 
@@ -145,7 +154,7 @@ export class ConversationTranscriptStore {
       const entry = { ...input, seq: state.maxSeq + 1, at: input.at ?? this.now() } as TranscriptEntry;
       validateLoadedTranscriptEntry(entry);
       await fs.promises.mkdir(state.dir, { recursive: true });
-      await fs.promises.appendFile(path.join(state.dir, JSONL_FILE_NAME), `${JSON.stringify(entry)}\n`, "utf8");
+      await fs.promises.appendFile(state.activeFile, `${JSON.stringify(entry)}\n`, "utf8");
       return entry;
     });
   }
@@ -177,7 +186,7 @@ export class ConversationTranscriptStore {
       const entry = { ...input, seq: state.maxSeq + 1, at: input.at ?? this.now() } as Extract<TranscriptEntry, { kind: "compaction_checkpoint" }>;
       validateLoadedTranscriptEntry(entry);
       await fs.promises.mkdir(state.dir, { recursive: true });
-      await fs.promises.appendFile(path.join(state.dir, JSONL_FILE_NAME), `${JSON.stringify(entry)}\n`, "utf8");
+      await fs.promises.appendFile(state.activeFile, `${JSON.stringify(entry)}\n`, "utf8");
       return entry;
     });
   }
@@ -225,7 +234,7 @@ export class ConversationTranscriptStore {
         throw error;
       }
       await fs.promises.mkdir(state.dir, { recursive: true });
-      await fs.promises.appendFile(path.join(state.dir, JSONL_FILE_NAME), `${JSON.stringify(entry)}\n`, "utf8");
+      await fs.promises.appendFile(state.activeFile, `${JSON.stringify(entry)}\n`, "utf8");
       return entry;
     });
   }
@@ -242,6 +251,118 @@ export class ConversationTranscriptStore {
         seenEntryIds: [...state.seenEntryIds],
         seenUserRevisions: [...state.seenUserRevisions],
       };
+    });
+  }
+
+  /**
+   * Commit an immutable archive generation. The manifest rename is the sole
+   * visibility point: files written before it are ignored by hot readers.
+   * The optional hook exists only for crash-injection tests and runs while
+   * the per-conversation queue is held.
+   */
+  archiveThrough(
+    conversationId: string,
+    throughSeq: number,
+    beforeManifest?: () => Promise<void>,
+  ): Promise<void> {
+    return this.enqueue(conversationId, async () => {
+      if (!Number.isInteger(throughSeq) || throughSeq < 1) {
+        throw new Error("TRANSCRIPT_ARCHIVE_INVALID_BOUNDARY");
+      }
+      const state = await this.loadState(conversationId);
+      const previousManifest = await this.readGenerationManifest(state.dir);
+      const archivedThrough = previousManifest?.archives.reduce(
+        (max, segment) => Math.max(max, segment.throughSeq), 0,
+      ) ?? 0;
+      if (throughSeq <= archivedThrough) return;
+
+      const checkpoint = state.entries
+        .filter((entry): entry is Extract<TranscriptEntry, { kind: "compaction_checkpoint" }> =>
+          entry.kind === "compaction_checkpoint" &&
+          entry.seq > throughSeq &&
+          entry.payload.sourceThroughSeq >= throughSeq)
+        .sort((left, right) => right.seq - left.seq)[0];
+      if (!checkpoint) throw new Error("TRANSCRIPT_ARCHIVE_BOUNDARY_NOT_COMMITTED");
+
+      const fromSeq = archivedThrough + 1;
+      const segmentEntries = state.entries.filter(
+        (entry) => entry.seq >= fromSeq && entry.seq <= throughSeq,
+      );
+      if (segmentEntries.length !== throughSeq - fromSeq + 1 ||
+        segmentEntries.some((entry, index) => entry.seq !== fromSeq + index)) {
+        throw new Error("TRANSCRIPT_ARCHIVE_BOUNDARY_NOT_CONTIGUOUS");
+      }
+      const activeEntries = state.entries.filter((entry) => entry.seq > throughSeq);
+      const generation = `${Date.now()}-${process.pid}-${Math.random().toString(16).slice(2)}`;
+      const segmentsDir = path.join(state.dir, "segments");
+      const activeDir = path.join(state.dir, "active");
+      await fs.promises.mkdir(segmentsDir, { recursive: true });
+      await fs.promises.mkdir(activeDir, { recursive: true });
+
+      const segmentFile = `segments/${fromSeq}-${throughSeq}.jsonl`;
+      const activeFile = `active/${generation}.jsonl`;
+      const segmentTmp = path.join(state.dir, `${segmentFile}.tmp`);
+      const activeTmp = path.join(state.dir, `${activeFile}.tmp`);
+      const segmentText = jsonlText(segmentEntries);
+      const activeText = jsonlText(activeEntries);
+      await writeDurableFile(segmentTmp, segmentText);
+      await writeDurableFile(activeTmp, activeText);
+      const segmentHash = sha256(segmentText);
+      await fs.promises.rename(segmentTmp, path.join(state.dir, segmentFile));
+      await fs.promises.rename(activeTmp, path.join(state.dir, activeFile));
+
+      const manifest: TranscriptGenerationManifest = {
+        schemaVersion: 1,
+        activeFile,
+        archives: [
+          ...(previousManifest?.archives ?? []),
+          { fromSeq, throughSeq, file: segmentFile, sha256: segmentHash },
+        ],
+      };
+      const manifestTmp = path.join(state.dir, `${GENERATION_MANIFEST_FILE_NAME}.${process.pid}.tmp`);
+      await writeDurableFile(manifestTmp, JSON.stringify(manifest));
+      if (beforeManifest) await beforeManifest();
+      await fs.promises.rename(manifestTmp, path.join(state.dir, GENERATION_MANIFEST_FILE_NAME));
+
+      // Persist the compact hot view only after the manifest is visible. If a
+      // crash occurs in this step, the active generation remains authoritative
+      // and the next checkpoint repairs this cache.
+      const snapshot: TranscriptSnapshotV2 = {
+        schemaVersion: SCHEMA_VERSION,
+        throughSeq: state.maxSeq,
+        entries: activeEntries,
+        projection: state.projection,
+        archives: manifest.archives,
+        seenEntryIds: [...state.seenEntryIds],
+        seenUserRevisions: [...state.seenUserRevisions],
+      };
+      await writeDurableFile(path.join(state.dir, `${SNAPSHOT_FILE_NAME}.${process.pid}.tmp`), JSON.stringify(snapshot));
+      await fs.promises.rename(
+        path.join(state.dir, `${SNAPSHOT_FILE_NAME}.${process.pid}.tmp`),
+        path.join(state.dir, SNAPSHOT_FILE_NAME),
+      );
+    });
+  }
+
+  /** Full audit view. Unlike read(), this intentionally scans immutable segments. */
+  readAuditEntries(conversationId: string): Promise<TranscriptEntry[]> {
+    return this.enqueue(conversationId, async () => {
+      const state = await this.loadState(conversationId);
+      const manifest = await this.readGenerationManifest(state.dir);
+      if (!manifest) return state.entries;
+      const entries: TranscriptEntry[] = [];
+      for (const segment of manifest.archives) {
+        const file = safeManifestFile(state.dir, segment.file);
+        const text = await fs.promises.readFile(file, "utf8");
+        if (sha256(text) !== segment.sha256) throw new Error("TRANSCRIPT_ARCHIVE_CORRUPT_SEGMENT");
+        entries.push(...parseJsonl(text));
+      }
+      entries.push(...parseJsonl(await readText(state.activeFile)));
+      entries.sort((left, right) => left.seq - right.seq);
+      if (entries.some((entry, index) => entry.seq !== index + 1)) {
+        throw new Error("TRANSCRIPT_ARCHIVE_CORRUPT_SEGMENT");
+      }
+      return entries;
     });
   }
 
@@ -297,11 +418,12 @@ export class ConversationTranscriptStore {
   /** 加载会话状态：尾行修复 + 快照基线 + seq > throughSeq 的 JSONL 增量重放。 */
   private async loadState(conversationId: string): Promise<LoadedConversationState> {
     const dir = await this.resolveConversationDir(conversationId, true);
-    const jsonlFile = path.join(dir, JSONL_FILE_NAME);
+    const generation = await this.readGenerationManifest(dir);
+    const activeFile = generation ? safeManifestFile(dir, generation.activeFile) : path.join(dir, JSONL_FILE_NAME);
 
     let text = "";
     try {
-      text = await fs.promises.readFile(jsonlFile, "utf8");
+      text = await fs.promises.readFile(activeFile, "utf8");
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
@@ -310,12 +432,15 @@ export class ConversationTranscriptStore {
     const { kept, lines } = repairTruncatedTail(text);
     if (kept !== text) {
       await fs.promises.mkdir(dir, { recursive: true });
-      await fs.promises.truncate(jsonlFile, Buffer.byteLength(kept, "utf8"));
+      await fs.promises.truncate(activeFile, Buffer.byteLength(kept, "utf8"));
     }
 
-    const snapshot = await this.readSnapshotFile(dir);
-    const throughSeq = snapshot?.throughSeq ?? 0;
-    const entries: TranscriptEntry[] = [...(snapshot?.entries ?? [])];
+    const snapshot = await this.readSnapshotFile(dir, Boolean(generation));
+    // Once a generation manifest is committed, the active file is the hot
+    // source. The old snapshot entries remain available as an idempotency
+    // index/projection cache but are never replayed into the hot log.
+    const throughSeq = generation ? 0 : snapshot?.throughSeq ?? 0;
+    const entries: TranscriptEntry[] = generation ? [] : [...(snapshot?.entries ?? [])];
     for (const entry of entries) validateLoadedTranscriptEntry(entry);
     const seenEntryIds = new Set<string>(snapshot?.seenEntryIds ?? []);
     const seenUserRevisions = new Set<string>(snapshot?.seenUserRevisions ?? []);
@@ -342,6 +467,7 @@ export class ConversationTranscriptStore {
     const maxSeq = entries.reduce((max, entry) => Math.max(max, entry.seq), throughSeq);
     return {
       dir,
+      activeFile,
       entries,
       throughSeq,
       maxSeq,
@@ -350,11 +476,11 @@ export class ConversationTranscriptStore {
       projection: snapshot?.schemaVersion === SCHEMA_VERSION
         ? snapshot.projection
         : { throughSeq: 0, messages: [] },
-      archives: snapshot?.schemaVersion === SCHEMA_VERSION ? snapshot.archives : [],
+      archives: generation?.archives ?? (snapshot?.schemaVersion === SCHEMA_VERSION ? snapshot.archives : []),
     };
   }
 
-  private async readSnapshotFile(dir: string): Promise<TranscriptSnapshotV2 | TranscriptSnapshotV1OnDisk | null> {
+  private async readSnapshotFile(dir: string, allowArchivedPrefix = false): Promise<TranscriptSnapshotV2 | TranscriptSnapshotV1OnDisk | null> {
     try {
       const raw = await fs.promises.readFile(path.join(dir, SNAPSHOT_FILE_NAME), "utf8");
       const parsed = JSON.parse(raw) as TranscriptSnapshotV2;
@@ -368,7 +494,6 @@ export class ConversationTranscriptStore {
           !Array.isArray(parsed.seenUserRevisions) ||
           !parsed.seenEntryIds.every((id) => typeof id === "string") ||
           !parsed.seenUserRevisions.every((key) => typeof key === "string") ||
-          parsed.archives.length !== 0 ||
           !parsed.archives.every((archive) => (
             isRecord(archive) &&
             Number.isInteger(archive.fromSeq) && archive.fromSeq >= 0 &&
@@ -376,7 +501,7 @@ export class ConversationTranscriptStore {
             typeof archive.file === "string" &&
             typeof archive.sha256 === "string"
           )) ||
-          !snapshotEntriesAreConsistent(parsed.entries, parsed.throughSeq, parsed.seenEntryIds, parsed.seenUserRevisions)
+          !snapshotEntriesAreConsistent(parsed.entries, parsed.throughSeq, parsed.seenEntryIds, parsed.seenUserRevisions, allowArchivedPrefix)
         ) throw new Error("TRANSCRIPT_CORRUPT_SNAPSHOT");
         return parsed;
       }
@@ -393,6 +518,33 @@ export class ConversationTranscriptStore {
       // canonical JSONL remains the source of truth and will be replayed.
       if (error instanceof SyntaxError) return null;
       throw error;
+    }
+  }
+
+  private async readGenerationManifest(dir: string): Promise<TranscriptGenerationManifest | null> {
+    try {
+      const raw = await fs.promises.readFile(path.join(dir, GENERATION_MANIFEST_FILE_NAME), "utf8");
+      const parsed = JSON.parse(raw) as Partial<TranscriptGenerationManifest>;
+      if (parsed.schemaVersion !== 1 || typeof parsed.activeFile !== "string" ||
+        !Array.isArray(parsed.archives) || parsed.archives.some((archive) => (
+          !isRecord(archive) || !Number.isInteger(archive.fromSeq) || archive.fromSeq < 1 ||
+          !Number.isInteger(archive.throughSeq) || archive.throughSeq < archive.fromSeq ||
+          typeof archive.file !== "string" || !/^[a-f0-9]{64}$/.test(archive.sha256 as string)
+        ))) {
+        throw new Error("TRANSCRIPT_ARCHIVE_CORRUPT_MANIFEST");
+      }
+      safeManifestFile(dir, parsed.activeFile);
+      let expectedFrom = 1;
+      for (const archive of parsed.archives) {
+        safeManifestFile(dir, archive.file);
+        if (archive.fromSeq !== expectedFrom) throw new Error("TRANSCRIPT_ARCHIVE_CORRUPT_MANIFEST");
+        expectedFrom = archive.throughSeq + 1;
+      }
+      return parsed as TranscriptGenerationManifest;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+      if (error instanceof Error && error.message === "TRANSCRIPT_ARCHIVE_CORRUPT_MANIFEST") throw error;
+      throw new Error("TRANSCRIPT_ARCHIVE_CORRUPT_MANIFEST");
     }
   }
 
@@ -537,6 +689,7 @@ function snapshotEntriesAreConsistent(
   throughSeq: number,
   seenEntryIds: string[],
   seenUserRevisions: string[],
+  allowArchivedPrefix = false,
 ): boolean {
   let previousSeq = 0;
   const entryIds: string[] = [];
@@ -544,7 +697,7 @@ function snapshotEntriesAreConsistent(
   for (const entry of entries) {
     validateLoadedTranscriptEntry(entry);
     if (entry.seq <= previousSeq) return false;
-    if (entry.seq !== entryIds.length + 1) return false;
+    if (!allowArchivedPrefix && entry.seq !== entryIds.length + 1) return false;
     previousSeq = entry.seq;
     entryIds.push(entry.id);
     if (entry.kind === "user") {
@@ -555,8 +708,14 @@ function snapshotEntriesAreConsistent(
     }
   }
   if (entries.length === 0) return throughSeq === 0 && seenEntryIds.length === 0 && seenUserRevisions.length === 0;
-  if (previousSeq !== throughSeq) return false;
-  return sameStringSet(entryIds, seenEntryIds) && sameStringSet(userRevisions, seenUserRevisions);
+  if ((!allowArchivedPrefix && previousSeq !== throughSeq) || (allowArchivedPrefix && previousSeq > throughSeq)) return false;
+  if (!allowArchivedPrefix) return sameStringSet(entryIds, seenEntryIds) && sameStringSet(userRevisions, seenUserRevisions);
+  const seenIds = new Set(seenEntryIds);
+  const seenRevisions = new Set(seenUserRevisions);
+  return new Set(entryIds).size === entryIds.length &&
+    new Set(userRevisions).size === userRevisions.length &&
+    entryIds.every((id) => seenIds.has(id)) &&
+    userRevisions.every((key) => seenRevisions.has(key));
 }
 
 function sameStringSet(left: string[], right: string[]): boolean {
@@ -665,6 +824,69 @@ async function pathExists(target: string): Promise<boolean> {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
     throw error;
   }
+}
+
+function jsonlText(entries: TranscriptEntry[]): string {
+  return entries.length === 0 ? "" : `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`;
+}
+
+function sha256(value: string): string {
+  return createHash("sha256").update(value, "utf8").digest("hex");
+}
+
+async function writeDurableFile(file: string, content: string): Promise<void> {
+  await fs.promises.mkdir(path.dirname(file), { recursive: true });
+  await fs.promises.writeFile(file, content, "utf8");
+  const handle = await fs.promises.open(file, "r+");
+  try {
+    try {
+      await handle.sync();
+    } catch (error) {
+      // Some Windows filesystems reject fsync on a newly-created handle. The
+      // atomic rename still provides the commit barrier there.
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "EPERM" && code !== "ENOTSUP" && code !== "EINVAL") throw error;
+    }
+  } finally {
+    await handle.close();
+  }
+}
+
+async function readText(file: string): Promise<string> {
+  try {
+    return await fs.promises.readFile(file, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return "";
+    throw error;
+  }
+}
+
+function parseJsonl(text: string): TranscriptEntry[] {
+  const { kept, lines } = repairTruncatedTail(text);
+  if (kept !== text) throw new Error("TRANSCRIPT_ARCHIVE_CORRUPT_SEGMENT");
+  const entries: TranscriptEntry[] = [];
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    try {
+      const entry = JSON.parse(line) as TranscriptEntry;
+      validateLoadedTranscriptEntry(entry);
+      entries.push(entry);
+    } catch {
+      throw new Error("TRANSCRIPT_ARCHIVE_CORRUPT_SEGMENT");
+    }
+  }
+  return entries;
+}
+
+function safeManifestFile(dir: string, file: string): string {
+  if (!file || path.isAbsolute(file) || file.includes("\\") || file.split("/").some((part) => part === ".." || part === "")) {
+    throw new Error("TRANSCRIPT_ARCHIVE_CORRUPT_MANIFEST");
+  }
+  const resolved = path.resolve(dir, ...file.split("/"));
+  if (path.dirname(resolved) === path.resolve(dir) || resolved.startsWith(`${path.resolve(dir)}${path.sep}`)) {
+    return resolved;
+  }
+  throw new Error("TRANSCRIPT_ARCHIVE_CORRUPT_MANIFEST");
 }
 
 /** 修剪截断尾行：返回保留文本与可用于解析的完整行。 */

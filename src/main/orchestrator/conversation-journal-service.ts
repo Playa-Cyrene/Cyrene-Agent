@@ -290,10 +290,19 @@ export class ConversationJournalService {
 
   async readProjection(conversationId: string): Promise<ConversationProjection> {
     const snapshot = await this.store.read(conversationId);
-    if (isUsableProjection(snapshot.projection, snapshot.throughSeq)) {
-      return snapshot.projection;
+    const seeded = isUsableProjection(snapshot.projection, snapshot.projection.throughSeq);
+    if (seeded && !(snapshot.archives.length > 0 && snapshot.projection.throughSeq === 0)) {
+      // After archival the hot snapshot may lag behind the active generation;
+      // apply only its suffix and keep the full UI history in the projection.
+      const rebuilt = reduceTranscriptProjection(snapshot.entries, snapshot.projection);
+      if (rebuilt.throughSeq === snapshot.throughSeq) return rebuilt;
+      await this.store.checkpoint(conversationId, rebuilt);
+      return rebuilt;
     }
-    const rebuilt = reduceTranscriptProjection(snapshot.entries);
+    const auditEntries = snapshot.archives.length > 0
+      ? await this.store.readAuditEntries(conversationId)
+      : snapshot.entries;
+    const rebuilt = reduceTranscriptProjection(auditEntries);
     await this.store.checkpoint(conversationId, rebuilt);
     return rebuilt;
   }
@@ -335,7 +344,15 @@ export class ConversationJournalService {
 
   private async refreshProjection(conversationId: string): Promise<ConversationProjection> {
     const snapshot = await this.store.read(conversationId);
-    const projection = reduceTranscriptProjection(snapshot.entries);
+    const seeded = isUsableProjection(snapshot.projection, snapshot.projection.throughSeq)
+      && !(snapshot.archives.length > 0 && snapshot.projection.throughSeq === 0)
+      ? snapshot.projection
+      : undefined;
+    const projection = seeded
+      ? reduceTranscriptProjection(snapshot.entries, seeded)
+      : reduceTranscriptProjection(
+        snapshot.archives.length > 0 ? await this.store.readAuditEntries(conversationId) : snapshot.entries,
+      );
     await this.store.checkpoint(conversationId, projection);
     return projection;
   }
