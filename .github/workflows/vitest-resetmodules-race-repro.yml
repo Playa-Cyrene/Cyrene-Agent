@@ -1,4 +1,4 @@
-name: Vitest exporter dependency bisect
+name: Vitest exporter body bisect
 
 on:
   push:
@@ -11,7 +11,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        deps: [base, fs-path, sync-flag, logger, vault-config, entity-graph, all-imports]
+        cut: ["427", "593", "626", "636", "original"]
     steps:
       - uses: actions/checkout@v4
 
@@ -35,74 +35,15 @@ jobs:
           fs.writeFileSync(p, s)
           EOF
 
-      - name: Build minimized exporter dependency set
+      - name: Truncate exporter at a function boundary
+        if: matrix.cut != 'original'
         env:
-          DEPS: ${{ matrix.deps }}
+          CUT: ${{ matrix.cut }}
         shell: bash
         run: |
-          P=src/main/memory/obsidian-exporter.ts
-          cat > "$P" <<'EOF'
-          import { memoryStore } from "./memory-store"
-          EOF
-
-          case "$DEPS" in
-            fs-path)
-              cat >> "$P" <<'EOF'
-          import * as fs from "fs"
-          import * as path from "path"
-          void fs
-          void path
-          EOF
-              ;;
-            sync-flag)
-              cat >> "$P" <<'EOF'
-          import { isImportingMemory } from "./obsidian-sync-flag"
-          void isImportingMemory
-          EOF
-              ;;
-            logger)
-              cat >> "$P" <<'EOF'
-          import { logger, LogTag } from "../logger"
-          void logger
-          void LogTag
-          EOF
-              ;;
-            vault-config)
-              cat >> "$P" <<'EOF'
-          import { loadObsidianVaultConfig, saveObsidianVaultConfig, isVaultBound } from "./obsidian-vault-config"
-          void loadObsidianVaultConfig
-          void saveObsidianVaultConfig
-          void isVaultBound
-          EOF
-              ;;
-            entity-graph)
-              cat >> "$P" <<'EOF'
-          import { entityGraph } from "./entity-graph"
-          void entityGraph
-          EOF
-              ;;
-            all-imports)
-              cat >> "$P" <<'EOF'
-          import * as fs from "fs"
-          import * as path from "path"
-          import { entityGraph } from "./entity-graph"
-          import { logger, LogTag } from "../logger"
-          import { loadObsidianVaultConfig, saveObsidianVaultConfig, isVaultBound } from "./obsidian-vault-config"
-          import { isImportingMemory } from "./obsidian-sync-flag"
-          void fs
-          void path
-          void entityGraph
-          void logger
-          void LogTag
-          void loadObsidianVaultConfig
-          void saveObsidianVaultConfig
-          void isVaultBound
-          void isImportingMemory
-          EOF
-              ;;
-          esac
-
-          cat >> "$P" <<'EOF'
+          cp src/main/memory/obsidian-exporter.ts /tmp/original-exporter.ts
+          head -n "$CUT" /tmp/original-exporter.ts > src/main/memory/obsidian-exporter.ts
+          cat >> src/main/memory/obsidian-exporter.ts <<'EOF'
 
           export function notifyMemoryChanged(): unknown {
             return memoryStore
@@ -119,7 +60,6 @@ jobs:
           import { expect, it, vi } from "vitest"
 
           const electronMock = vi.hoisted(() => ({ userDataDir: "" }))
-
           vi.mock("electron", () => ({
             app: {
               getPath: () => electronMock.userDataDir,
@@ -127,7 +67,7 @@ jobs:
             },
           }))
 
-          it("primes obsidian-exporter in an isolated test file", async () => {
+          it("primes obsidian-exporter", async () => {
             electronMock.userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "race-prime-"))
             vi.resetModules()
             const exporter = await import("./obsidian-exporter")
