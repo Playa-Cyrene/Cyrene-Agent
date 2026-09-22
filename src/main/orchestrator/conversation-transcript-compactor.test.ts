@@ -1,8 +1,9 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ConversationTranscriptCompactor } from "./conversation-transcript-compactor";
+import { ConversationTranscriptArchive } from "./conversation-transcript-archive";
 import { ConversationJournalService } from "./conversation-journal-service";
 import { ConversationTranscriptStore } from "./conversation-transcript-store";
 import type { ChatMessage } from "./vendors/types";
@@ -166,5 +167,21 @@ describe("ConversationTranscriptCompactor", () => {
     expect(result.compactedMessages[0]?.content).toContain("<cyrene_compaction_checkpoint>");
     expect((await fixture.journal.buildModelContext("c1")).messages.map((message) => message.content))
       .toEqual([expect.stringContaining("<cyrene_compaction_checkpoint>"), "新回答".repeat(20), "最新问题"]);
+  });
+
+  it("checkpoint durable 后 archive IO 失败只隔离归档且压缩仍成功", async () => {
+    const fixture = createFixture();
+    await seed(fixture);
+    const archive = new ConversationTranscriptArchive(fixture.store);
+    vi.spyOn(archive, "archiveThrough").mockRejectedValue(new Error("ARCHIVE_IO_FAILURE"));
+    const compactor = new ConversationTranscriptCompactor({
+      store: fixture.store,
+      summarize: async () => "summary",
+      archive,
+    });
+    const result = await compactor.compact({ conversationId: "c1", trigger: "automatic", retainTokens: 1 });
+    expect(result.checkpointEntryId).toBeTruthy();
+    expect((await fixture.journal.buildModelContext("c1")).messages[0]?.content)
+      .toContain("<cyrene_compaction_checkpoint>");
   });
 });

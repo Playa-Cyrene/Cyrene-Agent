@@ -88,6 +88,59 @@ describe("ConversationTranscriptArchive", () => {
     await expect(archive.archiveThrough("c1", 1)).rejects.toThrow("TRANSCRIPT_ARCHIVE_BOUNDARY_NOT_COMMITTED");
   });
 
+  it("manifest 不得把 active 指向 identity，且 active 缺失时 fail-closed", async () => {
+    const { store, archive, root } = fixture();
+    await seedCheckpoint(store);
+    await archive.archiveThrough("c1", 40);
+    const dir = path.join(root, "transcripts", transcriptStorageKey("c1"));
+    const manifestPath = path.join(dir, "generation.json");
+    const manifest = JSON.parse(await fs.promises.readFile(manifestPath, "utf8")) as Record<string, unknown>;
+    manifest.activeFile = "identity.json";
+    await fs.promises.writeFile(manifestPath, JSON.stringify(manifest), "utf8");
+    await expect(store.read("c1")).rejects.toThrow("TRANSCRIPT_ARCHIVE_CORRUPT_MANIFEST");
+    await expect(store.append("c1", user("e44", 44))).rejects.toThrow("TRANSCRIPT_ARCHIVE_CORRUPT_MANIFEST");
+    // Restore a valid manifest, then remove its active target: ENOENT must not
+    // be treated as an empty log that starts sequence numbers over.
+    const valid = JSON.parse(await fs.promises.readFile(manifestPath, "utf8")) as { activeFile: string };
+    valid.activeFile = "active/missing.jsonl";
+    await fs.promises.writeFile(manifestPath, JSON.stringify({ ...manifest, activeFile: valid.activeFile }), "utf8");
+    await expect(store.read("c1")).rejects.toThrow("TRANSCRIPT_ARCHIVE_CORRUPT_ACTIVE");
+    await expect(store.append("c1", user("e44", 44))).rejects.toThrow("TRANSCRIPT_ARCHIVE_CORRUPT_ACTIVE");
+  });
+
+  it("归档后重放已归档 entryId 与 user revision 不会生成新序号", async () => {
+    const { store, archive } = fixture();
+    await seedCheckpoint(store);
+    await archive.archiveThrough("c1", 40);
+    await expect(store.append("c1", user("e1", 1))).rejects.toThrow("TRANSCRIPT_IDEMPOTENCY_CONFLICT");
+    await expect(store.append("c1", {
+      ...user("new-id", 1), turnId: "e1",
+    })).rejects.toThrow("TRANSCRIPT_IDEMPOTENCY_CONFLICT");
+    expect((await store.read("c1")).throughSeq).toBe(43);
+  });
+
+  it("checkpoint 后投影 seed 未覆盖归档边界时从 audit 重建完整 UI", async () => {
+    const { store, archive } = fixture();
+    const journal = new ConversationJournalService(store);
+    await journal.appendUser("c1", { id: "u1", turnId: "u1", text: "first" });
+    await store.append("c1", {
+      id: "a1", at: 1_000, kind: "assistant", turnId: "t1",
+      payload: { role: "assistant", content: "answer" },
+    });
+    const before = await store.read("c1");
+    const sourceDigest = createHash("sha256").update(JSON.stringify(before.entries), "utf8").digest("hex");
+    await store.appendCompactionCheckpoint("c1", {
+      id: "checkpoint-timing", at: 1_000, kind: "compaction_checkpoint",
+      payload: {
+        baseThroughSeq: 2, sourceThroughSeq: 2, sourceDigest,
+        replacement: { role: "system", content: "summary" }, trigger: "manual",
+      },
+    });
+    await archive.archiveThrough("c1", 2);
+    const projection = await journal.readProjection("c1");
+    expect(projection.messages.map((message) => message.content)).toEqual(["first", "answer"]);
+  });
+
   it("投影快照损坏且前缀已归档时从 audit segments 重建 UI", async () => {
     const { store, archive, root } = fixture();
     await seedCheckpoint(store);

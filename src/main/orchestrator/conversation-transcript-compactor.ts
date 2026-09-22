@@ -156,7 +156,13 @@ export class ConversationTranscriptCompactor {
     // The checkpoint is committed before archival. A crash in the generation
     // commit therefore leaves the complete canonical log readable and lets a
     // later attempt safely retry the hot-prefix archive.
-    await this.archive.archiveThrough(request.conversationId, sourceThroughSeq);
+    try {
+      await this.archive.archiveThrough(request.conversationId, sourceThroughSeq);
+    } catch (error) {
+      // The durable checkpoint is the compaction commit. Archival is a
+      // recoverable hot-path optimization and can be retried independently.
+      console.error("[ConversationTranscriptCompactor] archive failed", error);
+    }
     const finalSnapshot = await this.store.read(request.conversationId);
     const finalContext = buildModelContextFromCompactedView(finalSnapshot.entries, this.runReader);
     return {

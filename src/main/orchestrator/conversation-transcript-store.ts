@@ -41,8 +41,8 @@ type TranscriptSnapshotV1OnDisk = {
   schemaVersion: 1;
   throughSeq: number;
   entries: TranscriptEntry[];
-  seenEntryIds: string[];
-  seenUserRevisions: string[];
+  seenEntryIds?: string[];
+  seenUserRevisions?: string[];
 };
 
 export interface ConversationTranscriptStoreOptions {
@@ -68,6 +68,8 @@ interface TranscriptGenerationManifest {
   schemaVersion: 1;
   activeFile: string;
   archives: TranscriptSnapshotV2["archives"];
+  seenEntryIds: string[];
+  seenUserRevisions: string[];
 }
 
 function validConversationId(conversationId: string): boolean {
@@ -137,6 +139,12 @@ export class ConversationTranscriptStore {
         if (existingById.kind !== input.kind) throw new Error("TRANSCRIPT_IDEMPOTENCY_CONFLICT");
         return existingById;
       }
+      // A generation's snapshot keeps the idempotency index for archived
+      // rows. They cannot be returned from the hot log, so fail closed rather
+      // than appending a duplicate with a new sequence number.
+      if (state.seenEntryIds.has(input.id)) {
+        throw new Error("TRANSCRIPT_IDEMPOTENCY_CONFLICT");
+      }
 
       // user 次级键 (turnId, revision)：同键语义等价吸收返回持有者，内容不同抛冲突
       if (input.kind === "user" && input.turnId && input.revision) {
@@ -146,6 +154,9 @@ export class ConversationTranscriptStore {
         );
         if (holder) {
           if (sameSemanticContent(input, holder)) return holder;
+          throw new Error("TRANSCRIPT_IDEMPOTENCY_CONFLICT");
+        }
+        if (state.seenUserRevisions.has(userRevisionKey(input.turnId, input.revision))) {
           throw new Error("TRANSCRIPT_IDEMPOTENCY_CONFLICT");
         }
       }
@@ -175,8 +186,11 @@ export class ConversationTranscriptStore {
     return this.enqueue(conversationId, async () => {
       const state = await this.loadState(conversationId);
       const payload = input.payload;
-      const prefix = state.entries.filter((entry) => entry.seq <= payload.sourceThroughSeq);
-      const competing = state.entries.some((entry) => entry.seq > payload.baseThroughSeq && (
+      const validationEntries = state.archives.length > 0
+        ? await this.readAuditEntriesLocked(state)
+        : state.entries;
+      const prefix = validationEntries.filter((entry) => entry.seq <= payload.sourceThroughSeq);
+      const competing = validationEntries.some((entry) => entry.seq > payload.baseThroughSeq && (
         entry.kind === "compaction_checkpoint" || entry.kind === "turn_rewind" || entry.kind === "turn_tombstone"
       ));
       const prefixDigest = createHash("sha256").update(JSON.stringify(prefix), "utf8").digest("hex");
@@ -213,14 +227,16 @@ export class ConversationTranscriptStore {
         }
         return existing;
       }
+      const keyDigest = createHash("sha256").update(mutationKey, "utf8").digest("hex");
+      const stableId = `presentation:${messageId}:m${keyDigest}`;
+      if (state.seenEntryIds.has(stableId)) throw new Error("TRANSCRIPT_IDEMPOTENCY_CONFLICT");
       const nextRevision = state.entries
         .filter((entry): entry is Extract<TranscriptEntry, { kind: "presentation_patch" }> =>
           entry.kind === "presentation_patch" && entry.payload.messageId === messageId)
         .reduce((max, entry) => Math.max(max, entry.payload.patchRevision), 0) + 1;
-      const keyDigest = createHash("sha256").update(mutationKey, "utf8").digest("hex");
       const input: TranscriptAppendInput = {
         kind: "presentation_patch",
-        id: `presentation:${messageId}:m${keyDigest}`,
+        id: stableId,
         at: this.now(),
         payload: { messageId, patchRevision: nextRevision, mutationKey, patch },
       };
@@ -310,6 +326,8 @@ export class ConversationTranscriptStore {
       const segmentHash = sha256(segmentText);
       await fs.promises.rename(segmentTmp, path.join(state.dir, segmentFile));
       await fs.promises.rename(activeTmp, path.join(state.dir, activeFile));
+      await syncDirectory(segmentsDir);
+      await syncDirectory(activeDir);
 
       const manifest: TranscriptGenerationManifest = {
         schemaVersion: 1,
@@ -318,11 +336,14 @@ export class ConversationTranscriptStore {
           ...(previousManifest?.archives ?? []),
           { fromSeq, throughSeq, file: segmentFile, sha256: segmentHash },
         ],
+        seenEntryIds: [...state.seenEntryIds],
+        seenUserRevisions: [...state.seenUserRevisions],
       };
       const manifestTmp = path.join(state.dir, `${GENERATION_MANIFEST_FILE_NAME}.${process.pid}.tmp`);
       await writeDurableFile(manifestTmp, JSON.stringify(manifest));
       if (beforeManifest) await beforeManifest();
       await fs.promises.rename(manifestTmp, path.join(state.dir, GENERATION_MANIFEST_FILE_NAME));
+      await syncDirectory(state.dir);
 
       // Persist the compact hot view only after the manifest is visible. If a
       // crash occurs in this step, the active generation remains authoritative
@@ -341,6 +362,7 @@ export class ConversationTranscriptStore {
         path.join(state.dir, `${SNAPSHOT_FILE_NAME}.${process.pid}.tmp`),
         path.join(state.dir, SNAPSHOT_FILE_NAME),
       );
+      await syncDirectory(state.dir);
     });
   }
 
@@ -348,22 +370,37 @@ export class ConversationTranscriptStore {
   readAuditEntries(conversationId: string): Promise<TranscriptEntry[]> {
     return this.enqueue(conversationId, async () => {
       const state = await this.loadState(conversationId);
-      const manifest = await this.readGenerationManifest(state.dir);
-      if (!manifest) return state.entries;
-      const entries: TranscriptEntry[] = [];
-      for (const segment of manifest.archives) {
-        const file = safeManifestFile(state.dir, segment.file);
-        const text = await fs.promises.readFile(file, "utf8");
-        if (sha256(text) !== segment.sha256) throw new Error("TRANSCRIPT_ARCHIVE_CORRUPT_SEGMENT");
-        entries.push(...parseJsonl(text));
-      }
-      entries.push(...parseJsonl(await readText(state.activeFile)));
-      entries.sort((left, right) => left.seq - right.seq);
-      if (entries.some((entry, index) => entry.seq !== index + 1)) {
-        throw new Error("TRANSCRIPT_ARCHIVE_CORRUPT_SEGMENT");
-      }
-      return entries;
+      return this.readAuditEntriesLocked(state);
     });
+  }
+
+  private async readAuditEntriesLocked(state: LoadedConversationState): Promise<TranscriptEntry[]> {
+    const manifest = await this.readGenerationManifest(state.dir);
+    if (!manifest) return state.entries;
+    const entries: TranscriptEntry[] = [];
+    for (const segment of manifest.archives) {
+      const file = safeSegmentManifestFile(state.dir, segment.file);
+      const text = await fs.promises.readFile(file, "utf8");
+      if (sha256(text) !== segment.sha256) throw new Error("TRANSCRIPT_ARCHIVE_CORRUPT_SEGMENT");
+      entries.push(...parseJsonl(text));
+    }
+    entries.push(...parseJsonl(await readText(state.activeFile)));
+    entries.sort((left, right) => left.seq - right.seq);
+    if (entries.some((entry, index) => entry.seq !== index + 1)) {
+      throw new Error("TRANSCRIPT_ARCHIVE_CORRUPT_SEGMENT");
+    }
+    const ids = new Set<string>();
+    const revisions = new Set<string>();
+    for (const entry of entries) {
+      if (ids.has(entry.id)) throw new Error("TRANSCRIPT_ARCHIVE_CORRUPT_SEGMENT");
+      ids.add(entry.id);
+      if (entry.kind === "user") {
+        const key = userRevisionKey(entry.turnId as string, entry.revision as number);
+        if (revisions.has(key)) throw new Error("TRANSCRIPT_ARCHIVE_CORRUPT_SEGMENT");
+        revisions.add(key);
+      }
+    }
+    return entries;
   }
 
   /** Atomically persist a snapshot, optionally replacing only its projection. */
@@ -419,18 +456,20 @@ export class ConversationTranscriptStore {
   private async loadState(conversationId: string): Promise<LoadedConversationState> {
     const dir = await this.resolveConversationDir(conversationId, true);
     const generation = await this.readGenerationManifest(dir);
-    const activeFile = generation ? safeManifestFile(dir, generation.activeFile) : path.join(dir, JSONL_FILE_NAME);
+    const activeFile = generation ? safeActiveManifestFile(dir, generation.activeFile) : path.join(dir, JSONL_FILE_NAME);
 
     let text = "";
     try {
       text = await fs.promises.readFile(activeFile, "utf8");
     } catch (error) {
+      if (generation) throw new Error("TRANSCRIPT_ARCHIVE_CORRUPT_ACTIVE");
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
 
     // 尾行容错：只修剪非空的未终止或不可解析的尾行，保留此前所有合法条目
     const { kept, lines } = repairTruncatedTail(text);
     if (kept !== text) {
+      if (generation) throw new Error("TRANSCRIPT_ARCHIVE_CORRUPT_ACTIVE");
       await fs.promises.mkdir(dir, { recursive: true });
       await fs.promises.truncate(activeFile, Buffer.byteLength(kept, "utf8"));
     }
@@ -442,8 +481,14 @@ export class ConversationTranscriptStore {
     const throughSeq = generation ? 0 : snapshot?.throughSeq ?? 0;
     const entries: TranscriptEntry[] = generation ? [] : [...(snapshot?.entries ?? [])];
     for (const entry of entries) validateLoadedTranscriptEntry(entry);
-    const seenEntryIds = new Set<string>(snapshot?.seenEntryIds ?? []);
-    const seenUserRevisions = new Set<string>(snapshot?.seenUserRevisions ?? []);
+    const seenEntryIds = new Set<string>([
+      ...(snapshot?.seenEntryIds ?? []),
+      ...(generation?.seenEntryIds ?? []),
+    ]);
+    const seenUserRevisions = new Set<string>([
+      ...(snapshot?.seenUserRevisions ?? []),
+      ...(generation?.seenUserRevisions ?? []),
+    ]);
 
     for (const line of lines) {
       if (line.trim() === "") continue;
@@ -452,15 +497,28 @@ export class ConversationTranscriptStore {
         parsed = JSON.parse(line);
       } catch {
         // 中间行损坏属于数据损坏，显性失败（尾行已在修复步骤处理）
-        throw new Error("TRANSCRIPT_CORRUPT_ROW");
+        throw new Error(generation ? "TRANSCRIPT_ARCHIVE_CORRUPT_ACTIVE" : "TRANSCRIPT_CORRUPT_ROW");
       }
       const entry = parsed as TranscriptEntry;
-      validateLoadedTranscriptEntry(entry);
+      try {
+        validateLoadedTranscriptEntry(entry);
+      } catch (error) {
+        if (generation) throw new Error("TRANSCRIPT_ARCHIVE_CORRUPT_ACTIVE");
+        throw error;
+      }
       if (entry.seq <= throughSeq) continue;
       entries.push(entry);
       seenEntryIds.add(entry.id);
       if (entry.kind === "user" && entry.turnId && typeof entry.revision === "number") {
         seenUserRevisions.add(userRevisionKey(entry.turnId, entry.revision));
+      }
+    }
+
+    if (generation) {
+      const expectedFirst = (generation.archives.at(-1)?.throughSeq ?? 0) + 1;
+      if (lines.length === 0 || entries[0]?.seq !== expectedFirst ||
+        entries.some((entry, index) => entry.seq !== expectedFirst + index)) {
+        throw new Error("TRANSCRIPT_ARCHIVE_CORRUPT_ACTIVE");
       }
     }
 
@@ -533,11 +591,17 @@ export class ConversationTranscriptStore {
         ))) {
         throw new Error("TRANSCRIPT_ARCHIVE_CORRUPT_MANIFEST");
       }
-      safeManifestFile(dir, parsed.activeFile);
+      if ((parsed.seenEntryIds !== undefined && (!Array.isArray(parsed.seenEntryIds) || !parsed.seenEntryIds.every((id) => typeof id === "string"))) ||
+        (parsed.seenUserRevisions !== undefined && (!Array.isArray(parsed.seenUserRevisions) || !parsed.seenUserRevisions.every((key) => typeof key === "string")))) {
+        throw new Error("TRANSCRIPT_ARCHIVE_CORRUPT_MANIFEST");
+      }
+      safeActiveManifestFile(dir, parsed.activeFile);
       let expectedFrom = 1;
       for (const archive of parsed.archives) {
-        safeManifestFile(dir, archive.file);
-        if (archive.fromSeq !== expectedFrom) throw new Error("TRANSCRIPT_ARCHIVE_CORRUPT_MANIFEST");
+        const match = /^segments\/(\d+)-(\d+)\.jsonl$/.exec(archive.file);
+        if (!match || Number(match[1]) !== archive.fromSeq || Number(match[2]) !== archive.throughSeq ||
+          archive.fromSeq !== expectedFrom) throw new Error("TRANSCRIPT_ARCHIVE_CORRUPT_MANIFEST");
+        safeSegmentManifestFile(dir, archive.file);
         expectedFrom = archive.throughSeq + 1;
       }
       return parsed as TranscriptGenerationManifest;
@@ -839,16 +903,25 @@ async function writeDurableFile(file: string, content: string): Promise<void> {
   await fs.promises.writeFile(file, content, "utf8");
   const handle = await fs.promises.open(file, "r+");
   try {
-    try {
-      await handle.sync();
-    } catch (error) {
-      // Some Windows filesystems reject fsync on a newly-created handle. The
-      // atomic rename still provides the commit barrier there.
-      const code = (error as NodeJS.ErrnoException).code;
-      if (code !== "EPERM" && code !== "ENOTSUP" && code !== "EINVAL") throw error;
-    }
+    await handle.sync();
   } finally {
     await handle.close();
+  }
+}
+
+async function syncDirectory(dir: string): Promise<void> {
+  let handle: fs.promises.FileHandle | undefined;
+  try {
+    handle = await fs.promises.open(dir, "r");
+    await handle.sync();
+  } catch (error) {
+    // Windows does not expose directory fsync. Only this directory-sync
+    // operation accepts the platform-specific unsupported errors; file fsync
+    // above remains fail-closed for all I/O failures.
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "EPERM" && code !== "ENOTSUP" && code !== "EINVAL") throw error;
+  } finally {
+    await handle?.close();
   }
 }
 
@@ -878,15 +951,19 @@ function parseJsonl(text: string): TranscriptEntry[] {
   return entries;
 }
 
-function safeManifestFile(dir: string, file: string): string {
-  if (!file || path.isAbsolute(file) || file.includes("\\") || file.split("/").some((part) => part === ".." || part === "")) {
+function safeActiveManifestFile(dir: string, file: string): string {
+  if (!/^active\/[A-Za-z0-9][A-Za-z0-9._-]*\.jsonl$/.test(file)) {
+    throw new Error("TRANSCRIPT_ARCHIVE_CORRUPT_MANIFEST");
+  }
+  return path.resolve(dir, ...file.split("/"));
+}
+
+function safeSegmentManifestFile(dir: string, file: string): string {
+  if (!/^segments\/\d+-\d+\.jsonl$/.test(file)) {
     throw new Error("TRANSCRIPT_ARCHIVE_CORRUPT_MANIFEST");
   }
   const resolved = path.resolve(dir, ...file.split("/"));
-  if (path.dirname(resolved) === path.resolve(dir) || resolved.startsWith(`${path.resolve(dir)}${path.sep}`)) {
-    return resolved;
-  }
-  throw new Error("TRANSCRIPT_ARCHIVE_CORRUPT_MANIFEST");
+  return resolved;
 }
 
 /** 修剪截断尾行：返回保留文本与可用于解析的完整行。 */

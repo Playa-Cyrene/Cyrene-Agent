@@ -290,8 +290,8 @@ export class ConversationJournalService {
 
   async readProjection(conversationId: string): Promise<ConversationProjection> {
     const snapshot = await this.store.read(conversationId);
-    const seeded = isUsableProjection(snapshot.projection, snapshot.projection.throughSeq);
-    if (seeded && !(snapshot.archives.length > 0 && snapshot.projection.throughSeq === 0)) {
+    const seeded = isProjectionSeedUsable(snapshot);
+    if (seeded) {
       // After archival the hot snapshot may lag behind the active generation;
       // apply only its suffix and keep the full UI history in the projection.
       const rebuilt = reduceTranscriptProjection(snapshot.entries, snapshot.projection);
@@ -344,10 +344,7 @@ export class ConversationJournalService {
 
   private async refreshProjection(conversationId: string): Promise<ConversationProjection> {
     const snapshot = await this.store.read(conversationId);
-    const seeded = isUsableProjection(snapshot.projection, snapshot.projection.throughSeq)
-      && !(snapshot.archives.length > 0 && snapshot.projection.throughSeq === 0)
-      ? snapshot.projection
-      : undefined;
+    const seeded = isProjectionSeedUsable(snapshot) ? snapshot.projection : undefined;
     const projection = seeded
       ? reduceTranscriptProjection(snapshot.entries, seeded)
       : reduceTranscriptProjection(
@@ -392,6 +389,17 @@ function isUsableProjection(
     typeof patch.patch === "object"
     ))
   );
+}
+
+function isProjectionSeedUsable(snapshot: TranscriptSnapshotV2): boolean {
+  const projection = snapshot.projection;
+  if (!isUsableProjection(projection, projection.throughSeq)) return false;
+  const archivedThrough = snapshot.archives.reduce(
+    (max, archive) => Math.max(max, archive.throughSeq), 0,
+  );
+  if (projection.throughSeq < archivedThrough || projection.throughSeq > snapshot.throughSeq) return false;
+  const messageIds = new Set(projection.messages.map((message) => message.id));
+  return projection.state?.nodes.every((node) => messageIds.has(node.messageId)) ?? projection.messages.length === 0;
 }
 
 function isProjectionMessage(message: unknown): boolean {
