@@ -1,4 +1,4 @@
-name: Vitest cross-file priming isolate
+name: Vitest 4-vs-5 exporter-prime repro
 
 on:
   push:
@@ -11,14 +11,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        case:
-          - noop
-          - mock-only
-          - mock-import-store
-          - mock-write-store
-          - real-import-store
-          - real-import-exporter
-          - real-write-store
+        vitest: ["4.1.11", "5.0.1"]
     steps:
       - uses: actions/checkout@v4
 
@@ -29,6 +22,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Select Vitest version
+        run: npm install --no-save --package-lock=false vitest@${{ matrix.vitest }}
 
       - name: Make run deterministic
         shell: bash
@@ -42,120 +38,34 @@ jobs:
           fs.writeFileSync(p, s)
           EOF
 
-      - name: Create priming companion
-        env:
-          CASE: ${{ matrix.case }}
+      - name: Create exporter primer
         shell: bash
         run: |
-          P=src/main/memory/vitest-race-companion.test.ts
-
-          case "$CASE" in
-            noop)
-              cat > "$P" <<'EOF'
-          import { expect, it } from "vitest"
-          it("noop primer", () => expect(true).toBe(true))
-          EOF
-              ;;
-            mock-only)
-              cat > "$P" <<'EOF'
-          import { expect, it, vi } from "vitest"
-          vi.mock("./obsidian-exporter", () => ({ notifyMemoryChanged: vi.fn() }))
-          it("mock-only primer", () => expect(true).toBe(true))
-          EOF
-              ;;
-            mock-import-store|mock-write-store)
-              cat > "$P" <<'EOF'
+          cat > src/main/memory/vitest-race-companion.test.ts <<'EOF'
           import * as fs from "fs"
           import * as os from "os"
           import * as path from "path"
           import { expect, it, vi } from "vitest"
 
           const electronMock = vi.hoisted(() => ({ userDataDir: "" }))
-          vi.mock("electron", () => ({
-            app: { getPath: () => electronMock.userDataDir },
-          }))
-          vi.mock("./obsidian-exporter", () => ({ notifyMemoryChanged: vi.fn() }))
 
-          it("mocked store primer", async () => {
-            electronMock.userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "race-prime-"))
-            vi.resetModules()
-            const { memoryStore } = await import("./memory-store")
-            expect(memoryStore).toBeDefined()
-
-            if (process.env.CASE === "mock-write-store") {
-              const memory = await memoryStore.addL2Memory({
-                content: "primer",
-                triggerText: "primer",
-                sourceConversationId: "test",
-                isPinned: false,
-              })
-              expect(memory.id).toBeTruthy()
-            }
-          })
-          EOF
-              ;;
-            real-import-store|real-write-store)
-              cat > "$P" <<'EOF'
-          import * as fs from "fs"
-          import * as os from "os"
-          import * as path from "path"
-          import { expect, it, vi } from "vitest"
-
-          const electronMock = vi.hoisted(() => ({ userDataDir: "" }))
           vi.mock("electron", () => ({
             app: { getPath: () => electronMock.userDataDir },
           }))
 
-          it("real store primer", async () => {
-            electronMock.userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "race-prime-"))
-            vi.resetModules()
-            const { memoryStore } = await import("./memory-store")
-            expect(memoryStore).toBeDefined()
-
-            if (process.env.CASE === "real-write-store") {
-              const memory = await memoryStore.addL2Memory({
-                content: "primer",
-                triggerText: "primer",
-                sourceConversationId: "test",
-                isPinned: false,
-              })
-              expect(memory.id).toBeTruthy()
-              await vi.dynamicImportSettled()
-            }
-          })
-          EOF
-              ;;
-            real-import-exporter)
-              cat > "$P" <<'EOF'
-          import * as fs from "fs"
-          import * as os from "os"
-          import * as path from "path"
-          import { expect, it, vi } from "vitest"
-
-          const electronMock = vi.hoisted(() => ({ userDataDir: "" }))
-          vi.mock("electron", () => ({
-            app: { getPath: () => electronMock.userDataDir },
-          }))
-
-          it("real exporter primer", async () => {
+          it("primes obsidian-exporter in an isolated test file", async () => {
             electronMock.userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "race-prime-"))
             vi.resetModules()
             const exporter = await import("./obsidian-exporter")
             expect(exporter.notifyMemoryChanged).toBeTypeOf("function")
           })
           EOF
-              ;;
-          esac
 
-          # Force this file ahead of memory-manager.test.ts in Vitest's size-based
-          # default sequencing, matching the real failing order.
           python - <<'PY'
           p = "src/main/memory/vitest-race-companion.test.ts"
           with open(p, "a", encoding="utf-8") as f:
               f.write("\n/* " + ("primer-padding " * 10000) + " */\n")
           PY
 
-      - name: Run primer then manager
-        env:
-          CASE: ${{ matrix.case }}
+      - name: Run two-file repro
         run: npx vitest run src/main/memory/memory-manager.test.ts src/main/memory/vitest-race-companion.test.ts
