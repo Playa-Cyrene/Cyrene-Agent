@@ -47,6 +47,7 @@ type TranscriptSnapshotV1OnDisk = {
 
 export interface ConversationTranscriptStoreOptions {
   now?: () => number;
+  syncFile?: (file: string) => Promise<void>;
 }
 
 interface LoadedConversationState {
@@ -61,6 +62,7 @@ interface LoadedConversationState {
   seenEntryIds: Set<string>;
   seenUserRevisions: Set<string>;
   projection: TranscriptSnapshotV2["projection"];
+  projectionDigest?: string;
   archives: TranscriptSnapshotV2["archives"];
 }
 
@@ -119,12 +121,14 @@ function sameSemanticContent(input: TranscriptAppendInput, existing: TranscriptE
 export class ConversationTranscriptStore {
   private readonly root: string;
   private readonly now: () => number;
+  private readonly syncFile: (file: string) => Promise<void>;
   /** 每会话写队列尾（settled promise），串行化所有文件操作。 */
   private readonly queues = new Map<string, Promise<void>>();
 
   constructor(userDataRoot: string, options?: ConversationTranscriptStoreOptions) {
     this.root = path.join(userDataRoot, ROOT_DIR_NAME);
     this.now = options?.now ?? (() => Date.now());
+    this.syncFile = options?.syncFile ?? syncFile;
   }
 
   append(conversationId: string, input: TranscriptAppendInput): Promise<TranscriptEntry> {
@@ -165,7 +169,7 @@ export class ConversationTranscriptStore {
       const entry = { ...input, seq: state.maxSeq + 1, at: input.at ?? this.now() } as TranscriptEntry;
       validateLoadedTranscriptEntry(entry);
       await fs.promises.mkdir(state.dir, { recursive: true });
-      await fs.promises.appendFile(state.activeFile, `${JSON.stringify(entry)}\n`, "utf8");
+      await appendDurableLine(state.activeFile, `${JSON.stringify(entry)}\n`, this.syncFile);
       return entry;
     });
   }
@@ -186,11 +190,11 @@ export class ConversationTranscriptStore {
     return this.enqueue(conversationId, async () => {
       const state = await this.loadState(conversationId);
       const payload = input.payload;
-      const validationEntries = state.archives.length > 0
-        ? await this.readAuditEntriesLocked(state)
-        : state.entries;
-      const prefix = validationEntries.filter((entry) => entry.seq <= payload.sourceThroughSeq);
-      const competing = validationEntries.some((entry) => entry.seq > payload.baseThroughSeq && (
+      // Compaction digests are deliberately scoped to the hot entries used by
+      // the compactor. Archived audit rows remain an independent idempotency
+      // source and must not silently change this CAS range.
+      const prefix = state.entries.filter((entry) => entry.seq <= payload.sourceThroughSeq);
+      const competing = state.entries.some((entry) => entry.seq > payload.baseThroughSeq && (
         entry.kind === "compaction_checkpoint" || entry.kind === "turn_rewind" || entry.kind === "turn_tombstone"
       ));
       const prefixDigest = createHash("sha256").update(JSON.stringify(prefix), "utf8").digest("hex");
@@ -200,7 +204,7 @@ export class ConversationTranscriptStore {
       const entry = { ...input, seq: state.maxSeq + 1, at: input.at ?? this.now() } as Extract<TranscriptEntry, { kind: "compaction_checkpoint" }>;
       validateLoadedTranscriptEntry(entry);
       await fs.promises.mkdir(state.dir, { recursive: true });
-      await fs.promises.appendFile(state.activeFile, `${JSON.stringify(entry)}\n`, "utf8");
+      await appendDurableLine(state.activeFile, `${JSON.stringify(entry)}\n`, this.syncFile);
       return entry;
     });
   }
@@ -263,6 +267,7 @@ export class ConversationTranscriptStore {
         throughSeq: state.maxSeq,
         entries: state.entries,
         projection: state.projection,
+        projectionDigest: state.projectionDigest,
         archives: state.archives,
         seenEntryIds: [...state.seenEntryIds],
         seenUserRevisions: [...state.seenUserRevisions],
@@ -353,6 +358,7 @@ export class ConversationTranscriptStore {
         throughSeq: state.maxSeq,
         entries: activeEntries,
         projection: state.projection,
+        projectionDigest: digestProjection(state.projection),
         archives: manifest.archives,
         seenEntryIds: [...state.seenEntryIds],
         seenUserRevisions: [...state.seenUserRevisions],
@@ -415,6 +421,7 @@ export class ConversationTranscriptStore {
         throughSeq: state.maxSeq,
         entries: state.entries,
         projection: projection ?? state.projection,
+        projectionDigest: digestProjection(projection ?? state.projection),
         archives: state.archives,
         seenEntryIds: [...state.seenEntryIds],
         seenUserRevisions: [...state.seenUserRevisions],
@@ -534,6 +541,7 @@ export class ConversationTranscriptStore {
       projection: snapshot?.schemaVersion === SCHEMA_VERSION
         ? snapshot.projection
         : { throughSeq: 0, messages: [] },
+      projectionDigest: snapshot?.schemaVersion === SCHEMA_VERSION ? snapshot.projectionDigest : undefined,
       archives: generation?.archives ?? (snapshot?.schemaVersion === SCHEMA_VERSION ? snapshot.archives : []),
     };
   }
@@ -898,6 +906,10 @@ function sha256(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex");
 }
 
+function digestProjection(projection: TranscriptSnapshotV2["projection"]): string {
+  return sha256(JSON.stringify(projection));
+}
+
 async function writeDurableFile(file: string, content: string): Promise<void> {
   await fs.promises.mkdir(path.dirname(file), { recursive: true });
   await fs.promises.writeFile(file, content, "utf8");
@@ -909,7 +921,33 @@ async function writeDurableFile(file: string, content: string): Promise<void> {
   }
 }
 
+async function appendDurableLine(
+  file: string,
+  content: string,
+  sync: (file: string) => Promise<void>,
+): Promise<void> {
+  await fs.promises.appendFile(file, content, "utf8");
+  await sync(file);
+}
+
+async function syncFile(file: string): Promise<void> {
+  const handle = await fs.promises.open(file, "r+");
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
+
 async function syncDirectory(dir: string): Promise<void> {
+  return syncDirectoryForPlatform(dir, process.platform);
+}
+
+export async function syncDirectoryForTests(dir: string, platform: NodeJS.Platform = process.platform): Promise<void> {
+  return syncDirectoryForPlatform(dir, platform);
+}
+
+async function syncDirectoryForPlatform(dir: string, platform: NodeJS.Platform): Promise<void> {
   let handle: fs.promises.FileHandle | undefined;
   try {
     handle = await fs.promises.open(dir, "r");
@@ -919,7 +957,7 @@ async function syncDirectory(dir: string): Promise<void> {
     // operation accepts the platform-specific unsupported errors; file fsync
     // above remains fail-closed for all I/O failures.
     const code = (error as NodeJS.ErrnoException).code;
-    if (code !== "EPERM" && code !== "ENOTSUP" && code !== "EINVAL") throw error;
+    if (platform !== "win32" || !["EPERM", "ENOTSUP", "EINVAL"].includes(code ?? "")) throw error;
   } finally {
     await handle?.close();
   }

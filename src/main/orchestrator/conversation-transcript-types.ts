@@ -268,6 +268,8 @@ export interface TranscriptSnapshotV2 {
   throughSeq: number;
   entries: TranscriptEntry[];
   projection: { throughSeq: number; messages: UiChatMessage[] };
+  /** Digest binding the projection cache to the canonical UI state. */
+  projectionDigest?: string;
   archives: TranscriptArchiveRef[];
   seenEntryIds: string[];
   seenUserRevisions: string[];

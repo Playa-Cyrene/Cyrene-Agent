@@ -184,4 +184,16 @@ describe("ConversationTranscriptCompactor", () => {
     expect((await fixture.journal.buildModelContext("c1")).messages[0]?.content)
       .toContain("<cyrene_compaction_checkpoint>");
   });
+
+  it("第一次压缩归档后仍可按热分支完成第二次压缩", async () => {
+    const fixture = createFixture();
+    await seed(fixture);
+    await fixture.compactor.compact({ conversationId: "c1", trigger: "manual", retainTokens: 1 });
+    await fixture.journal.appendUser("c1", { turnId: "u3", id: "u3", text: "第二轮问题".repeat(30) });
+    await fixture.journal.appendUser("c1", { turnId: "u4", id: "u4", text: "第三轮问题".repeat(30) });
+    const second = await fixture.compactor.compact({ conversationId: "c1", trigger: "manual", retainTokens: 1 });
+    expect(second.checkpointEntryId).toBeTruthy();
+    expect((await fixture.journal.buildModelContext("c1")).messages[0]?.content)
+      .toContain("<cyrene_compaction_checkpoint>");
+  });
 });

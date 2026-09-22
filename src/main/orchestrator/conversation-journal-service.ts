@@ -6,6 +6,7 @@
  * format or duplicate run lifecycle writes.
  */
 
+import { createHash } from "node:crypto";
 import type { PendingChatAttachment } from "../../shared/chat-types";
 import {
   buildModelContextFromCompactedView,
@@ -397,9 +398,15 @@ function isProjectionSeedUsable(snapshot: TranscriptSnapshotV2): boolean {
   const archivedThrough = snapshot.archives.reduce(
     (max, archive) => Math.max(max, archive.throughSeq), 0,
   );
+  if (snapshot.archives.length > 0 &&
+    (!snapshot.projectionDigest || digestProjection(projection) !== snapshot.projectionDigest)) return false;
   if (projection.throughSeq < archivedThrough || projection.throughSeq > snapshot.throughSeq) return false;
   const messageIds = new Set(projection.messages.map((message) => message.id));
   return projection.state?.nodes.every((node) => messageIds.has(node.messageId)) ?? projection.messages.length === 0;
+}
+
+function digestProjection(projection: ConversationProjection): string {
+  return createHash("sha256").update(JSON.stringify(projection), "utf8").digest("hex");
 }
 
 function isProjectionMessage(message: unknown): boolean {

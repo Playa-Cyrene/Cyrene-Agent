@@ -1,12 +1,13 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ConversationTranscriptArchive } from "./conversation-transcript-archive";
-import { ConversationTranscriptStore, transcriptStorageKey } from "./conversation-transcript-store";
+import { ConversationTranscriptStore, syncDirectoryForTests, transcriptStorageKey } from "./conversation-transcript-store";
 import type { TranscriptAppendInput, TranscriptEntry } from "./conversation-transcript-types";
 import { createHash } from "node:crypto";
 import { ConversationJournalService } from "./conversation-journal-service";
+import { reduceTranscriptProjection } from "./conversation-transcript-projection";
 
 describe("ConversationTranscriptArchive", () => {
   const roots: string[] = [];
@@ -152,5 +153,59 @@ describe("ConversationTranscriptArchive", () => {
     const projection = await new ConversationJournalService(store).readProjection("c1");
     expect(projection.messages).toHaveLength(42);
     expect(projection.messages[0]?.content).toBe("message-1");
+  });
+
+  it("健康完整 projection 不扫描 audit segments，非零残缺则按 digest 重建", async () => {
+    const { store, archive, root } = fixture();
+    await seedCheckpoint(store);
+    const all = await store.read("c1");
+    await store.checkpoint("c1", reduceTranscriptProjection(all.entries));
+    await archive.archiveThrough("c1", 40);
+    const journal = new ConversationJournalService(store);
+    const auditSpy = vi.spyOn(store, "readAuditEntries");
+    const healthy = await journal.readProjection("c1");
+    expect(healthy.messages).toHaveLength(42);
+    expect(auditSpy).not.toHaveBeenCalled();
+
+    const snapshotPath = path.join(root, "transcripts", transcriptStorageKey("c1"), "snapshot.json");
+    const snapshot = JSON.parse(await fs.promises.readFile(snapshotPath, "utf8")) as {
+      projection: { messages: unknown[]; state?: unknown; throughSeq: number };
+    };
+    snapshot.projection.messages = snapshot.projection.messages.slice(1);
+    await fs.promises.writeFile(snapshotPath, JSON.stringify(snapshot), "utf8");
+    const repaired = await new ConversationJournalService(store).readProjection("c1");
+    expect(repaired.messages).toHaveLength(42);
+    expect(auditSpy).toHaveBeenCalled();
+  });
+
+  it("checkpoint active 文件 sync 失败时不返回成功", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-transcript-sync-"));
+    roots.push(root);
+    let failSync = false;
+    const store = new ConversationTranscriptStore(root, {
+      now: () => 1_000,
+      syncFile: async (file) => {
+        if (failSync && file.endsWith("transcript.jsonl")) throw new Error("SYNC_FAILURE");
+      },
+    });
+    await store.append("c1", user("e1", 1));
+    failSync = true;
+    const source = await store.read("c1");
+    const sourceDigest = createHash("sha256").update(JSON.stringify(source.entries), "utf8").digest("hex");
+    await expect(store.appendCompactionCheckpoint("c1", {
+      id: "checkpoint-sync", at: 1_000, kind: "compaction_checkpoint",
+      payload: {
+        baseThroughSeq: 1, sourceThroughSeq: 1, sourceDigest,
+        replacement: { role: "system", content: "summary" }, trigger: "manual",
+      },
+    })).rejects.toThrow("SYNC_FAILURE");
+  });
+
+  it("目录 sync 的 Windows 兼容不会吞掉非 Windows I/O 错误", async () => {
+    const open = vi.spyOn(fs.promises, "open").mockRejectedValueOnce(
+      Object.assign(new Error("directory sync unsupported"), { code: "EPERM" }),
+    );
+    await expect(syncDirectoryForTests("C:/transcript", "linux")).rejects.toThrow("directory sync unsupported");
+    open.mockRestore();
   });
 });
