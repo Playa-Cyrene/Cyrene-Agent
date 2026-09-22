@@ -32,9 +32,5 @@ jobs:
           set -euo pipefail
           for i in $(seq 1 20); do
             echo "=== iteration $i / Vitest ${{ matrix.vitest }} ==="
-            npx vitest run src/main/memory/memory-manager.test.ts \
-              --pool=forks \
-              --maxWorkers=1 \
-              --minWorkers=1 \
-              --no-file-parallelism
+            npx vitest run src/main/memory/memory-manager.test.ts
           done
