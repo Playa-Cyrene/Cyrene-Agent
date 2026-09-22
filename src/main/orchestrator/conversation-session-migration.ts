@@ -8,7 +8,6 @@ import type {
   ChatMessage,
   ChatSession,
   ChatSessionRecordV2,
-  PendingDispatchState,
 } from "../../shared/chat-types";
 import { ConversationJournalService } from "./conversation-journal-service";
 import { getConversationTranscriptStore, type ConversationTranscriptStore } from "./conversation-transcript-store";
@@ -122,7 +121,12 @@ export class ConversationSessionMigration {
     return true;
   }
 
-  /** claim 的 async IPC 边界：journal 写成功后才向 renderer 报 claimed。 */
+  /**
+   * claim 的 async IPC 边界：journal 写成功后才向 renderer 报 claimed。
+   * 残留认领（上次认领后 run 从未被主进程接受）：先把快照幂等 reconcile 进
+   * 轨迹、清掉残留簿记，再正常认领下一条——绝不再把旧消息当新认领返回，
+   * 那等于替用户自动补发；旧消息留在轨迹里，等用户下一条消息再启动新 run。
+   */
   async claimPendingMessage(sessionId: string): Promise<chatsStore.ClaimPendingResult> {
     const record = this.sessionStore.getSessionRecord(sessionId);
     const existing = record?.schemaVersion === 2 ? chatsStore.getPendingDispatch(sessionId) : null;
@@ -132,7 +136,9 @@ export class ConversationSessionMigration {
       } catch {
         return { ok: false, error: "transcript-write-failed" };
       }
-      return this.buildRecoveredClaim(sessionId, existing);
+      // 残留认领已落轨迹：清簿记（写盘失败时残留保持，下次恢复重试），
+      // 随后照常认领队首——排队消息仍是用户既有意图
+      chatsStore.completePendingDispatch(sessionId, existing.messageId);
     }
 
     const claimed = chatsStore.claimPendingMessage(sessionId);
@@ -154,23 +160,6 @@ export class ConversationSessionMigration {
     await this.reconcilePendingDispatch(sessionId);
     const current = this.sessionStore.getSessionRecord(sessionId);
     return current?.schemaVersion === 2 ? current : migrated;
-  }
-
-  private async buildRecoveredClaim(
-    sessionId: string,
-    pending: PendingDispatchState,
-  ): Promise<chatsStore.ClaimPendingResult> {
-    if (!pending.userMessage) return { ok: false, error: "already-dispatching" };
-    const session = await this.loadComposedSession(sessionId);
-    if (!session) return { ok: false, error: "session-not-found" };
-    return {
-      ok: true,
-      claimed: true,
-      userMessage: chatsStore.pendingDispatchUserMessage(pending.userMessage),
-      visibleContent: pending.userMessage.visibleContent ?? pending.userMessage.text,
-      remainingQueue: (chatsStore.getPendingMessages(sessionId) ?? []).map((item) => ({ ...item })),
-      session,
-    };
   }
 
   ensureConversationMigrated(sessionId: string): Promise<ChatSessionRecordV2 | null> {

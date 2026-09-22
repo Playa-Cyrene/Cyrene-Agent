@@ -1161,7 +1161,7 @@ describe("chats pending queue IPC", () => {
     expect(await claim(event, "missing")).toEqual({ ok: false, error: "session-not-found" });
   });
 
-  it("v2 claim 轨迹写失败不谎报成功，重试可幂等恢复并在 complete 后保持 metadata-only", async () => {
+  it("v2 claim 轨迹写失败不谎报成功，重试幂等落轨迹且不再自动补发", async () => {
     const { registerChatsIpc } = await import("./chats-ipc");
     const { IPC } = await import("../../shared/ipc-channels");
     const chatsStore = await import("./chats-store");
@@ -1172,7 +1172,8 @@ describe("chats pending queue IPC", () => {
     const enqueue = mocks.handlers.get(IPC.CHATS_PENDING_ENQUEUE);
     const claim = mocks.handlers.get(IPC.CHATS_PENDING_CLAIM);
     const complete = mocks.handlers.get(IPC.CHATS_PENDING_COMPLETE_DISPATCH);
-    if (!create || !enqueue || !claim || !complete) throw new Error("v2 claim handlers were not registered");
+    const get = mocks.handlers.get(IPC.CHATS_GET);
+    if (!create || !enqueue || !claim || !complete || !get) throw new Error("v2 claim handlers were not registered");
     const event = { sender: {} };
     const session = await create(event, { mode: "chat" }) as { id: string };
     const file = path.join(chatsStore.getRootDir(), "sessions", `${session.id}.json`);
@@ -1197,15 +1198,63 @@ describe("chats pending queue IPC", () => {
     expect(failedDisk).not.toHaveProperty("messages");
 
     append.mockRestore();
-    const recovered = await claim(event, session.id) as Record<string, any>;
-    expect(recovered).toEqual(expect.objectContaining({ ok: true, claimed: true }));
-    expect(recovered.userMessage).toEqual(expect.objectContaining({ id: "v2-ipc-claim" }));
+    // 重试：残留认领被幂等 reconcile 进轨迹并清账；队列已空 → claimed:false。
+    // 不再把旧消息当新认领返回——那等于替用户自动补发
+    expect(await claim(event, session.id)).toEqual({ ok: true, claimed: false });
+    // 旧消息已持久化在轨迹里（用户意图不丢失），以「已发送未回答」等用户下一条消息
+    const composed = await get(event, session.id) as { messages: Array<{ id: string; role: string }> };
+    expect(composed.messages).toEqual([expect.objectContaining({ id: "v2-ipc-claim", role: "user" })]);
+    // complete 幂等：重试认领时已清账，这里 cleared=false
     expect(await complete(event, { sessionId: session.id, messageId: "v2-ipc-claim" })).toEqual({
       ok: true,
-      cleared: true,
+      cleared: false,
     });
     const completedDisk = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
     expect(completedDisk.schemaVersion).toBe(2);
+    expect(completedDisk.pendingDispatch).toBeUndefined();
     expect(completedDisk).not.toHaveProperty("messages");
+  });
+
+  it("v2 残留认领未确认时再认领：旧消息幂等落轨迹并清账，返回下一条而非自动补发", async () => {
+    const { registerChatsIpc } = await import("./chats-ipc");
+    const { IPC } = await import("../../shared/ipc-channels");
+    const chatsStore = await import("./chats-store");
+    registerChatsIpc();
+
+    const create = mocks.handlers.get(IPC.CHATS_CREATE);
+    const enqueue = mocks.handlers.get(IPC.CHATS_PENDING_ENQUEUE);
+    const claim = mocks.handlers.get(IPC.CHATS_PENDING_CLAIM);
+    const complete = mocks.handlers.get(IPC.CHATS_PENDING_COMPLETE_DISPATCH);
+    const get = mocks.handlers.get(IPC.CHATS_GET);
+    if (!create || !enqueue || !claim || !complete || !get) throw new Error("v2 claim handlers were not registered");
+    const event = { sender: {} };
+    const session = await create(event, { mode: "chat" }) as { id: string };
+    const file = path.join(chatsStore.getRootDir(), "sessions", `${session.id}.json`);
+    const persisted = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
+    delete persisted.messages;
+    persisted.schemaVersion = 2;
+    persisted.messageCount = 0;
+    fs.writeFileSync(file, JSON.stringify(persisted));
+    await enqueue(event, { sessionId: session.id, entry: entry({ id: "m-old", rawContent: "旧意图", visibleContent: "旧意图" }) });
+    await enqueue(event, { sessionId: session.id, entry: entry({ id: "m-next", rawContent: "新意图", visibleContent: "新意图" }) });
+
+    // 第一次认领成功但 run 从未被确认接受（不调 complete，模拟认领残留）
+    const first = await claim(event, session.id) as Record<string, any>;
+    expect(first).toEqual(expect.objectContaining({ ok: true, claimed: true }));
+    expect(first.userMessage).toEqual(expect.objectContaining({ id: "m-old" }));
+
+    // 残留下再认领：不再把 m-old 当新认领返回（那是自动补发），
+    // 而是幂等落轨迹、清残留账，照常认领下一条 m-next
+    const second = await claim(event, session.id) as Record<string, any>;
+    expect(second).toEqual(expect.objectContaining({ ok: true, claimed: true }));
+    expect(second.userMessage).toEqual(expect.objectContaining({ id: "m-next" }));
+
+    // 轨迹同时保留旧意图与新意图：用户下一条消息的模型上下文能看到两者
+    const composed = await get(event, session.id) as { messages: Array<{ id: string }> };
+    expect(composed.messages.map((message) => message.id)).toEqual(["m-old", "m-next"]);
+
+    expect(await complete(event, { sessionId: session.id, messageId: "m-next" })).toEqual({ ok: true, cleared: true });
+    const disk = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
+    expect(disk.pendingDispatch).toBeUndefined();
   });
 });

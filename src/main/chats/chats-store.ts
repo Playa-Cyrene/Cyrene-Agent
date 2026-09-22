@@ -808,11 +808,6 @@ function pendingUserMessage(head: PendingChatMessage, at: number): ChatMessage {
   });
 }
 
-/** 将 v2 durable claim 快照恢复成既有 pending claim 返回形状。 */
-export function pendingDispatchUserMessage(snapshot: PendingDispatchUserSnapshot): ChatMessage {
-  return pendingUserMessageFromSnapshot(snapshot);
-}
-
 /** 读取待恢复的认领意图；旧记录缺快照时仍原样返回，交由 async loader fail-closed。 */
 export function getPendingDispatch(sessionId: string): PendingDispatchState | null {
   const session = readSessionRecordFile(sessionId);

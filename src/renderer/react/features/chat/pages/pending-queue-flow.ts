@@ -231,11 +231,13 @@ export function createPendingQueueFlow(getHost: () => PendingQueueFlowHost): Pen
   }
 
   /**
-   * 恢复残留认领（pendingDispatch）：被认领的用户消息已在会话历史里，
-   * 启动模型时绝不能再次追加。按关联锚点（answersUserMessageId）区分：
+   * 恢复残留认领（pendingDispatch）：被认领的用户消息已由主进程在认领/读取时
+   * reconcile 落入权威轨迹（consume 前必有 store.get），清派发簿记不会丢消息。
+   * 按关联锚点（answersUserMessageId）区分：
    * - 已派发完成（对应 run 已有终态回答/错误提示）：清派发簿记，继续消费下一条；
-   * - 未派发（启动失败/认领后进程退出/run 进行中）：补占位并续派——
-   *   旧 run 若仍活着会被主进程 SESSION_RUN_ACTIVE 守卫拒绝并走既有接管卡，不新增锁；
+   * - 未派发（启动失败/守卫冲突/run 仍在进行/认领后进程退出）：同样只清簿记，
+   *   绝不自动续派——没有新的用户意图就不产生新的模型请求；消息以「已发送
+   *   未回答」留在历史，用户下一条消息会让模型在完整上下文里看到它；
    * - 认领记录指向的消息不存在（数据损坏）：暂停该会话队列并报错，绝不当作已完成。
    */
   async function resumePendingDispatch(
@@ -254,35 +256,15 @@ export function createPendingQueueFlow(getHost: () => PendingQueueFlowHost): Pen
       host.reportError(t("chatPage.errorClaimMessageMissing"));
       return;
     }
-    if (status.kind === "dispatched") {
-      const completed = await store.pendingCompleteDispatch(sessionId, pending.messageId);
-      if (!completed.ok) return; // 写盘失败：保留恢复入口，等下一个触发点
-      await consume(mode, sessionId);
-      return;
-    }
-    const userMessage = session.messages.find(
-      (message) => message.id === pending.messageId && message.role === "user",
-    );
-    if (!userMessage) {
-      // evaluateClaimRecovery 已确认存在，此为竞态兜底：同样暂停报错
-      pausedSessions.add(sessionId);
-      host.reportError(t("chatPage.errorClaimMessageMissing"));
-      return;
-    }
-    await startClaimedRun(mode, sessionId, {
-      userMessage,
-      visibleContent: userMessage.content,
-      session,
-    });
-    // 恢复的 run 进行期间队列里可能还有未认领消息（空闲入队时跳过了投影
-    // 刷新）：补一次同步让它们可见，等 run 结束再被消费
-    await syncProjection(sessionId);
+    const completed = await store.pendingCompleteDispatch(sessionId, pending.messageId);
+    if (!completed.ok) return; // 写盘失败：保留恢复入口，等下一个触发点
+    await consume(mode, sessionId);
   }
 
   /**
    * 派发一条已认领的用户消息：用户消息由主进程认领时写入历史（本函数绝不重复追加），
    * 这里只补渲染态占位并启动模型运行；claimedPendingMessageId 让控制器在
-   * run 被接受后清除派发状态。恢复路径（resumePendingDispatch）复用同一入口。
+   * run 被接受后清除派发状态。仅由 consume 的正常认领路径调用（残留认领恢复只清簿记）。
    */
   async function startClaimedRun(
     targetMode: ConversationMode,

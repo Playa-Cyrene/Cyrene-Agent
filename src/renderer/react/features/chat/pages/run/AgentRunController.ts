@@ -60,7 +60,7 @@ export interface AgentRunInput {
   takeoverFromRunId?: string;
   /**
    * 待发队列认领派发：用户消息已由主进程认领写入历史（非本控制器追加）。
-   * run ack 成功后清除会话的 pendingDispatch；失败则保留供恢复续派（不重复追加）。
+   * run ack 成功后清除会话的 pendingDispatch；失败则保留给恢复逻辑清账（恢复不自动续派）。
    */
   claimedPendingMessageId?: string;
   /** 桌面 edit / regenerate 的轨迹回退锚点（主进程写 turn_rewind；渲染端只传元数据）。 */
@@ -297,12 +297,12 @@ export class AgentRunController {
       });
       if (!ack.success) throw new Error(ack.error ?? t("chatPage.errorModelRequestStartFailed"));
       // run 已被主进程接受：认领派发的消息确认派发完成，清除 pendingDispatch。
-      // 确认失败仅告警——残留状态会被恢复逻辑识别为"已有回答"后清除，不会重复派发。
+      // 确认失败仅告警——残留状态会被恢复逻辑直接清账（不自动续派），不会重复派发。
       this.runAccepted = true;
       if (this.input.claimedPendingMessageId) {
         // 模型启动已成功：派发状态清理失败/异常只告警，绝不落入下方 catch 的
         // 「模型请求失败」分支（那会把成功的 run 污染成错误终态）。
-        // 残留的 pendingDispatch 由恢复逻辑识别为"已有回答"后清除，不会重复派发。
+        // 残留的 pendingDispatch 由恢复逻辑清账，不会重复派发。
         try {
           const completed = await store.pendingCompleteDispatch(
             this.input.sessionId,

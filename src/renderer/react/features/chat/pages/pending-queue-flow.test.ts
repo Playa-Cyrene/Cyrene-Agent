@@ -257,28 +257,70 @@ describe("页面待发队列流程", () => {
     expect(calls.errors).toHaveLength(1);
   });
 
-  it("刷新恢复（未派发）：用户消息已在视图时只补助手占位，绝不重复追加，并带认领派发标识", async () => {
-    const { flow, store, calls, renderedMessages } = createHarness();
+  it("刷新恢复（未派发，含 run 已接受但确认失败/回答未落盘）：清派发簿记且绝不自动续派", async () => {
+    const { flow, store, calls } = createHarness();
+    const session = makeSession({
+      pendingDispatch: { messageId: "q-1", claimedAt: 1 },
+      messages: [{ id: "q-1", role: "user", content: "排队消息", at: 1 } as ChatMessage],
+    });
+    // 第一次 get：发现残留认领（无终态回答）；第二次 get（清账后继续消费）：无认领
+    store.get.mockResolvedValueOnce(session).mockResolvedValueOnce(makeSession());
+    store.pendingCompleteDispatch.mockResolvedValue({ ok: true, cleared: true });
+    store.pendingClaim.mockResolvedValue({ ok: true, claimed: false });
+
+    await flow.consume("chat", "s1");
+
+    // 残留认领恢复：只清派发簿记——消息已在权威轨迹（认领/读取时 reconcile 落盘），
+    // 以「已发送未回答」留在历史；没有新的用户意图，不为它启动第二次 run
+    expect(store.pendingCompleteDispatch).toHaveBeenCalledWith("s1", "q-1");
+    expect(calls.appended).toHaveLength(0);
+    expect(calls.runs).toHaveLength(0);
+    // 清账后继续消费队列（队列空 → 认领返回 claimed=false，兜底同步投影）
+    expect(store.pendingClaim).toHaveBeenCalledWith("s1");
+    expect(store.pendingList).toHaveBeenCalledWith("s1");
+  });
+
+  it("残留认领未回答且队列还有下一条：清旧账后只派发下一条，旧消息留在历史", async () => {
+    const { flow, store, calls } = createHarness();
+    const session = makeSession({
+      pendingDispatch: { messageId: "q-1", claimedAt: 1 },
+      messages: [{ id: "q-1", role: "user", content: "旧消息", at: 1 } as ChatMessage],
+    });
+    store.get.mockResolvedValueOnce(session).mockResolvedValueOnce(makeSession());
+    store.pendingCompleteDispatch.mockResolvedValue({ ok: true, cleared: true });
+    store.pendingClaim.mockResolvedValueOnce(makeClaimed({
+      userMessage: { id: "q-2", role: "user", content: "新消息", at: 2 },
+      visibleContent: "新消息",
+      remainingQueue: [],
+    }));
+
+    await flow.consume("chat", "s1");
+
+    // 旧认领只清账：绝不为它启动 run（那是自动补发）
+    expect(store.pendingCompleteDispatch).toHaveBeenCalledWith("s1", "q-1");
+    expect(calls.runs).toHaveLength(1);
+    // 唯一的 run 属于下一条排队消息（用户既有意图的延迟执行）
+    expect(calls.runs[0]).toMatchObject({
+      sessionId: "s1",
+      userMessageId: "q-2",
+      claimedPendingMessageId: "q-2",
+    });
+  });
+
+  it("清账写盘失败：保留恢复入口不认领不派发，等下一个触发点重试", async () => {
+    const { flow, store, calls } = createHarness();
     const session = makeSession({
       pendingDispatch: { messageId: "q-1", claimedAt: 1 },
       messages: [{ id: "q-1", role: "user", content: "排队消息", at: 1 } as ChatMessage],
     });
     store.get.mockResolvedValue(session);
-    // 模拟刷新后：认领的用户消息已随会话灌入渲染态
-    renderedMessages.add("s1::q-1");
+    store.pendingCompleteDispatch.mockResolvedValueOnce({ ok: false, error: "write-failed" });
 
     await flow.consume("chat", "s1");
 
-    // 残留认领恢复：不再走认领（消息已转正），也不清派发簿记
+    expect(store.pendingCompleteDispatch).toHaveBeenCalledWith("s1", "q-1");
     expect(store.pendingClaim).not.toHaveBeenCalled();
-    expect(store.pendingCompleteDispatch).not.toHaveBeenCalled();
-    // 只追加助手占位一条
-    expect(calls.appended).toHaveLength(1);
-    expect(calls.appended[0].items).toHaveLength(1);
-    expect(calls.appended[0].items[0].role).toBe("assistant");
-    // 续派 run：用户消息来自历史，带认领派发标识
-    expect(calls.runs).toHaveLength(1);
-    expect(calls.runs[0]).toMatchObject({ sessionId: "s1", userMessageId: "q-1", claimedPendingMessageId: "q-1" });
+    expect(calls.runs).toHaveLength(0);
   });
 
   it("刷新恢复（已派发）：关联终态回答存在时清派发簿记并继续消费下一条，不再启动 run", async () => {
@@ -310,7 +352,7 @@ describe("页面待发队列流程", () => {
     expect(store.pendingClaim).toHaveBeenCalledWith("s1");
   });
 
-  it("恢复判定的关联性：终态回答属于其他用户轮次（answersUserMessageId 不匹配）时仍续派", async () => {
+  it("恢复判定的关联性：终态回答属于其他用户轮次（answersUserMessageId 不匹配）时不误判已派发，同样只清账不续派", async () => {
     const { flow, store, calls } = createHarness();
     const session = makeSession({
       pendingDispatch: { messageId: "q-1", claimedAt: 1 },
@@ -326,14 +368,17 @@ describe("页面待发队列流程", () => {
         },
       ] as ChatMessage[],
     });
-    store.get.mockResolvedValue(session);
+    store.get.mockResolvedValueOnce(session).mockResolvedValueOnce(makeSession());
+    store.pendingCompleteDispatch.mockResolvedValue({ ok: true, cleared: true });
+    store.pendingClaim.mockResolvedValue({ ok: true, claimed: false });
 
     await flow.consume("chat", "s1");
 
-    // 不误判为已派发：不清簿记，续派本认领
-    expect(store.pendingCompleteDispatch).not.toHaveBeenCalled();
-    expect(calls.runs).toHaveLength(1);
-    expect(calls.runs[0]).toMatchObject({ userMessageId: "q-1", claimedPendingMessageId: "q-1" });
+    // 迟到的他人轮次回答不算本认领已派发，但新语义下两个分支同样只清账：
+    // 不为该认领启动 run（绝不自动补发），继续消费队列
+    expect(store.pendingCompleteDispatch).toHaveBeenCalledWith("s1", "q-1");
+    expect(calls.runs).toHaveLength(0);
+    expect(store.pendingClaim).toHaveBeenCalledWith("s1");
   });
 
   it("认领记录指向的消息缺失：报错并暂停该会话队列；其他会话不受影响", async () => {
