@@ -83,6 +83,8 @@ export interface ChannelAgentInput {
   transcriptSink: TranscriptSink;
   userTurnId: string;
   assistantTurnId: string;
+  /** 渠道轮次运行标识：由 dispatcher 生成，贯通 sink、runStore 与生命周期事件。 */
+  runId: string;
 }
 
 /** Dispatcher 配置（依赖注入）。 */
@@ -255,6 +257,7 @@ export class ChannelDispatcher {
         transcriptSink,
         userTurnId: turnId,
         assistantTurnId,
+        runId,
       });
     } catch (err) {
       this.logAgentFailure(msg, err);

@@ -12,6 +12,7 @@ import { captionImageSafe, IMAGE_CAPTION_PROMPT } from "../chat/image-caption";
 import { resolveCaptionVisionConfig, resolveImageRoute } from "../orchestrator/image-router";
 import { ConversationJournalService } from "../orchestrator/conversation-journal-service";
 import { getConversationTranscriptStore } from "../orchestrator/conversation-transcript-store";
+import { getHarnessRunStore } from "../orchestrator/harness/run-store";
 import { indexConversationTurn } from "../orchestrator/tools/history-tools";
 import type { AgentRuntime } from "../orchestrator/agent-runtime";
 import type { TtsSynthesisService } from "../services/tts/tts-synthesis-service";
@@ -76,7 +77,12 @@ export function createChannelsSubsystem(
   lifecycle?: ChannelsLifecycleAdapter,
 ): ChannelsSubsystem {
   const conversationJournal = deps.conversationJournal
-    ?? new ConversationJournalService(getConversationTranscriptStore(app.getPath("userData")));
+    // runReader 接入 harness 运行存储：渠道会话同样需要把崩溃孤儿工具
+    // 按运行状态归类为 unknown，避免被误判为 not_executed。
+    ?? new ConversationJournalService({
+      store: getConversationTranscriptStore(app.getPath("userData")),
+      runReader: getHarnessRunStore(app.getPath("userData")),
+    });
 
   const observeExternalChat: DispatcherDeps["observeExternalChat"] = (sessionId, msg) => {
     getChannelConversationBindingStore().observe({
@@ -106,6 +112,7 @@ export function createChannelsSubsystem(
         transcriptSink: undefined,
         userTurnId: `${msg.channel}:${msg.senderId}:${msg.at.toISOString()}:user`,
         assistantTurnId: `${msg.channel}:${msg.senderId}:${msg.at.toISOString()}:assistant`,
+        runId: randomUUID(),
       }
       : input as ChannelAgentInput;
     const channelResult: { text: string; sticker: string | null } = { text: "", sticker: null };
@@ -157,6 +164,9 @@ export function createChannelsSubsystem(
       } : {}),
     });
     if (channelInput.transcriptSink) options.transcriptSink = channelInput.transcriptSink;
+    // 运行标识贯通：sink 写入、runStore 会话与生命周期事件使用同一 runId，
+    // 崩溃孤儿工具才能按 assistant 条目上的 runId 查回运行状态。
+    options.runId = channelInput.runId;
     options.tools = policy.exposeTools
       ? [...(options.capabilities?.tools ?? exposedTools)]
       : [];
@@ -167,7 +177,7 @@ export function createChannelsSubsystem(
     // 轮次事件只带渠道会话标识，不提供桌面消息边界；绑定消息由 dispatcher 镜像写入。
     const mode: PluginPromptMode = options.conversationMode
       ?? (options.executionMode === "chat" ? "chat" : "work");
-    const runId = randomUUID();
+    const runId = channelInput.runId;
     const runStartedAt = Date.now();
     deps.publishLifecycle?.publishTurnStarted({
       source: "channel",

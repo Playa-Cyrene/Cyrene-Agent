@@ -301,8 +301,10 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
         const socialContextService = createSocialContextService({ llmClient, enqueueLLMTask });
         const proactiveLifecycle = createProactiveLifecycle({
           loadGeneralSettings,
+          // runReader 接入 harness 运行存储：孤儿工具按运行状态归类，避免误判 not_executed
           conversationJournal: new ConversationJournalService({
             store: getConversationTranscriptStore(app.getPath("userData")),
+            runReader: getHarnessRunStore(app.getPath("userData")),
           }),
         });
         // 主动聊天服务初始化是纯装配；触发器由 background 阶段启动
@@ -478,8 +480,10 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
         getReactChatWindow: () => reactChatWindow,
         ipc: shell.ipc,
         publishLifecycle: lifecyclePublisher,
+        // runReader 接入 harness 运行存储：孤儿工具按运行状态归类，避免误判 not_executed
         conversationJournal: new ConversationJournalService({
           store: getConversationTranscriptStore(app.getPath("userData")),
+          runReader: getHarnessRunStore(app.getPath("userData")),
         }),
         getActiveConversation: () => activeConversationRegistry.getMostRecent(),
         // 插件任务只有在所属插件运行中才允许触发；用户任务不受影响。

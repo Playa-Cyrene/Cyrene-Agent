@@ -391,7 +391,13 @@ export function registerAgUiIpc(
   const transcriptStore = getConversationTranscriptStore(app.getPath("userData"));
   // Journal（会话日志服务）与 migration（迁移器）共享同一底层 store；
   // pending withdrawal 对账复用 Task 5 的持久状态，不创建旁路协议。
-  const journal = new ConversationJournalService({ store: transcriptStore, pendingStore: chatsStore });
+  // runReader 接入 harness 运行存储：崩溃孤儿工具按运行状态归类为 unknown，
+  // 而不是被误判为 not_executed（避免模型重发外部副作用）。
+  const journal = new ConversationJournalService({
+    store: transcriptStore,
+    pendingStore: chatsStore,
+    runReader: getHarnessRunStore(app.getPath("userData")),
+  });
   const loadComposedSession = async (sessionId: string) => {
     const recordReader = (chatsStore as typeof chatsStore & {
       getSessionRecord?: (id: string) => ReturnType<typeof chatsStore.getSessionRecord>;
