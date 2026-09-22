@@ -31,50 +31,50 @@ jobs:
           fs.writeFileSync(p, s)
           EOF
 
-      - name: Prepare exact case scan
+      - name: Prepare store case list
         shell: bash
         run: |
-          cp src/main/memory/memory-store.test.ts /tmp/memory-store.test.ts
-          node - <<'EOF'
-          const fs = require("fs")
-          const s = fs.readFileSync("/tmp/memory-store.test.ts", "utf8")
-          const titles = [...s.matchAll(/\\bit\\("([^"]+)"/g)].map((m) => m[1])
-          fs.writeFileSync("/tmp/store-titles.json", JSON.stringify(titles))
-          console.log("store test cases:", titles.length)
-          titles.forEach((title, i) => console.log(i, title))
+          cat > /tmp/store-titles.txt <<'EOF'
+          persists L2 conflict markers and status changes
+          keeps pinned L2 memories active when marking conflicts
+          decays only unpinned active L2 memories with positive weight
+          updates L0 and L2 through atomic write APIs
+          does not downgrade an active memory when recording a recall
+          creates evidence for new L2 memories with bounded snippets
+          deletes evidence together with a rolled-back L2 memory
+          marks L2 sync status and persists rag ids
+          stores conflict logs separately from reflection logs with a capped history
+          persists conflict scores and emits conflict.score trace
+          queues resolver-eligible conflict logs when scoring priority is not none
+          does not queue conflict logs with none resolver priority
+          returns queued resolver logs by priority and age
+          applies preference evolution by creating resolved memory and marking old entries
+          marks direct conflicts as clarification needed without creating resolved memory
+          caps reflection logs separately from conflict logs
+          migrates legacy memory files with a backup
+          saves the transformed store before notifying Obsidian
           EOF
 
       - name: Run every store case separately with manager
         shell: bash
         run: |
-          set -uo pipefail
-          COUNT=$(node -e 'console.log(require("/tmp/store-titles.json").length)')
+          set +e
+          INDEX=0
           TRIGGERS=0
-
-          for ((i=0; i<COUNT; i++)); do
-            I="$i" node - <<'EOF'
-          const fs = require("fs")
-          const i = Number(process.env.I)
-          const src = fs.readFileSync("/tmp/memory-store.test.ts", "utf8")
-          const titles = JSON.parse(fs.readFileSync("/tmp/store-titles.json", "utf8"))
-          const title = titles[i]
-          let out = src.replace(/\\bit\\("/g, 'it.skip("')
-          out = out.replace(`it.skip("${title}"`, `it("${title}"`)
-          fs.writeFileSync("src/main/memory/memory-store.test.ts", out)
-          console.log("\\n=== STORE CASE", i, "===", title)
-          EOF
-
-            npx vitest run src/main/memory/memory-manager.test.ts src/main/memory/memory-store.test.ts
+          while IFS= read -r TITLE; do
+            echo ""
+            echo "=== STORE CASE $INDEX === $TITLE"
+            npx vitest run               src/main/memory/memory-manager.test.ts               src/main/memory/memory-store.test.ts               -t "MemoryManager L2 sync|$TITLE"
             STATUS=$?
 
-            TITLE=$(I="$i" node -e 'const t=require("/tmp/store-titles.json"); console.log(t[Number(process.env.I)])')
             if [ "$STATUS" -ne 0 ]; then
-              echo "TRIGGER_CASE[$i]: $TITLE"
+              echo "TRIGGER_CASE[$INDEX]: $TITLE"
               TRIGGERS=$((TRIGGERS + 1))
             else
-              echo "PASS_CASE[$i]: $TITLE"
+              echo "PASS_CASE[$INDEX]: $TITLE"
             fi
-          done
+            INDEX=$((INDEX + 1))
+          done < /tmp/store-titles.txt
 
           echo "TOTAL_TRIGGER_CASES=$TRIGGERS"
           exit 0
