@@ -1,4 +1,4 @@
-name: Vitest 4-vs-5 exporter-prime repro
+name: Standalone Vitest exporter-prime repro
 
 on:
   push:
@@ -13,59 +13,105 @@ jobs:
       matrix:
         vitest: ["4.1.11", "5.0.1"]
     steps:
-      - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: npm
 
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Select Vitest version
-        run: npm install --no-save --package-lock=false vitest@${{ matrix.vitest }}
-
-      - name: Make run deterministic
+      - name: Create minimal project
         shell: bash
         run: |
-          node - <<'EOF'
-          const fs = require("fs")
-          const p = "vitest.config.ts"
-          let s = fs.readFileSync(p, "utf8")
-          s = s.replace("maxWorkers: 4,", "maxWorkers: 1,")
-          s = s.replace("fileParallelism: true,", "fileParallelism: false,")
-          fs.writeFileSync(p, s)
+          set -euo pipefail
+          mkdir repro
+          cd repro
+          npm init -y >/dev/null
+          npm pkg set type=module >/dev/null
+          npm install --no-save vitest@${{ matrix.vitest }}
+
+          cat > store.js <<'EOF'
+          export const store = {
+            add() {
+              this.save()
+              return "ok"
+            },
+            save() {
+              void import("./exporter.js")
+            },
+          }
           EOF
 
-      - name: Create exporter primer
-        shell: bash
-        run: |
-          cat > src/main/memory/vitest-race-companion.test.ts <<'EOF'
-          import * as fs from "fs"
-          import * as os from "os"
-          import * as path from "path"
-          import { expect, it, vi } from "vitest"
+          cat > exporter.js <<'EOF'
+          import { store } from "./store.js"
 
-          const electronMock = vi.hoisted(() => ({ userDataDir: "" }))
+          export function notify() {
+            return store
+          }
+          EOF
 
-          vi.mock("electron", () => ({
-            app: { getPath: () => electronMock.userDataDir },
-          }))
+          cat > manager.js <<'EOF'
+          import { store } from "./store.js"
 
-          it("primes obsidian-exporter in an isolated test file", async () => {
-            electronMock.userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "race-prime-"))
+          export function write() {
+            return store.add()
+          }
+          EOF
+
+          cat > a-primer.test.js <<'EOF'
+          import { expect, test, vi } from "vitest"
+
+          test("prime exporter in an isolated file", async () => {
             vi.resetModules()
-            const exporter = await import("./obsidian-exporter")
-            expect(exporter.notifyMemoryChanged).toBeTypeOf("function")
+            const exporter = await import("./exporter.js")
+            expect(exporter.notify()).toBeDefined()
           })
+
+          /*
+          PRIMER_PADDING
+          */
           EOF
 
           python - <<'PY'
-          p = "src/main/memory/vitest-race-companion.test.ts"
+          p = "a-primer.test.js"
           with open(p, "a", encoding="utf-8") as f:
-              f.write("\n/* " + ("primer-padding " * 10000) + " */\n")
+              f.write("/* " + ("primer-padding " * 10000) + " */\n")
           PY
 
-      - name: Run two-file repro
-        run: npx vitest run src/main/memory/memory-manager.test.ts src/main/memory/vitest-race-companion.test.ts
+          cat > z-manager.test.js <<'EOF'
+          import { beforeEach, expect, test, vi } from "vitest"
+
+          beforeEach(() => {
+            vi.resetModules()
+          })
+
+          test("first evaluation", async () => {
+            const { write } = await import("./manager.js")
+            const { store } = await import("./store.js")
+            expect(store).toBeDefined()
+            expect(write()).toBe("ok")
+          })
+
+          test("second evaluation after resetModules", async () => {
+            const { write } = await import("./manager.js")
+            const { store } = await import("./store.js")
+            expect(store).toBeDefined()
+            expect(write()).toBe("ok")
+          })
+          EOF
+
+          cat > vitest.config.js <<'EOF'
+          import { defineConfig } from "vitest/config"
+
+          export default defineConfig({
+            test: {
+              environment: "node",
+              pool: "forks",
+              maxWorkers: 1,
+              minWorkers: 1,
+              fileParallelism: false,
+              watch: false,
+              cache: false,
+            },
+          })
+          EOF
+
+      - name: Run standalone repro
+        run: cd repro && npx vitest run
