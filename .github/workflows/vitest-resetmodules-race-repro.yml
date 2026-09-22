@@ -1,4 +1,4 @@
-name: Vitest resetModules exact store-case scan
+name: Vitest pending dynamic-import overlap probe
 
 on:
   push:
@@ -8,6 +8,22 @@ on:
 jobs:
   repro:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - case: one-write
+            writes: 1
+            settle: "false"
+          - case: two-writes
+            writes: 2
+            settle: "false"
+          - case: three-writes
+            writes: 3
+            settle: "false"
+          - case: two-writes-settled
+            writes: 2
+            settle: "true"
     steps:
       - uses: actions/checkout@v4
 
@@ -31,50 +47,57 @@ jobs:
           fs.writeFileSync(p, s)
           EOF
 
-      - name: Prepare store case list
+      - name: Create overlap companion
+        env:
+          WRITES: ${{ matrix.writes }}
+          SETTLE: ${{ matrix.settle }}
         shell: bash
         run: |
-          cat > /tmp/store-titles.txt <<'EOF'
-          persists L2 conflict markers and status changes
-          keeps pinned L2 memories active when marking conflicts
-          decays only unpinned active L2 memories with positive weight
-          updates L0 and L2 through atomic write APIs
-          does not downgrade an active memory when recording a recall
-          creates evidence for new L2 memories with bounded snippets
-          deletes evidence together with a rolled-back L2 memory
-          marks L2 sync status and persists rag ids
-          stores conflict logs separately from reflection logs with a capped history
-          persists conflict scores and emits conflict.score trace
-          queues resolver-eligible conflict logs when scoring priority is not none
-          does not queue conflict logs with none resolver priority
-          returns queued resolver logs by priority and age
-          applies preference evolution by creating resolved memory and marking old entries
-          marks direct conflicts as clarification needed without creating resolved memory
-          caps reflection logs separately from conflict logs
-          migrates legacy memory files with a backup
-          saves the transformed store before notifying Obsidian
+          cat > src/main/memory/vitest-race-companion.test.ts <<'EOF'
+          import * as fs from "fs"
+          import * as os from "os"
+          import * as path from "path"
+          import { expect, it, vi } from "vitest"
+
+          const electronMock = vi.hoisted(() => ({
+            userDataDir: fs.mkdtempSync(path.join(os.tmpdir(), "race-overlap-")),
+          }))
+          const exporterMock = vi.hoisted(() => ({
+            notifyMemoryChanged: vi.fn(),
+          }))
+
+          vi.mock("electron", () => ({
+            app: { getPath: () => electronMock.userDataDir },
+          }))
+
+          vi.mock("./obsidian-exporter", () => ({
+            notifyMemoryChanged: exporterMock.notifyMemoryChanged,
+          }))
+
+          it("starts repeated store saves", async () => {
+            vi.resetModules()
+            const { memoryStore } = await import("./memory-store")
+            const writes = Number(process.env.WRITES)
+
+            for (let i = 0; i < writes; i++) {
+              await memoryStore.addL2Memory({
+                content: `companion-${i}`,
+                triggerText: "companion",
+                sourceConversationId: "test",
+                isPinned: false,
+              })
+            }
+
+            if (process.env.SETTLE === "true") {
+              await vi.dynamicImportSettled()
+            }
+
+            expect((await memoryStore.getAllL2()).length).toBe(writes)
+          })
           EOF
 
-      - name: Run every store case separately with manager
-        shell: bash
-        run: |
-          set +e
-          INDEX=0
-          TRIGGERS=0
-          while IFS= read -r TITLE; do
-            echo ""
-            echo "=== STORE CASE $INDEX === $TITLE"
-            npx vitest run               src/main/memory/memory-manager.test.ts               src/main/memory/memory-store.test.ts               -t "MemoryManager L2 sync|$TITLE"
-            STATUS=$?
-
-            if [ "$STATUS" -ne 0 ]; then
-              echo "TRIGGER_CASE[$INDEX]: $TITLE"
-              TRIGGERS=$((TRIGGERS + 1))
-            else
-              echo "PASS_CASE[$INDEX]: $TITLE"
-            fi
-            INDEX=$((INDEX + 1))
-          done < /tmp/store-titles.txt
-
-          echo "TOTAL_TRIGGER_CASES=$TRIGGERS"
-          exit 0
+      - name: Run manager with overlap companion
+        env:
+          WRITES: ${{ matrix.writes }}
+          SETTLE: ${{ matrix.settle }}
+        run: npx vitest run src/main/memory/memory-manager.test.ts src/main/memory/vitest-race-companion.test.ts
