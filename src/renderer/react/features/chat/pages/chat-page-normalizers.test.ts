@@ -1,6 +1,23 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ChatSession } from "../../../../../shared/chat-types";
-import { getInitialMode, LAST_MODE_STORAGE_KEY, normalizeWeatherData, stageForStep, toUiMessages } from "./chat-page-normalizers";
+import { getInitialMode, LAST_MODE_STORAGE_KEY, normalizeWeatherData, parseSessionRunActiveError, stageForStep, toUiMessages } from "./chat-page-normalizers";
+
+describe("parseSessionRunActiveError", () => {
+  it("解析干净守卫错误串", () => {
+    expect(parseSessionRunActiveError("SESSION_RUN_ACTIVE:run-old")).toBe("run-old");
+  });
+
+  it("解析 Electron 包装后的 invoke 拒绝消息", () => {
+    expect(parseSessionRunActiveError(
+      "Error invoking remote method 'agui:run': Error: SESSION_RUN_ACTIVE:run-1790073753338-53omeg",
+    )).toBe("run-1790073753338-53omeg");
+  });
+
+  it("普通错误消息不误触发", () => {
+    expect(parseSessionRunActiveError("Error: MODEL_FAILED")).toBeUndefined();
+    expect(parseSessionRunActiveError("")).toBeUndefined();
+  });
+});
 
 describe("chat page normalizers", () => {
   it("preserves channel source metadata while hydrating a bound conversation", () => {

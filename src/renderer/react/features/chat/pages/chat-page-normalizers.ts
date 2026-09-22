@@ -45,8 +45,9 @@ function asNonEmptyString(value: unknown): string | undefined {
 }
 
 export function parseSessionRunActiveError(message: string): string | undefined {
-  const prefix = "SESSION_RUN_ACTIVE:";
-  return message.startsWith(prefix) ? message.slice(prefix.length) || undefined : undefined;
+  // Electron 会给 invoke 拒绝包一层 "Error invoking remote method 'agui:run': Error: ..."，
+  // 守卫前缀不一定在消息开头；按 runId 模式匹配，顺带避免普通文本误触发。
+  return /SESSION_RUN_ACTIVE:(run-[A-Za-z0-9-]+)/.exec(message)?.[1];
 }
 
 export function normalizeWeatherData(value: unknown): WeatherData | undefined {
