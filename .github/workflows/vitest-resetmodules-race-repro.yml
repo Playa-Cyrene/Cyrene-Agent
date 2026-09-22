@@ -38,12 +38,19 @@ jobs:
           }
           EOF
 
+          cat > dep.js <<'EOF'
+          export function dependencyValue() {
+            return "real"
+          }
+          EOF
+
           cat > manager.js <<'EOF'
           import { store } from "./store.js"
+          import { dependencyValue } from "./dep.js"
 
           export function write() {
             store.save()
-            return store.add()
+            return `${store.add()}:${dependencyValue()}`
           }
           EOF
 
@@ -59,6 +66,12 @@ jobs:
             cat > "repro-${f}.test.js" <<'EOF'
           import { beforeEach, expect, test, vi } from "vitest"
 
+          const depMock = vi.hoisted(() => ({
+            dependencyValue: vi.fn(() => "mocked"),
+          }))
+
+          vi.mock("./dep.js", () => depMock)
+
           beforeEach(() => {
             vi.resetModules()
           })
@@ -70,7 +83,7 @@ jobs:
 
               expect(store).toBeDefined()
               expect(store.add()).toBe("ok")
-              expect(write()).toBe("ok")
+              expect(write()).toBe("ok:mocked")
             })
           }
           EOF
