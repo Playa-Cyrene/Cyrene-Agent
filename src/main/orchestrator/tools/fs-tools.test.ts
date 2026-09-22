@@ -65,6 +65,12 @@ import "./fs-tools";
 import { toolRegistry } from "./registry/tool-registry";
 import { ToolExecutionError } from "./registry/tool-execution-error";
 
+// Vitest 5 默认 clearMocks 会在每个测试前清空 mock 调用记录；工具注册发生在
+// import "./fs-tools" 的模块顶层，这里在清空前快照一份供全部测试使用
+const registeredTools = new Map(
+  vi.mocked(toolRegistry.register).mock.calls.map(([tool]) => [tool.id, tool]),
+);
+
 let tmpDir: string;
 
 beforeEach(() => {
@@ -81,9 +87,9 @@ afterEach(() => {
 
 describe("read_file structured output", () => {
   it("explicitly marks filesystem text and directory reads as concurrency-safe", () => {
-    const readFile = vi.mocked(toolRegistry.register).mock.calls.find((call) => call[0].id === "read_file")?.[0];
-    const listDir = vi.mocked(toolRegistry.register).mock.calls.find((call) => call[0].id === "list_dir")?.[0];
-    const readImage = vi.mocked(toolRegistry.register).mock.calls.find((call) => call[0].id === "read_image")?.[0];
+    const readFile = registeredTools.get("read_file");
+    const listDir = registeredTools.get("list_dir");
+    const readImage = registeredTools.get("read_image");
 
     expect(readFile?.isConcurrencySafe?.({ path: "C:\\workspace\\a.txt" })).toBe(true);
     expect(listDir?.isConcurrencySafe?.({ path: "C:\\workspace" })).toBe(true);
@@ -94,9 +100,7 @@ describe("read_file structured output", () => {
     const testFile = path.join(tmpDir, "test.txt");
     fs.writeFileSync(testFile, "line 1\nline 2\nline 3\nline 4\nline 5");
 
-    const tool = vi.mocked(toolRegistry.register).mock.calls.find(
-      (call) => call[0].id === "read_file",
-    )?.[0];
+    const tool = registeredTools.get("read_file");
     expect(tool).toBeDefined();
 
     const result = JSON.parse(await tool!.execute({ path: testFile }));
@@ -112,9 +116,7 @@ describe("read_file structured output", () => {
     const testFile = path.join(tmpDir, "test.txt");
     fs.writeFileSync(testFile, "line 1\nline 2\nline 3\nline 4\nline 5");
 
-    const tool = vi.mocked(toolRegistry.register).mock.calls.find(
-      (call) => call[0].id === "read_file",
-    )?.[0];
+    const tool = registeredTools.get("read_file");
 
     const result = JSON.parse(await tool!.execute({ path: testFile, startLine: 3 }));
     expect(result.startLine).toBe(3);
@@ -127,9 +129,7 @@ describe("read_file structured output", () => {
     const testFile = path.join(tmpDir, "test.txt");
     fs.writeFileSync(testFile, "line 1\nline 2\nline 3\nline 4\nline 5");
 
-    const tool = vi.mocked(toolRegistry.register).mock.calls.find(
-      (call) => call[0].id === "read_file",
-    )?.[0];
+    const tool = registeredTools.get("read_file");
 
     const result = JSON.parse(await tool!.execute({ path: testFile, startLine: 2, maxLines: 2 }));
     expect(result.startLine).toBe(2);
@@ -141,9 +141,7 @@ describe("read_file structured output", () => {
     const testFile = path.join(tmpDir, "empty.txt");
     fs.writeFileSync(testFile, "");
 
-    const tool = vi.mocked(toolRegistry.register).mock.calls.find(
-      (call) => call[0].id === "read_file",
-    )?.[0];
+    const tool = registeredTools.get("read_file");
 
     const result = JSON.parse(await tool!.execute({ path: testFile }));
     expect(result.totalLines).toBe(1); // 空文件 split 后有一个空字符串
@@ -151,27 +149,21 @@ describe("read_file structured output", () => {
   });
 
   it("returns error for non-existent file", async () => {
-    const tool = vi.mocked(toolRegistry.register).mock.calls.find(
-      (call) => call[0].id === "read_file",
-    )?.[0];
+    const tool = registeredTools.get("read_file");
 
     const result = JSON.parse(await tool!.execute({ path: "/nonexistent/file.txt" }));
     expect(result.error).toContain("文件不存在");
   });
 
   it("returns error for relative path", async () => {
-    const tool = vi.mocked(toolRegistry.register).mock.calls.find(
-      (call) => call[0].id === "read_file",
-    )?.[0];
+    const tool = registeredTools.get("read_file");
 
     const result = JSON.parse(await tool!.execute({ path: "relative/path.txt" }));
     expect(result.error).toContain("绝对路径");
   });
 
   it("returns error for directory", async () => {
-    const tool = vi.mocked(toolRegistry.register).mock.calls.find(
-      (call) => call[0].id === "read_file",
-    )?.[0];
+    const tool = registeredTools.get("read_file");
 
     const result = JSON.parse(await tool!.execute({ path: tmpDir }));
     expect(result.error).toContain("不是文件");
@@ -181,9 +173,7 @@ describe("read_file structured output", () => {
     const testFile = path.join(tmpDir, "test.txt");
     fs.writeFileSync(testFile, "first\nsecond\nthird");
 
-    const tool = vi.mocked(toolRegistry.register).mock.calls.find(
-      (call) => call[0].id === "read_file",
-    )?.[0];
+    const tool = registeredTools.get("read_file");
 
     const result = JSON.parse(await tool!.execute({ path: testFile }));
     expect(result.content).toContain("    1 | first");
@@ -195,9 +185,7 @@ describe("read_file structured output", () => {
     const testFile = path.join(tmpDir, "crlf.txt");
     fs.writeFileSync(testFile, "line 1\r\nline 2\r\nline 3");
 
-    const tool = vi.mocked(toolRegistry.register).mock.calls.find(
-      (call) => call[0].id === "read_file",
-    )?.[0];
+    const tool = registeredTools.get("read_file");
 
     const result = JSON.parse(await tool!.execute({ path: testFile }));
     expect(result.totalLines).toBe(3);
@@ -206,9 +194,7 @@ describe("read_file structured output", () => {
 
 describe("write_file truthful contract", () => {
   function writeTool() {
-    return vi.mocked(toolRegistry.register).mock.calls.find(
-      (call) => call[0].id === "write_file",
-    )?.[0];
+    return registeredTools.get("write_file");
   }
 
   it("相对文件名落到桌面根目录（learn 模式笔记场景，收编自 write_markdown）", async () => {
@@ -283,9 +269,7 @@ describe("write_file truthful contract", () => {
 
 describe("write_file 覆盖写骤降防护", () => {
   function writeTool() {
-    return vi.mocked(toolRegistry.register).mock.calls.find(
-      (call) => call[0].id === "write_file",
-    )?.[0];
+    return registeredTools.get("write_file");
   }
 
   function lines(n: number): string {
@@ -362,9 +346,7 @@ describe("write_file 覆盖写骤降防护", () => {
 
 describe("write_file Review 基线捕获（写盘前）", () => {
   function writeTool() {
-    return vi.mocked(toolRegistry.register).mock.calls.find(
-      (call) => call[0].id === "write_file",
-    )?.[0];
+    return registeredTools.get("write_file");
   }
 
   /** 列出某 run 的 before/ 基线文件（含 .absent 后缀）。 */
