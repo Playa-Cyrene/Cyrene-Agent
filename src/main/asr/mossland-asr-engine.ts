@@ -36,7 +36,8 @@ async function transcribeWav(apiKey: string, wav: Buffer): Promise<string> {
   const form = new FormData();
   form.append("model", "moss-transcribe");
   form.append("response_format", "json");
-  form.append("file", new Blob([wav], { type: "audio/wav" }), "speech.wav");
+  // Buffer 底层可能是 SharedArrayBuffer，不满足新版类型的 BlobPart 约束；拷贝成独立 ArrayBuffer 背书的 Uint8Array
+  form.append("file", new Blob([new Uint8Array(wav)], { type: "audio/wav" }), "speech.wav");
 
   const response = await mosslandFetch(`${MOSSLAND_BASE_URL}/v1/audio/transcriptions`, {
     method: "POST",
