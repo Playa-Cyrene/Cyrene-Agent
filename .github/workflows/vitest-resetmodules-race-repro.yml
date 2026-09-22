@@ -1,4 +1,4 @@
-name: Vitest resetModules race repro
+name: Vitest resetModules minimal race repro
 
 on:
   push:
@@ -13,24 +13,86 @@ jobs:
       matrix:
         vitest: ["4.1.11", "5.0.1"]
     steps:
-      - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: npm
 
-      - name: Install project dependencies
-        run: npm ci
-
-      - name: Override Vitest version
-        run: npm install --no-save --package-lock=false vitest@${{ matrix.vitest }}
-
-      - name: Run memory + rag shard repeatedly
+      - name: Create standalone repro
         shell: bash
         run: |
           set -euo pipefail
-          for i in $(seq 1 3); do
-            echo "=== shard iteration $i / Vitest ${{ matrix.vitest }} ==="
-            npx vitest run src/main/memory src/main/rag
+          mkdir repro
+          cd repro
+          npm init -y >/dev/null
+          npm pkg set type=module >/dev/null
+          npm install --no-save vitest@${{ matrix.vitest }}
+
+          cat > store.js <<'EOF'
+          export const store = {
+            add() {
+              return "ok"
+            },
+            save() {
+              void import("./exporter.js")
+            },
+          }
+          EOF
+
+          cat > manager.js <<'EOF'
+          import { store } from "./store.js"
+
+          export function write() {
+            store.save()
+            return store.add()
+          }
+          EOF
+
+          cat > exporter.js <<'EOF'
+          await new Promise((resolve) => setTimeout(resolve, 20))
+          const { store } = await import("./store.js")
+          export const observedStore = store
+          EOF
+
+          cat > repro.test.js <<'EOF'
+          import { beforeEach, expect, test, vi } from "vitest"
+
+          beforeEach(() => {
+            vi.resetModules()
+          })
+
+          for (let i = 0; i < 100; i++) {
+            test(`iteration ${i}`, async () => {
+              const { write } = await import("./manager.js")
+              const { store } = await import("./store.js")
+
+              expect(store).toBeDefined()
+              expect(store.add()).toBe("ok")
+              expect(write()).toBe("ok")
+            })
+          }
+          EOF
+
+          cat > vitest.config.js <<'EOF'
+          import { defineConfig } from "vitest/config"
+
+          export default defineConfig({
+            test: {
+              environment: "node",
+              pool: "forks",
+              maxWorkers: 1,
+              fileParallelism: false,
+              watch: false,
+              cache: false,
+            },
+          })
+          EOF
+
+      - name: Run standalone repro repeatedly
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd repro
+          for i in $(seq 1 10); do
+            echo "=== standalone iteration $i / Vitest ${{ matrix.vitest }} ==="
+            npx vitest run
           done
