@@ -48,8 +48,10 @@ jobs:
           EOF
 
           cat > exporter.js <<'EOF'
+          import { store } from "./store.js"
+
           await new Promise((resolve) => setTimeout(resolve, 20))
-          const { store } = await import("./store.js")
+
           export const observedStore = store
           EOF
 
