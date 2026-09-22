@@ -45,8 +45,6 @@ import { buildModelContext } from "./conversation-transcript-context";
 import { getConversationTranscriptStore } from "./conversation-transcript-store";
 import { getHarnessRunStore } from "./harness/run-store";
 import { ConversationTranscriptCompactor } from "./conversation-transcript-compactor";
-import { callSummarizeModel } from "./context-manager";
-import { getAdapterForConfig } from "./vendors";
 import { type CyreneRunResult, type CyreneRunOptions } from "./cyrene-agent";
 import type { HarnessToolFinishedEvent } from "./harness/types";
 import type { ToolFinishedInput } from "../plugin-host/lifecycle-publisher";
@@ -97,6 +95,8 @@ export interface AgentRuntimeDeps {
   publishPluginHostEvent: <T>(event: string, payload: T) => Promise<void>;
   /** 工具完成事件发布入口；缺省不发布（早期装配与测试场景）。 */
   publishToolFinished?: (event: ToolFinishedInput) => void;
+  /** Composition-root-owned singleton shared with manual CHATS_COMPACT. */
+  transcriptCompactor?: ConversationTranscriptCompactor;
 }
 
 type SchedulerRunOptions = Omit<CyreneRunOptions, "toolSystemContent" | "soulSystemBaseContent">;
@@ -119,27 +119,12 @@ export function createAgentRuntime(rawDeps: AgentRuntimeDeps): AgentRuntime {
   const runtimeStateService = rawDeps.runtimeStateService;
   const transcriptStore = getConversationTranscriptStore(app.getPath("userData"));
   const transcriptRunStore = getHarnessRunStore(app.getPath("userData"));
-  // The desktop automatic path and CHATS_COMPACT use the same coordinator;
-  // only the model-specific summary callback is supplied by this composition root.
-  const transcriptCompactor = new ConversationTranscriptCompactor({
+  // Production composition owns the singleton; unit/fallback callers retain
+  // the same service contract but fail closed until one is injected.
+  const transcriptCompactor = rawDeps.transcriptCompactor ?? new ConversationTranscriptCompactor({
     store: transcriptStore,
     runReader: transcriptRunStore,
-    summarize: async (history) => {
-      const settings = resolveModelSettingsProfile(rawDeps.loadModelSettings());
-      const vendorConfig = {
-        provider: settings.provider,
-        baseUrl: settings.baseUrl,
-        model: settings.model,
-        apiKey: settings.apiKey,
-        explicitTransport: settings.explicitTransport,
-        reasoning: settings.reasoning,
-      };
-      return callSummarizeModel(
-        history,
-        getAdapterForConfig(vendorConfig),
-        { ...settings, contextWindowTokens: settings.contextWindowTokens ?? 256_000 },
-      );
-    },
+    summarize: async () => { throw new Error("TRANSCRIPT_COMPACTION_REQUIRED"); },
   });
 
   async function observeRuntimeState(

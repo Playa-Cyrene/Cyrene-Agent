@@ -100,9 +100,71 @@ describe("ConversationTranscriptCompactor", () => {
     fixture.reject(new Error("provider down"));
     const pending = fixture.compactor.compact({ conversationId: "c1", trigger: "manual", retainTokens: 1 });
 
-    await expect(pending).rejects.toThrow("provider down");
+    await expect(pending).rejects.toThrow("TRANSCRIPT_COMPACTION_REQUIRED");
     const entries = (await fixture.store.read("c1")).entries;
     expect(entries).toEqual(original);
     expect(entries.some((entry) => entry.kind === "compaction_checkpoint")).toBe(false);
+  });
+
+  it("没有安全切点时显式要求 TRANSCRIPT_COMPACTION_REQUIRED 且不写 checkpoint", async () => {
+    const fixture = createFixture();
+    await seed(fixture);
+    const original = (await fixture.store.read("c1")).entries;
+
+    await expect(fixture.compactor.compact({
+      conversationId: "c1", trigger: "automatic", retainTokens: 1_000_000,
+    })).rejects.toThrow("TRANSCRIPT_COMPACTION_REQUIRED");
+    expect((await fixture.store.read("c1")).entries).toEqual(original);
+  });
+
+  it("并发 compaction 只允许一个 checkpoint 通过 CAS", async () => {
+    const fixture = createFixture();
+    await seed(fixture);
+    let release!: (summary: string) => void;
+    const gate = new Promise<string>((resolve) => { release = resolve; });
+    const first = new ConversationTranscriptCompactor({ store: fixture.store, summarize: async () => gate });
+    const second = new ConversationTranscriptCompactor({ store: fixture.store, summarize: async () => gate });
+    const a = first.compact({ conversationId: "c1", trigger: "automatic", retainTokens: 1 });
+    const b = second.compact({ conversationId: "c1", trigger: "automatic", retainTokens: 1 });
+    release("summary");
+
+    const results = await Promise.allSettled([a, b]);
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.find((result) => result.status === "rejected")).toEqual(
+      expect.objectContaining({ reason: expect.objectContaining({ message: "TRANSCRIPT_COMPACTION_REQUIRED" }) }),
+    );
+    expect((await fixture.store.read("c1")).entries.filter((entry) => entry.kind === "compaction_checkpoint")).toHaveLength(1);
+  });
+
+  it("按活动分支 source seq 压缩同文本 replace_user，且模型上下文命中 checkpoint", async () => {
+    const fixture = createFixture();
+    await fixture.store.append("c1", {
+      id: "u-old", at: 1, kind: "user", turnId: "turn-1", revision: 1,
+      payload: { text: "相同文本".repeat(20) },
+    });
+    await fixture.store.append("c1", {
+      id: "a-old", at: 1, kind: "assistant", payload: { role: "assistant", content: "旧回答".repeat(20) },
+    });
+    await fixture.store.append("c1", {
+      id: "rewind", at: 1, kind: "turn_rewind", turnId: "turn-1", revision: 2,
+      payload: {
+        anchorUserTurnId: "turn-1", disposition: "replace_user", reason: "edit",
+        replacementUser: { text: "相同文本".repeat(20) },
+      },
+    });
+    await fixture.store.append("c1", {
+      id: "a-new", at: 1, kind: "assistant", payload: { role: "assistant", content: "新回答".repeat(20) },
+    });
+    await fixture.store.append("c1", {
+      id: "u-latest", at: 1, kind: "user", turnId: "turn-2", revision: 1,
+      payload: { text: "最新问题" },
+    });
+
+    const branchCompactor = new ConversationTranscriptCompactor({ store: fixture.store, summarize: async () => "x" });
+    const result = await branchCompactor.compact({ conversationId: "c1", trigger: "automatic", retainTokens: 50 });
+    expect(result.sourceThroughSeq).toBe(3);
+    expect(result.compactedMessages[0]?.content).toContain("<cyrene_compaction_checkpoint>");
+    expect((await fixture.journal.buildModelContext("c1")).messages.map((message) => message.content))
+      .toEqual([expect.stringContaining("<cyrene_compaction_checkpoint>"), "新回答".repeat(20), "最新问题"]);
   });
 });

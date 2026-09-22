@@ -27,9 +27,11 @@ import { getHarnessRunStore } from "../orchestrator/harness/run-store";
 import { getConversationTranscriptStore } from "../orchestrator/conversation-transcript-store";
 import { ConversationJournalService } from "../orchestrator/conversation-journal-service";
 import { ConversationSessionMigration } from "../orchestrator/conversation-session-migration";
-import { ConversationTranscriptCompactor } from "../orchestrator/conversation-transcript-compactor";
-import { callSummarizeModel } from "../orchestrator/context-manager";
-import { getAdapterForConfig } from "../orchestrator/vendors";
+import {
+  ConversationTranscriptCompactor,
+  createTranscriptCompactionRequiredError,
+  TRANSCRIPT_COMPACTION_REQUIRED,
+} from "../orchestrator/conversation-transcript-compactor";
 import { getRunReviewTracker } from "../orchestrator/review/run-review-tracker";
 import { activeChatTargetRegistry } from "../plugin-host/active-chat-target";
 import type { LlmClient } from "../services/llm/llm-client";
@@ -87,21 +89,7 @@ export function registerChatsIpc(
   const transcriptCompactor = options.transcriptCompactor ?? new ConversationTranscriptCompactor({
     store: transcriptStore,
     runReader: getHarnessRunStore(app.getPath("userData")),
-    summarize: async (history) => {
-      const settings = resolveModelSettingsProfile(loadModelSettings());
-      return callSummarizeModel(
-        history,
-        getAdapterForConfig({
-          provider: settings.provider,
-          baseUrl: settings.baseUrl,
-          model: settings.model,
-          apiKey: settings.apiKey,
-          explicitTransport: settings.explicitTransport,
-          reasoning: settings.reasoning,
-        }),
-        { ...settings, contextWindowTokens: settings.contextWindowTokens ?? 256_000 },
-      );
-    },
+    summarize: async () => { throw new Error(TRANSCRIPT_COMPACTION_REQUIRED); },
   });
   const sessionMigration = new ConversationSessionMigration({ journal: conversationJournal, store: transcriptStore });
   // 进程刚启动时没有任何存活运行：磁盘上遗留的插话标记都是陈旧的，清回普通队列
@@ -208,7 +196,9 @@ export function registerChatsIpc(
     } catch (error) {
       return {
         ok: false as const,
-        error: error instanceof Error ? error.message : "TRANSCRIPT_COMPACTION_REQUIRED",
+        error: error instanceof Error && error.message === TRANSCRIPT_COMPACTION_REQUIRED
+          ? error.message
+          : createTranscriptCompactionRequiredError(error).message,
       };
     }
   });

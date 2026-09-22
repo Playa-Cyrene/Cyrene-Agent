@@ -150,6 +150,38 @@ export class ConversationTranscriptStore {
     });
   }
 
+  /**
+   * CAS（比较并追加）compaction checkpoint：校验与 seq 分配/写入必须位于同一会话队列。
+   * 允许普通 suffix 追加；任何会改变 source branch 的 checkpoint/rewind/tombstone
+   * 会让本次压缩显式失败，避免两个摘要并发时 second writer 静默幂等成功。
+   */
+  appendCompactionCheckpoint(
+    conversationId: string,
+    input: TranscriptAppendInput,
+  ): Promise<Extract<TranscriptEntry, { kind: "compaction_checkpoint" }>> {
+    assertValidTranscriptDraft(input);
+    if (input.kind !== "compaction_checkpoint") {
+      return Promise.reject(new Error("TRANSCRIPT_INVALID_COMPACTION_CHECKPOINT"));
+    }
+    return this.enqueue(conversationId, async () => {
+      const state = await this.loadState(conversationId);
+      const payload = input.payload;
+      const prefix = state.entries.filter((entry) => entry.seq <= payload.sourceThroughSeq);
+      const competing = state.entries.some((entry) => entry.seq > payload.baseThroughSeq && (
+        entry.kind === "compaction_checkpoint" || entry.kind === "turn_rewind" || entry.kind === "turn_tombstone"
+      ));
+      const prefixDigest = createHash("sha256").update(JSON.stringify(prefix), "utf8").digest("hex");
+      if (competing || prefixDigest !== payload.sourceDigest) {
+        throw new Error("TRANSCRIPT_COMPACTION_REQUIRED");
+      }
+      const entry = { ...input, seq: state.maxSeq + 1, at: input.at ?? this.now() } as Extract<TranscriptEntry, { kind: "compaction_checkpoint" }>;
+      validateLoadedTranscriptEntry(entry);
+      await fs.promises.mkdir(state.dir, { recursive: true });
+      await fs.promises.appendFile(path.join(state.dir, JSONL_FILE_NAME), `${JSON.stringify(entry)}\n`, "utf8");
+      return entry;
+    });
+  }
+
   /** Append a derived presentation patch with queue-assigned revision and stable idempotency. */
   appendPresentationNext(
     conversationId: string,

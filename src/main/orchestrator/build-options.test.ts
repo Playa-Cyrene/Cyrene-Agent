@@ -1084,13 +1084,18 @@ describe("权威轨迹上下文源（CTA Phase 1）", () => {
     const deps = createBuildDeps()
     deps.loadModelSettings = () => ({
       provider: "test", baseUrl: "https://example.test", model: "m", apiKey: "k",
-      contextWindowTokens: 100,
+      contextWindowTokens: 10_000,
     })
-    const full = [{ role: "user" as const, content: "历史".repeat(300) }]
-    deps.buildModelContext = vi.fn(async () => ({ messages: full, uncertainEffects: [], throughSeq: 8 }))
+    const full = [{ role: "user" as const, content: "历史".repeat(2_000) }]
+    const compacted = [{ role: "system" as const, content: "<cyrene_compaction_checkpoint>\n摘要\n</cyrene_compaction_checkpoint>" }]
+    let reads = 0
+    deps.buildModelContext = vi.fn(async () => ({
+      messages: reads++ === 0 ? full : compacted,
+      uncertainEffects: [], throughSeq: 8,
+    }))
     deps.compactTranscript = vi.fn(async () => ({ checkpointEntryId: "cp-1" }))
 
-    await buildAgentRunOptions({
+    const built = await buildAgentRunOptions({
       sessionId: "auto-compact", currentUser: { turnId: "turn-1", text: "继续", visibleContent: "继续" },
     } as never, deps)
 
@@ -1098,6 +1103,23 @@ describe("权威轨迹上下文源（CTA Phase 1）", () => {
       conversationId: "auto-compact", trigger: "automatic", retainTokens: expect.any(Number),
     }))
     expect(deps.buildModelContext).toHaveBeenCalledTimes(2)
+    expect(built.options.cleanMessages).toContainEqual(expect.objectContaining({ content: expect.stringContaining("<cyrene_compaction_checkpoint>") }))
+  })
+
+  it("自动 compaction 摘要失败时对外只报告 TRANSCRIPT_COMPACTION_REQUIRED", async () => {
+    const deps = createBuildDeps()
+    deps.loadModelSettings = () => ({
+      provider: "test", baseUrl: "https://example.test", model: "m", apiKey: "k", contextWindowTokens: 100,
+    })
+    deps.buildModelContext = vi.fn(async () => ({
+      messages: [{ role: "user" as const, content: "历史".repeat(300) }], uncertainEffects: [], throughSeq: 8,
+    }))
+    deps.compactTranscript = vi.fn(async () => { throw new Error("provider down") })
+
+    await expect(buildAgentRunOptions({
+      sessionId: "auto-compact-failure",
+      currentUser: { turnId: "turn-1", text: "继续", visibleContent: "继续" },
+    } as never, deps)).rejects.toThrow("TRANSCRIPT_COMPACTION_REQUIRED")
   })
 
   it("崩溃孤儿不确定效果并入 recoveryContext", async () => {

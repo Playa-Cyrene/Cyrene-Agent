@@ -66,6 +66,7 @@ import { resolveTranscriptRetainTokens, type MaterializedTranscript } from "./co
 import type { UncertainEffect } from "./harness/types";
 import { DEFAULT_HARNESS_CONFIG } from "./harness/types";
 import { estimateMessageTokens } from "./context-manager";
+import { createTranscriptCompactionRequiredError } from "./conversation-transcript-compactor";
 
 /** index.ts 模块级符号的最小可注入子集。
  *  类型故意用宽签名（unknown / 任意 shape）—— 因为 build-options 是纯消费者，
@@ -542,12 +543,20 @@ export async function buildAgentRunOptions(
     const estimatedMessages = estimateMessageTokens(transcriptContext.messages);
     if (estimatedMessages >= usableInputBudget * DEFAULT_HARNESS_CONFIG.compactionThreshold) {
       if (!deps.compactTranscript) throw new Error("TRANSCRIPT_COMPACTION_REQUIRED");
-      await deps.compactTranscript({
-        conversationId: input.sessionId,
-        trigger: "automatic",
-        retainTokens: Math.max(1, Math.floor(contextWindowTokens * DEFAULT_HARNESS_CONFIG.compactionRetainRatio)),
-      });
+      try {
+        await deps.compactTranscript({
+          conversationId: input.sessionId,
+          trigger: "automatic",
+          retainTokens: Math.max(1, Math.floor(contextWindowTokens * DEFAULT_HARNESS_CONFIG.compactionRetainRatio)),
+        });
+      } catch (error) {
+        console.error("[BuildOptions] transcript compaction failed", error);
+        throw createTranscriptCompactionRequiredError(error);
+      }
       transcriptContext = await requireBuildModelContext(deps)(input.sessionId, retainTokens);
+      if (estimateMessageTokens(transcriptContext.messages) >= usableInputBudget * DEFAULT_HARNESS_CONFIG.compactionThreshold) {
+        throw createTranscriptCompactionRequiredError();
+      }
     }
   }
   const messages = transcriptContext?.messages

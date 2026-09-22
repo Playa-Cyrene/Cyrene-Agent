@@ -29,6 +29,11 @@ export interface MaterializedTranscript {
   throughSeq: number;
 }
 
+/** Canonical messages plus the active transcript row that produced each one. */
+export interface MaterializedTranscriptWithSources extends MaterializedTranscript {
+  sourceSeqs: number[];
+}
+
 export interface ConversationProjectionNodeState {
   kind: "user" | "assistant";
   entryId: string;
@@ -61,7 +66,12 @@ type RewindEntry = Extract<TranscriptEntry, { kind: "turn_rewind" }>;
 
 type ActiveNode =
   | { kind: "user"; entry: UserEntry | RewindEntry; text: string }
-  | { kind: "assistant"; entry: AssistantEntry; toolResults: Map<string, ChatMessage> };
+  | {
+      kind: "assistant";
+      entry: AssistantEntry;
+      toolResults: Map<string, ChatMessage>;
+      toolResultSeqs: Map<string, number>;
+    };
 
 interface ActiveTranscript {
   nodes: ActiveNode[];
@@ -101,7 +111,7 @@ function reduceActiveTranscript(entries: TranscriptEntry[]): ActiveTranscript {
         nodes.push({ kind: "user", entry, text: entry.payload.text });
         break;
       case "assistant":
-        nodes.push({ kind: "assistant", entry, toolResults: new Map() });
+        nodes.push({ kind: "assistant", entry, toolResults: new Map(), toolResultSeqs: new Map() });
         break;
       case "tool_result": {
         const node = nodes.find(
@@ -109,6 +119,7 @@ function reduceActiveTranscript(entries: TranscriptEntry[]): ActiveTranscript {
         );
         if (node?.kind === "assistant" && !node.toolResults.has(entry.payload.toolCallId)) {
           node.toolResults.set(entry.payload.toolCallId, entry.payload.message);
+          node.toolResultSeqs.set(entry.payload.toolCallId, entry.seq);
         }
         break;
       }
@@ -174,16 +185,19 @@ function addUncertainEffect(
 function materializeNodes(
   nodes: ActiveNode[],
   runReader: TranscriptRunReader,
-): { messages: ChatMessage[]; uncertainEffects: UncertainEffect[] } {
+): { messages: ChatMessage[]; uncertainEffects: UncertainEffect[]; sourceSeqs: number[] } {
   const messages: ChatMessage[] = [];
   const uncertainEffects: UncertainEffect[] = [];
+  const sourceSeqs: number[] = [];
   for (const node of nodes) {
     if (node.kind === "user") {
       messages.push({ role: "user", content: node.text });
+      sourceSeqs.push(node.entry.seq);
       continue;
     }
     const payload = node.entry.payload;
     messages.push(payload);
+    sourceSeqs.push(node.entry.seq);
     if (!payload.toolCalls?.length) continue;
 
     const runSession = node.entry.runId ? runReader.get(node.entry.runId) : null;
@@ -192,6 +206,7 @@ function materializeNodes(
       const persisted = node.toolResults.get(call.id);
       if (persisted) {
         messages.push(persisted);
+        sourceSeqs.push(node.toolResultSeqs.get(call.id) ?? node.entry.seq);
         continue;
       }
       const record = statusById.get(call.id);
@@ -204,9 +219,10 @@ function materializeNodes(
       } else {
         messages.push(syntheticToolMessage(call, "not_executed"));
       }
+      sourceSeqs.push(node.entry.seq);
     }
   }
-  return { messages, uncertainEffects };
+  return { messages, uncertainEffects, sourceSeqs };
 }
 
 function failedDeliveryNotes(
@@ -214,7 +230,16 @@ function failedDeliveryNotes(
   activeNodes: ActiveNode[],
   minSeqExclusive = -Infinity,
 ): ChatMessage[] {
+  return failedDeliveryNotesWithSources(entries, activeNodes, minSeqExclusive).notes;
+}
+
+function failedDeliveryNotesWithSources(
+  entries: TranscriptEntry[],
+  activeNodes: ActiveNode[],
+  minSeqExclusive = -Infinity,
+): { notes: ChatMessage[]; sourceSeqs: number[] } {
   const notes: ChatMessage[] = [];
+  const sourceSeqs: number[] = [];
   const activeAssistantTurns = new Set(
     activeNodes
       .filter((node): node is Extract<ActiveNode, { kind: "assistant" }> => node.kind === "assistant")
@@ -240,8 +265,9 @@ function failedDeliveryNotes(
         createdAt: entry.at,
       },
     });
+    sourceSeqs.push(entry.seq);
   }
-  return notes;
+  return { notes, sourceSeqs };
 }
 
 function checkpointCoversActiveBranch(
@@ -599,12 +625,27 @@ export function buildFullModelContext(
   entries: TranscriptEntry[],
   runReader: TranscriptRunReader,
 ): MaterializedTranscript {
+  const result = buildFullModelContextWithSources(entries, runReader);
+  return {
+    messages: result.messages,
+    uncertainEffects: result.uncertainEffects,
+    throughSeq: result.throughSeq,
+  };
+}
+
+/** Full active model view with branch-aware source sequence mapping for compaction. */
+export function buildFullModelContextWithSources(
+  entries: TranscriptEntry[],
+  runReader: TranscriptRunReader,
+): MaterializedTranscriptWithSources {
   const active = reduceActiveTranscript(entries);
   const materialized = materializeNodes(active.nodes, runReader);
+  const delivery = failedDeliveryNotesWithSources(entries, active.nodes);
   return {
-    messages: [...materialized.messages, ...failedDeliveryNotes(entries, active.nodes)],
+    messages: [...materialized.messages, ...delivery.notes],
     uncertainEffects: materialized.uncertainEffects,
     throughSeq: active.throughSeq,
+    sourceSeqs: [...materialized.sourceSeqs, ...delivery.sourceSeqs],
   };
 }
 

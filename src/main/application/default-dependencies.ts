@@ -31,8 +31,10 @@ import {
   settingsWindow,
   tasksWindow,
 } from "../windows/window-state";
-import { loadModelSettings, saveModelSettings } from "../settings/model-settings";
+import { loadModelSettings, resolveModelSettingsProfile, saveModelSettings } from "../settings/model-settings";
 import { getConversationTranscriptStore } from "../orchestrator/conversation-transcript-store";
+import { getHarnessRunStore } from "../orchestrator/harness/run-store";
+import { createModelBackedConversationTranscriptCompactor } from "../orchestrator/conversation-transcript-compactor";
 import { ConversationJournalService } from "../orchestrator/conversation-journal-service";
 import { activeConversationRegistry } from "../chats/active-conversation-registry";
 import { registerSettingsIpc } from "../settings/settings-ipc";
@@ -110,6 +112,7 @@ import { createPendingTurnLifecycle } from "../plugin-host/pending-turn-lifecycl
 import { startPluginRuntime } from "../plugin-runtime";
 import { createAgentRuntime } from "../orchestrator/agent-runtime";
 import { createRuntimeStateService } from "../orchestrator/runtime-state-service";
+import { createTranscriptCompactorGetter } from "./transcript-compaction-wiring";
 import { createProactiveLifecycle } from "../proactive/proactive-lifecycle";
 import { createCitaService } from "../services/cita/cita-service";
 import { createSocialContextService } from "../services/social-context/social-context-service";
@@ -173,6 +176,13 @@ async function reconcileUserMemoryIndex(): Promise<void> {
 export function createDefaultApplicationDependencies(): ApplicationDependencies {
   // Agent Runtime 早于插件管理器构造；通过窄闭包在运行期转发宿主事件，避免反转启动顺序。
   let pluginManager: PluginManager | undefined;
+  // 自动压缩与 CHATS_COMPACT 必须共享同一个会话级压缩器，避免两条路径各自组装 provider。
+  const getTranscriptCompactor = createTranscriptCompactorGetter(() =>
+    createModelBackedConversationTranscriptCompactor({
+      store: getConversationTranscriptStore(app.getPath("userData")),
+      runReader: getHarnessRunStore(app.getPath("userData")),
+      loadModelSettings: () => resolveModelSettingsProfile(loadModelSettings()),
+    }));
   // 生命周期事件发布器：插件系统就绪前发布的事件没有监听器，直接丢弃
   const lifecyclePublisher = createLifecyclePublisher({
     publish: (event, payload) => pluginManager
@@ -411,30 +421,34 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
         logger.info(LogTag.RAG, "RAG initialized OK");
       },
 
-      createRuntime: (services) => createAgentRuntime({
-        runtimeStateService: services.runtimeState,
-        llmClient: services.llm,
-        enqueueLLMTask,
-        loadModelSettings,
-        loadGeneralSettings,
-        loadUserProfile,
-        toolRegistry,
-        skillRegistry,
-        getStickerEmbeddingIndex: () => services.embedding.getStickerEmbeddingIndex(),
-        getEmbeddingProvider,
-        broadcastRuntimeStateChanged: () => {
-          broadcastToAuxWindows(IPC.RUNTIME_STATE_CHANGED, services.runtimeState.getState());
-        },
-        citaService: services.cita,
-        socialContextScheduler: services.social.scheduler,
-        chatsStore,
-        socialAtomStore: services.social.store,
-        buildPluginPromptContext: (input) => pluginPromptRegistry.build(input),
-        publishPluginHostEvent: (event, payload) => pluginManager
-          ? pluginManager.publishHostEvent(event, payload)
-          : Promise.resolve(),
-        publishToolFinished: (event) => lifecyclePublisher.publishToolFinished(event),
-      }),
+      createRuntime: (services) => {
+        const transcriptCompactor = getTranscriptCompactor();
+        return createAgentRuntime({
+          runtimeStateService: services.runtimeState,
+          llmClient: services.llm,
+          enqueueLLMTask,
+          loadModelSettings,
+          loadGeneralSettings,
+          loadUserProfile,
+          toolRegistry,
+          skillRegistry,
+          getStickerEmbeddingIndex: () => services.embedding.getStickerEmbeddingIndex(),
+          getEmbeddingProvider,
+          broadcastRuntimeStateChanged: () => {
+            broadcastToAuxWindows(IPC.RUNTIME_STATE_CHANGED, services.runtimeState.getState());
+          },
+          citaService: services.cita,
+          socialContextScheduler: services.social.scheduler,
+          chatsStore,
+          socialAtomStore: services.social.store,
+          buildPluginPromptContext: (input) => pluginPromptRegistry.build(input),
+          publishPluginHostEvent: (event, payload) => pluginManager
+            ? pluginManager.publishHostEvent(event, payload)
+            : Promise.resolve(),
+          publishToolFinished: (event) => lifecyclePublisher.publishToolFinished(event),
+          transcriptCompactor,
+        });
+      },
 
       createChannels: (runtime, services) => createChannelsSubsystem({
         agentRuntime: runtime,
@@ -474,6 +488,7 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
       }),
 
       registerCoreIpc: ({ ipc, runtime, services }) => {
+        const transcriptCompactor = getTranscriptCompactor();
         // 设置变更反应：窗口/托盘/截图热键/主动服务联动
         onGeneralSettingsChanged((before, after) =>
           handleGeneralSettingsChanged(before, after, {
@@ -513,6 +528,7 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
         registerChatsIpc(ipc, {
           llmClient: services.llm,
           isPrimaryModelBusy: hasActiveConversationRun,
+          transcriptCompactor,
         });
         registerMomentsIpc(ipc);
         registerCodeGitIpc({ ipc, service: services.git });

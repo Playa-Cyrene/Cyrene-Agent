@@ -121,6 +121,18 @@ describe("chats IPC mode filtering", () => {
     expect(session.messages).toEqual([]);
   });
 
+  it("normalizes a manual summarizer failure to TRANSCRIPT_COMPACTION_REQUIRED", async () => {
+    const { registerChatsIpc } = await import("./chats-ipc");
+    registerChatsIpc(undefined, {
+      transcriptCompactor: { compact: vi.fn(async () => { throw new Error("provider down"); }) } as any,
+    });
+    const compact = mocks.handlers.get(IPC.CHATS_COMPACT);
+    if (!compact) throw new Error("compaction IPC handler was not registered");
+    await expect(compact({ sender: {} }, { sessionId: "c1" })).resolves.toEqual({
+      ok: false, error: "TRANSCRIPT_COMPACTION_REQUIRED",
+    });
+  });
+
   it("runs the controller through the real bridge handler before api.run and fails closed for a deep patch", async () => {
     const { registerChatsIpc } = await import("./chats-ipc");
     const { getConversationTranscriptStore } = await import("../orchestrator/conversation-transcript-store");

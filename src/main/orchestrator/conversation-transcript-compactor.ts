@@ -1,12 +1,14 @@
 import { createHash } from "node:crypto";
 import type { ConversationTranscriptStore } from "./conversation-transcript-store";
 import {
-  buildFullModelContext,
+  buildFullModelContextWithSources,
   buildModelContextFromCompactedView,
   type TranscriptRunReader,
 } from "./conversation-transcript-projection";
 import type { TranscriptAppendInput, TranscriptEntry } from "./conversation-transcript-types";
 import type { ChatMessage as CanonicalChatMessage } from "./vendors/types";
+import { callSummarizeModel } from "./context-manager";
+import { getAdapterForConfig } from "./vendors";
 import {
   compressForAgentLoop,
   findSafeCutPointForRetainedTokens,
@@ -31,6 +33,51 @@ export interface ConversationTranscriptCompactorOptions {
   now?: () => number;
 }
 
+export interface TranscriptCompactionModelSettings {
+  provider: string;
+  baseUrl: string;
+  model: string;
+  apiKey: string;
+  explicitTransport?: "openai" | "anthropic" | "responses" | "auto";
+  reasoning?: import("../../shared/reasoning").ReasoningPreference;
+  contextWindowTokens?: number;
+}
+
+export const TRANSCRIPT_COMPACTION_REQUIRED = "TRANSCRIPT_COMPACTION_REQUIRED";
+
+export function createTranscriptCompactionRequiredError(cause?: unknown): Error {
+  const error = new Error(TRANSCRIPT_COMPACTION_REQUIRED);
+  if (cause !== undefined) Object.assign(error, { cause });
+  return error;
+}
+
+/** Composition-root factory: the existing context-manager summarizer is the only provider path. */
+export function createModelBackedConversationTranscriptCompactor(input: {
+  store: ConversationTranscriptStore;
+  runReader?: TranscriptRunReader;
+  loadModelSettings: () => TranscriptCompactionModelSettings;
+}): ConversationTranscriptCompactor {
+  return new ConversationTranscriptCompactor({
+    store: input.store,
+    runReader: input.runReader,
+    summarize: async (history) => {
+      const settings = input.loadModelSettings();
+      return callSummarizeModel(
+        history,
+        getAdapterForConfig({
+          provider: settings.provider,
+          baseUrl: settings.baseUrl,
+          model: settings.model,
+          apiKey: settings.apiKey,
+          explicitTransport: settings.explicitTransport,
+          reasoning: settings.reasoning,
+        }),
+        { ...settings, contextWindowTokens: settings.contextWindowTokens ?? 256_000 },
+      );
+    },
+  });
+}
+
 /** 会话级压缩协调器：摘要成功并写入 checkpoint 前，canonical 轨迹永不改写。 */
 export class ConversationTranscriptCompactor {
   private readonly store: ConversationTranscriptStore;
@@ -48,11 +95,12 @@ export class ConversationTranscriptCompactor {
   async compact(request: ConversationCompactionRequest): Promise<ConversationCompactionResult> {
     const retainTokens = request.retainTokens ?? 1;
     const before = await this.store.read(request.conversationId);
-    const full = buildFullModelContext(before.entries, this.runReader);
+    const full = buildFullModelContextWithSources(before.entries, this.runReader);
     const cutIndex = findSafeCutPointForRetainedTokens(full.messages, retainTokens);
-    if (cutIndex <= 0) throw new Error("TRANSCRIPT_COMPACTION_REQUIRED");
+    if (cutIndex <= 0) throw createTranscriptCompactionRequiredError();
 
-    const sourceThroughSeq = sourceThroughSeqForMessages(before.entries, full.messages, cutIndex);
+    const sourceThroughSeq = Math.max(...full.sourceSeqs.slice(0, cutIndex), 0);
+    if (sourceThroughSeq <= 0) throw createTranscriptCompactionRequiredError();
     const sourceEntries = before.entries.filter((entry) => entry.seq <= sourceThroughSeq);
     const sourceDigest = digest(sourceEntries);
     let summaryError: unknown;
@@ -68,10 +116,13 @@ export class ConversationTranscriptCompactor {
         }
       },
     });
-    if (summaryError) throw summaryError;
+    if (summaryError) {
+      console.error("[ConversationTranscriptCompactor] summary failed", summaryError);
+      throw createTranscriptCompactionRequiredError(summaryError);
+    }
     const replacement = compacted[0];
     if (!replacement || replacement.role !== "system" || !isCompactionReplacement(replacement)) {
-      throw new Error("TRANSCRIPT_COMPACTION_REQUIRED");
+      throw createTranscriptCompactionRequiredError();
     }
 
     // A rewind or a competing checkpoint invalidates the prefix selected above.
@@ -82,7 +133,7 @@ export class ConversationTranscriptCompactor {
       entry.seq > before.throughSeq
       && (entry.kind === "compaction_checkpoint" || entry.kind === "turn_rewind" || entry.kind === "turn_tombstone")
     ))) {
-      throw new Error("TRANSCRIPT_COMPACTION_CONFLICT");
+      throw createTranscriptCompactionRequiredError();
     }
 
     const checkpointInput: TranscriptAppendInput = {
@@ -97,7 +148,7 @@ export class ConversationTranscriptCompactor {
         trigger: request.trigger,
       },
     };
-    const checkpoint = await this.store.append(request.conversationId, checkpointInput);
+    const checkpoint = await this.store.appendCompactionCheckpoint(request.conversationId, checkpointInput);
     const finalSnapshot = await this.store.read(request.conversationId);
     const finalContext = buildModelContextFromCompactedView(finalSnapshot.entries, this.runReader);
     return {
@@ -115,37 +166,4 @@ function isCompactionReplacement(message: CanonicalChatMessage): boolean {
 
 function digest(entries: TranscriptEntry[]): string {
   return createHash("sha256").update(JSON.stringify(entries), "utf8").digest("hex");
-}
-
-function sourceThroughSeqForMessages(
-  entries: TranscriptEntry[],
-  messages: CanonicalChatMessage[],
-  messageCount: number,
-): number {
-  let messageIndex = 0;
-  let sourceThroughSeq = 0;
-  for (const entry of entries) {
-    const message = canonicalMessageForEntry(entry);
-    if (!message || messageIndex >= messageCount) continue;
-    if (sameMessage(message, messages[messageIndex]!)) {
-      sourceThroughSeq = entry.seq;
-      messageIndex += 1;
-    }
-  }
-  if (messageIndex < messageCount) throw new Error("TRANSCRIPT_COMPACTION_REQUIRED");
-  return sourceThroughSeq;
-}
-
-function canonicalMessageForEntry(entry: TranscriptEntry): CanonicalChatMessage | null {
-  if (entry.kind === "user") return { role: "user", content: entry.payload.text };
-  if (entry.kind === "turn_rewind" && entry.payload.disposition === "replace_user") {
-    return { role: "user", content: entry.payload.replacementUser?.text ?? "" };
-  }
-  if (entry.kind === "assistant") return entry.payload;
-  if (entry.kind === "tool_result") return entry.payload.message;
-  return null;
-}
-
-function sameMessage(left: CanonicalChatMessage, right: CanonicalChatMessage): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
 }
