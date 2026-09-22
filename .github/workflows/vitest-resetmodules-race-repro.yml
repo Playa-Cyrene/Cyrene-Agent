@@ -1,4 +1,4 @@
-name: Vitest cyclic async-export shape probe
+name: Vitest exporter size-vs-shape probe
 
 on:
   push:
@@ -11,15 +11,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shape:
-          - empty-async-export
-          - one-store-call
-          - five-store-calls
-          - promise-all-store-calls
-          - try-promise-all
+        lines: [0, 100, 300, 600]
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -40,78 +34,28 @@ jobs:
           fs.writeFileSync(p, s)
           EOF
 
-      - name: Build exporter shape
+      - name: Build large dummy exporter
         env:
-          SHAPE: ${{ matrix.shape }}
+          LINES: ${{ matrix.lines }}
         shell: bash
         run: |
           cp src/main/memory/obsidian-exporter.ts /tmp/original-exporter.ts
           head -n 427 /tmp/original-exporter.ts > src/main/memory/obsidian-exporter.ts
 
-          case "$SHAPE" in
-            empty-async-export)
-              cat >> src/main/memory/obsidian-exporter.ts <<'EOF'
+          cat >> src/main/memory/obsidian-exporter.ts <<'EOF'
           export async function exportMemoryToObsidianVault(_outputDir: string): Promise<ExportResult> {
-            return { ok: true }
-          }
+            let n = 0
           EOF
-              ;;
-            one-store-call)
-              cat >> src/main/memory/obsidian-exporter.ts <<'EOF'
-          export async function exportMemoryToObsidianVault(_outputDir: string): Promise<ExportResult> {
-            await memoryStore.getL0()
-            return { ok: true }
-          }
-          EOF
-              ;;
-            five-store-calls)
-              cat >> src/main/memory/obsidian-exporter.ts <<'EOF'
-          export async function exportMemoryToObsidianVault(_outputDir: string): Promise<ExportResult> {
-            await memoryStore.getL0()
-            await memoryStore.getL1()
-            await memoryStore.getAllL2()
-            await memoryStore.getReflectionLogs()
-            await memoryStore.getConflictLogs()
-            return { ok: true }
-          }
-          EOF
-              ;;
-            promise-all-store-calls)
-              cat >> src/main/memory/obsidian-exporter.ts <<'EOF'
-          export async function exportMemoryToObsidianVault(_outputDir: string): Promise<ExportResult> {
-            await Promise.all([
-              memoryStore.getL0(),
-              memoryStore.getL1(),
-              memoryStore.getAllL2(),
-              memoryStore.getReflectionLogs(),
-              memoryStore.getConflictLogs(),
-            ])
-            return { ok: true }
-          }
-          EOF
-              ;;
-            try-promise-all)
-              cat >> src/main/memory/obsidian-exporter.ts <<'EOF'
-          export async function exportMemoryToObsidianVault(_outputDir: string): Promise<ExportResult> {
-            try {
-              await Promise.all([
-                memoryStore.getL0(),
-                memoryStore.getL1(),
-                memoryStore.getAllL2(),
-                memoryStore.getReflectionLogs(),
-                memoryStore.getConflictLogs(),
-              ])
-              return { ok: true }
-            } catch (err) {
-              const msg = err instanceof Error ? err.message : String(err)
-              return { ok: false, error: msg }
-            }
-          }
-          EOF
-              ;;
-          esac
+
+          for i in $(seq 1 "$LINES"); do
+            echo "  n += $i" >> src/main/memory/obsidian-exporter.ts
+          done
 
           cat >> src/main/memory/obsidian-exporter.ts <<'EOF'
+            void n
+            void memoryStore
+            return { ok: true }
+          }
 
           export function notifyMemoryChanged(): unknown {
             return memoryStore
