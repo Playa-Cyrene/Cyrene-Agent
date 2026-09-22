@@ -1127,6 +1127,36 @@ describe("权威轨迹上下文源（CTA Phase 1）", () => {
     expect(built.options.cleanMessages).toContainEqual(expect.objectContaining({ content: expect.stringContaining("<cyrene_compaction_checkpoint>") }))
   })
 
+  it("传入 modelContext 超预算时同样执行自动压缩并重读 journal", async () => {
+    const deps = createBuildDeps()
+    deps.loadModelSettings = () => ({
+      provider: "test", baseUrl: "https://example.test", model: "m", apiKey: "k",
+      contextWindowTokens: 10_000,
+    })
+    const compacted = [{ role: "system" as const, content: "<cyrene_compaction_checkpoint>\n摘要\n</cyrene_compaction_checkpoint>" }]
+    deps.buildModelContext = vi.fn(async () => ({
+      messages: compacted, uncertainEffects: [], throughSeq: 8,
+    }))
+    deps.compactTranscript = vi.fn(async () => ({ checkpointEntryId: "cp-1" }))
+
+    const built = await buildAgentRunOptions({
+      sessionId: "prebuilt-compact",
+      currentUser: { turnId: "turn-1", text: "继续", visibleContent: "继续" },
+      // 模拟桌面/渠道入口预传入的超长上下文
+      modelContext: {
+        messages: [{ role: "user" as const, content: "历史".repeat(2_000) }],
+        uncertainEffects: [], throughSeq: 8,
+      },
+    } as never, deps)
+
+    expect(deps.compactTranscript).toHaveBeenCalledWith(expect.objectContaining({
+      conversationId: "prebuilt-compact", trigger: "automatic", retainTokens: expect.any(Number),
+    }))
+    // 压缩后只发生一次重读（初始上下文来自传入值）
+    expect(deps.buildModelContext).toHaveBeenCalledTimes(1)
+    expect(built.options.cleanMessages).toContainEqual(expect.objectContaining({ content: expect.stringContaining("<cyrene_compaction_checkpoint>") }))
+  })
+
   it("自动 compaction 摘要失败时对外只报告 TRANSCRIPT_COMPACTION_REQUIRED", async () => {
     const deps = createBuildDeps()
     deps.loadModelSettings = () => ({

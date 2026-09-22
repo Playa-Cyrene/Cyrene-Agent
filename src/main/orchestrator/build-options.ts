@@ -528,13 +528,15 @@ export async function buildAgentRunOptions(
   }
   // 权威轨迹上下文：桌面 bridge 在 canonical append 后传入 modelContext；
   // 若由其它主进程入口调用，则从同一 journal reader 构建，不读取 renderer 历史。
-  const retainTokens = resolveTranscriptRetainTokens(settings.contextWindowTokens ?? 256_000);
+  const contextWindowTokens = settings.contextWindowTokens ?? 256_000;
+  const retainTokens = resolveTranscriptRetainTokens(contextWindowTokens);
   let transcriptContext = input.modelContext
     ?? (input.currentUser && input.sessionId
       ? await requireBuildModelContext(deps)(input.sessionId, retainTokens)
       : undefined);
-  if (!input.modelContext && input.currentUser && input.sessionId && transcriptContext) {
-    const contextWindowTokens = settings.contextWindowTokens ?? 256_000;
+  // 预算检查对传入与自建上下文一视同仁：长会话无论从桌面还是渠道入口进入，
+  // 都必须先提交自动压缩检查点，再重读 journal 作为最终上下文。
+  if (input.currentUser && input.sessionId && transcriptContext) {
     const usableInputBudget = contextWindowTokens
       - DEFAULT_HARNESS_CONFIG.reservedOutputTokens
       - DEFAULT_HARNESS_CONFIG.safetyMarginTokens;
