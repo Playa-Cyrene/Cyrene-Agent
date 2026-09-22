@@ -14,6 +14,9 @@ import type {
   IncomingMessage,
   OutgoingMessage,
 } from "./types";
+import { randomUUID } from "node:crypto";
+import type { MaterializedTranscript } from "../orchestrator/conversation-transcript-projection";
+import type { TranscriptSink } from "../orchestrator/transcript-sink";
 import type { ChannelsSettings } from "./settings-store";
 import { appendLog } from "./message-log";
 import type { MobileMessageSegmentationMode } from "../../shared/preferences";
@@ -24,9 +27,11 @@ import type { ChannelDeliveryService } from "./delivery-service";
 import type { OutgoingComposer } from "./outgoing-composer";
 import {
   makeSessionId,
+  formatChannelUserText,
   type ChannelContext,
-  type ChatMessage,
   type DispatchContext,
+  type ChannelConversationTarget,
+  resolveChannelConversationTarget,
 } from "./channel-context";
 
 export {
@@ -35,12 +40,41 @@ export {
   makeSessionId,
 } from "./channel-context";
 export type {
-  BoundConversationMessageMetadata,
-  ChatMessage,
   DispatchContext,
+  ChannelConversationTarget,
 } from "./channel-context";
 
 const LOG = "[ChannelDispatcher]";
+
+/** Task 11 只依赖 journal 的业务入口，不引入新的存储或 outbox。 */
+export interface ChannelConversationJournal {
+  appendUser(conversationId: string, input: {
+    id?: string;
+    turnId: string;
+    text: string;
+    at?: number;
+    attachments?: Array<{ kind: "image" | "document"; name: string; filePath: string; mime?: string; caption?: string }>;
+  }): Promise<{ id: string }>;
+  appendPresentation(conversationId: string, messageId: string, patchRevision: number, patch: Record<string, unknown>): Promise<unknown>;
+  buildModelContext(conversationId: string): Promise<MaterializedTranscript>;
+  createRunSink(input: { conversationId: string; runId: string; assistantTurnId: string }): TranscriptSink;
+  appendDeliveryReceipt(conversationId: string, input: {
+    assistantTurnId: string;
+    channel: IncomingMessage["channel"];
+    status: "delivered" | "failed";
+    errorCode?: string;
+    runId?: string;
+  }): Promise<unknown>;
+}
+
+export interface ChannelAgentInput {
+  sessionId: string;
+  target: ChannelConversationTarget;
+  modelContext: MaterializedTranscript;
+  transcriptSink: TranscriptSink;
+  userTurnId: string;
+  assistantTurnId: string;
+}
 
 /** Dispatcher 配置（依赖注入）。 */
 export interface DispatcherDeps {
@@ -50,6 +84,8 @@ export interface DispatcherDeps {
   readonly limiter: ChannelRateLimiter;
   /** 读取和提交渠道与绑定桌面会话上下文。 */
   readonly context: ChannelContext;
+  /** Canonical journal; it is the sole model-history source. */
+  readonly journal: ChannelConversationJournal;
   /** 根据渠道能力组装出站消息。 */
   readonly composer: OutgoingComposer;
   /** 统一渠道发送边界。 */
@@ -57,8 +93,7 @@ export interface DispatcherDeps {
   /** 执行完整智能体调用。 */
   readonly buildAndRunAgent: (
     msg: IncomingMessage,
-    sessionId: string,
-    priorMessages?: ChatMessage[],
+    inputOrSessionId: ChannelAgentInput,
   ) => Promise<{ text: string; sticker: string | null }>;
   /** 延迟读取渠道设置，避免应用就绪前访问加密存储。 */
   readonly loadSettings: () => ChannelsSettings;
@@ -138,142 +173,117 @@ export class ChannelDispatcher {
     msg: IncomingMessage,
     context: DispatchContext,
   ): Promise<OutgoingMessage | null> {
-    const { sessionId } = context;
-    // 绑定只选择历史与消息镜像目标，Agent 运行身份始终属于原渠道。
+    return this.processIncomingCanonical(msg, context);
+  }
+
+  /**
+   * Canonical CTA channel path. Target and all journal writes happen inside
+   * the keyed queue; a binding change can therefore only affect the next turn.
+   */
+  private async processIncomingCanonical(
+    msg: IncomingMessage,
+    context: DispatchContext,
+  ): Promise<OutgoingMessage | null> {
+    const journal = this.deps.journal!;
+    const target = resolveChannelConversationTarget(context);
+    const turnId = makeChannelTurnId(msg, "user");
+    const assistantTurnId = makeChannelTurnId(msg, "assistant");
+    const runId = randomUUID();
     this.deps.context.recordIncomingSession(msg, context);
-    rememberProactiveChannelRecipient(msg, sessionId);
+    rememberProactiveChannelRecipient(msg, context.sessionId);
+    this.broadcastIncoming(msg);
+    this.appendIncomingAuditLog(msg);
 
-    // 入站消息广播到桌面端 chatWindow（让用户看到 bot 在和谁聊天）
-    if (this.settings.mirrorToDesktop) {
-      try {
-        this.deps.broadcastChat?.({
-          type: "bot:incoming",
-          channel: msg.channel,
-          senderId: msg.senderId,
-          senderName: msg.senderName,
-          chatId: msg.chatId,
-          text: msg.text,
-          at: msg.at.getTime(),
-        });
-      } catch (err) {
-        console.warn(LOG, "broadcastChat (incoming) 失败:", err);
-      }
-    }
-
-    // 入站消息写日志
-    try {
-      appendLog({
-        dir: "incoming",
+    const userEntry = await journal.appendUser(target.conversationId, {
+      id: `channel:${turnId}`,
+      turnId,
+      text: formatChannelUserText(msg),
+      at: msg.at.getTime(),
+      attachments: toJournalAttachments(msg),
+    });
+    await journal.appendPresentation(target.conversationId, userEntry.id, 1, {
+      content: msg.text,
+      channelSource: {
         channel: msg.channel,
-        senderId: msg.senderId,
-        senderName: msg.senderName,
-        chatId: msg.chatId,
-        text: msg.text,
-        hasAttachments: (msg.attachments?.length ?? 0) > 0,
+        chatType: msg.chatType ?? "private",
+        ...(msg.senderName ? { senderName: msg.senderName } : {}),
+      },
+    });
+    const modelContext = await journal.buildModelContext(target.conversationId);
+    const transcriptSink = journal.createRunSink({
+      conversationId: target.conversationId,
+      runId,
+      assistantTurnId,
+    });
+
+    let result: { text: string; sticker: string | null };
+    try {
+      result = await this.deps.buildAndRunAgent(msg, {
+        sessionId: context.sessionId,
+        target,
+        modelContext,
+        transcriptSink,
+        userTurnId: turnId,
+        assistantTurnId,
       });
     } catch (err) {
-      console.warn(LOG, "appendLog (incoming) 失败:", err);
-    }
-
-    // 先加载历史滑窗（此时还不含本条），再落本条入站消息。
-    // 顺序不能反：先 append 再 load 会让本条消息既出现在滑窗末尾、又作为新 user
-    // 消息追加给 agent，模型会把同一条消息读两遍。
-    const priorMessages = await this.deps.context.resolvePriorMessages(context, 16);
-
-    // 入站消息落对话历史（下一轮滑窗的数据源）
-    await this.deps.context.appendIncomingContext(msg, context);
-
-    // 拼接最近 16 条历史（同桌面端模型消息构造行为）。
-    let replyText: string;
-    let sticker: string | null;
-    try {
-      const result = await this.deps.buildAndRunAgent(msg, sessionId, priorMessages);
-      replyText = result.text;
-      sticker = result.sticker;
-    } catch (err) {
-      const errMsg = err instanceof Error ? err.message : String(err);
-      console.error(LOG, "agent 调用失败:", errMsg);
-      // 打包版通常看不到主进程输出，必须留下错误日志便于定位。
-      try {
-        appendLog({
-          dir: "error",
-          channel: msg.channel,
-          senderId: msg.senderId,
-          senderName: msg.senderName,
-          chatId: msg.chatId,
-          text: `[agent 调用失败] ${errMsg}`,
-        });
-      } catch (logErr) {
-        console.warn(LOG, "appendLog (error) 失败:", logErr);
-      }
+      this.logAgentFailure(msg, err);
       return null;
     }
 
     const prepared = await this.deps.composer.compose({
       incoming: msg,
-      replyText,
-      sticker,
+      replyText: result.text,
+      sticker: result.sticker,
       settings: {
         ttsEnabled: this.settings.ttsEnabled,
         stickerEnabled: this.settings.stickerEnabled,
       },
       mobileMessageSegmentation: this.deps.loadGeneralSettings().mobileMessageSegmentation,
     });
-
     try {
-      const deliveryResult = await this.deps.delivery.send(prepared.message);
+      let deliveryResult: Awaited<ReturnType<ChannelDeliveryService["send"]>>;
+      try {
+        deliveryResult = await this.deps.delivery.send(prepared.message);
+      } catch (error) {
+        deliveryResult = {
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
       if (!deliveryResult.ok) {
-        console.warn(LOG, `发送失败 [${msg.channel}]:`, deliveryResult.error);
-        try {
-          appendLog({
-            dir: "error",
-            channel: msg.channel,
-            senderId: msg.senderId,
-            senderName: msg.senderName,
-            chatId: msg.chatId,
-            text: `[发送失败] ${deliveryResult.error}`,
-          });
-        } catch (err) {
-          console.warn(LOG, "appendLog (delivery error) 失败:", err);
-        }
+        await journal.appendDeliveryReceipt(target.conversationId, {
+          assistantTurnId,
+          channel: msg.channel,
+          status: "failed",
+          errorCode: deliveryResult.error,
+          runId,
+        });
+        this.logDeliveryFailure(msg, deliveryResult.error);
         return null;
       }
 
-      // 出站消息广播到桌面端
-      if (this.settings.mirrorToDesktop) {
-        try {
-          this.deps.broadcastChat?.({
-            type: "bot:outgoing",
+      const assistantEntryId = transcriptSink.getLastAssistantEntryId?.();
+      if (assistantEntryId) {
+        await journal.appendPresentation(target.conversationId, assistantEntryId, 1, {
+          content: prepared.assistantText,
+          channelSource: {
             channel: msg.channel,
-            senderId: msg.senderId,
-            senderName: msg.senderName,
-            chatId: msg.chatId,
-            text: prepared.assistantText,
-            at: Date.now(),
-          });
-        } catch (err) {
-          console.warn(LOG, "broadcastChat (outgoing) 失败:", err);
-        }
-      }
-
-      // 出站消息写日志（仅文本片段，附件路径不写入日志）
-      try {
-        appendLog({
-          dir: "outgoing",
-          channel: msg.channel,
-          senderId: msg.senderId,
-          senderName: msg.senderName,
-          chatId: msg.chatId,
-          text: prepared.assistantText,
-          hasAttachments: prepared.message.parts.some((part) => part.kind === "audio"),
+            chatType: msg.chatType ?? "private",
+            ...(msg.senderName ? { senderName: msg.senderName } : {}),
+          },
+          ...(result.sticker && prepared.message.parts.some((part) => part.kind === "sticker")
+            ? { sticker: result.sticker } : {}),
         });
-      } catch (err) {
-        console.warn(LOG, "appendLog (outgoing) 失败:", err);
       }
-
-      // 助手上下文只在渠道确认发送成功后提交。
-      await this.deps.context.appendAssistantContext(msg, context, prepared);
-
+      await journal.appendDeliveryReceipt(target.conversationId, {
+        assistantTurnId,
+        channel: msg.channel,
+        status: "delivered",
+        runId,
+      });
+      this.broadcastOutgoing(msg, prepared.assistantText);
+      this.appendOutgoingAuditLog(msg, prepared.assistantText, prepared.message);
       return prepared.message;
     } finally {
       try {
@@ -283,4 +293,57 @@ export class ChannelDispatcher {
       }
     }
   }
+
+  private broadcastIncoming(msg: IncomingMessage): void {
+    if (!this.settings.mirrorToDesktop) return;
+    try {
+      this.deps.broadcastChat?.({ type: "bot:incoming", channel: msg.channel, senderId: msg.senderId, senderName: msg.senderName, chatId: msg.chatId, text: msg.text, at: msg.at.getTime() });
+    } catch (err) { console.warn(LOG, "broadcastChat (incoming) 失败:", err); }
+  }
+
+  private broadcastOutgoing(msg: IncomingMessage, text: string): void {
+    if (!this.settings.mirrorToDesktop) return;
+    try {
+      this.deps.broadcastChat?.({ type: "bot:outgoing", channel: msg.channel, senderId: msg.senderId, senderName: msg.senderName, chatId: msg.chatId, text, at: Date.now() });
+    } catch (err) { console.warn(LOG, "broadcastChat (outgoing) 失败:", err); }
+  }
+
+  private appendIncomingAuditLog(msg: IncomingMessage): void {
+    try { appendLog({ dir: "incoming", channel: msg.channel, senderId: msg.senderId, senderName: msg.senderName, chatId: msg.chatId, text: msg.text, hasAttachments: (msg.attachments?.length ?? 0) > 0 }); }
+    catch (err) { console.warn(LOG, "appendLog (incoming) 失败:", err); }
+  }
+
+  private appendOutgoingAuditLog(msg: IncomingMessage, text: string, outgoing: OutgoingMessage): void {
+    try { appendLog({ dir: "outgoing", channel: msg.channel, senderId: msg.senderId, senderName: msg.senderName, chatId: msg.chatId, text, hasAttachments: outgoing.parts.some((part) => part.kind === "audio") }); }
+    catch (err) { console.warn(LOG, "appendLog (outgoing) 失败:", err); }
+  }
+
+  private logAgentFailure(msg: IncomingMessage, err: unknown): void {
+    const error = err instanceof Error ? err.message : String(err);
+    console.error(LOG, "agent 调用失败:", error);
+    try { appendLog({ dir: "error", channel: msg.channel, senderId: msg.senderId, senderName: msg.senderName, chatId: msg.chatId, text: `[agent 调用失败] ${error}` }); }
+    catch (logErr) { console.warn(LOG, "appendLog (error) 失败:", logErr); }
+  }
+
+  private logDeliveryFailure(msg: IncomingMessage, error: string): void {
+    console.warn(LOG, `发送失败 [${msg.channel}]:`, error);
+    try { appendLog({ dir: "error", channel: msg.channel, senderId: msg.senderId, senderName: msg.senderName, chatId: msg.chatId, text: `[发送失败] ${error}` }); }
+    catch (logErr) { console.warn(LOG, "appendLog (delivery error) 失败:", logErr); }
+  }
+}
+
+export function makeChannelTurnId(msg: IncomingMessage, role: "user" | "assistant"): string {
+  const source = msg.messageId || `${msg.at.getTime()}:${msg.text}`;
+  return `${msg.channel}:${msg.chatId}:${source}:${role}`;
+}
+
+function toJournalAttachments(msg: IncomingMessage): Array<{ kind: "image" | "document"; name: string; filePath: string; mime?: string; caption?: string }> | undefined {
+  const attachments = (msg.attachments ?? []).map((attachment, index) => ({
+    kind: attachment.kind === "image" ? "image" as const : "document" as const,
+    name: attachment.caption || attachment.filePath?.split(/[\\/]/).pop() || `${attachment.kind}-${index + 1}`,
+    filePath: attachment.filePath || attachment.url || attachment.caption || attachment.kind,
+    ...(attachment.mime ? { mime: attachment.mime } : {}),
+    ...(attachment.caption ? { caption: attachment.caption } : {}),
+  }));
+  return attachments.length > 0 ? attachments : undefined;
 }

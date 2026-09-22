@@ -8,6 +8,7 @@
 
 import { createHash } from "node:crypto";
 import type { PendingChatAttachment } from "../../shared/chat-types";
+import type { ChatMessageChannel } from "../../shared/chat-types";
 import {
   buildModelContextFromCompactedView,
   reduceTranscriptProjection,
@@ -329,6 +330,33 @@ export class ConversationJournalService {
   async buildModelContext(conversationId: string): Promise<MaterializedTranscript> {
     const snapshot = await this.store.read(conversationId);
     return buildModelContextFromCompactedView(snapshot.entries, this.runReader);
+  }
+
+  /** 记录外部渠道送达结果；失败回执只由模型投影合成为内部提示。 */
+  async appendDeliveryReceipt(
+    conversationId: string,
+    input: {
+      assistantTurnId: string;
+      channel: ChatMessageChannel;
+      status: "delivered" | "failed";
+      errorCode?: string;
+      runId?: string;
+      at?: number;
+    },
+  ): Promise<TranscriptEntry> {
+    return this.store.append(conversationId, {
+      kind: "delivery_receipt",
+      id: `delivery:${input.assistantTurnId}:${input.channel}:${input.status}`,
+      at: input.at ?? Date.now(),
+      ...(input.runId ? { runId: input.runId } : {}),
+      turnId: input.assistantTurnId,
+      payload: {
+        assistantTurnId: input.assistantTurnId,
+        channel: input.channel,
+        status: input.status,
+        ...(input.errorCode ? { errorCode: input.errorCode } : {}),
+      },
+    });
   }
 
   async checkpoint(conversationId: string): Promise<TranscriptSnapshotV2> {

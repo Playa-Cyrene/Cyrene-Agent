@@ -2,9 +2,8 @@
 // 形式展示在聊天窗口当前会话里（不落库，切会话即消失）。
 //
 // 主进程 dispatcher 在 mirrorToDesktop 开启时通过 AGUI_EVENT CUSTOM
-// "cyrene.botMessage" 推送到聊天窗口；若该外部聊天已绑定到当前正在查看
-// 的会话，消息会经绑定镜像落库并触发 CHATS_CHANGED 刷新展示，此处跳过
-// 避免同一条消息出现两次。
+// "cyrene.botMessage" 推送投影通知；这里仅刷新当前窗口内存 projection，
+// 不查询或写入 chats-store。
 
 import { useEffect, useRef } from "react";
 import type { ChatMessageItem } from "../components/ChatMessageList";
@@ -19,17 +18,6 @@ interface ChannelMirrorPayload {
   chatId: string;
   text: string;
   at: number;
-}
-
-/** 上下文绑定快照中与展示去重有关的字段。 */
-interface BindingSnapshot {
-  externalChats: Array<{ sessionId: string; channel: string; chatId: string }>;
-  bindings: Array<{ sessionId: string; conversationId: string }>;
-}
-
-/** 设置面板暴露的渠道上下文绑定查询（preload window.settings）。 */
-interface SettingsBindingApi {
-  channelsContextBindingsGet: () => Promise<BindingSnapshot>;
 }
 
 export interface UseChannelMirrorEventsDeps {
@@ -66,20 +54,6 @@ function mirrorLine(payload: ChannelMirrorPayload): string {
   return payload.type === "bot:outgoing"
     ? `[${label}] 回复 ${who}：${text}`
     : `[${label}] ${who}：${text}`;
-}
-
-/** 查询该外部聊天当前绑定的桌面对话 id；查询失败按未绑定处理。 */
-async function resolveBoundConversation(channel: string, chatId: string): Promise<string | null> {
-  const settings = (window as typeof window & { settings?: SettingsBindingApi }).settings;
-  if (!settings?.channelsContextBindingsGet) return null;
-  try {
-    const snapshot = await settings.channelsContextBindingsGet();
-    const chat = snapshot.externalChats.find((item) => item.channel === channel && item.chatId === chatId);
-    if (!chat) return null;
-    return snapshot.bindings.find((binding) => binding.sessionId === chat.sessionId)?.conversationId ?? null;
-  } catch {
-    return null;
-  }
 }
 
 /** 校验事件载荷形状，防御主进程字段变更。 */
@@ -120,9 +94,6 @@ export function useChannelMirrorEvents(deps: UseChannelMirrorEventsDeps): void {
         .then(async () => {
           const sessionId = depsRef.current.getActiveSessionId();
           if (!sessionId) return;
-          // 已绑定到当前查看的会话：落库镜像会随刷新展示，跳过临时消息
-          const bound = await resolveBoundConversation(payload.channel, payload.chatId);
-          if (bound === sessionId) return;
           mirrorSequence += 1;
           depsRef.current.appendMessages(sessionId, [
             {

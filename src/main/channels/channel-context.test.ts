@@ -4,6 +4,7 @@ import {
   formatChannelUserText,
   lookupOriginalSender,
   makeSessionId,
+  resolveChannelConversationTarget,
 } from "./channel-context";
 import type { IncomingMessage } from "./types";
 
@@ -21,6 +22,16 @@ function makeIncoming(overrides: Partial<IncomingMessage> = {}): IncomingMessage
 }
 
 describe("渠道上下文", () => {
+  it("绑定渠道使用桌面对话 journal，未绑定渠道使用逻辑 channel sessionId", () => {
+    expect(resolveChannelConversationTarget({
+      sessionId: "channel:wechat:private:42",
+      boundConversationId: "desktop-1",
+    })).toEqual({ conversationId: "desktop-1" });
+    expect(resolveChannelConversationTarget({
+      sessionId: "channel:wechat:private:42",
+      boundConversationId: null,
+    })).toEqual({ conversationId: "channel:wechat:private:42" });
+  });
   it("为同一渠道会话生成稳定标识", () => {
     expect(makeSessionId("feishu", "ou_abc123"))
       .toBe(makeSessionId("feishu", "ou_abc123"));
@@ -61,7 +72,6 @@ describe("渠道上下文", () => {
   it("记录会话时迁移旧发送者键并支持反查", () => {
     const migrateHistory = vi.fn();
     const context = createChannelContext({
-      appendChannelHistory: vi.fn(),
       migrateHistory,
     });
     const msg = makeIncoming({
@@ -83,127 +93,4 @@ describe("渠道上下文", () => {
     });
   });
 
-  it("绑定历史读取失败时回退到渠道历史", async () => {
-    const context = createChannelContext({
-      loadBoundConversationHistory: async () => {
-        throw new Error("桌面对话已删除");
-      },
-      loadRecentChannelHistory: async () => [
-        { role: "user", content: "渠道历史" },
-      ],
-      appendChannelHistory: vi.fn(),
-      migrateHistory: vi.fn(),
-    });
-
-    await expect(context.resolvePriorMessages({
-      sessionId: "channel:qq:abc",
-      boundConversationId: "conversation-1",
-    }, 16)).resolves.toEqual([
-      { role: "user", content: "渠道历史" },
-    ]);
-  });
-
-  it("历史读取只使用已经解析的绑定快照", async () => {
-    const resolveBoundConversationId = vi.fn(() => "conversation-new");
-    const loadBoundConversationHistory = vi.fn(async () => [
-      { role: "assistant" as const, content: "桌面历史" },
-    ]);
-    const context = createChannelContext({
-      resolveBoundConversationId,
-      loadBoundConversationHistory,
-      appendChannelHistory: vi.fn(),
-      migrateHistory: vi.fn(),
-    });
-
-    const dispatchContext = context.resolveDispatchContext("channel:qq:abc");
-    await context.resolvePriorMessages(dispatchContext, 16);
-
-    expect(resolveBoundConversationId).toHaveBeenCalledOnce();
-    expect(loadBoundConversationHistory)
-      .toHaveBeenCalledWith("conversation-new", 16);
-  });
-
-  it("入站上下文始终写渠道历史，并将群聊原文镜像到绑定会话", async () => {
-    const appendChannelHistory = vi.fn();
-    const appendBoundConversationMessage = vi.fn();
-    const context = createChannelContext({
-      appendChannelHistory,
-      appendBoundConversationMessage,
-      migrateHistory: vi.fn(),
-    });
-    const msg = makeIncoming({
-      chatType: "group",
-      senderId: "10001",
-      senderName: "小明",
-      chatId: "20001",
-      text: "大家好",
-    });
-    const dispatchContext = {
-      sessionId: makeSessionId("qq", "20001"),
-      boundConversationId: "conversation-group",
-    };
-
-    await context.appendIncomingContext(msg, dispatchContext);
-
-    expect(appendChannelHistory).toHaveBeenCalledWith(
-      dispatchContext.sessionId,
-      "user",
-      "[群聊发送者：小明 (10001)]\n大家好",
-    );
-    expect(appendBoundConversationMessage).toHaveBeenCalledWith(
-      "conversation-group",
-      "user",
-      "大家好",
-      {
-        channel: "qq",
-        chatType: "group",
-        senderName: "小明",
-        modelContext: "[群聊发送者：小明 (10001)]\n大家好",
-      },
-    );
-  });
-
-  it("助手上下文写入渠道历史和绑定会话，并保留已发送表情", async () => {
-    const appendChannelHistory = vi.fn();
-    const appendBoundConversationMessage = vi.fn();
-    const context = createChannelContext({
-      appendChannelHistory,
-      appendBoundConversationMessage,
-      migrateHistory: vi.fn(),
-    });
-    const msg = makeIncoming({ channel: "wechat" });
-    const dispatchContext = {
-      sessionId: makeSessionId("wechat", "chat-1"),
-      boundConversationId: "conversation-1",
-    };
-
-    await context.appendAssistantContext(msg, dispatchContext, {
-      message: {
-        channel: "wechat",
-        targetId: "chat-1",
-        parts: [{ kind: "text", text: "收到" }],
-      },
-      assistantText: "收到",
-      stickerId: "OK",
-      transientFiles: [],
-    });
-
-    expect(appendChannelHistory).toHaveBeenCalledWith(
-      dispatchContext.sessionId,
-      "assistant",
-      "收到",
-    );
-    expect(appendBoundConversationMessage).toHaveBeenCalledWith(
-      "conversation-1",
-      "assistant",
-      "收到",
-      {
-        channel: "wechat",
-        chatType: "private",
-        senderName: "测试用户",
-        modelContext: undefined,
-        sticker: "OK",
-      },
-    );
-  });
 });

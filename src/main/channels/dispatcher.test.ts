@@ -62,10 +62,11 @@ describe("channels/dispatcher", () => {
 
   type TestDispatcherOptions = Partial<DispatcherDeps> & {
     manager?: ReturnType<typeof makeManager>;
-    loadRecentChannelHistory?: Parameters<typeof createChannelContext>[0]["loadRecentChannelHistory"];
+    journal?: DispatcherDeps["journal"];
+    loadRecentChannelHistory?: unknown;
     resolveBoundConversationId?: Parameters<typeof createChannelContext>[0]["resolveBoundConversationId"];
-    loadBoundConversationHistory?: Parameters<typeof createChannelContext>[0]["loadBoundConversationHistory"];
-    appendBoundConversationMessage?: Parameters<typeof createChannelContext>[0]["appendBoundConversationMessage"];
+    loadBoundConversationHistory?: unknown;
+    appendBoundConversationMessage?: unknown;
   };
 
   function makeDispatcher(options: TestDispatcherOptions): ChannelDispatcher {
@@ -80,12 +81,20 @@ describe("channels/dispatcher", () => {
       }),
       context: options.context ?? createChannelContext({
         resolveBoundConversationId: options.resolveBoundConversationId,
-        loadRecentChannelHistory: options.loadRecentChannelHistory,
-        loadBoundConversationHistory: options.loadBoundConversationHistory,
-        appendChannelHistory: appendHistory,
-        appendBoundConversationMessage: options.appendBoundConversationMessage,
         migrateHistory,
       }),
+      journal: options.journal ?? {
+        appendUser: vi.fn(async (_conversationId: string, input: { id?: string }) => ({ id: input.id ?? "user-1" })),
+        appendPresentation: vi.fn(async () => undefined),
+        buildModelContext: vi.fn(async () => ({ messages: [], uncertainEffects: [], throughSeq: 0 })),
+        createRunSink: vi.fn(() => ({
+          appendAssistant: vi.fn(async () => "assistant-1"),
+          appendToolResult: vi.fn(async () => undefined),
+          closeInterruption: vi.fn(async () => undefined),
+          checkpoint: vi.fn(async () => undefined),
+        })),
+        appendDeliveryReceipt: vi.fn(async () => undefined),
+      },
       composer: {
         compose: (input) => baseComposer.compose({
           ...input,
@@ -126,39 +135,30 @@ describe("channels/dispatcher", () => {
   });
 
   it("uses channel history and channel session when the chat is unbound", async () => {
-    const loadRecentChannelHistory = vi.fn(async () => [{ role: "user" as const, content: "渠道旧消息" }]);
-    const buildAndRunAgent = vi.fn(async (_msg: IncomingMessage, sessionId: string, prior?: Array<{ role: string; content?: string }>) => {
-      expect(sessionId).toBe(makeSessionId("qq", "chat-1"));
-      expect(prior).toEqual([{ role: "user", content: "渠道旧消息" }]);
+    const buildAndRunAgent = vi.fn(async (_msg: IncomingMessage, input: { sessionId: string }) => {
+      expect(input.sessionId).toBe(makeSessionId("qq", "chat-1"));
       return { text: "渠道回复", sticker: null };
     });
-    const dispatcher = makeDispatcher({ manager: makeManager(), loadRecentChannelHistory, buildAndRunAgent });
+    const dispatcher = makeDispatcher({ manager: makeManager(), buildAndRunAgent: buildAndRunAgent as never });
 
     const result = await dispatcher.handleIncoming(makeIncoming());
 
     expect(result?.targetId).toBe("chat-1");
-    expect(loadRecentChannelHistory).toHaveBeenCalledWith(makeSessionId("qq", "chat-1"), 16);
     expect(buildAndRunAgent).toHaveBeenCalledOnce();
   });
 
   it("通过注入的上下文模块读取和提交会话状态", async () => {
-    const priorMessages = [{ role: "user" as const, content: "模块历史" }];
     const contextService: ChannelContext = {
       resolveDispatchContext: vi.fn((sessionId: string) => ({
         sessionId,
         boundConversationId: null,
       })),
       recordIncomingSession: vi.fn(),
-      resolvePriorMessages: vi.fn(async () => priorMessages),
-      appendIncomingContext: vi.fn(async () => undefined),
-      appendAssistantContext: vi.fn(async () => undefined),
     };
     const buildAndRunAgent = vi.fn(async (
       _msg: IncomingMessage,
-      _sessionId: string,
-      prior?: Array<{ role: string; content?: string }>,
+      _input: unknown,
     ) => {
-      expect(prior).toEqual(priorMessages);
       return { text: "模块回复", sticker: null };
     });
     const dispatcher = makeDispatcher({
@@ -170,22 +170,15 @@ describe("channels/dispatcher", () => {
     await dispatcher.handleIncoming(makeIncoming());
 
     expect(contextService.recordIncomingSession).toHaveBeenCalledOnce();
-    expect(contextService.appendIncomingContext).toHaveBeenCalledOnce();
-    expect(contextService.appendAssistantContext).toHaveBeenCalledOnce();
   });
 
   it.each(["qq", "wechat"] as const)("uses bound desktop history while keeping %s runtime identity separate", async (channel) => {
     const channelSessionId = makeSessionId(channel, "chat-1");
     const loadRecentChannelHistory = vi.fn(async () => [{ role: "user" as const, content: "不应读取" }]);
-    const loadBoundConversationHistory = vi.fn(async (conversationId: string, limit: number) => {
-      expect(conversationId).toBe("conversation-7");
-      expect(limit).toBe(16);
-      return [{ role: "user" as const, content: "桌面旧消息" }];
-    });
+    const loadBoundConversationHistory = vi.fn(async () => [{ role: "user" as const, content: "桌面旧消息" }]);
     const appendBoundConversationMessage = vi.fn();
-    const buildAndRunAgent = vi.fn(async (_msg: IncomingMessage, sessionId: string, prior?: Array<{ role: string; content?: string }>) => {
-      expect(sessionId).toBe(channelSessionId);
-      expect(prior).toEqual([{ role: "user", content: "桌面旧消息" }]);
+    const buildAndRunAgent = vi.fn(async (_msg: IncomingMessage, input: { sessionId: string }) => {
+      expect(input.sessionId).toBe(channelSessionId);
       return { text: "共享回复", sticker: null };
     });
     const dispatcher = makeDispatcher({
@@ -201,19 +194,8 @@ describe("channels/dispatcher", () => {
 
     expect(result?.targetId).toBe("chat-1");
     expect(loadRecentChannelHistory).not.toHaveBeenCalled();
-    expect(loadBoundConversationHistory).toHaveBeenCalledWith("conversation-7", 16);
-    expect(appendBoundConversationMessage).toHaveBeenNthCalledWith(1, "conversation-7", "user", "你好", {
-      channel,
-      chatType: "private",
-      senderName: "测试用户",
-      modelContext: undefined,
-    });
-    expect(appendBoundConversationMessage).toHaveBeenNthCalledWith(2, "conversation-7", "assistant", "共享回复", {
-      channel,
-      chatType: "private",
-      senderName: "测试用户",
-      modelContext: undefined,
-    });
+    expect(loadBoundConversationHistory).not.toHaveBeenCalled();
+    expect(appendBoundConversationMessage).not.toHaveBeenCalled();
     expect(buildAndRunAgent).toHaveBeenCalledOnce();
   });
 
@@ -236,12 +218,7 @@ describe("channels/dispatcher", () => {
       text: "大家好",
     }));
 
-    expect(appendBoundConversationMessage).toHaveBeenNthCalledWith(1, "conversation-group", "user", "大家好", {
-      channel: "qq",
-      chatType: "group",
-      senderName: "小明",
-      modelContext: "[群聊发送者：小明 (10001)]\n大家好",
-    });
+    expect(appendBoundConversationMessage).not.toHaveBeenCalled();
   });
 
   it("persists the same selected built-in sticker in the bound desktop reply", async () => {
@@ -261,10 +238,7 @@ describe("channels/dispatcher", () => {
 
     await dispatcher.handleIncoming(makeIncoming({ channel: "wechat" }));
 
-    expect(appendBoundConversationMessage).toHaveBeenNthCalledWith(2, "conversation-sticker", "assistant", "收到", expect.objectContaining({
-      channel: "wechat",
-      sticker: "OK",
-    }));
+    expect(appendBoundConversationMessage).not.toHaveBeenCalled();
   });
 
   it("does not persist a selected sticker when the channel capability rejects stickers", async () => {
@@ -279,16 +253,15 @@ describe("channels/dispatcher", () => {
 
     await dispatcher.handleIncoming(makeIncoming());
 
-    expect(appendBoundConversationMessage.mock.calls[1]?.[3]).not.toHaveProperty("sticker");
+    expect(appendBoundConversationMessage).not.toHaveBeenCalled();
   });
 
   it("falls back to channel history when bound desktop history cannot be loaded", async () => {
     const channelSessionId = makeSessionId("qq", "chat-1");
     const loadRecentChannelHistory = vi.fn(async () => [{ role: "user" as const, content: "渠道回退" }]);
     const loadBoundConversationHistory = vi.fn(async () => { throw new Error("桌面对话已删除"); });
-    const buildAndRunAgent = vi.fn(async (_msg: IncomingMessage, sessionId: string, prior?: Array<{ role: string; content?: string }>) => {
-      expect(sessionId).toBe(channelSessionId);
-      expect(prior).toEqual([{ role: "user", content: "渠道回退" }]);
+    const buildAndRunAgent = vi.fn(async (_msg: IncomingMessage, input: { sessionId: string }) => {
+      expect(input.sessionId).toBe(channelSessionId);
       return { text: "回复", sticker: null };
     });
     const dispatcher = makeDispatcher({
@@ -301,15 +274,15 @@ describe("channels/dispatcher", () => {
 
     await dispatcher.handleIncoming(makeIncoming());
 
-    expect(loadRecentChannelHistory).toHaveBeenCalledWith(channelSessionId, 16);
-    expect(buildAndRunAgent).toHaveBeenCalledWith(expect.anything(), channelSessionId, [{ role: "user", content: "渠道回退" }]);
+    expect(loadRecentChannelHistory).not.toHaveBeenCalled();
+    expect(loadBoundConversationHistory).not.toHaveBeenCalled();
+    expect(buildAndRunAgent).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ sessionId: channelSessionId }));
   });
 
   it("falls back to the unbound channel path when binding lookup fails", async () => {
     const loadRecentChannelHistory = vi.fn(async () => [{ role: "user" as const, content: "渠道历史" }]);
-    const buildAndRunAgent = vi.fn(async (_msg: IncomingMessage, sessionId: string, prior?: Array<{ role: string; content?: string }>) => {
-      expect(sessionId).toBe(makeSessionId("qq", "chat-1"));
-      expect(prior).toEqual([{ role: "user", content: "渠道历史" }]);
+    const buildAndRunAgent = vi.fn(async (_msg: IncomingMessage, input: { sessionId: string }) => {
+      expect(input.sessionId).toBe(makeSessionId("qq", "chat-1"));
       return { text: "回复", sticker: null };
     });
     const dispatcher = makeDispatcher({
@@ -322,7 +295,7 @@ describe("channels/dispatcher", () => {
     const result = await dispatcher.handleIncoming(makeIncoming());
 
     expect(result?.targetId).toBe("chat-1");
-    expect(loadRecentChannelHistory).toHaveBeenCalledWith(makeSessionId("qq", "chat-1"), 16);
+    expect(loadRecentChannelHistory).not.toHaveBeenCalled();
   });
 
   it("适配器明确发送失败时不提交助手状态", async () => {
@@ -344,13 +317,7 @@ describe("channels/dispatcher", () => {
 
     expect(result).toBeNull();
     expect(send).toHaveBeenCalledOnce();
-    expect(appendBoundConversationMessage).toHaveBeenCalledTimes(1);
-    expect(appendBoundConversationMessage).toHaveBeenCalledWith(
-      "conversation-1",
-      "user",
-      "你好",
-      expect.anything(),
-    );
+    expect(appendBoundConversationMessage).not.toHaveBeenCalled();
     expect(appendHistory).not.toHaveBeenCalledWith(
       makeSessionId("qq", "chat-1"),
       "assistant",
@@ -377,11 +344,7 @@ describe("channels/dispatcher", () => {
     const result = await dispatcher.handleIncoming(makeIncoming());
 
     expect(result?.parts).toEqual([{ kind: "text", text: "传输成功" }]);
-    expect(appendHistory).toHaveBeenCalledWith(
-      makeSessionId("qq", "chat-1"),
-      "assistant",
-      "传输成功",
-    );
+    expect(appendHistory).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -573,5 +536,121 @@ describe("channels/dispatcher", () => {
       release();
       await Promise.all([first, second]);
     }
+  });
+
+  it("同会话并发从 canonical journal 串行，且 agent 不接收 priorMessages", async () => {
+    const events: string[] = [];
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    let runCount = 0;
+    const journal = {
+      appendUser: vi.fn(async (_conversationId: string, input: { text: string; attachments?: unknown[] }) => {
+        events.push(`${input.text}:user`);
+        return { id: `user-${input.text}` };
+      }),
+      appendPresentation: vi.fn(async () => undefined),
+      buildModelContext: vi.fn(async () => ({ messages: [], uncertainEffects: [], throughSeq: 0 })),
+      createRunSink: vi.fn(() => ({
+        appendAssistant: vi.fn(async () => "assistant-1"),
+        appendToolResult: vi.fn(async () => undefined),
+        closeInterruption: vi.fn(async () => undefined),
+        checkpoint: vi.fn(async () => undefined),
+      })),
+      appendDeliveryReceipt: vi.fn(async () => undefined),
+    };
+    const buildAndRunAgent = vi.fn(async (_msg: IncomingMessage, input: { transcriptSink: unknown }) => {
+      expect(input.transcriptSink).toBeDefined();
+      runCount += 1;
+      if (runCount === 1) await firstGate;
+      return { text: `回复-${runCount}`, sticker: null };
+    });
+    const dispatcher = makeDispatcher({
+      manager: makeManager(),
+      journal: journal as never,
+      buildAndRunAgent: buildAndRunAgent as never,
+    });
+
+    const first = dispatcher.handleIncoming(makeIncoming({ text: "first", messageId: "m-1" }));
+    await flushMicrotasks();
+    const second = dispatcher.handleIncoming(makeIncoming({ text: "second", messageId: "m-2" }));
+    await flushMicrotasks();
+    expect(journal.appendUser).toHaveBeenCalledTimes(1);
+    expect(buildAndRunAgent).toHaveBeenCalledTimes(1);
+    releaseFirst();
+    await Promise.all([first, second]);
+    expect(journal.appendUser).toHaveBeenCalledTimes(2);
+    expect(buildAndRunAgent.mock.calls[0]?.[1]).not.toHaveProperty("priorMessages");
+    expect(journal.buildModelContext).toHaveBeenCalledTimes(2);
+  });
+
+  it("发送失败写入 failed receipt 且保留已落盘 assistant", async () => {
+    const appendDeliveryReceipt = vi.fn(async () => undefined);
+    const appendAssistant = vi.fn(async () => "assistant-turn-1");
+    const journal = {
+      appendUser: vi.fn(async () => ({ id: "user-1" })),
+      appendPresentation: vi.fn(async () => undefined),
+      buildModelContext: vi.fn(async () => ({ messages: [], uncertainEffects: [], throughSeq: 0 })),
+      createRunSink: vi.fn(() => ({
+        appendAssistant,
+        appendToolResult: vi.fn(async () => undefined),
+        closeInterruption: vi.fn(async () => undefined),
+        checkpoint: vi.fn(async () => undefined),
+      })),
+      appendDeliveryReceipt,
+    };
+    const dispatcher = makeDispatcher({
+      manager: makeManager(),
+      journal: journal as never,
+      delivery: { send: vi.fn(async () => ({ ok: false as const, error: "offline" })) },
+      buildAndRunAgent: vi.fn(async (_msg: IncomingMessage, input: { transcriptSink: { appendAssistant: (input: unknown) => Promise<string> } }) => {
+        await input.transcriptSink.appendAssistant({ message: { role: "assistant", content: "回复" } });
+        return { text: "回复", sticker: null };
+      }) as never,
+    });
+
+    await expect(dispatcher.handleIncoming(makeIncoming({ messageId: "m-1" }))).resolves.toBeNull();
+    expect(appendAssistant).toHaveBeenCalledOnce();
+    expect(appendDeliveryReceipt).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+      assistantTurnId: "qq:chat-1:m-1:assistant",
+      channel: "qq",
+      status: "failed",
+      errorCode: "offline",
+    }));
+  });
+
+  it("canonical user 条目保留附件和渠道来源展示补丁", async () => {
+    const appendUser = vi.fn(async (_conversationId: string, input: { id?: string }) => ({ id: input.id ?? "user-1" }));
+    const appendPresentation = vi.fn(async () => undefined);
+    const dispatcher = makeDispatcher({
+      journal: {
+        appendUser,
+        appendPresentation,
+        buildModelContext: vi.fn(async () => ({ messages: [], uncertainEffects: [], throughSeq: 0 })),
+        createRunSink: vi.fn(() => ({
+          appendAssistant: vi.fn(async () => "assistant-1"),
+          appendToolResult: vi.fn(async () => undefined),
+          closeInterruption: vi.fn(async () => undefined),
+          checkpoint: vi.fn(async () => undefined),
+        })),
+        appendDeliveryReceipt: vi.fn(async () => undefined),
+      } as never,
+      buildAndRunAgent: vi.fn(async () => ({ text: "收到", sticker: null })) as never,
+    });
+
+    await dispatcher.handleIncoming(makeIncoming({
+      messageId: "m-attachment",
+      text: "看这个",
+      chatType: "group",
+      attachments: [{ kind: "image", filePath: "C:/inbox/a.png", mime: "image/png" }],
+    }));
+
+    expect(appendUser).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+      text: expect.stringContaining("看这个"),
+      attachments: [{ kind: "image", name: "a.png", filePath: "C:/inbox/a.png", mime: "image/png" }],
+    }));
+    expect(appendPresentation).toHaveBeenCalledWith(expect.any(String), expect.any(String), 1, expect.objectContaining({
+      content: "看这个",
+      channelSource: { channel: "qq", chatType: "group", senderName: "测试用户" },
+    }));
   });
 });

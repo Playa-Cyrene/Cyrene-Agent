@@ -140,7 +140,21 @@ describe("useChannelMirrorEvents", () => {
     emitMirror("bot:incoming");
     await flush();
 
-    expect(appended).toHaveLength(0);
+    expect(appended).toHaveLength(1);
+  });
+
+  it("仅更新内存 projection，不查询或写入 chats-store", async () => {
+    let bindingReads = 0;
+    (window as unknown as { settings?: unknown }).settings = {
+      channelsContextBindingsGet: async () => {
+        bindingReads += 1;
+        return bindingSnapshot;
+      },
+    };
+    emitMirror("bot:incoming");
+    await flush();
+    expect(bindingReads).toBe(0);
+    expect(appended).toHaveLength(1);
   });
 
   it("绑定到其他会话时仍展示", async () => {
