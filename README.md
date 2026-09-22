@@ -49,6 +49,11 @@
 
 CyreneHarness 是 Cyrene Agent 的核心 Agent Loop，负责把**模型决策、工具执行、副作用记账与状态恢复**串成一个可中断、可恢复、可回放的连续循环。
 
+> 会话轨迹由 **CTA（Canonical Transcript Architecture）** 承载：canonical journal 是唯一权威源，
+> 模型上下文、UI 投影与渠道消息全部从 transcript 派生；压缩摘要以 checkpoint 形式持久化，
+> 热日志归档到 `segments/`，支持跨进程崩溃恢复与编辑 / 重新生成回溯。
+> 源码：`src/main/orchestrator/conversation-*.ts`（store / journal-service / compactor / projection 等）
+
 **关键设计：**
 
 - **连续的 while + Function Calling 循环** — 每轮调用 LLM，按其返回的 `toolCalls` 进入工具派发，无 `toolCalls` 时由模型主动结束当前 turn。
@@ -58,14 +63,14 @@ CyreneHarness 是 Cyrene Agent 的核心 Agent Loop，负责把**模型决策、
 - **失败重试** — 工具失败时根据 `classifyToolResultError` + `resolveSideEffect` 决定是否重试；`sleepWithJitter` 退避可被 `AbortSignal` 中断。
 - **保守并行调度** — 默认串行，仅"显式声明并发安全的纯读工具"可并行（默认上限 4）；结果始终按模型原始 tool-call 顺序提交；halt / error / cancel 时已执行结果不丢弃，出错槽位以合成失败结果闭合 transcript。
 - **双时钟超时** — 执行计时与用户等待计时分离：`ask_user` 等待用户期间暂停执行计时，用户思考多久都不消耗任务超时预算。
-- **Mid-loop Compaction** — 每轮开始时根据 token 预算判断是否需要压缩上下文，超阈值时复用 LLM 做历史摘要，保留 todo 与已确定结果；压缩后 checkpoint 失败立即熔断，不再发起模型请求。
+- **双层压缩（Mid-loop + Journal Compaction）** — harness 每轮开始时根据 token 预算判断是否需要压缩上下文，超阈值时复用 LLM 做历史摘要，保留 todo 与已确定结果，压缩后 checkpoint 失败立即熔断；构建上下文超预算时再触发 journal 级压缩——摘要以 compaction checkpoint 持久化进 transcript，热日志归档至 `segments/`，二次压缩保留前次摘要，编辑 / 重新生成不能跨压缩边界回溯。
 - **前缀缓存体系** — 稳定前缀分层（stablePrefix / sessionPrefix / mode），Todo 等易变状态禁止进入前缀；工具清单在 run 期间冻结；动态事实一次性物化进 transcript 而非每轮拼接；`cacheEpoch` 缓存周期跨压缩 / 恢复推进；Kimi `prompt_cache_key` 等厂商缓存 hints 在请求层统一注入。
 - **工具输出双级截断** — 大输出落盘存储（`ToolOutputRef`），模型消息只保留 preview；需要完整内容时由模型调用内置 `read_tool_result` 按需回读，大幅降低上下文占用。
 - **上下文容量快照** — 每轮请求前与终态各发一次 `context_usage` 快照事件，驱动 UI 上下文环实时显示。
 - **截断可见化** — 输出命中模型长度上限（`finishReason = length`）时在回复尾部追加提示，不静默截断。
 - **流式优先与降级** — 仅在零增量且供应商明确不支持 stream + tools 时降级非流式，绝不重放半截流；token 用量记账区分缓存命中。
 - **全程 signal-aware** — 几乎每个 `await` 都用 `raceWithSignal` 包裹，`signal.aborted` 时返回 `cancelled()`（`finalAnswer = ''`，**不发 `final_answer` 事件**）。
-- **每轮 checkpoint** — 通过 `onCheckpoint` 把 `messages` + `state` + `rounds` 持久化，跨进程崩溃后可恢复。
+- **每轮 checkpoint** — 通过 `onCheckpoint` 把 `messages` + `state` + `rounds` 持久化，跨进程崩溃后可恢复；恢复时崩溃孤儿工具按运行状态归为 `unknown`（而非误判 `not_executed`），避免重放外部副作用。
 
 **4 种终止状态：**
 
@@ -443,7 +448,7 @@ Cyrene 内置和扩展的工具较多，主要覆盖以下类别：
 | --- | :---: | --- |
 | 🌸 Live2D 桌面陪伴 | ✅ 可用 | 支持桌宠置顶、多窗口、表情动作、心情状态、气泡互动与智能表情包 |
 | 💬 日常聊天（Chat） | ✅ 可用 | 独立角色聊天流程，不暴露或执行工具，结合近期消息、社交上下文与用户风格生成回复 |
-| 🛠️ 辅助工作（Work） | ✅ 可用 | 由 [CyreneHarness](./src/main/orchestrator/harness/cyrene-harness.ts) 统一驱动：CITA 上下文理解 + 权限审批过滤 + 主循环工具调度 + 不确定副作用记账 + 可恢复 checkpoint；人设层（Soul）在出口生成回复文本 |
+| 🛠️ 辅助工作（Work） | ✅ 可用 | 由 [CyreneHarness](./src/main/orchestrator/harness/cyrene-harness.ts) 统一驱动：CITA 上下文理解 + 权限审批过滤 + 主循环工具调度 + 不确定副作用记账 + CTA 会话轨迹权威存储与崩溃恢复；人设层（Soul）在出口生成回复文本 |
 | 💻 代码协作（Code） | ✅ 可用 | 绑定可信代码目录，Coding Agent 读取、修改、验证代码并执行命令 |
 | 📚 学习陪伴（Learn） | ✅ 可用 | 绑定 Obsidian Vault，陪伴理解材料、整理笔记、生成练习与维护进度 |
 | 🧠 个性化记忆 | ✅ 可用 | L0 / L1 / L2 分层记忆、自研 DMAE Worldbook、关系画像与长期互动沉淀 |
@@ -473,7 +478,8 @@ Cyrene 内置和扩展的工具较多，主要覆盖以下类别：
 | 构建工具 | Vite 7 |
 | 界面渲染 | HTML / CSS + React 19 + Pixi.js 7 + Ant Design X + Chart.js |
 | Live2D | `pixi-live2d-display` 0.5.0-beta + Cubism Core |
-| Agent 主循环 | [CyreneHarness](./src/main/orchestrator/harness/cyrene-harness.ts)（while + Function Calling + 流式 reasoning/tool + 前缀缓存分层 + mid-loop compaction） + Structured Output + Native Function Calling |
+| Agent 主循环 | [CyreneHarness](./src/main/orchestrator/harness/cyrene-harness.ts)（while + Function Calling + 流式 reasoning/tool + 前缀缓存分层 + 双层压缩） + Structured Output + Native Function Calling |
+| 会话轨迹 | CTA（Canonical Transcript Architecture）— canonical journal 权威存储 + 压缩 checkpoint 持久化 + segments 归档 + 崩溃孤儿恢复 |
 | Agent 事件协议 | AG-UI（`@ag-ui/core`、`@ag-ui/client`）— 通过 `RUN_STARTED / STEP_* / TEXT_MESSAGE_* / TOOL_CALL_* / RUN_FINISHED` 等事件与渲染进程解耦 |
 | 工具调度 | 自研 `tool-dispatcher` + `side-effect-resolver` + `error-classifier` + `retry-policy` 四件套，统一处理四态 outcome（success / failure / unknown / not_executed） |
 | 沙箱执行（Windows） | `@anthropic-ai/sandbox-runtime`（SRT）— 非可信命令走 SandboxManager.wrapWithSandboxArgv；未安装时回退直接 spawn，workspace_mutation 命令仍被拒绝 |
@@ -521,8 +527,9 @@ src/
 │   ├── lsp/          # LSP 客户端（manager / client / server-catalog / server-discovery）
 │   ├── memory/       # L0/L1/L2 记忆引擎 + DMAE Worldbook + 实体关系图
 │   ├── music/        # 音乐陪伴（播放 / 推荐 / 会话 / MCP 客户端）
-│   ├── orchestrator/ # Agent 主循环 + 工具调度 + 权限审批
+│   ├── orchestrator/ # Agent 主循环 + 会话轨迹（CTA）+ 工具调度 + 权限审批
 │   │   ├── harness/  # CyreneHarness 核心（while 循环 + compaction + retry + uncertainty）
+│   │   ├── conversation-*.ts # CTA：transcript 权威存储 / journal 服务 / 压缩归档 / 模型与 UI 投影
 │   │   ├── sandbox/  # Windows 命令执行沙箱（@anthropic-ai/sandbox-runtime 接入）
 │   │   ├── code/     # Code 模式子模块（绑定工作目录 + LSP 工具）
 │   │   ├── vendors/  # 多模型厂商适配（A/B/M/D 分级 Structured Output + Function Calling）
