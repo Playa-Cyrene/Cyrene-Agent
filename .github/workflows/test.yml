@@ -67,4 +67,7 @@ jobs:
       - name: Test · main / core（其余）
         run: npx vitest run src/main --exclude "src/main/orchestrator/**" --exclude "src/main/moments/**" --exclude "src/main/music/**" --exclude "src/main/memory/**" --exclude "src/main/rag/**" --exclude "src/main/channels/**" --exclude "src/main/tts/**" --exclude "src/main/plugin-host/**" --exclude "src/main/application/**" --exclude "src/main/cita/**" --exclude "src/main/skills/**" --exclude "src/main/scheduler/**" --exclude "src/main/proactive/**" --exclude "src/main/chats/**"
       - name: Test · packages + skills + poc
-        run: npx vitest run --exclude "src/**"
+        # packages 的 include 目前在 vitest.config.ts 中临时禁用（windows-2025 镜像下
+        # fork worker 静默崩溃，改由 plugin-sdk workflow 单独验证），skills / cline-poc
+        # 暂无测试文件，因此允许空跑；packages 恢复或新增测试后本步骤自动生效。
+        run: npx vitest run --exclude "src/**" --passWithNoTests
