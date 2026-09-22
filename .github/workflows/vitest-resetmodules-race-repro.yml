@@ -55,14 +55,15 @@ jobs:
           export const observedStore = store
           EOF
 
-          cat > repro.test.js <<'EOF'
+          for f in $(seq 1 32); do
+            cat > "repro-${f}.test.js" <<'EOF'
           import { beforeEach, expect, test, vi } from "vitest"
 
           beforeEach(() => {
             vi.resetModules()
           })
 
-          for (let i = 0; i < 100; i++) {
+          for (let i = 0; i < 12; i++) {
             test(`iteration ${i}`, async () => {
               const { write } = await import("./manager.js")
               const { store } = await import("./store.js")
@@ -73,6 +74,7 @@ jobs:
             })
           }
           EOF
+          done
 
           cat > vitest.config.js <<'EOF'
           import { defineConfig } from "vitest/config"
@@ -81,8 +83,9 @@ jobs:
             test: {
               environment: "node",
               pool: "forks",
-              maxWorkers: 1,
-              fileParallelism: false,
+              maxWorkers: 4,
+              minWorkers: 1,
+              fileParallelism: true,
               watch: false,
               cache: false,
             },
@@ -94,7 +97,7 @@ jobs:
         run: |
           set -euo pipefail
           cd repro
-          for i in $(seq 1 10); do
+          for i in $(seq 1 5); do
             echo "=== standalone iteration $i / Vitest ${{ matrix.vitest }} ==="
             npx vitest run
           done
