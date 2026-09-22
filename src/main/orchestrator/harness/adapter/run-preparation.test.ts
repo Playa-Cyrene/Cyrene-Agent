@@ -1,18 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { trace, preparePlanRunContext, buildHarnessPromptLayers, materializeHarnessStartTranscript, runStore, prepareHarnessRecoveryState } = vi.hoisted(() => ({
+const { trace, preparePlanRunContext, buildHarnessPromptLayers, materializeHarnessStartTranscript, runStore } = vi.hoisted(() => ({
   trace: [] as string[],
   preparePlanRunContext: vi.fn(),
   buildHarnessPromptLayers: vi.fn(),
   materializeHarnessStartTranscript: vi.fn(),
   runStore: { create: vi.fn(), get: vi.fn() },
-  prepareHarnessRecoveryState: vi.fn(),
 }));
 
 vi.mock("./plan-lifecycle", () => ({ preparePlanRunContext }));
 vi.mock("./prompt-builder", () => ({ buildHarnessPromptLayers, materializeHarnessStartTranscript }));
 vi.mock("../run-store", () => ({ getHarnessRunStore: vi.fn(() => runStore) }));
-vi.mock("../run-recovery", () => ({ prepareHarnessRecoveryState }));
 vi.mock("../../tools/registry/tool-registry", () => ({
   toolRegistry: { getEnabledTools: vi.fn(() => []) },
 }));
@@ -39,7 +37,6 @@ describe("harness run preparation", () => {
     runStore.create.mockReset();
     runStore.create.mockImplementation(() => trace.push("create"));
     runStore.get.mockReset();
-    prepareHarnessRecoveryState.mockReset();
   });
 
   it("materializes the startup transcript before creating the run store", async () => {
@@ -66,16 +63,30 @@ describe("harness run preparation", () => {
   it("always uses journal messages as the recovery base and restores only execution state", async () => {
     const authoritativeMessages = [{ role: "user", content: "authoritative" }];
     runStore.get.mockReturnValue({
+      schemaVersion: 1,
       status: "interrupted",
       conversationId: "thread-1",
       runId: "run-old",
-      request: { provider: "test", model: "model", contextWindowTokens: 256000, promptFingerprint: "p", toolSchemaFingerprint: "t" },
-    });
-    prepareHarnessRecoveryState.mockReturnValue({
+      messages: [{
+        role: "assistant",
+        content: "stale",
+        toolCalls: [{ id: "mail-1", name: "send_email", arguments: JSON.stringify({ to: "a@example.com", body: "hello" }) }],
+      }],
       state: { todoItems: [{ id: "todo", content: "继续", status: "in_progress" }], uncertainEffects: [] },
-      cacheState: { cacheEpoch: 4, epochReason: "recovery" },
-      recoveryContext: "继续执行",
-      uncertainEffects: [],
+      toolOutputs: [],
+      toolCalls: [{ toolCallId: "mail-1", toolName: "send_email", sideEffect: "non_idempotent_side_effect", status: "started", updatedAt: 2 }],
+      rounds: 3,
+      cache: { cacheEpoch: 3, epochReason: "compaction" },
+      request: {
+        provider: "old-provider",
+        model: "old-model",
+        contextWindowTokens: 256000,
+        promptFingerprint: "old-prompt",
+        toolSchemaFingerprint: "old-tools",
+        enabledToolIds: ["send_email"],
+      },
+      createdAt: 1,
+      updatedAt: 2,
     });
 
     const prepared = await prepareHarnessRun({
@@ -85,11 +96,19 @@ describe("harness run preparation", () => {
       resumeFromRunId: "run-old",
       settings: { provider: "test", baseUrl: "", model: "model", apiKey: "" },
       messages: authoritativeMessages,
+      capabilities: { tools: [{
+        id: "send_email",
+        name: "Send email",
+        description: "send",
+        enabled: true,
+        inputSchema: { type: "object", properties: {} },
+        effectKind: "external_side_effect",
+        execute: vi.fn(),
+      }] },
       toolSystemContent: "",
       soulSystemBaseContent: "persona",
     } as never, new AbortController().signal);
 
-    expect(prepareHarnessRecoveryState).toHaveBeenCalled();
     expect(materializeHarnessStartTranscript).toHaveBeenCalledWith(expect.objectContaining({
       messages: authoritativeMessages,
       initialState: expect.objectContaining({ todoItems: expect.any(Array) }),
@@ -102,6 +121,12 @@ describe("harness run preparation", () => {
       state: expect.objectContaining({ todoItems: expect.any(Array) }),
       cache: { cacheEpoch: 4, epochReason: "recovery" },
     }));
+    expect(prepared.recovered?.uncertainEffects[0]).toEqual(expect.objectContaining({
+      toolCallId: "mail-1",
+      fingerprint: "send_email(body=hello,to=a@example.com)",
+    }));
+    expect(prepared.recovered?.recoveryContext).toContain("提示词指纹已变化");
+    expect(prepared.recovered?.recoveryContext).toContain("工具目录指纹已变化");
   });
 
   it("does not inspect interrupted runs for an ordinary new turn", async () => {

@@ -108,6 +108,28 @@ export async function prepareHarnessRun(
 
   const tools = [...(options.capabilities?.tools ?? options.tools ?? toolRegistry.getEnabledTools())];
   const runStore = getHarnessRunStore(app.getPath("userData"));
+  // 恢复校验必须使用当前稳定前缀与工具目录指纹；恢复上下文本身只进入 runtimeContext，
+  // 因而先用未附加恢复说明的稳定前缀计算一次，不把 run recovery 变成循环依赖。
+  const preRecoveryPromptLayers = options.resumeFromRunId
+    ? buildHarnessPromptLayers(
+      [options.recoveryContext, planContextBlock].filter(Boolean).length > 0
+        ? {
+          ...options,
+          recoveryContext: [options.recoveryContext, planContextBlock].filter(Boolean).join("\n\n"),
+        }
+        : options,
+    )
+    : undefined;
+  const preRecoveryHarnessPromptLayers: PromptLayers | undefined = preRecoveryPromptLayers
+    ? {
+      stablePrefix: preRecoveryPromptLayers.stablePrefix,
+      ...(preRecoveryPromptLayers.sessionPrefix ? { sessionPrefix: preRecoveryPromptLayers.sessionPrefix } : {}),
+      ...(preRecoveryPromptLayers.mode ? { mode: preRecoveryPromptLayers.mode } : {}),
+    }
+    : undefined;
+  const currentRequestFingerprint = preRecoveryHarnessPromptLayers
+    ? snapshotHarnessRequest(options, preRecoveryHarnessPromptLayers, tools)
+    : undefined;
   const recovered = options.resumeFromRunId
     ? (() => {
       const previous = runStore.get(options.resumeFromRunId!);
@@ -118,6 +140,8 @@ export async function prepareHarnessRun(
         provider: options.settings.provider,
         model: options.settings.model,
         enabledToolIds: tools.map((tool) => tool.id),
+        promptFingerprint: currentRequestFingerprint?.promptFingerprint,
+        toolSchemaFingerprint: currentRequestFingerprint?.toolSchemaFingerprint,
       });
     })()
     : undefined;

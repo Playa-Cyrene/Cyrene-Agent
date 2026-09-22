@@ -1,3 +1,4 @@
+import type { ToolCall } from "../vendors/types";
 import { toolCallFingerprint, type AgentState, type HarnessCacheState, type UncertainEffect } from "./types";
 import type { HarnessRunSession } from "./run-store";
 
@@ -20,6 +21,28 @@ export interface PreparedHarnessRecoveryState {
 
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function findPersistedToolCall(session: HarnessRunSession, toolCallId: string): ToolCall | undefined {
+  let found: ToolCall | undefined;
+  for (const message of session.messages) {
+    const call = message.toolCalls?.find((candidate) => candidate.id === toolCallId);
+    if (call) found = call;
+  }
+  return found;
+}
+
+function fingerprintPersistedCall(session: HarnessRunSession, toolCallId: string, toolName: string): string {
+  const call = findPersistedToolCall(session, toolCallId);
+  // 不确定参数时使用按工具名的 fail-safe 标记；uncertain-effect-guard 会阻止该工具的任何重试。
+  if (!call || call.name !== toolName) return `${toolName}(*)`;
+  try {
+    const parsed: unknown = JSON.parse(call.arguments);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return `${toolName}(*)`;
+    return toolCallFingerprint(toolName, parsed as Record<string, unknown>);
+  } catch {
+    return `${toolName}(*)`;
+  }
 }
 
 /**
@@ -69,7 +92,7 @@ export function prepareHarnessRecoveryState(
       state.uncertainEffects.push({
         id: `${session.runId}:${persisted.toolCallId}`,
         toolCallId: persisted.toolCallId,
-        fingerprint: toolCallFingerprint(persisted.toolName, {}),
+        fingerprint: fingerprintPersistedCall(session, persisted.toolCallId, persisted.toolName),
         toolName: persisted.toolName,
         message: "该外部副作用在应用中断时尚未确认结果",
       });

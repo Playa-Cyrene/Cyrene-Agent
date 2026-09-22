@@ -28,7 +28,12 @@ export function isBlockedByUncertainEffect(
   state: AgentState,
   fingerprint: string,
 ): boolean {
-  return state.uncertainEffects.some((effect) => effect.fingerprint === fingerprint);
+  const openParen = fingerprint.indexOf("(");
+  const toolName = openParen > 0 ? fingerprint.slice(0, openParen) : "";
+  const failSafeFingerprint = toolName ? `${toolName}(*)` : undefined;
+  return state.uncertainEffects.some((effect) =>
+    effect.fingerprint === fingerprint || effect.fingerprint === failSafeFingerprint,
+  );
 }
 
 /**
