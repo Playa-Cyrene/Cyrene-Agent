@@ -9,7 +9,6 @@ const channelMocks = vi.hoisted(() => ({
   flush: vi.fn(),
   listSessions: vi.fn(),
   getSession: vi.fn(),
-  legacyChannelAppendMessage: vi.fn(),
   buildAndRunAgent: undefined as ((...args: unknown[]) => Promise<unknown>) | undefined,
   dispatcherDeps: [] as Array<Record<string, any>>,
   agentError: undefined as Error | undefined,
@@ -74,7 +73,6 @@ vi.mock("./conversation-binding-store", () => ({
 vi.mock("../chats/chats-store", () => ({
   listSessions: channelMocks.listSessions,
   getSession: channelMocks.getSession,
-  legacyChannelAppendMessage: channelMocks.legacyChannelAppendMessage,
 }));
 
 // 避免拉起真实 tool registry（会级联 import RAG 等重依赖）
@@ -228,11 +226,6 @@ describe("createChannelsSubsystem lifecycle", () => {
     createChannelsSubsystem(makeChannelsDeps());
     expect(channelMocks.dispatcherDeps[0]?.journal).toBeDefined();
     expect(channelMocks.getSession).not.toHaveBeenCalled();
-  });
-
-  it("不再通过 legacy chats-store 写渠道镜像", () => {
-    createChannelsSubsystem(makeChannelsDeps());
-    expect(channelMocks.legacyChannelAppendMessage).not.toHaveBeenCalled();
   });
 
   it("resolves bindings from metadata without reading the full conversation", () => {

@@ -1,6 +1,6 @@
 # CTA 设计文档：会话轨迹架构（Conversation Transcript Architecture）
 
-> 状态：设计修订 v4，已批准进入 Phase 1 施工计划（2026-09-21；施工前代码核对补充两项字段级澄清：附件复用 `PendingChatAttachment`，tool_result 原样携带 canonical `ChatMessage`）
+> 状态：设计修订 v4；Phase 1 与 Phase 2（兼容面清理及验收）已落地（2026-09-22）
 > 依据：`docs/internal-issue/2026-09-20-cross-run-context-discontinuity-report.md`（问题报告，含决策记录）
 > 前置：施工包 A（孤儿闸门，`2026-09-20-harness-recovery-orphan-tool-result-400-construction.md`）先行落地
 > 路线拍板（2026-09-20）：路线 2——Phase 1 建立会话级轨迹权威源 + 渲染端暂时双写；路线 1（串接 run 检查点）与路线 3（一次性全量翻转）已否决
@@ -220,12 +220,12 @@ interface TranscriptEnvelope {
 | 主进程 | `orchestrator/transcript-sink.ts`（新增，或并入 store） | 轨迹写入边界接口，Harness / ChatLoop 的唯一依赖 |
 | 主进程 | `cyrene-harness.ts` 主循环 | canonical ChatMessage 产生处写 assistant 条目（原样 ChatMessage，整组 toolCalls 工具执行前落盘）与 tool_result |
 | 主进程 | `orchestrator/chat-loop.ts` | assistant 轮次结束写条目（含 rawAssistant） |
-| 主进程 | `agui-bridge.ts` dispatch | user 条目（仅新输入）+ 回退锚点（turn_rewind + disposition；replace_user 单行携带 replacementUser）+ 上下文从 transcript 构建；**忽略 `AguiRunInput.messages`**（保留回退开关一个版本周期） |
+| 主进程 | `agui-bridge.ts` dispatch | user 条目（仅新输入）+ 回退锚点（turn_rewind + disposition；replace_user 单行携带 replacementUser）+ 上下文从 transcript 构建；不再声明或传递 renderer 历史旁路字段 |
 | 主进程 | 取消路径（takeover 结算处） | 闭合未配对 toolCalls（unknown / not_executed）+ interruption 边界 |
 | 渲染端 | `ChatPage.tsx` 编辑/重新生成路径 | dispatch 附带回退锚点与 disposition——Phase 1 唯一渲染端改动 |
 | 展示 | AG-UI 事件流 | 保持纯展示投影，不作为轨迹来源 |
 
-**回退开关**：dispatch 处保留"上下文源 = 渲染端 messages"的旧路径开关，Phase 1 上线后观察一个版本周期再移除。
+**回退开关**：Phase 2 已移除；所有生产入口只接受 canonical journal 物化上下文。
 
 ---
 
@@ -253,12 +253,12 @@ interface TranscriptEnvelope {
 
 ---
 
-## 十、Phase 2 展望（不展开，仅锚点）
+## 十、Phase 2 落地摘要（详见十四）
 
-1. **删双写**：UI 消息从轨迹投影派生（事件流 + snapshot），`session.messages` 退役；
-2. **Compaction 升层**：`raw prefix → compact → replacement + suffix`，替换 Phase 1 窗口规则；
-3. **渠道整合**（最后一步）：`channels/bootstrap.ts` 的 `buildAndRunAgent` 将 `priorMessages` 纯文本过滤改为读权威轨迹（"渠道绑定只共享文字上下文"的约束自然升级）；
-4. **崩溃恢复重放**：`prepareHarnessRecovery` 的 transcript 重建退役，改读轨迹；`uncertainEffects`、执行日志等执行恢复机制保留；`resumedFromRunId` 语义收窄回"显式继续"。
+1. **删双写**：UI 消息从轨迹投影派生；v2 `session.messages` 退役；
+2. **Compaction 升层**：`raw prefix → compact → replacement + suffix` 已由 checkpoint + suffix 落地；
+3. **渠道整合**：`ChannelDispatcher` 直接读取权威 journal，不再接受 `priorMessages`；
+4. **崩溃恢复重放**：`prepareHarnessRecovery` 与执行日志共同提供 recovery context；`uncertainEffects` 保留并禁止自动盲重放。
 
 ---
 
@@ -266,10 +266,10 @@ interface TranscriptEnvelope {
 
 | 风险 | 对策 |
 | --- | --- |
-| 双写不一致 | 轨迹唯一权威；编辑/重新生成经 `turn_rewind`（双 disposition）同步；其余改写历史操作进禁改清单；回退开关保留一个版本周期 |
+| 双写不一致 | 轨迹唯一权威；编辑/重新生成经 `turn_rewind`（双 disposition）同步；其余改写历史操作进禁改清单；Phase 2 已移除回退开关 |
 | rewind 读取语义复杂度 | 只支持末轮回退（对齐 `replaceTail` 语义）；disposition 只有两态，rewind 区间读取侧整体排除，不做部分恢复 |
 | replace_user 两次追加非原子 | **已消除**：rewind 与替换 user 合并为单行 journal record（同一 JSONL 行），单行落盘即原子提交；无需 mutationId/事务提交记录 |
-| rawAssistant/thinking 增大轨迹体积 | 上下文体积由安全裁剪窗口控制；**磁盘占用不随 compaction 缩小（compaction 只压缩上下文、不压缩 JSONL）——Phase 2 另设日志分段归档/真空整理，或明确接受磁盘增长** |
+| rawAssistant/thinking 增大轨迹体积 | 上下文体积由 checkpoint + suffix 控制；审计 JSONL 仍 append-only，按十四节归档协议保留，不以压缩结果覆盖审计段 |
 | 写入性能 | JSONL 追加 + 快照物化与 runStore 同级，无新风险面 |
 | 崩溃丢尾部 | 追加即落盘 + 尾行容错；最多丢流式中 assistant 尾部，读取侧孤儿分类规则兜底（6.3：unknown / not_executed 分流） |
 | 存量会话体验 | 回填后分界前无工具历史——与现状持平，不劣化 |
@@ -362,3 +362,34 @@ interface TranscriptEnvelope {
 - [x] `findSafeCutPointForRetainedTokens`：`compaction.ts:129-143` 直接接收完整 canonical `ChatMessage[]` 与 `retainTokens`，内部用 `estimateMessageTokens` 从尾部累计，并回退至工具配对安全边界；
 - [x] 存放约定：runStore 由 `app.getPath("userData")` 构造并落在 `<userData>/cyrene-runs/`；TranscriptStore 同根落在 `<userData>/transcripts/`，沿用单例 + 原子 temp/rename 方式；
 - [x] 附件元数据：复用 `shared/chat-types.ts:207-220` 的 `PendingChatAttachment` 稳定字段 `kind / name / filePath / mime? / caption? / hasAnnotations?`；不持久化 `previewUrl / status / processedKind / chunks / reason` 等 UI 或预处理瞬态字段。
+
+---
+
+## 十四、Phase 2 实际落地与最终验收（2026-09-22）
+
+### 14.1 实际提交表
+
+| 工作项 | 实际提交 | 结果 |
+|---|---|---|
+| Task 8 | `00105a09` | 轨迹上下文与 UI 投影基础 |
+| Task 9 | `1a1239b4`、`6619024a`、`5dd464f2` | 编辑/重新生成与回退语义 |
+| Task 10 | `5e0111fb`、`3b64b2ac`、`83efa12e` | 执行恢复及压缩基础 |
+| Task 11 | `3d39068b`、`db8de45f`、`6fe67117` | 渠道 journal 接入、取消与不确定副作用 |
+| Task 12 | 本提交 `fix（cta）/完成二阶段兼容清理与验收` | 删除旧 IPC/API/旁路历史，加入跨组件验收 |
+
+### 14.2 v1 → v2 迁移与归档协议
+
+迁移入口统一为 `ConversationSessionMigration.ensureConversationMigrated`：先读取 v1 `sessions/<id>.json`，将旧 `messages` 按稳定 ID 写入 canonical journal，再以 v2 元数据原子替换；v2 `cyrene-chats` 文件只保存标题、身份、模式、绑定、`messageCount` 等 metadata，不写正式 `messages`。v1 reader 保留到显式删除会话，以便旧文件可读和迁移可重试；新的 renderer/渠道入口不得绕过 journal。
+
+归档以 append-only JSONL 轨迹及 compaction checkpoint 为边界：checkpoint 只改变模型活动视图，不删除审计段；projection 可从审计段重建，归档失败保持原轨迹可恢复，不能以部分归档结果覆盖 canonical 文件。runStore 只保存执行生命周期和工具状态，不承担会话历史。
+
+### 14.3 最终自动化测试数字与手动边界
+
+- Phase 2 acceptance test（跨组件验收测试）：**1 个文件、6 个测试全部通过**，四模式各 1 个真实 journal → projection → recovery → compaction 流程，另含渠道连续性与旧 IPC 零入口断言。
+- 指定模块矩阵：`src/main/orchestrator`、`src/main/chats`、`src/main/channels`、`src/main/scheduler`、`src/main/proactive`、`src/renderer/react/features/chat`；**246 文件、2439 测试全部通过**。
+- 全量 `npm test`：**506 文件、4624 通过、1 跳过、0 失败**（共 4625）。
+- 三项构建检查：`npm run build:main`、`npm run build:preload`、`npm run check:renderer` 均通过。
+- 兼容面 `rg` 验收：旧 IPC/API、`transcriptSource`、`useTranscriptContext`、`priorMessages` **0 命中**；`src/main/chats` 的第二条 writer 检查仅命中 `chats-store.ts:875`、`:1082` 两个显式 v1 `schemaVersion !== 2` 迁移兼容分支，精确 v2 writer 检查 **0 命中**。
+- 交付语义边界：远端渠道不保证 exactly-once（恰好一次），系统不自动盲重试；收到不确定回执时记录未确认副作用，下一轮通过 recovery context 提示人工确认。
+- 保留边界：canonical transcript、审计段、checkpoint、uncertainEffects 和 v1 reader 保留；只在用户显式删除会话时删除 transcript。不得恢复旧 renderer messages 旁路、旧直写 IPC 或 `priorMessages`。
+- 人工项：未执行真实扫码、未使用用户已配置渠道、未向外部服务发送消息；以自动适配器矩阵和生产 `ChannelDispatcher` journal 验收作为替代证据。`npm run dev` 仅允许做非交互启动检查，不改变用户配置。

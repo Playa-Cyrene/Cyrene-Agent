@@ -92,6 +92,7 @@ describe("ConversationSessionMigration", () => {
 
   it("checkpoint 后并发追加 v1 消息时不覆盖新消息", async () => {
     const store = await import("../chats/chats-store");
+    const { getRootDir } = store;
     store.initialize();
     const session = store.createSession({
       initialMessages: [{ id: "u1", role: "user", content: "旧消息", at: 1 }],
@@ -107,9 +108,11 @@ describe("ConversationSessionMigration", () => {
     const gate = migration.pauseAfterCheckpoint();
     const pending = migration.ensureConversationMigrated(session.id);
     await gate.entered;
-    expect(store.legacyChannelAppendMessage(session.id, {
-      id: "u2", role: "user", content: "并发追加", at: 2,
-    })).not.toBeNull();
+    // 模拟仍处于 v1 格式的外部写入；生产 writer 已退休，迁移 reader 必须能读到这次追加。
+    const file = path.join(getRootDir(), "sessions", `${session.id}.json`);
+    const legacy = JSON.parse(fs.readFileSync(file, "utf8")) as { messages: unknown[] };
+    legacy.messages.push({ id: "u2", role: "user", content: "并发追加", at: 2 });
+    fs.writeFileSync(file, JSON.stringify(legacy));
     gate.release();
 
     const record = await pending;

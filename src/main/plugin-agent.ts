@@ -176,7 +176,7 @@ export function createPluginAgentRunner(deps: PluginAgentRunnerDeps): NonNullabl
       mode: "work",
       promptSource: "plugin-agent",
       promptChannel: "minecraft",
-      messages: [{ role: "user", content: goal }],
+      currentUser: { turnId: `plugin:${runId}`, text: goal, visibleContent: goal },
     });
     const toolSystemContent = buildToolSystemPrompt("work", tools);
     const promptLayers = buildHarnessPromptLayers({

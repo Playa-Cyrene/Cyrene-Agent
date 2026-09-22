@@ -135,13 +135,6 @@ export function registerChatsIpc(
     },
   );
 
-  const retiredMessageStore = () => ({ ok: false as const, error: "chat-message-store-retired" as const });
-  ipc.handle(IPC.CHATS_APPEND, retiredMessageStore);
-  ipc.handle(IPC.CHATS_UPSERT, retiredMessageStore);
-  ipc.handle(IPC.CHATS_SET_MESSAGE_TTS_CACHE, retiredMessageStore);
-  ipc.handle(IPC.CHATS_REPLACE_MESSAGES, retiredMessageStore);
-  ipc.handle(IPC.CHATS_REPLACE_TAIL, retiredMessageStore);
-
   ipc.handle(
     IPC.CTA_PRESENTATION_CHECKPOINT,
     async (_event, payload: {

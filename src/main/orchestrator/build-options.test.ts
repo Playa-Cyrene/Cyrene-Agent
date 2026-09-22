@@ -3,12 +3,13 @@ import * as os from "os"
 import * as path from "path"
 import { describe, expect, it, vi } from "vitest"
 import {
-  buildAgentRunOptions,
+  buildAgentRunOptions as buildAgentRunOptionsProduction,
   buildChannelSystem,
   onAgentRunFinished,
   type BuildOptionsDeps,
   type OnRunFinishedDeps,
 } from "./build-options"
+import type { MaterializedTranscript } from "./conversation-transcript-context"
 import type { SocialAtom } from "../social-context/types"
 import type { ConversationMode } from "../../shared/chat-types"
 
@@ -52,6 +53,26 @@ function createBuildDeps(): BuildOptionsDeps {
     normalizeChatMessages: (raw) => raw as never,
     chatRequestTimeoutMs: 1000,
   }
+}
+
+// 测试夹具把历史消息物化为 canonical journal 的 modelContext；生产入口不再接受旁路 messages。
+async function buildAgentRunOptions(
+  input: Record<string, unknown>,
+  deps: BuildOptionsDeps,
+) {
+  const rawMessages = input.messages
+  const { messages: _legacyMessages, ...canonicalInput } = input
+  const modelContext = !canonicalInput.currentUser && Array.isArray(rawMessages)
+    ? {
+      messages: rawMessages,
+      uncertainEffects: [],
+      throughSeq: 0,
+    } as MaterializedTranscript
+    : undefined
+  return buildAgentRunOptionsProduction({
+    ...canonicalInput,
+    ...(modelContext ? { modelContext } : {}),
+  } as never, deps)
 }
 
 describe("build-options", () => {

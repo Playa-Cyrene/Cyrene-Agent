@@ -126,8 +126,6 @@ function normalizeCurrentUserAttachments(value: unknown): PendingChatAttachment[
 /** 渲染进程发起 run 时传的控制输入。 */
 export interface AguiRunInput {
   sessionId: string;
-  /** 仅渠道/插件旧入口使用；AG-UI renderer 类型不暴露此字段，bridge 会丢弃。 */
-  messages?: unknown[];
   currentUser?: AguiCurrentUserInput;
   mode?: ConversationMode;
   /** 主进程在 append 后构建的权威模型上下文，renderer 无法构造。 */
@@ -663,9 +661,8 @@ export function registerAgUiIpc(
     const agentExecutionMode: AgentExecutionMode = mode === "chat" ? "chat" : "work";
     let built;
     try {
-    const { messages: _ignoredRendererMessages, ...safeInput } = input as AguiRunInput & {
-      messages?: unknown;
-    };
+    // 运行时拒绝未知的历史旁路字段；类型层已不再声明 renderer messages。
+    const { messages: _ignoredLegacyMessages, ...safeInput } = input as AguiRunInput & Record<string, unknown>;
     built = await perf.track("build_options", () => buildOptionsFn!({
       ...safeInput,
       mode,

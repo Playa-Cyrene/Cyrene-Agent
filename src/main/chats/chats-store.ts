@@ -443,21 +443,6 @@ export function getOrCreateSessionByPurpose(
   });
 }
 
-/** Task 11 compatibility: only the channel adapter may call this writer. */
-export function legacyChannelAppendMessage(id: string, message: ChatMessage): ChatSession | null {
-  const session = readSessionFile(id);
-  if (!session) return null;
-  session.messages.push(message);
-  session.updatedAt = Date.now();
-  // 用户没手动改名时，根据最新内容重新派生（清空后也会回到"新对话"）
-  if (!session.titleIsCustom) {
-    session.title = deriveTitle(session.messages);
-  }
-  writeSessionFile(session);
-  upsertMeta(metaFromSession(session));
-  return session;
-}
-
 export function renameSession(id: string, title: string): ChatSession | null {
   const session = readSessionRecordFile(id);
   if (!session) return null;

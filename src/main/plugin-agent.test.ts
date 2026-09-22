@@ -94,7 +94,7 @@ describe("plugin-agent", () => {
       mode: "work",
       promptSource: "plugin-agent",
       promptChannel: "minecraft",
-      messages: [{ role: "user", content: "收集十个木头" }],
+      currentUser: expect.objectContaining({ text: "收集十个木头", visibleContent: "收集十个木头" }),
     }));
     const input = runHarness.mock.calls[0]?.[0];
     expect(input).toEqual(expect.objectContaining({

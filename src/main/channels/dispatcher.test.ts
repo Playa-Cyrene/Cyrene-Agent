@@ -539,7 +539,7 @@ describe("channels/dispatcher", () => {
     }
   });
 
-  it("同会话并发从 canonical journal 串行，且 agent 不接收 priorMessages", async () => {
+  it("同会话并发从 canonical journal 串行，且 agent 不接收历史旁路", async () => {
     const events: string[] = [];
     let releaseFirst!: () => void;
     const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
@@ -580,7 +580,7 @@ describe("channels/dispatcher", () => {
     releaseFirst();
     await Promise.all([first, second]);
     expect(journal.appendUser).toHaveBeenCalledTimes(2);
-    expect(buildAndRunAgent.mock.calls[0]?.[1]).not.toHaveProperty("priorMessages");
+    expect(buildAndRunAgent.mock.calls[0]?.[1]).not.toHaveProperty("messages");
     expect(journal.buildModelContext).toHaveBeenCalledTimes(2);
   });
 

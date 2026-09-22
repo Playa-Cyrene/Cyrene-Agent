@@ -439,7 +439,6 @@ describe("chats store", () => {
     expect(new Set(sessions.map((session) => session.id)).size).toBe(1);
     expect(store.listSessions().filter((session) => session.purpose === "proactive-chat")).toHaveLength(1);
 
-    store.legacyChannelAppendMessage(sessions[0].id, { id: "p1", role: "model", content: "主动问候", at: 1 });
     expect(store.getSession(sessions[0].id)?.title).toBe("昔涟的主动消息");
   });
 

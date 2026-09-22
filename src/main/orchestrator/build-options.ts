@@ -176,10 +176,8 @@ export interface BuildOptionsDeps {
   }) => Promise<string>;
 }
 
-/** 内部/渠道测试仍可提供一次性消息，但桌面 currentUser 必须使用 modelContext。 */
-export type BuildOptionsInput = AguiRunInput & {
-  messages?: ReadonlyArray<unknown>;
-};
+/** 所有入口都从 canonical journal 构建上下文；不再接受旁路历史消息。 */
+export type BuildOptionsInput = AguiRunInput;
 
 /** onRunFinished 副作用所需的 deps（与 BuildOptionsDeps 部分重叠） */
 export interface OnRunFinishedDeps {
@@ -562,7 +560,7 @@ export async function buildAgentRunOptions(
   const messages = transcriptContext?.messages
     ?? (input.currentUser
       ? [{ role: "user" as const, content: input.currentUser.text } as ChatMessage]
-      : deps.normalizeChatMessages(input.messages ?? []));
+      : []);
   if (messages.length === 0) {
     throw new Error("没有可发送的聊天内容。");
   }

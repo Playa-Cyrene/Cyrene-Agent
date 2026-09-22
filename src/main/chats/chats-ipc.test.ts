@@ -213,22 +213,6 @@ describe("chats IPC mode filtering", () => {
     expect(invalidRun).not.toHaveBeenCalled();
   });
 
-  it("returns a stable retired error for formal message IPC", async () => {
-    const { registerChatsIpc } = await import("./chats-ipc");
-    registerChatsIpc();
-    const retired = [IPC.CHATS_APPEND, IPC.CHATS_UPSERT, IPC.CHATS_SET_MESSAGE_TTS_CACHE, IPC.CHATS_REPLACE_MESSAGES, IPC.CHATS_REPLACE_TAIL];
-    const transcriptDir = path.join(mocks.userDataDir, "transcripts");
-    const before = fs.existsSync(transcriptDir) ? fs.readdirSync(transcriptDir).sort() : [];
-    for (const channel of retired) {
-      const handler = mocks.handlers.get(channel);
-      if (!handler) throw new Error(`retired message IPC handler missing: ${channel}`);
-      expect(await handler({ sender: {} }, { id: "session-1", message: { id: "m1" } }))
-        .toEqual({ ok: false, error: "chat-message-store-retired" });
-    }
-    const after = fs.existsSync(transcriptDir) ? fs.readdirSync(transcriptDir).sort() : [];
-    expect(after).toEqual(before);
-  });
-
   it("accepts a TTS cache update as a presentation-only patch", async () => {
     const { registerChatsIpc } = await import("./chats-ipc");
     const { getConversationTranscriptStore } = await import("../orchestrator/conversation-transcript-store");
@@ -317,24 +301,6 @@ describe("chats IPC mode filtering", () => {
     expect(firstPage.nextBefore).toBeNull();
   });
 
-  it("validates and forwards CHATS_UPSERT for run checkpoints", async () => {
-    const { registerChatsIpc } = await import("./chats-ipc");
-    registerChatsIpc();
-
-    const create = mocks.handlers.get(IPC.CHATS_CREATE);
-    const upsert = mocks.handlers.get(IPC.CHATS_UPSERT);
-    if (!create || !upsert) throw new Error("checkpoint IPC handlers were not registered");
-    const event = { sender: {} };
-    const session = await create(event, { mode: "work" }) as { id: string };
-
-    expect(await upsert(event, null)).toEqual({ ok: false, error: "chat-message-store-retired" });
-    expect(await upsert(event, { id: session.id })).toEqual({ ok: false, error: "chat-message-store-retired" });
-    expect(await upsert(event, {
-      id: session.id,
-      message: { id: "assistant-1", role: "model", content: "checkpoint", at: 1 },
-    })).toEqual({ ok: false, error: "chat-message-store-retired" });
-  });
-
   it("schedules first-message title generation for every conversation mode with visible text only", async () => {
     const { registerChatsIpc } = await import("./chats-ipc");
     const scheduled: Array<{ sessionId: string; userMessageId: string; text: string }> = [];
@@ -374,36 +340,6 @@ describe("chats IPC mode filtering", () => {
       expect.objectContaining({ userMessageId: "first-code", text: "处理code问题" }),
       expect.objectContaining({ userMessageId: "first-learn", text: "处理learn问题" }),
     ]);
-  });
-
-  it("retires legacy direct appends without writing metadata", async () => {
-    const { registerChatsIpc } = await import("./chats-ipc");
-    const scheduled: Array<{ sessionId: string; userMessageId: string; text: string }> = [];
-    registerChatsIpc(undefined, {
-      titleService: {
-        schedule: (input) => {
-          scheduled.push(input);
-          return true;
-        },
-      },
-    });
-    const create = mocks.handlers.get(IPC.CHATS_CREATE);
-    const append = mocks.handlers.get(IPC.CHATS_APPEND);
-    if (!create || !append) throw new Error("direct append IPC handlers were not registered");
-    const event = { sender: {} };
-    const created = await create(event, { mode: "chat" }) as { id: string };
-
-    expect(await append(event, {
-      id: created.id,
-      message: {
-        id: "legacy-first",
-        role: "user",
-        content: "  总结这份材料 [sticker:wave]  ",
-        at: 1,
-        attachments: [{ kind: "document", name: "secret.txt", filePath: "C:\\tmp\\secret.txt", status: "pending" }],
-      },
-    })).toEqual({ ok: false, error: "chat-message-store-retired" });
-    expect(scheduled).toEqual([]);
   });
 
   it("pending remove 先写 journal 墓碑，不能绕过轨迹直接删除", async () => {
