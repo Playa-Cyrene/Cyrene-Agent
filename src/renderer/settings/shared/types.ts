@@ -114,6 +114,7 @@ export interface GeneralSettings extends ChatAppearanceSettings {
   /** 朋友圈热闹程度：抽签人数分布与角色日调用上限联动档位 */
   momentsLiveliness: "quiet" | "natural" | "lively";
   petAlwaysOnTop: boolean;
+  rememberWindowState: boolean;
   petVisible: boolean;
   petZoom: number;
   disableGpuElectron?: boolean;

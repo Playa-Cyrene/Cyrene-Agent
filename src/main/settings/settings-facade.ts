@@ -48,6 +48,7 @@ const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
   momentsCharacterReactionsEnabled: true,
   momentsLiveliness: "quiet",
   petAlwaysOnTop: true,
+  rememberWindowState: true,
   petVisible: true,
   petZoom: 1,
   sidebarVisible: true,
@@ -209,6 +210,9 @@ export function normalizeGeneralSettings(
     petAlwaysOnTop: input?.petAlwaysOnTop === undefined
       ? DEFAULT_GENERAL_SETTINGS.petAlwaysOnTop
       : Boolean(input.petAlwaysOnTop),
+    rememberWindowState: input?.rememberWindowState === undefined
+      ? true
+      : Boolean(input.rememberWindowState),
     petVisible: input?.petVisible === undefined
       ? DEFAULT_GENERAL_SETTINGS.petVisible
       : Boolean(input.petVisible),

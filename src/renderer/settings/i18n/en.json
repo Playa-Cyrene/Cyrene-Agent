@@ -1,1 +1,10 @@
-{}
+{
+  "panel": {
+    "general": {
+      "rememberWindowState": {
+        "title": "Remember window position",
+        "desc": "Remember the position and size of the Settings and Music windows and restore them after restart."
+      }
+    }
+  }
+}

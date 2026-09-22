@@ -1,6 +1,8 @@
 import { app, BrowserWindow, screen } from "electron";
 import * as path from "path";
 import { isDev } from "../env";
+import { loadGeneralSettings } from "../settings/settings-facade";
+import { persistedWindowState } from "./create-aux-windows";
 import { getCurrentAppIconPath, setMusicPlayerWindow, musicPlayerWindow } from "./window-state";
 
 /**
@@ -20,8 +22,10 @@ export function createMusicPlayerWindow(): void {
   const height = 660;
   const display = screen.getPrimaryDisplay();
   const { x: dx, y: dy, width: dw, height: dh } = display.workArea;
+  const rememberWindowState = loadGeneralSettings().rememberWindowState;
 
   const window = new BrowserWindow({
+    ...persistedWindowState("cyrene.music-player", rememberWindowState),
     x: dx + Math.max(0, Math.floor((dw - width) / 2)),
     y: dy + Math.max(0, Math.floor((dh - height) / 2)),
     width,

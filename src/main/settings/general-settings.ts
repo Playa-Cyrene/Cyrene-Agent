@@ -41,6 +41,8 @@ export interface GeneralSettings extends ChatAppearanceSettings {
    *  quiet=现状（冷场常见），natural=冷场减半，lively=上限 5 人冷场罕见。 */
   momentsLiveliness: "quiet" | "natural" | "lively";
   petAlwaysOnTop: boolean;
+  /** 记住设置与音乐窗口的位置和大小。 */
+  rememberWindowState: boolean;
   petVisible: boolean;
   /** 桌宠缩放因子：1.0=默认，0.5~2.0，窗口与模型同步等比缩放。 */
   petZoom: number;

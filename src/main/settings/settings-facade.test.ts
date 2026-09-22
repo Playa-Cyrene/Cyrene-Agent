@@ -15,6 +15,31 @@ vi.mock("electron", () => ({
   },
 }));
 
+describe("general window state persistence setting", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    electronMock.userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-window-state-settings-"));
+  });
+
+  it("defaults to true for fresh and legacy settings", () => {
+    expect(normalizeGeneralSettings({}).rememberWindowState).toBe(true);
+    expect(normalizeGeneralSettings({ petAlwaysOnTop: false } as never).rememberWindowState).toBe(true);
+  });
+
+  it("keeps an explicit false value", () => {
+    expect(normalizeGeneralSettings({ rememberWindowState: false }).rememberWindowState).toBe(false);
+  });
+
+  it("round trips through general-settings.json", async () => {
+    const first = await import("./settings-facade");
+    first.saveGeneralSettings({ rememberWindowState: false });
+
+    vi.resetModules();
+    const reloaded = await import("./settings-facade");
+    expect(reloaded.loadGeneralSettings().rememberWindowState).toBe(false);
+  });
+});
+
 describe("general LSP settings", () => {
   it("keeps valid user server overrides and safely drops malformed settings", () => {
     const settings = normalizeGeneralSettings({
