@@ -173,6 +173,29 @@ describe("ConversationJournalService", () => {
     expect((await journal.readProjectionPage("c1", 1, 1)).messages[0].sticker).toBe("calm");
   });
 
+  it("按 canonical 顺序查询渠道 turn，并按 assistant receipt revision 取最新状态", async () => {
+    const { journal } = createJournal();
+    await journal.appendUser("c1", userInput("u1", "hello"));
+    expect(await journal.getChannelTurnState("c1", {
+      userTurnId: "u1",
+      assistantTurnId: "a1",
+    })).toMatchObject({ userEntry: { turnId: "u1" } });
+
+    const sink = journal.createRunSink({ conversationId: "c1", runId: "run-1", assistantTurnId: "a1" });
+    await sink.appendAssistant({ message: { role: "assistant", content: "reply" } });
+    expect(await journal.getChannelTurnState("c1", { userTurnId: "u1", assistantTurnId: "a1" }))
+      .toMatchObject({ assistantEntry: { turnId: "a1" } });
+
+    await journal.appendDeliveryReceipt("c1", {
+      assistantTurnId: "a1", channel: "qq", status: "failed", errorCode: "DELIVERY_UNCONFIRMED", revision: 1,
+    });
+    await journal.appendDeliveryReceipt("c1", {
+      assistantTurnId: "a1", channel: "qq", status: "delivered", revision: 2,
+    });
+    expect(await journal.getChannelTurnState("c1", { userTurnId: "u1", assistantTurnId: "a1" }))
+      .toMatchObject({ latestReceipt: { payload: { status: "delivered", revision: 2 } } });
+  });
+
   it("由主进程队列分配单调 presentation revision 并按 mutation key 幂等", async () => {
     const { journal } = createJournal();
     await journal.appendUser("c1", userInput("u1", "hello"));

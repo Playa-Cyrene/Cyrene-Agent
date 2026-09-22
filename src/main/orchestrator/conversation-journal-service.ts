@@ -37,6 +37,12 @@ export interface JournalUserInput {
   attachments?: PendingChatAttachment[];
 }
 
+export interface ChannelTurnState {
+  userEntry: TranscriptEntry;
+  assistantEntry?: Extract<TranscriptEntry, { kind: "assistant" }>;
+  latestReceipt?: Extract<TranscriptEntry, { kind: "delivery_receipt" }>;
+}
+
 export interface JournalRewindInput {
   anchorUserTurnId: string;
   disposition: "keep_user" | "replace_user";
@@ -330,6 +336,43 @@ export class ConversationJournalService {
   async buildModelContext(conversationId: string): Promise<MaterializedTranscript> {
     const snapshot = await this.store.read(conversationId);
     return buildModelContextFromCompactedView(snapshot.entries, this.runReader);
+  }
+
+  /**
+   * Read the durable state for one channel turn. This intentionally stays
+   * narrow: replay protection is derived from canonical journal order rather
+   * than an in-memory seen set or a second persistence protocol.
+   */
+  async getChannelTurnState(
+    conversationId: string,
+    input: { userTurnId: string; assistantTurnId: string },
+  ): Promise<ChannelTurnState | null> {
+    const snapshot = await this.store.read(conversationId);
+    const userEntry = snapshot.entries.find(
+      (entry) => entry.kind === "user" && entry.turnId === input.userTurnId,
+    );
+    if (!userEntry) return null;
+    const assistantEntry = snapshot.entries.find(
+      (entry): entry is Extract<TranscriptEntry, { kind: "assistant" }> =>
+        entry.kind === "assistant" && entry.turnId === input.assistantTurnId && entry.seq > userEntry.seq,
+    );
+    if (!assistantEntry) return { userEntry };
+    const receipts = snapshot.entries.filter(
+      (entry): entry is Extract<TranscriptEntry, { kind: "delivery_receipt" }> =>
+        entry.kind === "delivery_receipt" && entry.payload.assistantTurnId === input.assistantTurnId && entry.seq > assistantEntry.seq,
+    );
+    const latestReceipt = receipts.reduce<Extract<TranscriptEntry, { kind: "delivery_receipt" }> | undefined>(
+      (latest, entry) => {
+        if (!latest) return entry;
+        const revision = entry.payload.revision ?? entry.revision ?? 0;
+        const latestRevision = latest.payload.revision ?? latest.revision ?? 0;
+        return revision > latestRevision || (revision === latestRevision && entry.seq > latest.seq)
+          ? entry
+          : latest;
+      },
+      undefined,
+    );
+    return { userEntry, assistantEntry, ...(latestReceipt ? { latestReceipt } : {}) };
   }
 
   /** 记录外部渠道送达结果；失败回执只由模型投影合成为内部提示。 */

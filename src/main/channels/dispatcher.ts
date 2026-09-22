@@ -57,6 +57,14 @@ export interface ChannelConversationJournal {
   }): Promise<{ id: string }>;
   appendPresentation(conversationId: string, messageId: string, patchRevision: number, patch: Record<string, unknown>): Promise<unknown>;
   buildModelContext(conversationId: string): Promise<MaterializedTranscript>;
+  getChannelTurnState?(conversationId: string, input: {
+    userTurnId: string;
+    assistantTurnId: string;
+  }): Promise<{
+    userEntry: unknown;
+    assistantEntry?: unknown;
+    latestReceipt?: unknown;
+  } | null>;
   createRunSink(input: { conversationId: string; runId: string; assistantTurnId: string }): TranscriptSink;
   appendDeliveryReceipt(conversationId: string, input: {
     assistantTurnId: string;
@@ -202,6 +210,27 @@ export class ChannelDispatcher {
       at: msg.at.getTime(),
       attachments: toJournalAttachments(msg),
     });
+    const existingTurn = await journal.getChannelTurnState?.(target.conversationId, {
+      userTurnId: turnId,
+      assistantTurnId,
+    });
+    if (existingTurn?.assistantEntry) {
+      if (!existingTurn.latestReceipt) {
+        try {
+          await journal.appendDeliveryReceipt(target.conversationId, {
+            assistantTurnId,
+            channel: msg.channel,
+            status: "failed",
+            errorCode: "DELIVERY_UNCONFIRMED",
+            runId,
+            revision: 1,
+          });
+        } catch (error) {
+          console.warn(LOG, "重放补写渠道未确认回执失败，保持 fail-safe:", error);
+        }
+      }
+      return null;
+    }
     await journal.appendPresentation(target.conversationId, userEntry.id, 1, {
       content: msg.text,
       channelSource: {

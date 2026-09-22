@@ -3,6 +3,7 @@ import * as os from "node:os";
 import { describe, it, expect, vi } from "vitest";
 import {
   ChannelDispatcher,
+  makeChannelTurnId,
   makeSessionId,
   type DispatcherDeps,
 } from "./dispatcher";
@@ -738,5 +739,128 @@ describe("channels/dispatcher", () => {
       content: "看这个",
       channelSource: { channel: "qq", chatType: "group", senderName: "测试用户" },
     }));
+  });
+
+  function makeReplayJournal(options: {
+    finalStatus?: "delivered" | "failed";
+    failFinalReceipt?: boolean;
+    seedAssistant?: boolean;
+  } = {}) {
+    let seq = 0;
+    const entries: any[] = [];
+    const appendUser = vi.fn(async (_conversationId: string, input: { id?: string; turnId: string; text: string }) => {
+      const existing = entries.find((entry) => entry.kind === "user" && entry.turnId === input.turnId);
+      if (existing) return existing;
+      const entry = { seq: ++seq, id: input.id ?? `user:${input.turnId}`, kind: "user", turnId: input.turnId, revision: 1, payload: { text: input.text } };
+      entries.push(entry);
+      return entry;
+    });
+    const getChannelTurnState = vi.fn(async (_conversationId: string, input: { userTurnId: string; assistantTurnId: string }) => {
+      const userEntry = entries.find((entry) => entry.kind === "user" && entry.turnId === input.userTurnId);
+      if (!userEntry) return null;
+      const assistantEntry = entries.find((entry) => entry.kind === "assistant" && entry.turnId === input.assistantTurnId && entry.seq > userEntry.seq);
+      if (!assistantEntry) return { userEntry };
+      const receipts = entries.filter((entry) => entry.kind === "delivery_receipt" && entry.payload.assistantTurnId === input.assistantTurnId && entry.seq > assistantEntry.seq);
+      const latestReceipt = receipts.at(-1);
+      return { userEntry, assistantEntry, ...(latestReceipt ? { latestReceipt } : {}) };
+    });
+    const appendDeliveryReceipt = vi.fn(async (_conversationId: string, input: { assistantTurnId: string; status: string; errorCode?: string; revision?: number }) => {
+      if (options.failFinalReceipt && input.revision === 2) throw new Error("disk full");
+      entries.push({ seq: ++seq, id: `receipt:${input.assistantTurnId}:r${input.revision}`, kind: "delivery_receipt", revision: input.revision, payload: { ...input } });
+    });
+    const assistantTurnId = makeChannelTurnId(makeIncoming({ messageId: "replay-1" }), "assistant");
+    if (options.seedAssistant) {
+      const userTurnId = makeChannelTurnId(makeIncoming({ messageId: "replay-1" }), "user");
+      entries.push({ seq: ++seq, id: "seed-user", kind: "user", turnId: userTurnId, revision: 1, payload: { text: "已有用户" } });
+      entries.push({ seq: ++seq, id: "seed-assistant", kind: "assistant", turnId: assistantTurnId, payload: { role: "assistant", content: "已有回复" } });
+    }
+    const journal = {
+      appendUser,
+      getChannelTurnState,
+      appendPresentation: vi.fn(async () => undefined),
+      buildModelContext: vi.fn(async () => ({ messages: [], uncertainEffects: [], throughSeq: seq })),
+      createRunSink: vi.fn((input: { assistantTurnId: string }) => ({
+        appendAssistant: vi.fn(async () => {
+          entries.push({ seq: ++seq, id: `assistant:${input.assistantTurnId}`, kind: "assistant", turnId: input.assistantTurnId, payload: { role: "assistant", content: "回复" } });
+          return `assistant:${input.assistantTurnId}`;
+        }),
+        appendToolResult: vi.fn(async () => undefined),
+        closeInterruption: vi.fn(async () => undefined),
+        checkpoint: vi.fn(async () => undefined),
+      })),
+      appendDeliveryReceipt,
+    };
+    return { journal, entries, appendUser, getChannelTurnState, appendDeliveryReceipt };
+  }
+
+  it.each([
+    ["delivered", { finalStatus: "delivered" as const }],
+    ["failed", { finalStatus: "failed" as const }],
+  ])("重复入站在 %s 最终回执后不再次执行或发送", async (_name, options) => {
+    const replay = makeReplayJournal(options);
+    const agent = vi.fn(async (_msg: IncomingMessage, input: { transcriptSink: { appendAssistant: () => Promise<string> } }) => {
+      await input.transcriptSink.appendAssistant();
+      return { text: "回复", sticker: null };
+    });
+    const delivery = vi.fn(async () => options.finalStatus === "delivered"
+      ? { ok: true as const }
+      : { ok: false as const, error: "offline" });
+    const dispatcher = makeDispatcher({ journal: replay.journal as never, buildAndRunAgent: agent as never, delivery: { send: delivery } });
+    const message = makeIncoming({ messageId: "replay-1" });
+
+    await dispatcher.handleIncoming(message);
+    await dispatcher.handleIncoming(message);
+
+    expect(agent).toHaveBeenCalledOnce();
+    expect(delivery).toHaveBeenCalledOnce();
+    expect(replay.entries.filter((entry) => entry.kind === "assistant")).toHaveLength(1);
+  });
+
+  it("重复入站遇到最终回执写失败时只保留未确认，不再次执行或发送", async () => {
+    const replay = makeReplayJournal({ finalStatus: "delivered", failFinalReceipt: true });
+    const agent = vi.fn(async (_msg: IncomingMessage, input: { transcriptSink: { appendAssistant: () => Promise<string> } }) => {
+      await input.transcriptSink.appendAssistant();
+      return { text: "回复", sticker: null };
+    });
+    const delivery = vi.fn(async () => ({ ok: true as const }));
+    const dispatcher = makeDispatcher({ journal: replay.journal as never, buildAndRunAgent: agent as never, delivery: { send: delivery } });
+
+    await dispatcher.handleIncoming(makeIncoming({ messageId: "replay-1" }));
+    await dispatcher.handleIncoming(makeIncoming({ messageId: "replay-1" }));
+
+    expect(agent).toHaveBeenCalledOnce();
+    expect(delivery).toHaveBeenCalledOnce();
+    expect(replay.appendDeliveryReceipt).toHaveBeenCalledTimes(2);
+  });
+
+  it("已有 assistant 但没有 receipt 时只补 unconfirmed，不重跑或发送", async () => {
+    const replay = makeReplayJournal({ seedAssistant: true });
+    const agent = vi.fn(async () => ({ text: "不应执行", sticker: null }));
+    const delivery = vi.fn(async () => ({ ok: true as const }));
+    const dispatcher = makeDispatcher({ journal: replay.journal as never, buildAndRunAgent: agent as never, delivery: { send: delivery } });
+
+    await dispatcher.handleIncoming(makeIncoming({ messageId: "replay-1" }));
+
+    expect(agent).not.toHaveBeenCalled();
+    expect(delivery).not.toHaveBeenCalled();
+    expect(replay.appendDeliveryReceipt).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+      errorCode: "DELIVERY_UNCONFIRMED", revision: 1,
+    }));
+  });
+
+  it("只有 user 轨迹时允许恢复一次模型处理", async () => {
+    const replay = makeReplayJournal();
+    const agent = vi.fn(async (_msg: IncomingMessage, input: { transcriptSink: { appendAssistant: () => Promise<string> } }) => {
+      await input.transcriptSink.appendAssistant();
+      return { text: "恢复", sticker: null };
+    });
+    const delivery = vi.fn(async () => ({ ok: true as const }));
+    const dispatcher = makeDispatcher({ journal: replay.journal as never, buildAndRunAgent: agent as never, delivery: { send: delivery } });
+
+    await dispatcher.handleIncoming(makeIncoming({ messageId: "replay-1" }));
+
+    expect(agent).toHaveBeenCalledOnce();
+    expect(delivery).toHaveBeenCalledOnce();
+    expect(replay.entries.filter((entry) => entry.kind === "assistant")).toHaveLength(1);
   });
 });
