@@ -60,7 +60,7 @@ jobs:
           import { expect, it, vi } from "vitest"
 
           const electronMock = vi.hoisted(() => ({
-            userDataDir: fs.mkdtempSync(path.join(os.tmpdir(), "race-overlap-")),
+            userDataDir: "",
           }))
           const exporterMock = vi.hoisted(() => ({
             notifyMemoryChanged: vi.fn(),
@@ -75,6 +75,7 @@ jobs:
           }))
 
           it("starts repeated store saves", async () => {
+            electronMock.userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "race-overlap-"))
             vi.resetModules()
             const { memoryStore } = await import("./memory-store")
             const writes = Number(process.env.WRITES)
@@ -95,6 +96,15 @@ jobs:
             expect((await memoryStore.getAllL2()).length).toBe(writes)
           })
           EOF
+
+          # Vitest's default sequencer tends to run larger files first. Pad the
+          # companion so it deterministically executes before memory-manager.test.ts,
+          # matching the real failing memory-store -> manager order.
+          python - <<'PY'
+          p = "src/main/memory/vitest-race-companion.test.ts"
+          with open(p, "a", encoding="utf-8") as f:
+              f.write("\n/* " + ("prime " * 12000) + " */\n")
+          PY
 
       - name: Run manager with overlap companion
         env:
