@@ -1,4 +1,4 @@
-name: Vitest resetModules worker isolation probe
+name: Vitest resetModules companion-file bisect
 
 on:
   push:
@@ -11,7 +11,46 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        workers: [1, 4]
+        include:
+          - group: A
+            files: >-
+              src/main/memory/l2-dmae-manager.test.ts
+              src/main/memory/memory-audit.test.ts
+              src/main/memory/memory-compression-transaction.test.ts
+              src/main/memory/memory-conflict-score.test.ts
+              src/main/memory/memory-conflict.test.ts
+              src/main/memory/memory-judge.test.ts
+              src/main/memory/memory-llm-client.test.ts
+              src/main/memory/memory-rag-reconciliation.test.ts
+          - group: B
+            files: >-
+              src/main/memory/memory-resolver.test.ts
+              src/main/memory/memory-scheduler.test.ts
+              src/main/memory/memory-schemas.test.ts
+              src/main/memory/memory-store-dmae.test.ts
+              src/main/memory/memory-store-io.test.ts
+              src/main/memory/memory-store-migrations.test.ts
+              src/main/memory/memory-store.test.ts
+              src/main/memory/obsidian-exporter.test.ts
+          - group: C
+            files: >-
+              src/main/memory/obsidian-importer-loop.test.ts
+              src/main/memory/obsidian-importer-watcher.test.ts
+              src/main/memory/obsidian-importer.test.ts
+              src/main/memory/recent-injected-memory.test.ts
+              src/main/rag/chunk.test.ts
+              src/main/rag/document-cache.test.ts
+              src/main/rag/document-index-ipc.test.ts
+              src/main/rag/document-index-queue.test.ts
+          - group: D
+            files: >-
+              src/main/rag/document-index-worker.test.ts
+              src/main/rag/embedding-diagnostics.test.ts
+              src/main/rag/embedding-dimension.test.ts
+              src/main/rag/file-ingest.test.ts
+              src/main/rag/index.test.ts
+              src/main/rag/model-status.test.ts
+              src/main/rag/retriever.test.ts
     steps:
       - uses: actions/checkout@v4
 
@@ -20,26 +59,23 @@ jobs:
           node-version: 24
           cache: npm
 
-      - name: Install project dependencies
+      - name: Install dependencies
         run: npm ci
 
-      - name: Force Vitest 5.0.1
-        run: npm install --no-save --package-lock=false vitest@5.0.1
-
-      - name: Configure worker count
-        env:
-          WORKERS: ${{ matrix.workers }}
+      - name: Make run deterministic
         shell: bash
         run: |
           node - <<'EOF'
           const fs = require("fs")
           const p = "vitest.config.ts"
-          const workers = Number(process.env.WORKERS)
           let s = fs.readFileSync(p, "utf8")
-          s = s.replace("maxWorkers: 4,", `maxWorkers: ${workers},`)
-          s = s.replace("fileParallelism: true,", `fileParallelism: ${workers === 1 ? "false" : "true"},`)
+          s = s.replace("maxWorkers: 4,", "maxWorkers: 1,")
+          s = s.replace("fileParallelism: true,", "fileParallelism: false,")
           fs.writeFileSync(p, s)
           EOF
 
-      - name: Run real memory + rag shard
-        run: npx vitest run src/main/memory src/main/rag
+      - name: Run target with companion group ${{ matrix.group }}
+        env:
+          FILES: ${{ matrix.files }}
+        shell: bash
+        run: npx vitest run src/main/memory/memory-manager.test.ts $FILES
