@@ -111,6 +111,7 @@ import { createLifecyclePublisher } from "../plugin-host/lifecycle-publisher";
 import { createPendingTurnLifecycle } from "../plugin-host/pending-turn-lifecycle";
 import { startPluginRuntime } from "../plugin-runtime";
 import { createAgentRuntime } from "../orchestrator/agent-runtime";
+import { reconcileCrashedInterruptions } from "../orchestrator/conversation-interruption-reconciliation";
 import { createRuntimeStateService } from "../orchestrator/runtime-state-service";
 import { createTranscriptCompactorGetter } from "./transcript-compaction-wiring";
 import { createProactiveLifecycle } from "../proactive/proactive-lifecycle";
@@ -309,6 +310,20 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
         });
         // 主动聊天服务初始化是纯装配；触发器由 background 阶段启动
         proactiveLifecycle.initializeProactiveChatService();
+
+        // 崩溃对账：启动时对进程崩溃遗留的 interrupted run 幂等补写 crashed 中断边界。
+        // 异步、失败仅日志，不阻塞启动关键路径；两 store 单例在此刻均已就绪。
+        void reconcileCrashedInterruptions({
+          runStore: getHarnessRunStore(app.getPath("userData")),
+          transcriptStore: getConversationTranscriptStore(app.getPath("userData")),
+          now: Date.now,
+        }).then((result) => {
+          if (result.written > 0) {
+            console.log(`[CrashReconcile] 补写 ${result.written} 条崩溃边界，跳过 ${result.skipped} 个已有边界的中断 run`);
+          }
+        }).catch((error) => {
+          console.error("[CrashReconcile] 崩溃对账失败（仅日志，不阻塞启动）:", error);
+        });
 
         const ttsSessionService = new TtsSessionService((request, signal, emit) =>
           ttsSynthesisService.synthesizeSession(request, signal, emit),

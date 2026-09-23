@@ -50,7 +50,6 @@ export interface HarnessRunSession {
   createdAt: number;
   updatedAt: number;
   completedAt?: number;
-  resumedFromRunId?: string;
 }
 
 export interface CreateHarnessRunInput {
@@ -60,7 +59,6 @@ export interface CreateHarnessRunInput {
   request: HarnessRequestSnapshot;
   state?: AgentState;
   cache?: HarnessCacheState;
-  resumedFromRunId?: string;
 }
 
 export interface HarnessRunCheckpoint {
@@ -163,7 +161,6 @@ export class HarnessRunStore {
       rounds: 0,
       cache: clone(input.cache ?? INITIAL_HARNESS_CACHE_STATE),
       request: clone(input.request),
-      ...(input.resumedFromRunId ? { resumedFromRunId: input.resumedFromRunId } : {}),
       createdAt: now,
       updatedAt: now,
     };
@@ -175,13 +172,6 @@ export class HarnessRunStore {
   get(runId: string): HarnessRunSession | null {
     const session = this.read(runId);
     return session ? clone(session) : null;
-  }
-
-  getLatestInterrupted(conversationId: string): HarnessRunSession | null {
-    const row = [...this.index.values()]
-      .filter((candidate) => candidate.conversationId === conversationId && candidate.status === "interrupted")
-      .sort((left, right) => right.updatedAt - left.updatedAt)[0];
-    return row ? this.get(row.runId) : null;
   }
 
   checkpoint(runId: string, patch: HarnessRunCheckpoint): HarnessRunSession {
@@ -244,6 +234,22 @@ export class HarnessRunStore {
       this.index.delete(row.runId);
     }
     this.writeIndexNow();
+  }
+
+  /**
+   * 崩溃对账的数据源：返回全部 status=="interrupted" 的 run session。
+   * interrupted 只由 initialize() 在启动时把滞留的 running 翻转而来
+   * （正常终态都走 markTerminal），因此该集合即「进程崩溃遗留」的穷尽集合。
+   */
+  listInterruptedRuns(): HarnessRunSession[] {
+    const sessions: HarnessRunSession[] = [];
+    for (const [runId, row] of this.index) {
+      if (row.status !== "interrupted") continue;
+      const session = this.read(runId);
+      if (session) sessions.push(session);
+    }
+    // 稳定排序：避免并发初始化因遍历顺序不同产生不同的对账写入顺序
+    return sessions.sort((left, right) => left.createdAt - right.createdAt);
   }
 
   private initialize(): void {

@@ -83,7 +83,33 @@ describe("HarnessRunStore", () => {
     const restarted = new HarnessRunStore(root);
 
     expect(restarted.get("run-1")).toMatchObject({ status: "interrupted", runId: "run-1" });
-    expect(restarted.getLatestInterrupted("chat-1")?.runId).toBe("run-1");
+  });
+
+  it("listInterruptedRuns 只返回崩溃遗留的 interrupted run，排除终态 run", () => {
+    const { root, store } = createStore();
+    // run-1 正常完成（终态，不应出现在崩溃对账集合）
+    createRun(store); // run-1
+    store.markTerminal("run-1", "completed");
+    // run-2 以 running 留存在磁盘（模拟进程崩溃遗留）
+    store.create({
+      conversationId: "chat-1",
+      runId: "run-2",
+      messages: [{ role: "user", content: "再次整理" }],
+      request: {
+        provider: "openai", model: "test-model", contextWindowTokens: 128_000,
+        mode: "work", promptFingerprint: "p1", toolSchemaFingerprint: "t1",
+      },
+    });
+
+    // 重启：finished 保持，running 翻转为 interrupted
+    const restored = new HarnessRunStore(root);
+    const interrupted = restored.listInterruptedRuns();
+    expect(interrupted.map((session) => session.runId)).toEqual(["run-2"]);
+    expect(interrupted.every((session) => session.status === "interrupted")).toBe(true);
+
+    // 崩溃对账是幂等定位源：再次实例化仍返回同一崩溃集合
+    const again = new HarnessRunStore(root).listInterruptedRuns();
+    expect(again.map((session) => session.runId)).toEqual(["run-2"]);
   });
 
   it("returns isolated snapshots and keeps a lifecycle journal", () => {

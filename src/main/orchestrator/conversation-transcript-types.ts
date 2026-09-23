@@ -223,7 +223,7 @@ export type TranscriptEntry =
     })
   | (TranscriptEnvelopeBase & {
       kind: "interruption";
-      payload: { reason: "user_cancel" | "runtime_error" };
+      payload: { reason: "user_cancel" | "runtime_error" | "crashed" };
     })
   | (TranscriptEnvelopeBase & {
       kind: "turn_rewind";

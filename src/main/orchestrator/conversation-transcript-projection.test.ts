@@ -405,6 +405,38 @@ describe("conversation transcript projection", () => {
     expect(notes[0].content).not.toContain("用户主动停止");
   });
 
+  it("crashed 中断提示使用崩溃语义，且与取消/系统错误文案可区分", () => {
+    nextSeq = 0;
+    const entries: TranscriptEntry[] = [
+      user("u1", "question"),
+      assistant("a1", "partial"),
+      {
+        seq: ++nextSeq,
+        id: "run-crash:interruption:crashed",
+        at: nextSeq,
+        kind: "interruption",
+        runId: "run-crash",
+        payload: { reason: "crashed" },
+      },
+      user("u2", "继续"),
+    ];
+    const model = buildFullModelContext(entries, noRuns);
+    const notes = model.messages.filter((message) => message.visibility === "internal");
+    expect(notes).toHaveLength(1);
+    expect(notes[0].content).toContain("应用崩溃");
+    expect(notes[0].content).toContain("未完整结束");
+    expect(notes[0].content).not.toContain("用户主动停止");
+    expect(notes[0].content).not.toContain("系统错误");
+    expect(notes[0].internal).toMatchObject({
+      kind: "recovery",
+      digest: "interruption:crashed",
+      id: "interruption-note:run-crash:interruption:crashed",
+      runId: "run-crash",
+    });
+    // 提示紧贴在崩溃后的第一个 user 之前
+    expect(model.messages[model.messages.indexOf(notes[0]) + 1]).toEqual({ role: "user", content: "继续" });
+  });
+
   it("中断后的 user 产生 assistant 即闭合：后续轮次不再注入提示", () => {
     nextSeq = 0;
     const entries: TranscriptEntry[] = [

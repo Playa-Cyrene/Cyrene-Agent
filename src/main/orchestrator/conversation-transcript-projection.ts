@@ -318,7 +318,9 @@ function interruptionNotesWithSources(
         visibility: "internal",
         content: entry.payload.reason === "user_cancel"
           ? "上一轮由用户主动停止，未完整结束。不要自行延续上一轮；以用户最新消息为准。"
-          : "上一轮因系统错误未完整结束，没有生成完整回答。请结合用户最新消息决定是否继续。",
+          : entry.payload.reason === "crashed"
+            ? "上一轮因应用崩溃未完整结束。请基于现有记录与用户最新消息决定如何继续。"
+            : "上一轮因系统错误未完整结束，没有生成完整回答。请结合用户最新消息决定是否继续。",
         internal: {
           kind: "recovery",
           revision: 1,

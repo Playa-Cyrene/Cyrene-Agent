@@ -221,6 +221,24 @@ describe("ConversationTranscriptStore", () => {
     expect((await store.read("c1")).entries.map((entry) => entry.id)).toEqual(["e1"]);
   });
 
+  it("interruption 边界接受 user_cancel / runtime_error / crashed 三种 reason", async () => {
+    const { store } = createStore();
+    for (const reason of ["user_cancel", "runtime_error", "crashed"] as const) {
+      await store.append("c1", {
+        id: `c1:interruption:${reason}`,
+        at: 1_000,
+        kind: "interruption",
+        runId: "run-1",
+        payload: { reason },
+      });
+    }
+    const snapshot = await store.read("c1");
+    const interruptions = snapshot.entries.filter((entry) => entry.kind === "interruption");
+    expect(interruptions.map((entry) => entry.payload.reason)).toEqual([
+      "user_cancel", "runtime_error", "crashed",
+    ]);
+  });
+
   it("rejects malformed canonical user and assistant rows", async () => {
     const { store, jsonlPath } = createStore();
     await store.append("c1", userDraft("e1", "u1", 1, "one"));
