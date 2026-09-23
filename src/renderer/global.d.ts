@@ -62,7 +62,15 @@ interface SettingsWindowApi {
   getToolModeOverrides: () => Promise<unknown>;
   getGeneral: () => Promise<unknown>;
   setToolModeOverride: (toolId: string, mode: string, next: boolean) => Promise<unknown>;
+  // MCP 服务器管理（设置页 MCP 面板用）
+  addMcpServer: (config: import("./settings/shared/types").McpServerConfigView) => Promise<{ ok: boolean; toolIds?: string[]; error?: string }>;
+  removeMcpServer: (serverId: string) => Promise<{ ok: boolean; error?: string }>;
+  listMcpServers: () => Promise<Array<{ id: string; name: string; connected: boolean; toolCount: number; toolIds: string[] }>>;
+  listMcpServerConfigs: () => Promise<import("./settings/shared/types").McpServerConfigView[]>;
   saveGeneral: (payload: Record<string, unknown>) => Promise<unknown>;
+  getPermissionLevel: () => Promise<{ level: string }>;
+  setPermissionLevel: (level: string) => Promise<{ ok: boolean; level?: string; error?: string }>;
+  openChromeGpu: () => void;
   pickUiFont: () => Promise<string | null>;
   importUiFont: (sourcePath: string) => Promise<import("../shared/ui-font").UiFont>;
   resetUiFont: () => Promise<import("../shared/ui-font").UiFont>;
@@ -71,6 +79,49 @@ interface SettingsWindowApi {
   setPetAlwaysOnTop: (value: boolean) => void;
   setPetVisible: (value: boolean) => void;
   setPetZoom: (value: number) => void;
+  listModelProfiles: () => Promise<{ profiles: Array<{
+    id: string;
+    provider: string;
+    displayName?: string;
+    baseUrl: string;
+    model: string;
+    apiKey: string;
+    explicitTransport?: import("../shared/api-endpoint").ApiTransport;
+    reasoning?: import("../shared/reasoning").ReasoningPreference;
+    contextWindowTokens?: number;
+    multimodal?: boolean;
+  }>; defaultModelProfileId?: string }>;
+  saveModelProfile: (profile: {
+    id?: string;
+    provider: string;
+    displayName?: string;
+    baseUrl: string;
+    model: string;
+    apiKey: string;
+    explicitTransport?: import("../shared/api-endpoint").ApiTransport;
+    reasoning?: import("../shared/reasoning").ReasoningPreference;
+    contextWindowTokens?: number;
+    multimodal?: boolean;
+  }) => Promise<{ added: boolean; profiles: unknown[]; defaultModelProfileId?: string }>;
+  deleteModelProfile: (id: string) => Promise<unknown>;
+  setDefaultModelProfile: (id: string) => Promise<unknown>;
+  getConfig: () => Promise<{
+    vision?: { baseUrl: string; apiKey: string; model: string };
+    thinkingOverride?: -1 | 0 | 1;
+    disableMaxToken?: boolean;
+  }>;
+  saveConfig: (config: Record<string, unknown>) => Promise<unknown>;
+  testConnection: (config: {
+    provider: string;
+    baseUrl: string;
+    model: string;
+    apiKey: string;
+    explicitTransport?: import("../shared/api-endpoint").ApiTransport;
+    reasoning?: import("../shared/reasoning").ReasoningPreference;
+  }) => Promise<{ ok: boolean; latency?: number; sample?: string; error?: string }>;
+  testVision: (config: { baseUrl: string; apiKey: string; model: string }) => Promise<{ ok: boolean; latency?: number; sample?: string; error?: string }>;
+  getTimeoutSettings: () => Promise<import("../shared/timeout-types").TimeoutSettings>;
+  saveTimeoutSettings: (config: Partial<import("../shared/timeout-types").TimeoutSettings>) => Promise<import("../shared/timeout-types").TimeoutSettings>;
 }
 
 declare global {
@@ -86,6 +137,11 @@ declare global {
     toast?: ToastRendererApi;
     chat?: ChatWindowApi;
     settings?: SettingsWindowApi;
+    memoryPanel?: import("./settings/shared/types").MemoryPanelApi;
+    tts?: {
+      loadSettings: () => Promise<Record<string, unknown>>;
+      saveSettings: (patch: Record<string, unknown>) => Promise<unknown>;
+    };
   }
 }
 

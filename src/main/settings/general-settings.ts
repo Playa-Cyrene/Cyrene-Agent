@@ -128,6 +128,8 @@ export interface GeneralSettings extends ChatAppearanceSettings {
   travelEnabled: boolean;
   /** 🖥️ 浏览器自动化（Playwright MCP）是否启用。默认 false，需用户手动开启。 */
   playwrightMcpEnabled: boolean;
+  /** 📁 文件系统 MCP（官方 server-filesystem，允许目录为下载文件夹）是否启用。默认 false。 */
+  filesystemMcpEnabled: boolean;
   // 联网搜索：选哪个搜索源 + 对应 key
   searchEngine: "off" | "bocha" | "tavily" | "minimax" | "anySearch";
   searchBochaKey: string;

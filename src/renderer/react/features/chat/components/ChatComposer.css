@@ -532,3 +532,31 @@
 .cy-model-selector__menu button { border: 0; background: transparent; text-align: left; padding: 8px; border-radius: 8px; cursor: pointer; display: grid; gap: 2px; }
 .cy-model-selector__menu button:hover { background: #fff0f5; }
 .cy-model-selector__menu small { color: #8d7c83; }
+
+/* 聊天功能栏沿用设置页的界面字体与文字对比；消息 Markdown 保持独立排版。 */
+.cy-composer-shell .cy-composer__footer-button,
+.cy-composer-shell .cy-composer__agent-button,
+.cy-composer-shell .cy-composer__icon-button {
+  color: #0d0d0d;
+  font-family: var(--rb-font-ui, ui-sans-serif, system-ui, sans-serif);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.cy-composer-shell .cy-composer__footer-button:hover,
+.cy-composer-shell .cy-composer__agent-button:hover,
+.cy-composer-shell .cy-composer__icon-button:hover {
+  color: var(--cy-accent);
+}
+
+.cy-composer-shell .cy-composer__footer-button:disabled,
+.cy-composer-shell .cy-composer__icon-button:disabled {
+  color: #828282;
+}
+
+.cy-queue-dock__header,
+.cy-queue-dock__content {
+  color: #0d0d0d;
+  font-family: var(--rb-font-ui, ui-sans-serif, system-ui, sans-serif);
+}

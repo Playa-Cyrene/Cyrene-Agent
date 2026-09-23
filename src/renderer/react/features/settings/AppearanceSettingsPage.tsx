@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Alert, Button, Slider, Spin, Switch } from "antd";
-import { ArrowLeft, Monitor, Palette, Type } from "lucide-react";
+import { ArrowLeft, Boxes, Brain, Headphones, Heart, Monitor, Palette, Settings2, Type, Wrench } from "lucide-react";
+import { MCP } from "@lobehub/icons";
 import { normalizeUiFont, type UiFont } from "../../../../shared/ui-font";
 import { normalizeUiIcon, UI_ICON_PRESETS, type UiIcon } from "../../../../shared/ui-icon";
 import { normalizeWindowCornerRadius } from "../../../../shared/window-corner-radius";
@@ -8,6 +9,13 @@ import { useTranslation } from "../../i18n";
 import { applyWindowCornerRadius } from "../../../ui/window-corner-radius";
 import { WindowControls } from "../../components/ui/WindowControls";
 import { PreferencesSettingsPanel } from "./PreferencesSettingsPanel";
+import { GeneralSettingsPanel } from "./GeneralSettingsPanel";
+import { ModelSettingsPanel } from "./ModelSettingsPanel";
+import { ToolSettingsPanel } from "./ToolSettingsPanel";
+import { MemorySettingsPanel } from "./MemorySettingsPanel";
+import { CyreneSettingsPanel } from "./CyreneSettingsPanel";
+import { AsrSettingsPanel } from "./AsrSettingsPanel";
+import { McpSettingsPanel } from "./McpSettingsPanel";
 import settingsLogoUrl from "../../../settings/100.png";
 import "../../components/ui/WindowControls.css";
 import "./AppearanceSettingsPage.css";
@@ -57,8 +65,8 @@ function readAppearance(value: unknown): AppearanceValues {
 }
 
 export interface AppearanceSettingsPageProps {
-  section: "appearance" | "preferences";
-  onSelectSection: (section: "appearance" | "preferences") => void;
+  section: "appearance" | "preferences" | "models" | "general" | "tools" | "memory" | "cyrene" | "asr" | "mcp";
+  onSelectSection: (section: "appearance" | "preferences" | "models" | "general" | "tools" | "memory" | "cyrene" | "asr" | "mcp") => void;
   onBackToWorkspace: () => void;
 }
 
@@ -184,6 +192,15 @@ export function AppearanceSettingsPage({ section, onSelectSection, onBackToWorks
         </Button>
         <div className="cy-settings-sidebar__group-title">{t("settingsPage.basicSettings")}</div>
         <Button
+          className={`cy-settings-nav-item ${section === "models" ? "is-active" : ""}`}
+          type="text"
+          icon={<Boxes size={16} />}
+          aria-current={section === "models" ? "page" : undefined}
+          onClick={() => onSelectSection("models")}
+        >
+          {t("settingsPage.modelSettings.title")}
+        </Button>
+        <Button
           className={`cy-settings-nav-item ${section === "appearance" ? "is-active" : ""}`}
           type="text"
           icon={<Palette size={16} />}
@@ -201,12 +218,68 @@ export function AppearanceSettingsPage({ section, onSelectSection, onBackToWorks
         >
           {t("settingsPage.preferencesLabel")}
         </Button>
+        <Button
+          className={`cy-settings-nav-item ${section === "general" ? "is-active" : ""}`}
+          type="text"
+          icon={<Settings2 size={16} />}
+          aria-current={section === "general" ? "page" : undefined}
+          onClick={() => onSelectSection("general")}
+        >
+          {t("settingsPage.general.title")}
+        </Button>
+        <div className="cy-settings-sidebar__group-title cy-settings-sidebar__group-title--spaced">{t("settingsPage.agentAbilities")}</div>
+        <Button
+          className={`cy-settings-nav-item ${section === "memory" ? "is-active" : ""}`}
+          type="text"
+          icon={<Brain size={16} />}
+          aria-current={section === "memory" ? "page" : undefined}
+          onClick={() => onSelectSection("memory")}
+        >
+          {t("settingsPage.memory.title")}
+        </Button>
+        <Button
+          className={`cy-settings-nav-item ${section === "cyrene" ? "is-active" : ""}`}
+          type="text"
+          icon={<Heart size={16} />}
+          aria-current={section === "cyrene" ? "page" : undefined}
+          onClick={() => onSelectSection("cyrene")}
+        >
+          {t("settingsPage.cyrene.title")}
+        </Button>
+        <Button
+          className={`cy-settings-nav-item ${section === "tools" ? "is-active" : ""}`}
+          type="text"
+          icon={<Wrench size={16} />}
+          aria-current={section === "tools" ? "page" : undefined}
+          onClick={() => onSelectSection("tools")}
+        >
+          {t("settingsPage.tools.title")}
+        </Button>
+        <Button
+          className={`cy-settings-nav-item ${section === "mcp" ? "is-active" : ""}`}
+          type="text"
+          icon={<MCP size={16} />}
+          aria-current={section === "mcp" ? "page" : undefined}
+          onClick={() => onSelectSection("mcp")}
+        >
+          {t("settingsPage.mcp.menuLabel")}
+        </Button>
+        <div className="cy-settings-sidebar__group-title cy-settings-sidebar__group-title--spaced">{t("settingsPage.voiceAbilities")}</div>
+        <Button
+          className={`cy-settings-nav-item ${section === "asr" ? "is-active" : ""}`}
+          type="text"
+          icon={<Headphones size={16} />}
+          aria-current={section === "asr" ? "page" : undefined}
+          onClick={() => onSelectSection("asr")}
+        >
+          {t("settingsPage.asr.title")}
+        </Button>
         <div className="cy-settings-sidebar__footer">{t("settingsPage.moreSettingsLater")}</div>
       </aside>
 
       <main className="cy-workspace is-empty cy-settings-content">
         <div className="cy-settings-content__inner">
-          {section === "preferences" ? <PreferencesSettingsPanel /> : <>
+          {section === "preferences" ? <PreferencesSettingsPanel /> : section === "models" ? <ModelSettingsPanel /> : section === "general" ? <GeneralSettingsPanel /> : section === "tools" ? <ToolSettingsPanel /> : section === "memory" ? <MemorySettingsPanel /> : section === "cyrene" ? <CyreneSettingsPanel /> : section === "asr" ? <AsrSettingsPanel /> : section === "mcp" ? <McpSettingsPanel /> : <>
             <h1>{t("settingsPage.appearance")}</h1>
             <p className="cy-settings-intro">{t("settingsPage.description")}</p>
 

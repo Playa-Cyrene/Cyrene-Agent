@@ -102,6 +102,7 @@ const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
   amapKey: "",
   travelEnabled: false,
   playwrightMcpEnabled: false,
+  filesystemMcpEnabled: false,
   searchEngine: "off",
   searchBochaKey: "",
   searchTavilyKey: "",
@@ -277,6 +278,7 @@ export function normalizeGeneralSettings(
     amapKey: typeof input?.amapKey === "string" ? input.amapKey : "",
     travelEnabled: Boolean(input?.travelEnabled),
     playwrightMcpEnabled: Boolean(input?.playwrightMcpEnabled),
+    filesystemMcpEnabled: Boolean(input?.filesystemMcpEnabled),
     searchEngine: ["off", "bocha", "tavily", "minimax", "anySearch"].includes(String(input?.searchEngine))
       ? (input!.searchEngine as "off" | "bocha" | "tavily" | "minimax" | "anySearch")
       : "off",

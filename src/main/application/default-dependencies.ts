@@ -80,7 +80,7 @@ import {
   type PlanStateSnapshot,
 } from "../orchestrator/plan-mode";
 import { initMcpManager, pruneMcpServersByIds } from "../orchestrator/mcp-manager";
-import { syncPlaywrightMcp, REMOVED_BUILTIN_MCP_IDS } from "../sync-mcp-builtin";
+import { syncPlaywrightMcp, syncFilesystemMcp, REMOVED_BUILTIN_MCP_IDS } from "../sync-mcp-builtin";
 import { registerAppUpdateIpc } from "../updater/app-update-ipc";
 import { createGitHubAppUpdateService, scheduleStartupUpdateCheck } from "../updater/github-app-updater";
 import { registerWindowSystemIpc } from "../windows/window-system-ipc";
@@ -180,7 +180,7 @@ async function reconcileUserMemoryIndex(): Promise<void> {
 }
 
 /**
- * 启动崩溃恢复：扫描 userData/plans/*/state.json，把中断的非 NORMAL 会话还原。
+ * 启动崩溃恢复：扫描 userData/plans/各会话目录/state.json，把中断的非 NORMAL 会话还原。
  * 只恢复事实不恢复执行权——统一降级 PLAN_DISCUSSING，REVIEW/EXECUTING 来源
  * 由 [PLAN_RECOVERY] 注入中断事实，模型先查证工作区再修订计划重新审批。
  * 快照的会话键取自文件内容（原始 conversationId），目录名只是物理位置；
@@ -534,9 +534,10 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
           agentRuntime: runtime,
           // 插件启停后让调度引擎重新归一化逾期任务并重排计时器（不补跑）。
           onPluginRunningStateChange: () => scheduler.engine.refreshPluginTasks(),
-          // 面板宿主窗口（首版=设置窗口）：settingsWindow 为 CJS live-binding，
-          // 必须在请求时刻读取
-          getPanelHostWebContents: () => settingsWindow?.webContents ?? null,
+          // 两种设置界面都能承载插件面板；窗口引用须在请求时刻读取。
+          getPanelHostWebContents: () => [settingsWindow, reactChatWindow]
+            .filter((window) => window && !window.isDestroyed())
+            .map((window) => window!.webContents),
         });
         return pluginManager;
       },
@@ -583,6 +584,7 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
           embeddingIndexService: services.embedding,
           syncVolcanoSearchMcp,
           syncPlaywrightMcp,
+          syncFilesystemMcp,
         });
 
         registerMemoryUserToolIpc({
@@ -725,8 +727,12 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
         }
       },
       syncBuiltInMcp: async () => {
-        // 内置 MCP 自动连接：Playwright（默认关闭，选项控制）
+        // 内置 MCP 自动连接：Playwright / Filesystem（均默认关闭，选项控制）
         await syncPlaywrightMcp(loadGeneralSettings());
+        await syncFilesystemMcp({
+          filesystemMcpEnabled: loadGeneralSettings().filesystemMcpEnabled,
+          allowedDir: app.getPath("downloads"),
+        });
       },
       restoreMcp: (signal) => initMcpManager({ signal }),
       reconcileMemory: async (signal) => {

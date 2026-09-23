@@ -412,6 +412,7 @@ const settingsApi = {
   addMcpServer: (config: unknown) => ipcRenderer.invoke(IPC.MCP_ADD_SERVER, config),
   removeMcpServer: (serverId: string) => ipcRenderer.invoke(IPC.MCP_REMOVE_SERVER, serverId),
   listMcpServers: () => ipcRenderer.invoke(IPC.MCP_LIST_SERVERS),
+  listMcpServerConfigs: () => ipcRenderer.invoke(IPC.MCP_LIST_SERVER_CONFIGS),
   // 多渠道（微信/飞书/QQ/QQ 机器人）
   channelsGetConfig: () => ipcRenderer.invoke(IPC.CHANNELS_GET_CONFIG),
   channelsSaveConfig: (patch: unknown) => ipcRenderer.invoke(IPC.CHANNELS_SAVE_CONFIG, patch),

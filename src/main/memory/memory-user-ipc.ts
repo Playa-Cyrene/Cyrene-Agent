@@ -8,7 +8,7 @@ import { addUserSticker, deleteUserSticker } from "../sticker-storage";
 import { loadMemoryPanelData } from "./panel";
 import { deleteImportedDoc } from "../rag";
 import { loadUserProfile, saveUserProfile, getAvatarPath } from "../settings-store";
-import { addMcpServer, removeMcpServer, listMcpServers } from "../orchestrator/mcp-manager";
+import { addMcpServer, removeMcpServer, listMcpServers, listMcpServerConfigs } from "../orchestrator/mcp-manager";
 import { toolRegistry } from "../orchestrator/tools/registry/tool-registry";
 import type { ConversationMode } from "../../shared/chat-types";
 import { loadGeneralSettings, saveGeneralSettings } from "../settings/settings-facade";
@@ -273,6 +273,11 @@ export function registerMemoryUserToolIpc(deps: MemoryUserToolIpcDependencies): 
     const servers = listMcpServers();
     console.log("[MCP IPC] list-servers:", servers.length + " servers");
     return servers;
+  });
+
+  // 持久化配置（含连接失败的），设置页列表以此为准
+  ipc.handle(IPC.MCP_LIST_SERVER_CONFIGS, () => {
+    return listMcpServerConfigs();
   });
 
   // Tool toggles

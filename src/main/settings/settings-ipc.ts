@@ -25,7 +25,7 @@ import { normalizeModelSettings, getPublicModelConfig, listSavedModelProfiles, s
 import type { ModelSettings } from "./model-settings";
 import { getTimeoutSettings, saveTimeoutSettings } from "../timeout-manager";
 import type { syncVolcanoSearchMcp } from "./general-settings-lifecycle";
-import type { syncPlaywrightMcp } from "../sync-mcp-builtin";
+import type { syncPlaywrightMcp, syncFilesystemMcp } from "../sync-mcp-builtin";
 
 export interface SettingsIpcDependencies {
   get windowManager(): WindowManager | null;
@@ -39,6 +39,7 @@ export interface SettingsIpcDependencies {
   embeddingIndexService: EmbeddingIndexService;
   syncVolcanoSearchMcp: typeof syncVolcanoSearchMcp;
   syncPlaywrightMcp: typeof syncPlaywrightMcp;
+  syncFilesystemMcp: typeof syncFilesystemMcp;
   /** 传入共享 scope 以便退出时统一注销；缺省时使用独立 scope。 */
   ipc?: IpcScope;
 }
@@ -69,6 +70,7 @@ export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
     embeddingIndexService,
     syncVolcanoSearchMcp,
     syncPlaywrightMcp,
+    syncFilesystemMcp,
   } = deps;
   // 注意：windowManager 不解构，统一用 deps.windowManager 实时读取 getter。
   // registerSettingsIpc 在模块加载阶段调用，那时 windowManager 仍为 null，
@@ -200,6 +202,14 @@ export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
     // Playwright MCP：按 settings 字段自动连接/断开
     if ("playwrightMcpEnabled" in tts) {
       await syncPlaywrightMcp(saved);
+    }
+
+    // Filesystem MCP：按 settings 字段自动连接/断开（允许目录固定为下载文件夹）
+    if ("filesystemMcpEnabled" in tts) {
+      await syncFilesystemMcp({
+        filesystemMcpEnabled: saved.filesystemMcpEnabled,
+        allowedDir: app.getPath("downloads"),
+      });
     }
 
     // 主动聊天总开关变化时使现有评估失效（频率档位由 ProactiveChat 内部判定，无需重启）。

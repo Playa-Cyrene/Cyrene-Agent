@@ -84,7 +84,7 @@ window.addEventListener("message", (event: MessageEvent) => {
 function mountPanel(
   container: HTMLElement,
   plugin: { id: string; name: string; version: string; settingsPanel: string },
-): void {
+): () => void {
   const card = document.createElement("article");
   card.className = "plugin-panel-card";
 
@@ -106,10 +106,9 @@ function mountPanel(
   iframe.style.height = `${PANEL_MIN_HEIGHT}px`;
 
   card.append(header, iframe);
-  container.append(card);
 
   // 注册表登记与 init 下发都在 load 后（此时 contentWindow 才可寻址）
-  iframe.addEventListener("load", () => {
+  const onLoad = () => {
     if (!iframe.contentWindow) return;
     panelRegistry.set(iframe.contentWindow, plugin.id);
     const theme = buildPanelTheme(
@@ -117,20 +116,31 @@ function mountPanel(
       getComputedStyle(document.documentElement),
     );
     postToPanel(iframe.contentWindow, plugin.id, { kind: "init", theme });
-  });
+  };
+  iframe.addEventListener("load", onLoad);
+  container.append(card);
+  return () => {
+    iframe.removeEventListener("load", onLoad);
+    if (iframe.contentWindow) panelRegistry.delete(iframe.contentWindow);
+    card.remove();
+  };
 }
 
 /** 设置页入口：按分区挂载所有已启用且声明了面板的插件 */
-export async function mountPluginPanels(): Promise<void> {
+export async function mountPluginPanels(options?: {
+  containers?: Partial<Record<"channels" | "plugins", HTMLElement | null>>;
+  signal?: AbortSignal;
+}): Promise<() => void> {
   // list() 历史返回数组、新版返回 overview 对象，两种都要接
   const overview = await window.plugins?.list();
-  if (!overview) return;
+  if (!overview || options?.signal?.aborted) return () => {};
   const entries = Array.isArray(overview) ? overview : overview.plugins;
-  if (!Array.isArray(entries)) return;
-  const containers: Record<string, HTMLElement | null> = {
+  if (!Array.isArray(entries)) return () => {};
+  const containers = options?.containers ?? {
     channels: document.getElementById("plugin-panels-channels"),
     plugins: document.getElementById("plugin-panels-plugins"),
   };
+  const disposePanels: Array<() => void> = [];
   for (const plugin of entries) {
     // 局部收窄后显式传参（TS 的属性窄化不随对象参数穿透）
     const panelFile = plugin.settingsPanel;
@@ -138,12 +148,12 @@ export async function mountPluginPanels(): Promise<void> {
     const section = plugin.settingsSection === "channels" ? "channels" : "plugins";
     const container = containers[section];
     if (container) {
-      mountPanel(container, { id: plugin.id, name: plugin.name, version: plugin.version, settingsPanel: panelFile });
+      disposePanels.push(mountPanel(container, { id: plugin.id, name: plugin.name, version: plugin.version, settingsPanel: panelFile }));
     }
   }
   // 主题变化时对所有存活面板下发 theme-changed（当前仅单一白调主题，
   // 预留未来多主题；data-ui-theme 变化即触发）
-  new MutationObserver(() => {
+  const themeObserver = new MutationObserver(() => {
     const theme = buildPanelTheme(
       document.documentElement.dataset.uiTheme || "default",
       getComputedStyle(document.documentElement),
@@ -151,5 +161,10 @@ export async function mountPluginPanels(): Promise<void> {
     for (const [contentWindow, pluginId] of panelRegistry) {
       postToPanel(contentWindow, pluginId, { kind: "theme-changed", theme });
     }
-  }).observe(document.documentElement, { attributes: true, attributeFilter: ["data-ui-theme"] });
+  });
+  themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["data-ui-theme"] });
+  return () => {
+    themeObserver.disconnect();
+    for (const dispose of disposePanels) dispose();
+  };
 }

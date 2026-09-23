@@ -20,7 +20,7 @@ vi.mock("./orchestrator/mcp-manager", () => ({
   listMcpServerConfigs: mockListConfigs,
 }));
 
-import { syncPlaywrightMcp, buildPlaywrightMcpConfig, PLAYWRIGHT_MCP_ID } from "./sync-mcp-builtin";
+import { syncPlaywrightMcp, buildPlaywrightMcpConfig, PLAYWRIGHT_MCP_ID, syncFilesystemMcp, buildFilesystemMcpConfig, FILESYSTEM_MCP_ID } from "./sync-mcp-builtin";
 
 describe("syncPlaywrightMcp", () => {
   beforeEach(() => {
@@ -79,6 +79,58 @@ describe("syncPlaywrightMcp", () => {
     expect(mockAdd).toHaveBeenCalledTimes(1);
     expect(mockAdd).toHaveBeenCalledWith(expect.objectContaining({
       command: process.execPath,
+    }));
+  });
+});
+
+describe("syncFilesystemMcp", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockListConfigs.mockReturnValue([]);
+  });
+
+  it("does nothing when disabled and no stored config", async () => {
+    await syncFilesystemMcp({ filesystemMcpEnabled: false, allowedDir: "C:/Downloads" });
+    expect(mockAdd).not.toHaveBeenCalled();
+    expect(mockRemove).not.toHaveBeenCalled();
+  });
+
+  it("adds stdio server with allowed dir as argument when enabled", async () => {
+    await syncFilesystemMcp({ filesystemMcpEnabled: true, allowedDir: "C:/Users/u/Downloads" });
+    expect(mockAdd).toHaveBeenCalledTimes(1);
+    expect(mockAdd).toHaveBeenCalledWith(expect.objectContaining({
+      id: FILESYSTEM_MCP_ID,
+      transport: "stdio",
+      command: process.execPath,
+      args: expect.arrayContaining([
+        expect.stringContaining("index.js"),
+        "C:/Users/u/Downloads",
+      ]),
+      env: { ELECTRON_RUN_AS_NODE: "1" },
+    }));
+  });
+
+  it("removes stored config when disabled", async () => {
+    mockListConfigs.mockReturnValue([buildFilesystemMcpConfig("C:/Downloads")]);
+    await syncFilesystemMcp({ filesystemMcpEnabled: false, allowedDir: "C:/Downloads" });
+    expect(mockRemove).toHaveBeenCalledWith(FILESYSTEM_MCP_ID);
+    expect(mockAdd).not.toHaveBeenCalled();
+  });
+
+  it("no-op when enabled and stored config matches expected", async () => {
+    mockListConfigs.mockReturnValue([buildFilesystemMcpConfig("C:/Downloads")]);
+    await syncFilesystemMcp({ filesystemMcpEnabled: true, allowedDir: "C:/Downloads" });
+    expect(mockAdd).not.toHaveBeenCalled();
+    expect(mockRemove).not.toHaveBeenCalled();
+  });
+
+  it("migrates stale config when allowed dir changes (下载目录迁移)", async () => {
+    mockListConfigs.mockReturnValue([buildFilesystemMcpConfig("C:/Old/Downloads")]);
+    await syncFilesystemMcp({ filesystemMcpEnabled: true, allowedDir: "D:/New/Downloads" });
+    expect(mockRemove).toHaveBeenCalledWith(FILESYSTEM_MCP_ID);
+    expect(mockAdd).toHaveBeenCalledTimes(1);
+    expect(mockAdd).toHaveBeenCalledWith(expect.objectContaining({
+      args: expect.arrayContaining(["D:/New/Downloads"]),
     }));
   });
 });

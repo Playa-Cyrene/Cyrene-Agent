@@ -215,6 +215,22 @@ export interface MemoryPanelApi {
   syncNow: () => Promise<{ ok: boolean; vaultPath?: string; fileCount?: number; error?: string; skipped?: boolean }>;
 }
 
+/**
+ * renderer 侧的 MCP server 配置视图。
+ * 与主进程 McpServerConfig 对应（effectKindOverrides 等高级字段对 UI 不可见）。
+ */
+export interface McpServerConfigView {
+  id: string;
+  name: string;
+  transport: "stdio" | "sse" | "http";
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  cwd?: string;
+  url?: string;
+  headers?: Record<string, string>;
+}
+
 export interface SettingsApi {
   minimize: () => void;
   close: () => void;
@@ -275,9 +291,10 @@ export interface SettingsApi {
   getSkillModeOverrides?: () => Promise<Record<string, Partial<Record<"work" | "code" | "learn", boolean>>>>;
   setSkillModeOverride?: (skillId: string, mode: "work" | "code" | "learn", enabled: boolean) => Promise<{ ok: boolean; error?: string }>;
   clearSkillModeOverride?: (skillId: string, mode?: "work" | "code" | "learn") => Promise<{ ok: boolean; error?: string }>;
-  addMcpServer?: (config: unknown) => Promise<{ ok: boolean; toolIds?: string[]; error?: string }>;
+  addMcpServer?: (config: McpServerConfigView) => Promise<{ ok: boolean; toolIds?: string[]; error?: string }>;
   removeMcpServer?: (serverId: string) => Promise<{ ok: boolean; error?: string }>;
   listMcpServers?: () => Promise<Array<{ id: string; name: string; connected: boolean; toolCount: number; toolIds: string[] }>>;
+  listMcpServerConfigs?: () => Promise<McpServerConfigView[]>;
   getPermissionLevel?: () => Promise<{ level: "read-only" | "scoped" | "per-action" | "full" }>;
   setPermissionLevel?: (level: string) => Promise<{ ok: boolean; level?: string; error?: string }>;
   // 计划模式开关（renderer → main）：显式设置 on/off

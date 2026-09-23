@@ -15,6 +15,11 @@ asarUnpack:
   - "**/node_modules/@playwright/**"
   - "**/node_modules/playwright/**"
   - "**/node_modules/playwright-core/**"
+  # Filesystem MCP 同理（dist/index.js + 其依赖的 sdk / diff / glob 等）
+  - "**/node_modules/@modelcontextprotocol/**"
+  - "**/node_modules/diff/**"
+  - "**/node_modules/glob/**"
+  - "**/node_modules/minimatch/**"
 electronDist: node_modules/electron/dist
 files:
   - dist/**/*

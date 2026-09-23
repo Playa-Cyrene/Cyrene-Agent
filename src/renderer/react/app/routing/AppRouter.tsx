@@ -5,7 +5,7 @@ import "./AppRouter.css";
 
 export function AppRouter() {
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsSection, setSettingsSection] = useState<"appearance" | "preferences">("appearance");
+  const [settingsSection, setSettingsSection] = useState<"appearance" | "preferences" | "models" | "general" | "tools" | "memory" | "cyrene" | "asr" | "mcp">("appearance");
 
   const openSettings = useCallback(() => {
     setSettingsSection("appearance");

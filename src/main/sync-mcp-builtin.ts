@@ -9,6 +9,7 @@ import type { McpServerConfig } from "./orchestrator/mcp-adapter";
 const LOG_PREFIX = "[Cyrene]";
 
 export const PLAYWRIGHT_MCP_ID = "playwright-mcp";
+export const FILESYSTEM_MCP_ID = "filesystem-mcp";
 
 /**
  * 已下架的内置 MCP server id 列表 —— 启动时从 mcp-servers.json 中清理。
@@ -46,6 +47,34 @@ export function buildPlaywrightMcpConfig(): McpServerConfig {
     transport: "stdio",
     command: process.execPath,
     args: [resolvePlaywrightMcpCliPath(), "--isolated", "--headless", "--browser", "msedge"],
+    env: { ELECTRON_RUN_AS_NODE: "1" },
+  };
+}
+
+/**
+ * 解析打包内 @modelcontextprotocol/server-filesystem 的入口绝对路径。
+ * 与 Playwright MCP 同理：asar 虚拟路径在 ELECTRON_RUN_AS_NODE 模式下不可读，
+ * 需替换为 electron-builder asarUnpack 解出的真实磁盘路径。
+ */
+export function resolveFilesystemMcpCliPath(): string {
+  const pkgJsonPath = require.resolve("@modelcontextprotocol/server-filesystem/package.json");
+  return path.join(path.dirname(pkgJsonPath), "dist", "index.js")
+    .replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`);
+}
+
+/**
+ * 期望的 Filesystem MCP server 配置。
+ * 与 Playwright 相同的分发方式（不依赖用户机器的 Node.js / npx）。
+ * allowedDir 由调用方传入（默认下载目录），保持本模块不依赖 electron 以便 vitest 测试。
+ * 版本随 package.json 精确锁定（无 ^ 漂移）。
+ */
+export function buildFilesystemMcpConfig(allowedDir: string): McpServerConfig {
+  return {
+    id: FILESYSTEM_MCP_ID,
+    name: "文件系统",
+    transport: "stdio",
+    command: process.execPath,
+    args: [resolveFilesystemMcpCliPath(), allowedDir],
     env: { ELECTRON_RUN_AS_NODE: "1" },
   };
 }
@@ -103,6 +132,53 @@ export async function syncPlaywrightMcp(settings: {
       await removeMcpServer(PLAYWRIGHT_MCP_ID);
     } catch (err) {
       console.error(LOG_PREFIX, "Playwright MCP 移除异常:", err);
+    }
+  }
+}
+
+/**
+ * Sync the Filesystem MCP server（官方 @modelcontextprotocol/server-filesystem）。
+ * Default OFF: opt-in via settings.filesystemMcpEnabled。
+ * 逻辑与 syncPlaywrightMcp 一致：以持久化配置为事实源，过期自动重建。
+ */
+export async function syncFilesystemMcp(settings: {
+  filesystemMcpEnabled: boolean;
+  allowedDir: string;
+}): Promise<void> {
+  const stored = listMcpServerConfigs().find(s => s.id === FILESYSTEM_MCP_ID);
+
+  if (settings.filesystemMcpEnabled) {
+    const expected = buildFilesystemMcpConfig(settings.allowedDir);
+    const stale = !!stored && !sameConfig(stored, expected);
+
+    if (stale) {
+      console.log(LOG_PREFIX, "Filesystem MCP 配置过期，自动迁移:", stored?.args?.[1], "→", settings.allowedDir);
+      try {
+        await removeMcpServer(FILESYSTEM_MCP_ID);
+      } catch (err) {
+        console.error(LOG_PREFIX, "Filesystem MCP 旧配置移除异常:", err);
+      }
+    }
+
+    if (!stored || stale) {
+      console.log(LOG_PREFIX, "注册 Filesystem MCP Server...");
+      try {
+        const result = await addMcpServer(expected);
+        if (result.ok) {
+          console.log(LOG_PREFIX, "Filesystem MCP 注册成功,工具:", result.toolIds?.join(", "));
+        } else {
+          console.error(LOG_PREFIX, "Filesystem MCP 注册失败:", result.error);
+        }
+      } catch (err) {
+        console.error(LOG_PREFIX, "Filesystem MCP 注册异常:", err);
+      }
+    }
+  } else if (stored) {
+    console.log(LOG_PREFIX, "移除 Filesystem MCP Server...");
+    try {
+      await removeMcpServer(FILESYSTEM_MCP_ID);
+    } catch (err) {
+      console.error(LOG_PREFIX, "Filesystem MCP 移除异常:", err);
     }
   }
 }

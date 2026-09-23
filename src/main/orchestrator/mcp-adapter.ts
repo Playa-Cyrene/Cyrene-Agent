@@ -2,6 +2,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { ToolDefinition, toolRegistry, type ToolEffectKind } from "./tools/registry/tool-registry";
 
@@ -10,12 +11,13 @@ const LOG_PREFIX = "[MCP Adapter]";
 export interface McpServerConfig {
   id: string;              // 唯一标识
   name: string;            // 展示名
-  transport: "stdio" | "sse";
-  command?: string;         // stdio 必填,sse 不用
+  transport: "stdio" | "sse" | "http";
+  command?: string;         // stdio 必填,远程类型不用
   args?: string[];         // 命令行参数
   env?: Record<string, string>;
   cwd?: string;
-  url?: string;            // sse 必填,stdio 不用
+  url?: string;            // sse/http 必填,stdio 不用
+  headers?: Record<string, string>; // 远程连接的请求头（如 Authorization）
   /** 按 toolName 显式覆盖 effectKind（serverId + toolName 作为 key） */
   effectKindOverrides?: Record<string, ToolEffectKind>;
 }
@@ -73,11 +75,21 @@ export async function connectMcpServer(config: McpServerConfig): Promise<string[
   console.log(LOG_PREFIX, "连接 MCP server:", config.name, "(" + config.id + ")");
 
   let transport: Transport;
-  if (config.transport === "sse") {
+  if (config.transport === "http") {
+    if (!config.url) {
+      throw new Error("http transport requires url");
+    }
+    // Streamable HTTP 是当前 MCP 远程连接的推荐方式（2025-03-26 协议起）
+    transport = new StreamableHTTPClientTransport(new URL(config.url), {
+      requestInit: { headers: config.headers },
+    });
+  } else if (config.transport === "sse") {
     if (!config.url) {
       throw new Error("sse transport requires url");
     }
-    transport = new SSEClientTransport(new URL(config.url));
+    transport = new SSEClientTransport(new URL(config.url), {
+      requestInit: { headers: config.headers },
+    });
   } else {
     if (!config.command) {
       throw new Error("stdio transport requires command");
