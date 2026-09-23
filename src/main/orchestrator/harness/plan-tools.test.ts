@@ -7,14 +7,17 @@ import type { ToolContext } from "../tools/registry/tool-context";
 import {
   ENTER_PLAN_MODE_TOOL_ID,
   WRITE_PLAN_TOOL_ID,
-  buildPlanReviewCard,
-  buildPlanSupplementCard,
+  SUBMIT_PLAN_TOOL_ID,
+  buildPlanApprovalCard,
+  buildPlanReviseCard,
   executeEnterPlanMode,
   executeWritePlan,
+  executeSubmitPlan,
 } from "./plan-tools";
 import {
   approvePlan,
   enterPlanDiscussing,
+  getPlanPath,
   getPlanState,
   hasPlanWrittenThisRun,
   initPlanPaths,
@@ -22,6 +25,7 @@ import {
   moveToReview,
   resetPlanSessionsForTest,
 } from "../plan-mode";
+import { toastEvents } from "../../toast/toast-events";
 
 const PLAN_CONTENT = [
   "# 实施计划",
@@ -251,38 +255,265 @@ describe("plan-tools", () => {
     });
   });
 
-  describe("buildPlanReviewCard", () => {
-    it("生成两选项审批卡片并携带 planPath", () => {
-      const card = buildPlanReviewCard("E:/ws/.cyrene/docs/plan-20260915-120000.md");
+  describe("buildPlanApprovalCard", () => {
+    it("生成三档审批卡片（批准 / 需要修改 / 不批准）", () => {
+      const card = buildPlanApprovalCard("E:/ws/.cyrene/docs/plan-20260915-120000.md");
 
       expect(card.mode).toBe("semantic_clarification");
       expect(card.planPath).toBe("E:/ws/.cyrene/docs/plan-20260915-120000.md");
+      // 审批等待独立计时：user-choice 靠该档位区分快问快答
+      expect(card.waitTimeoutTone).toBe("plan_approval");
       expect(card.questions).toHaveLength(1);
       const question = card.questions[0]!;
       expect(question.field).toBe("plan_decision");
       expect(question.type).toBe("single_select");
       expect(question.allowCustom).toBe(false);
       expect(question.options).toEqual([
-        { label: "批准计划，开始执行", value: "approve" },
-        { label: "我要修改 / 补充", value: "supplement" },
+        { label: "批准", value: "approve" },
+        { label: "需要修改", value: "revise" },
+        { label: "不批准", value: "reject" },
       ]);
       expect(card.deferredFields).toEqual([]);
     });
   });
 
-  describe("buildPlanSupplementCard", () => {
-    it("生成纯文本补充卡片", () => {
-      const card = buildPlanSupplementCard();
+  describe("buildPlanReviseCard", () => {
+    it("生成纯文本修改意见卡片并沿用审批等待档位", () => {
+      const card = buildPlanReviseCard();
 
       expect(card.mode).toBe("semantic_clarification");
+      expect(card.waitTimeoutTone).toBe("plan_approval");
       expect(card.questions).toHaveLength(1);
       const question = card.questions[0]!;
-      expect(question.field).toBe("plan_supplement");
+      expect(question.field).toBe("plan_revise");
       expect(question.type).toBe("text");
       expect(question.allowCustom).toBe(true);
       expect(question.options).toEqual([]);
       expect(question.freeTextPlaceholder).not.toBe("");
       expect(card.deferredFields).toEqual([]);
+    });
+  });
+
+  describe("executeSubmitPlan", () => {
+    // 三档用例的公共前置：进入讨论态并把计划真实落盘（交卷前会读全文）
+    async function setupSubmittedPlan(): Promise<void> {
+      enterPlanDiscussing("conv-1", workspaceRoot);
+      await executeWritePlan(makeCall({ content: PLAN_CONTENT }), makeCtx());
+    }
+
+    it("NORMAL 状态拒绝交卷", async () => {
+      const observation = await executeSubmitPlan(
+        makeCall({}, SUBMIT_PLAN_TOOL_ID),
+        makeCtx(),
+        vi.fn(),
+      );
+
+      expect(observation.outcome).toBe("failure");
+      expect(observation.category).toBe("runtime_safety");
+      expect(observation.message).toContain("submit_plan 仅在计划讨论状态可用");
+    });
+
+    it("PLAN_REVIEW 状态拒绝重复交卷", async () => {
+      enterPlanDiscussing("conv-1", workspaceRoot);
+      markPlanWritten("conv-1");
+      moveToReview("conv-1");
+
+      const observation = await executeSubmitPlan(
+        makeCall({}, SUBMIT_PLAN_TOOL_ID),
+        makeCtx(),
+        vi.fn(),
+      );
+
+      expect(observation.outcome).toBe("failure");
+      expect(observation.message).toContain("submit_plan 仅在计划讨论状态可用");
+    });
+
+    it("EXECUTING 状态拒绝交卷", async () => {
+      enterPlanDiscussing("conv-1", workspaceRoot);
+      markPlanWritten("conv-1");
+      moveToReview("conv-1");
+      approvePlan("conv-1");
+
+      const observation = await executeSubmitPlan(
+        makeCall({}, SUBMIT_PLAN_TOOL_ID),
+        makeCtx(),
+        vi.fn(),
+      );
+
+      expect(observation.outcome).toBe("failure");
+      expect(observation.message).toContain("submit_plan 仅在计划讨论状态可用");
+    });
+
+    it("讨论态但本轮未写计划时拒绝", async () => {
+      enterPlanDiscussing("conv-1", workspaceRoot);
+
+      const observation = await executeSubmitPlan(
+        makeCall({}, SUBMIT_PLAN_TOOL_ID),
+        makeCtx(),
+        vi.fn(),
+      );
+
+      expect(observation.outcome).toBe("failure");
+      expect(observation.category).toBe("runtime_safety");
+      expect(observation.message).toContain("本轮尚未 write_plan，请先写入计划再提交审批");
+    });
+
+    it("requestUserClarification 未注入时拒绝且不迁移状态", async () => {
+      enterPlanDiscussing("conv-1", workspaceRoot);
+      markPlanWritten("conv-1");
+
+      const observation = await executeSubmitPlan(
+        makeCall({}, SUBMIT_PLAN_TOOL_ID),
+        makeCtx(),
+        undefined,
+      );
+
+      expect(observation.outcome).toBe("failure");
+      expect(observation.message).toContain("requestUserClarification 函数未注入");
+      // 注入校验在交卷之前：不应进入 REVIEW
+      expect(getPlanState("conv-1")).toBe("PLAN_DISCUSSING");
+    });
+
+    it("批准：进入 EXECUTING，回执携带计划全文（同 run 原地开工）", async () => {
+      await setupSubmittedPlan();
+      const reviewSpy = vi.spyOn(toastEvents, "publishPlanReview");
+      const approvedSpy = vi.spyOn(toastEvents, "publishPlanApproved");
+      const events: { type: string; [key: string]: unknown }[] = [];
+      const requestClarification = vi.fn(async () => {
+        // 审批卡发布前 toast 必须已归类同 run（去重互斥依赖此顺序）
+        expect(reviewSpy).toHaveBeenCalledTimes(1);
+        return {
+          requestId: "req-1",
+          answers: [{ field: "plan_decision", selectedValues: ["approve"] }],
+        };
+      });
+
+      const observation = await executeSubmitPlan(
+        makeCall({}, SUBMIT_PLAN_TOOL_ID),
+        makeCtx({ runId: "run-1" }),
+        requestClarification,
+        (event) => events.push(event as { type: string; [key: string]: unknown }),
+      );
+
+      expect(observation.outcome).toBe("success");
+      expect(observation.tool).toBe(SUBMIT_PLAN_TOOL_ID);
+      expect(observation.message).toContain("用户已批准该计划，现在开始执行。");
+      expect(observation.message).toContain(PLAN_CONTENT);
+      expect(getPlanState("conv-1")).toBe("EXECUTING");
+      expect(requestClarification).toHaveBeenCalledTimes(1);
+      // 计划全文经 plan_submitted 独立事件下发（渲染端打开计划面板的依据）
+      expect(events).toEqual([{
+        type: "plan_submitted",
+        conversationId: "conv-1",
+        planPath: getPlanPath("conv-1"),
+        planContent: PLAN_CONTENT,
+      }]);
+      expect(reviewSpy).toHaveBeenCalledWith({ sessionId: "conv-1", runId: "run-1" });
+      expect(approvedSpy).toHaveBeenCalledWith({ sessionId: "conv-1", runId: "run-1" });
+    });
+
+    it("需要修改：收意见全文后回讨论态，回执带修订指引", async () => {
+      await setupSubmittedPlan();
+      const requestClarification = vi.fn()
+        .mockResolvedValueOnce({
+          requestId: "req-1",
+          answers: [{ field: "plan_decision", selectedValues: ["revise"] }],
+        })
+        .mockResolvedValueOnce({
+          requestId: "req-2",
+          answers: [{ field: "plan_revise", customText: "第三步改成先写测试" }],
+        });
+
+      const observation = await executeSubmitPlan(
+        makeCall({}, SUBMIT_PLAN_TOOL_ID),
+        makeCtx(),
+        requestClarification,
+      );
+
+      expect(observation.outcome).toBe("success");
+      expect(observation.message).toContain("用户要求先修改计划，再重新提交审批。");
+      expect(observation.message).toContain("第三步改成先写测试");
+      expect(observation.message).toContain("write_plan 整份覆盖");
+      expect(getPlanState("conv-1")).toBe("PLAN_DISCUSSING");
+      expect(requestClarification).toHaveBeenCalledTimes(2);
+      // 第二段等待的是纯文本修改意见卡
+      const reviseCard = requestClarification.mock.calls[1]![0] as { questions: Array<{ field: string }> };
+      expect(reviseCard.questions[0]!.field).toBe("plan_revise");
+    });
+
+    it("需要修改但未填意见：回讨论态并提示与用户确认", async () => {
+      await setupSubmittedPlan();
+      const requestClarification = vi.fn()
+        .mockResolvedValueOnce({
+          requestId: "req-1",
+          answers: [{ field: "plan_decision", selectedValues: ["revise"] }],
+        })
+        .mockResolvedValueOnce({ requestId: "req-2", answers: [] });
+
+      const observation = await executeSubmitPlan(
+        makeCall({}, SUBMIT_PLAN_TOOL_ID),
+        makeCtx(),
+        requestClarification,
+      );
+
+      expect(observation.outcome).toBe("success");
+      expect(observation.message).toContain("未填写具体意见，已回到计划讨论状态");
+      expect(getPlanState("conv-1")).toBe("PLAN_DISCUSSING");
+    });
+
+    it("不批准：退出计划模式，计划文件保留", async () => {
+      await setupSubmittedPlan();
+      const requestClarification = vi.fn(async () => ({
+        requestId: "req-1",
+        answers: [{ field: "plan_decision", selectedValues: ["reject"] }],
+      }));
+
+      const observation = await executeSubmitPlan(
+        makeCall({}, SUBMIT_PLAN_TOOL_ID),
+        makeCtx(),
+        requestClarification,
+      );
+
+      expect(observation.outcome).toBe("success");
+      expect(observation.message).toContain("用户否决了该计划，已退出计划模式。");
+      expect(getPlanState("conv-1")).toBe("NORMAL");
+      // 三档均不删除计划文件（项目资产）
+      expect(fs.existsSync(getPlanPath("conv-1"))).toBe(true);
+    });
+
+    it("等待超时/空答案：回讨论态，不默认批准也不默认否决", async () => {
+      await setupSubmittedPlan();
+      const endedSpy = vi.spyOn(toastEvents, "publishPlanReviewEnded");
+      const requestClarification = vi.fn(async () => ({ requestId: "req-1", answers: [] }));
+
+      const observation = await executeSubmitPlan(
+        makeCall({}, SUBMIT_PLAN_TOOL_ID),
+        makeCtx(),
+        requestClarification,
+      );
+
+      expect(observation.outcome).toBe("success");
+      expect(observation.message).toContain("等待审批超时，已回到计划讨论状态。");
+      expect(getPlanState("conv-1")).toBe("PLAN_DISCUSSING");
+      expect(fs.existsSync(getPlanPath("conv-1"))).toBe(true);
+      expect(endedSpy).toHaveBeenCalled();
+    });
+
+    it("计划文件读取失败：拉回讨论态并返回 failure", async () => {
+      await setupSubmittedPlan();
+      fs.rmSync(getPlanPath("conv-1"));
+
+      const observation = await executeSubmitPlan(
+        makeCall({}, SUBMIT_PLAN_TOOL_ID),
+        makeCtx(),
+        vi.fn(),
+      );
+
+      expect(observation.outcome).toBe("failure");
+      expect(observation.category).toBe("runtime_safety");
+      expect(observation.message).toContain("计划文件读取失败，无法提交审批");
+      // 读不到全文不能让用户盲批：交卷回滚为讨论态
+      expect(getPlanState("conv-1")).toBe("PLAN_DISCUSSING");
     });
   });
 });

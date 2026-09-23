@@ -15,6 +15,8 @@ function normalizeTimeoutSettings(input: Partial<TimeoutSettings> | null | undef
     testTimeout: input?.testTimeout || 15000,
     chatRequestTimeout: input?.chatRequestTimeout || DEFAULT_CHAT_REQUEST_TIMEOUT_MS,
     userChoiceTimeout: input?.userChoiceTimeout || 60000,
+    // 审批等待默认 10 分钟：用户要通读计划再决定，60s 快问快答不够用
+    planApprovalTimeout: input?.planApprovalTimeout || 600000,
     profileMinimumRemainingBudgetMs: input?.profileMinimumRemainingBudgetMs || -1,
     modelRequestTimeoutSec: input?.modelRequestTimeoutSec,
   };

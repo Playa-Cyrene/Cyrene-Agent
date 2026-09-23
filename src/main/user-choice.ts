@@ -28,7 +28,8 @@ import { createAbortError } from "./abort-utils";
 import { toastEvents } from "./toast/toast-events";
 
 const LOG_PREFIX = "[UserChoice]";
-// 卡片等待超时统一取 timeout-settings 的 userChoiceTimeout（设置页「询问等待时间」可调，默认 60s）。
+// 卡片等待超时统一取 timeout-settings：普通询问卡用 userChoiceTimeout（设置页「询问等待时间」可调，默认 60s），
+// 审批卡（waitTimeoutTone="plan_approval"）用 planApprovalTimeout（默认 10 分钟，审批要通读计划）。
 
 /** 选项结构。 */
 export interface ChoiceOption {
@@ -156,8 +157,11 @@ export function requestUserClarification(
   return new Promise<AskUserAnswer>((resolve, reject) => {
     const id = "choice-" + (++choiceCounter) + "-" + Date.now();
     const emptyAnswer: AskUserAnswer = { requestId: id, answers: [] };
-    const timeout = getTimeoutSettings().userChoiceTimeout;
     const publication = publishAskCard(card, { interactionId: id, ...identity });
+    // 审批卡等待独立计时：planApprovalTimeout；普通询问卡维持快问快答配置
+    const timeout = card.waitTimeoutTone === "plan_approval"
+      ? getTimeoutSettings().planApprovalTimeout
+      : getTimeoutSettings().userChoiceTimeout;
     // 结算统一出口：先通知调用方（渲染端清卡），再通知 ToastService 清 toast
     const notifySettled = (settlement: ChoiceSettlement): void => {
       onSettled?.(settlement);

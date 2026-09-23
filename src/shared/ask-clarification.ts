@@ -50,6 +50,11 @@ export interface AskClarificationCard {
   intro: string;
   questions: AskQuestion[];
   deferredFields: string[];
+  /**
+   * 等待档位：缺省走询问卡的快问快答超时（userChoiceTimeout）；
+   * "plan_approval" 走审批专用超时（planApprovalTimeout）——审批是重决策，等待时长独立配置。
+   */
+  waitTimeoutTone?: "plan_approval";
 }
 
 export interface AskUserAnswer {

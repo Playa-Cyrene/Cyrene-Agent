@@ -20,7 +20,7 @@ import { resolveUncertainEffect } from "./uncertain-effect-guard";
 import type { TaskExecuteRequest, TaskExecuteResult } from "../task-runtime";
 import { buildGoldenDescendantsPrompt, getGoldenDescendantNames } from "../../tasks/task-character-pool";
 import { READ_TOOL_RESULT_TOOL_ID, readToolResultToolSpec } from "./tool-output/read-tool-result";
-import { ENTER_PLAN_MODE_TOOL_ID, WRITE_PLAN_TOOL_ID, enterPlanModeToolSpec, writePlanToolSpec } from "./plan-tools";
+import { ENTER_PLAN_MODE_TOOL_ID, WRITE_PLAN_TOOL_ID, SUBMIT_PLAN_TOOL_ID, enterPlanModeToolSpec, writePlanToolSpec, submitPlanToolSpec } from "./plan-tools";
 
 // ── update_todo ──────────────────────────────────────────
 
@@ -615,6 +615,7 @@ export const HARNESS_BUILTIN_TOOL_IDS = new Set([
   READ_TOOL_RESULT_TOOL_ID,
   ENTER_PLAN_MODE_TOOL_ID,
   WRITE_PLAN_TOOL_ID,
+  SUBMIT_PLAN_TOOL_ID,
 ]);
 
 export function isHarnessBuiltin(toolName: string): boolean {
@@ -627,19 +628,19 @@ export function isInteractiveHarnessBuiltin(toolName: string): boolean {
 
 /**
  * 计划工具组按状态注入（可见性即防御）：
- * - NORMAL：enter_plan_mode + write_plan。工具列表是 run 级固定的，模型常在
- *   同一 run 内先调 enter_plan_mode 再调 write_plan，因此两者必须同时注入；
- *   write_plan 自身有状态守卫（非 PLAN_DISCUSSING 调用直接 failure）。
- * - PLAN_DISCUSSING：仅 write_plan（enter_plan_mode 物理隐藏，幂等防御）
- * - PLAN_REVIEW / EXECUTING：全部隐藏（REVIEW 无模型轮；EXECUTING 防执行中再进计划）
+ * - NORMAL：enter_plan_mode + write_plan + submit_plan。工具列表是 run 级固定的，模型常在
+ *   同一 run 内先调 enter_plan_mode 再调 write_plan，讨论收敛后 submit_plan 交卷审批，
+ *   因此三者必须同时注入；write_plan / submit_plan 自身有状态守卫（非合法状态调用直接 failure）。
+ * - PLAN_DISCUSSING：write_plan + submit_plan（enter_plan_mode 物理隐藏，幂等防御）
+ * - PLAN_REVIEW / EXECUTING：全部隐藏（REVIEW 挂在 run 内等待，无模型轮；EXECUTING 防执行中再进计划）
  * - undefined（旧调用方/子任务）：不注入任何计划工具
  */
 function planToolSpecsFor(planState: import("../plan-mode").PlanStateName | undefined): ToolSpec[] {
   switch (planState) {
     case "NORMAL":
-      return [enterPlanModeToolSpec, writePlanToolSpec];
+      return [enterPlanModeToolSpec, writePlanToolSpec, submitPlanToolSpec];
     case "PLAN_DISCUSSING":
-      return [writePlanToolSpec];
+      return [writePlanToolSpec, submitPlanToolSpec];
     default:
       return [];
   }

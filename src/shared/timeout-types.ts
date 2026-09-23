@@ -1,6 +1,8 @@
 export type TimeoutSettings = {
   chatRequestTimeout: number,
   userChoiceTimeout: number,
+  /** 计划审批卡专用等待时长：审批是重决策（要通读整份计划），不能沿用快问快答的 60s。 */
+  planApprovalTimeout: number,
   testTimeout: number,
   /** 旧结构化输出策略仍读取；不再暴露为用户设置。 */
   profileMinimumRemainingBudgetMs: number,
@@ -12,5 +14,6 @@ export const DEFAULT_TIMEOUT_SETTINGS: TimeoutSettings = {
   testTimeout: 15000,
   chatRequestTimeout: DEFAULT_CHAT_REQUEST_TIMEOUT_MS,
   userChoiceTimeout: 60000,
+  planApprovalTimeout: 600000,
   profileMinimumRemainingBudgetMs: -1,
 };

@@ -2,9 +2,10 @@
  * Harness 工具执行轮
  *
  * 职责：模型发起 tool call 后的一轮执行——
- * - ask_user / confirm_uncertain_effect 排他为先：交互工具与普通工具互斥，一次只优先处理首个询问，
- *   其余调用一律返回 not_executed，交还给模型基于答案重新决策（confirm_uncertain_effect 是 v3 新增的
- *   未知副作用解除点，排他语义与 ask_user 一致）
+ * - ask_user / confirm_uncertain_effect / submit_plan 排他为先：交互工具与普通工具互斥，
+ *   一次只优先处理首个询问，其余调用一律返回 not_executed，交还给模型基于答案重新决策
+ *   （confirm_uncertain_effect 是 v3 新增的未知副作用解除点；submit_plan 是计划交卷审批等待，
+ *   排他语义与 ask_user 一致）
  * - 普通工具调度、执行、重试与按序提交：安全读操作可滚动并行，独占调用前后形成串行屏障，
  *   模型可见结果始终按原始 tool-call 顺序写回（并行执行是有意的演化）
  * - uncertainEffects 记录与 fatal / unknown 中断：结果不确定的非幂等副作用要显式入账并停止本轮后续执行，
@@ -65,9 +66,11 @@ function notifyToolFinished(
  */
 export async function runToolRound(run: HarnessRun, toolCalls: ToolCall[]): Promise<ToolRoundOutcome> {
   const { input } = run;
+  // 交互工具（ask_user / confirm_uncertain_effect / submit_plan）与普通工具互斥：
+  // submit_plan 审批等待与询问等待同机制（排他轮 + userWait 不计执行超时）
   const exclusiveToolNames = input.includeInteractiveTools === false
     ? new Set<string>()
-    : new Set(["ask_user", "confirm_uncertain_effect"]);
+    : new Set(["ask_user", "confirm_uncertain_effect", "submit_plan"]);
   const askCalls = toolCalls.filter((c) => exclusiveToolNames.has(c.name));
   const otherCalls = toolCalls.filter((c) => !exclusiveToolNames.has(c.name));
 
@@ -187,7 +190,8 @@ async function commitToolResultMessage(
 
 /**
  * 交互工具的排他轮：
- * 只执行首个 ask_user，其余 ask 与同轮普通工具调用统一返回 not_executed。
+ * 只执行首个交互调用（ask_user / confirm_uncertain_effect / submit_plan），
+ * 其余交互调用与同轮普通工具调用统一返回 not_executed。
  */
 async function runAskUserRound(
   run: HarnessRun,

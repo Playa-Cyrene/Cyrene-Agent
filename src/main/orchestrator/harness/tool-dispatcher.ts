@@ -15,7 +15,7 @@ import type { AgentState, HarnessEvent, ToolObservation } from "./types";
 import { parseToolCallArgs, toolCallFingerprint } from "./types";
 import { isHarnessBuiltin, isInteractiveHarnessBuiltin, TASK_TOOL_ID } from "./builtin-tools";
 import { executeUpdateTodo, executeAskUser, executeTask } from "./builtin-tools";
-import { ENTER_PLAN_MODE_TOOL_ID, WRITE_PLAN_TOOL_ID, executeEnterPlanMode, executeWritePlan } from "./plan-tools";
+import { ENTER_PLAN_MODE_TOOL_ID, WRITE_PLAN_TOOL_ID, SUBMIT_PLAN_TOOL_ID, executeEnterPlanMode, executeWritePlan, executeSubmitPlan } from "./plan-tools";
 import { executeReadToolResult, READ_TOOL_RESULT_TOOL_ID } from "./tool-output/read-tool-result";
 import { resolveSideEffect } from "./side-effect-resolver";
 import { extractFileChangesFromOutput } from "../tools/registry/tool-evidence";
@@ -310,6 +310,8 @@ async function executeHarnessBuiltin(
       return executeEnterPlanMode(call, ctx.toolContext, ctx.onEvent);
     case WRITE_PLAN_TOOL_ID:
       return executeWritePlan(call, ctx.toolContext, ctx.onEvent);
+    case SUBMIT_PLAN_TOOL_ID:
+      return executeSubmitPlan(call, ctx.toolContext, ctx.requestUserClarification, ctx.onEvent);
     case "task":
       return executeTask(call, ctx.taskExecutor);
     case READ_TOOL_RESULT_TOOL_ID:

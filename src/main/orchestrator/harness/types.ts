@@ -170,6 +170,7 @@ export type HarnessEvent =
   | { type: "ask_user"; card: unknown }
   | { type: "plan_mode_changed"; state: import("../plan-mode").PlanStateName }
   | { type: "plan_written"; planPath: string }
+  | { type: "plan_submitted"; conversationId: string; planPath: string; planContent: string }
   | { type: "runtime_feedback"; message: string }
   | { type: "error"; message: string };
 

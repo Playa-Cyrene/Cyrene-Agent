@@ -60,6 +60,27 @@ describe("harness event mapper", () => {
     ]);
   });
 
+  it("maps plan_submitted to cyrene.plan.review with the full plan content", () => {
+    // 交卷事件走独立 CUSTOM 事件下发计划全文，渲染端持久监听据此打开计划面板
+    expect(capture({
+      type: "plan_submitted",
+      conversationId: "conv-1",
+      planPath: "E:/ws/.cyrene/docs/plan-20260923-120000.md",
+      planContent: "# 实施计划\n\n- [ ] 第一步：写测试",
+    })).toEqual([
+      expect.objectContaining({
+        type: "CUSTOM",
+        name: "cyrene.plan.review",
+        value: {
+          planPath: "E:/ws/.cyrene/docs/plan-20260923-120000.md",
+          planContent: "# 实施计划\n\n- [ ] 第一步：写测试",
+          sessionId: "conv-1",
+        },
+        runId: "run-1",
+      }),
+    ]);
+  });
+
   it("maps task lifecycle presentation to a stamped custom event", () => {
     const sent: BaseEvent[] = [];
     sendTaskLifecycleAsAgui({ taskId: "task-1", status: "running" } as never, "thread-1", "run-1", (event) => sent.push(event));

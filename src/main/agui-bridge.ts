@@ -7,7 +7,6 @@
 //
 // Agent 的 Observable 是内存流、跨不过进程边界。
 // 因此主进程统一持有运行并仅把事件发送给 Renderer。
-import * as fs from "fs";
 import { app, IpcMainInvokeEvent, WebContents } from "electron";
 import { getHarnessRunStore } from "./orchestrator/harness/run-store";
 import { IPC } from "../shared/ipc-channels";
@@ -21,7 +20,6 @@ import {
   type CyreneRunResult,
 } from "./orchestrator/cyrene-agent";
 import { RunSettlementGate } from "./orchestrator/run-settlement";
-import { toastEvents } from "./toast/toast-events";
 import type { AguiRunAck, CyreneRunTerminalResult } from "../shared/run-terminal";
 import { indexConversationTurn } from "./orchestrator/tools/history-tools";
 import type { RelationshipChannel } from "./relationship/relationship-log";
@@ -47,14 +45,9 @@ import type { TranscriptPresentationPatch } from "./orchestrator/conversation-tr
 import {
   requestUserClarification,
   cancelPendingChoicesForRun,
-  type ChoiceCardData,
-  type ChoiceSettlement,
 } from "./user-choice";
 import { cancelPendingApprovalsForRun } from "./permission";
 import { cancelPendingQuizzesForRun, takeQuizEvidenceForRun } from "./orchestrator/pop-quiz";
-import { approvePlan, getPlanPath, moveToReview, supplementPlan } from "./orchestrator/plan-mode";
-import { buildPlanReviewCard, buildPlanSupplementCard } from "./orchestrator/harness/plan-tools";
-import type { AskUserAnswer } from "../shared/ask-clarification";
 import type { PluginPromptMode, PluginTurnCompletedEvent } from "../plugins/types";
 /**
  * 从 RUN_FINISHED 事件中提取规范的终态结果（terminal）。
@@ -262,109 +255,6 @@ export function __releaseSessionGuardForTest(sessionId: string, runId: string): 
 
 let buildOptionsFn: BuildOptionsFn | null = null;
 let getChatWindowFn: GetChatWindowFn = () => null;
-
-/**
- * 计划审批流：run 成功收尾后触发，不阻塞 RUN_FINISHED。
- *
- * 1. PLAN_DISCUSSING + 本轮 write_plan → PLAN_REVIEW（moveToReview 幂等，纯讨论轮不弹卡）
- * 2. 发 cyrene.plan.review（计划全文，渲染端打开独立计划窗口）+ 弹第一段审批卡（两选项）
- * 3. 批准 → EXECUTING + cyrene.plan.approved，渲染端自动发送执行消息开新 run
- * 4. 选"我要修改 / 补充" → 弹第二段纯文本卡；提交的文本经 cyrene.plan.supplement
- *    由渲染端作为用户消息发出，模型改计划后再次 write_plan 重新走审批
- * 5. 第二段卡超时 / 空文本 → 拉回 PLAN_DISCUSSING，等用户下一条消息
- */
-function startPlanReviewFlow(params: {
-  sessionId: string;
-  threadId: string;
-  runId: string;
-  send: (event: unknown) => void;
-}): void {
-  const { sessionId, threadId, runId, send } = params;
-  // 计划审批卡与补充卡共用同一收发通道：run 已结束，渲染端靠持久监听器收卡。
-  // 卡片与结算（超时/取消）都带同一 runId 身份，结算事件让渲染端立即清卡，
-  // 不留点不出结果的僵尸卡（与 run 内 ask_user 卡同机制）。
-  const sendPlanCard = (cardData: ChoiceCardData): void => send({
-    type: "CUSTOM",
-    name: "cyrene.choice",
-    value: { ...cardData, sessionId },
-    threadId,
-    runId,
-  });
-  const sendPlanDismiss = (settlement: ChoiceSettlement): void => send({
-    type: "CUSTOM",
-    name: "cyrene.choice.dismiss",
-    value: settlement,
-    threadId,
-    runId,
-  });
-  void (async () => {
-    if (!moveToReview(sessionId)) return;
-    console.log("[AgUiBridge][Plan] run finished with write_plan, entering PLAN_REVIEW");
-    const planPath = getPlanPath(sessionId);
-    // 计划全文走独立事件：publishAskCard 只映射 questions，卡片 payload 带不动全文。
-    let planContent = "";
-    try {
-      planContent = await fs.promises.readFile(planPath, "utf8");
-    } catch (err) {
-      console.warn("[AgUiBridge][Plan] read plan.md for review failed:", err);
-    }
-    send({
-      type: "CUSTOM",
-      name: "cyrene.plan.review",
-      value: { planPath, planContent, sessionId },
-      threadId,
-      runId,
-    });
-    // 注意力提醒：计划进入审批，先于审批卡发布（ToastService 据此把同 runId 的
-    // choice 卡归类为 plan-review，避免双弹）
-    toastEvents.publishPlanReview({ sessionId, runId });
-    const answer = await requestUserClarification(
-      buildPlanReviewCard(planPath),
-      sendPlanCard,
-      sendPlanDismiss,
-      { runId, revision: 1 },
-    ) as AskUserAnswer;
-    const decision = answer.answers.find((a) => a.field === "plan_decision");
-    if (decision?.selectedValues?.includes("approve") && approvePlan(sessionId)) {
-      console.log("[AgUiBridge][Plan] plan approved, entering EXECUTING");
-      // 渲染端对此事件做持久监听（run 订阅此时已解除），按 sessionId 匹配后自动发送执行消息。
-      send({ type: "CUSTOM", name: "cyrene.plan.approved", value: { planPath, sessionId }, threadId, runId });
-      // 注意力提醒：计划已批准，ToastService 清去重记忆与残留 toast
-      toastEvents.publishPlanApproved({ sessionId, runId });
-      return;
-    }
-    // 非批准（含超时空答案）：统一拉回讨论态
-    supplementPlan(sessionId);
-    if (!decision?.selectedValues?.includes("supplement")) return;
-    // 第二段：纯文本补充卡（复用同一 ask 卡片链路）
-    console.log("[AgUiBridge][Plan] user wants to supplement, asking for details");
-    const supplementAnswer = await requestUserClarification(
-      buildPlanSupplementCard(),
-      sendPlanCard,
-      sendPlanDismiss,
-      { runId, revision: 2 },
-    ) as AskUserAnswer;
-    const supplementText = supplementAnswer.answers
-      .find((a) => a.field === "plan_supplement")?.customText?.trim();
-    if (supplementText) {
-      console.log("[AgUiBridge][Plan] supplement submitted, back to PLAN_DISCUSSING with user text");
-      send({
-        type: "CUSTOM",
-        name: "cyrene.plan.supplement",
-        value: { sessionId, text: supplementText },
-        threadId,
-        runId,
-      });
-    } else {
-      console.log("[AgUiBridge][Plan] supplement card timed out / empty, waiting for user message");
-    }
-  })().catch((err) => {
-    console.warn("[AgUiBridge][Plan] review flow failed:", err);
-    supplementPlan(sessionId);
-    // 注意力提醒：流程异常终止，同样要清理（幂等，与既有结算清理重合无副作用）
-    toastEvents.publishPlanReviewEnded({ sessionId, runId });
-  });
-}
 
 /**
  * 注册 AG-UI IPC。由 core bootstrap 在加载聊天页面前调一次。
@@ -1101,10 +991,6 @@ export function registerAgUiIpc(
         } else if (pendingRunFinishedEvent) {
           send(pendingRunFinishedEvent);
           pendingRunFinishedEvent = null;
-        }
-        // 计划模式（code / chat）：run 成功收尾后检测 write_plan，触发审批流（异步，不阻塞 complete）。
-        if ((mode === "code" || mode === "chat") && isSuccessfulCompletion) {
-          startPlanReviewFlow({ sessionId, threadId, runId, send });
         }
         endLifecycle();
         perf.dump();

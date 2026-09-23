@@ -158,6 +158,18 @@ export function sendHarnessEventAsAgui(
       } as BaseEvent);
       break;
     }
+    case "plan_submitted": {
+      // 计划提交审批（submit_plan 在 run 内发出）：计划全文走独立事件供渲染端打开计划面板。
+      // 事件名沿用 cyrene.plan.review，渲染端现有监听分支原样工作。
+      send({
+        type: EventType.CUSTOM,
+        name: "cyrene.plan.review",
+        value: { planPath: event.planPath, planContent: event.planContent, sessionId: event.conversationId },
+        threadId,
+        runId,
+      } as BaseEvent);
+      break;
+    }
     case "error":
       console.error(`${LOG_PREFIX} harness error: ${event.message}`);
       break;

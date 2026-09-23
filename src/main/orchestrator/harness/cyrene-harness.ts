@@ -297,6 +297,8 @@ function createRun(input: HarnessInput): HarnessRun {
     }),
   ];
 
+  // 排他轮（ask_user / submit_plan）分发上下文：submit_plan 交卷需要会话身份
+  // （conversationId / runId）驱动状态机与注意力提醒，因此 toolContext 必须在此就位
   const askDispatchContext: ToolDispatchContext = {
     state,
     tools: input.tools,
@@ -304,6 +306,7 @@ function createRun(input: HarnessInput): HarnessRun {
     requestUserClarification: input.requestUserClarification,
     includeInteractiveTools: input.includeInteractiveTools,
     toolOutputStore: input.toolOutputStore,
+    toolContext: input.toolContext,
   };
 
   return {
