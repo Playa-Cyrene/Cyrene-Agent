@@ -63,6 +63,14 @@ interface SettingsWindowApi {
   getGeneral: () => Promise<unknown>;
   setToolModeOverride: (toolId: string, mode: string, next: boolean) => Promise<unknown>;
   saveGeneral: (payload: Record<string, unknown>) => Promise<unknown>;
+  pickUiFont: () => Promise<string | null>;
+  importUiFont: (sourcePath: string) => Promise<import("../shared/ui-font").UiFont>;
+  resetUiFont: () => Promise<import("../shared/ui-font").UiFont>;
+  openCustomStylePrompt: () => Promise<unknown>;
+  channelsGetStatus: () => Promise<unknown>;
+  setPetAlwaysOnTop: (value: boolean) => void;
+  setPetVisible: (value: boolean) => void;
+  setPetZoom: (value: number) => void;
 }
 
 declare global {

@@ -1,21 +1,35 @@
-/* ===== 渲染层统一反馈 Token（深色安全默认值） =====
-   设置页 DOM 弹窗与 React 适配器共享同一组语义变量；
-   pearl-white 在下方按同名变量覆盖，保证两端视觉一致。 */
-@import url("./themes/pearl-white.css");
-
-:root {
-  --rb-feedback-radius: 18px;
-  --rb-feedback-surface: rgba(30, 25, 35, 0.97);
-  --rb-feedback-fg: #f3eef6;
-  --rb-feedback-muted: #c9bfd2;
-  --rb-feedback-border: rgba(255, 182, 220, 0.22);
-  --rb-feedback-shadow: 0 28px 70px rgba(0, 0, 0, 0.38);
-  --rb-feedback-details-bg: rgba(255, 255, 255, 0.06);
-  --rb-feedback-danger: #e15b70;
-  --rb-feedback-success: #43a877;
-  --rb-feedback-warning: #d09a43;
-  --rb-feedback-info: var(--rb-pink-400);
-  --rb-feedback-motion: 180ms;
+/* Pearl-white semantic theme contract. */
+[data-ui-theme="pearl-white"] {
+  --rb-surface-page: #faf4f8;
+  --rb-surface-workspace: #fffbfc;
+  --rb-surface-elevated: #ffffff;
+  --rb-surface-hover: #fff1f6;
+  --rb-surface-active: #fde0ed;
+  --rb-text-primary: #1d1d1f;
+  --rb-text-secondary: #8e8e93;
+  --rb-text-disabled: #6e6e73;
+  --rb-text-on-accent: #ffffff;
+  --rb-border-default: #f2f2f2;
+  --rb-border-subtle: rgba(0, 0, 0, 0.06);
+  --rb-border-focus: #ff9fbd;
+  --rb-accent: #ff5b8a;
+  --rb-accent-hover: #f04b7c;
+  --rb-danger: #d94f61;
+  --rb-success: #43a877;
+  --rb-warning: #c58a31;
+  --rb-info: #ff5b8a;
+  --rb-shadow-workspace: inset 0 2px 8px rgba(31, 35, 48, 0.04), inset 0 0 2px rgba(31, 35, 48, 0.03);
+  --rb-shadow-bubble-neutral: 2px 2px 3px rgba(31, 35, 48, 0.06), 3px 5px 16px rgba(31, 35, 48, 0.055);
+  --rb-shadow-bubble-accent: 2px 2px 4px rgba(255, 91, 138, 0.12), 3px 7px 16px rgba(255, 91, 138, 0.16);
+  --rb-shadow-control-hover: 2px 2px 5px rgba(31, 35, 48, 0.075), 3px 8px 18px rgba(31, 35, 48, 0.065);
+  --rb-shadow-control-focus: 0 0 0 3px rgba(255, 91, 138, 0.10), 2px 6px 16px rgba(31, 35, 48, 0.08);
+  --rb-weather-card-shadow: 0 28px 64px -18px rgba(0, 0, 0, 0.65), 0 6px 22px rgba(90, 60, 160, 0.18);
+  --rb-weather-card-inner-glow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  --rb-weather-accent-2: #9d8cff;
+  --rb-weather-accent-soft: rgba(255, 143, 191, 0.13);
+  --rb-weather-detail-shadow: 0 4px 16px rgba(0, 0, 0, 0.28);
+  --rb-weather-icon-color: #ffa8cd;
+  --rb-weather-tag-color: #ffb0d0;
 }
 
 [data-ui-theme="pearl-white"] {
@@ -44,7 +58,7 @@
   /* Glows / shadows — soft black, no color cast */
   --rb-glow-pink:   0 0 12px rgba(255, 91, 138, 0.18);
   --rb-glow-soft:   0 0 6px  rgba(0, 0, 0, 0.06);
-  --rb-glow-violet: 0 0 10px rgba(0, 0, 0, 0.04);
+  --rb-glow-secondary: 0 0 10px rgba(0, 0, 0, 0.04);
   --rb-shadow-card:    0 1px 2px rgba(0, 0, 0, 0.06), 0 4px 16px rgba(0, 0, 0, 0.04);
   --rb-shadow-elevated:0 8px 32px rgba(0, 0, 0, 0.10);
   --rb-shadow-pink:    0 4px 16px rgba(255, 91, 138, 0.20);
@@ -77,21 +91,21 @@
   --rb-scroll-thumb:   rgba(0, 0, 0, 0.18);
   --rb-scroll-thumb-hover: rgba(0, 0, 0, 0.32);
 
-  /* Weather card: glass-morphism on white UI, dark text for contrast */
-  --rb-weather-bg:          rgba(255, 255, 255, 0.62);
-  --rb-weather-card-border: rgba(255, 255, 255, 0.85);
-  --rb-weather-border:      rgba(157, 139, 171, 0.16);
-  --rb-weather-text-strong: #5c4a66;
-  --rb-weather-text-default: #7a6888;
-  --rb-weather-text-muted:  #9d8bab;
-  --rb-weather-text-faint:  #bdaecf;
-  --rb-weather-accent:      #ff7fa8;
-  --rb-weather-detail-bg:   rgba(255, 255, 255, 0.55);
-  --rb-weather-detail-border: rgba(255, 255, 255, 0.9);
-  --rb-weather-icon-bg:     linear-gradient(135deg, #ffe4ee, #efe6ff);
-  --rb-weather-panel-bg:    rgba(255, 255, 255, 0.38);
-  --rb-weather-panel-border: rgba(255, 255, 255, 0.7);
-  --rb-weather-tag-bg:      linear-gradient(135deg, #ffd9e7, #e6ddff);
+  /* Weather card keeps its own deep glass treatment on the pearl-white app shell. */
+  --rb-weather-bg:          rgba(34, 33, 56, 0.58);
+  --rb-weather-card-border: rgba(255, 255, 255, 0.09);
+  --rb-weather-border:      rgba(167, 159, 196, 0.14);
+  --rb-weather-text-strong: #efeaf8;
+  --rb-weather-text-default: #d8d0ee;
+  --rb-weather-text-muted:  #a79fc4;
+  --rb-weather-text-faint:  #6f698c;
+  --rb-weather-accent:      #ff8fbf;
+  --rb-weather-detail-bg:   rgba(255, 255, 255, 0.045);
+  --rb-weather-detail-border: rgba(255, 255, 255, 0.07);
+  --rb-weather-icon-bg:     linear-gradient(135deg, rgba(255,143,191,0.16), rgba(157,140,255,0.16));
+  --rb-weather-panel-bg:    rgba(255, 255, 255, 0.03);
+  --rb-weather-panel-border: rgba(255, 255, 255, 0.06);
+  --rb-weather-tag-bg:      linear-gradient(135deg, rgba(255,143,191,0.22), rgba(157,140,255,0.22));
 
   /* Weather illustration overrides for light theme */
   --rb-weather-sun-core-1:  #ffe08a;

@@ -1,0 +1,479 @@
+.cy-settings-page {
+  padding: 20px 10px 10px;
+  gap: 10px;
+  color: var(--rb-text-primary);
+  font-family: var(--rb-font-sans, sans-serif);
+  letter-spacing: var(--rb-letter-spacing, 0.7px);
+}
+
+.cy-settings-titlebar {
+  z-index: 2;
+}
+
+.cy-settings-page .cy-window-controls {
+  app-region: no-drag;
+}
+
+.cy-settings-sidebar {
+  padding: 0 0 8px;
+}
+
+.cy-settings-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 38px;
+  margin: 0 8px 14px;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.cy-settings-brand__logo {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  border-radius: var(--rb-radius-sm);
+  object-fit: contain;
+}
+
+.cy-settings-page .cy-settings-back.ant-btn {
+  justify-content: flex-start;
+  width: 100%;
+  height: 36px;
+  margin: 4px 0 22px;
+  padding-inline: 12px;
+  color: var(--rb-text-secondary);
+  text-align: left;
+}
+
+.cy-settings-page .cy-settings-back.ant-btn:hover {
+  color: var(--rb-text-primary);
+  background: var(--rb-surface-hover);
+}
+
+.cy-settings-sidebar__group-title {
+  padding: 0 10px 8px;
+  color: var(--rb-text-disabled);
+  font: var(--rb-text-micro);
+}
+
+.cy-settings-nav-item {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  width: 100%;
+  min-height: 36px;
+  height: 36px;
+  padding: 0 12px;
+  border-radius: 9px;
+  text-align: left;
+  color: var(--rb-text-primary);
+  font: 500 13px/1.5 var(--rb-font-sans, sans-serif);
+}
+
+.cy-settings-page .cy-settings-nav-item.ant-btn-variant-text:not(:disabled):not(.ant-btn-disabled):hover {
+  color: var(--rb-text-primary);
+  background: var(--rb-surface-hover);
+}
+
+.cy-settings-page .cy-settings-nav-item.ant-btn-variant-text.is-active:not(:disabled):not(.ant-btn-disabled),
+.cy-settings-page .cy-settings-nav-item.ant-btn-variant-text.is-active:not(:disabled):not(.ant-btn-disabled):hover {
+  color: var(--rb-text-primary);
+  background: var(--rb-surface-active);
+  font-weight: 550;
+}
+
+.cy-settings-page .cy-settings-nav-item.ant-btn-variant-text[aria-current="page"],
+.cy-settings-page .cy-settings-nav-item.ant-btn-variant-text[aria-current="page"]:hover {
+  background-color: var(--rb-surface-active) !important;
+}
+
+.cy-settings-sidebar__footer {
+  margin-top: auto;
+  padding: 12px 10px 0;
+  color: var(--rb-text-disabled);
+  font: var(--rb-text-micro);
+}
+
+.cy-settings-content {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 10px 24px 48px;
+}
+
+.cy-settings-content__inner {
+  width: min(100%, 832px);
+  margin: 0 auto;
+}
+
+.cy-settings-content h1 {
+  margin: 0 0 26px;
+  color: var(--rb-text-primary);
+  font: var(--rb-text-h2);
+}
+
+.cy-settings-intro {
+  margin: -14px 0 32px;
+  color: var(--rb-text-secondary);
+  font: var(--rb-text-small);
+}
+
+.cy-settings-section + .cy-settings-section {
+  margin-top: 34px;
+}
+
+.cy-settings-section__heading {
+  margin-bottom: 14px;
+}
+
+.cy-settings-section__heading h2 {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0 0 5px;
+  color: var(--rb-text-primary);
+  font: var(--rb-text-title);
+}
+
+.cy-settings-section__heading h2 svg {
+  flex: none;
+  color: var(--rb-accent);
+}
+
+.cy-settings-section__heading p {
+  margin: 0;
+  color: var(--rb-text-secondary);
+  font: var(--rb-text-caption);
+}
+
+.cy-settings-card {
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--rb-text-primary) 10%, var(--rb-surface-elevated));
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--rb-surface-hover) 42%, var(--rb-surface-elevated));
+  box-shadow: 0 3px 14px color-mix(in srgb, var(--rb-text-primary) 4%, transparent);
+}
+
+.cy-settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 28px;
+  min-height: 76px;
+  padding: 15px 16px;
+}
+
+.cy-settings-row + .cy-settings-row {
+  border-top: 1px solid color-mix(in srgb, var(--rb-text-primary) 8%, transparent);
+}
+
+.cy-settings-row__copy {
+  display: flex;
+  flex: 1 1 0;
+  min-width: 0;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.cy-settings-row__copy strong {
+  color: var(--rb-text-primary);
+  font: var(--rb-text-small-em);
+}
+
+.cy-settings-row__copy span {
+  color: var(--rb-text-secondary);
+  font: var(--rb-text-caption);
+}
+
+.cy-settings-row__control {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 52%;
+}
+
+.cy-settings-row > .ant-segmented {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 52%;
+}
+
+.cy-settings-row > .ant-segmented .ant-segmented-group {
+  min-width: 0;
+}
+
+.cy-settings-row > .ant-segmented .ant-segmented-item {
+  min-width: 0;
+}
+
+.cy-settings-row > .ant-segmented .ant-segmented-item-label {
+  overflow-wrap: anywhere;
+  white-space: normal;
+  text-align: center;
+}
+
+.cy-settings-slider {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  width: min(360px, 42%);
+}
+
+.cy-settings-slider .ant-slider {
+  flex: 1;
+  margin: 10px 0;
+}
+
+.cy-settings-slider > span {
+  min-width: 52px;
+  color: var(--rb-text-primary);
+  font: var(--rb-text-small);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.cy-settings-page .ant-slider .ant-slider-track {
+  background: var(--rb-accent);
+}
+
+.cy-settings-page .ant-slider .ant-slider-handle::after {
+  box-shadow: 0 0 0 2px var(--rb-accent);
+}
+
+.cy-settings-button-group {
+  display: flex;
+  flex: 0 1 auto;
+  max-width: 52%;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.cy-settings-button-group .ant-btn {
+  max-width: 100%;
+  white-space: normal;
+}
+
+.cy-settings-page .ant-btn-default {
+  border-color: var(--rb-border-default);
+  color: var(--rb-text-primary);
+  background: var(--rb-surface-elevated);
+  box-shadow: none;
+}
+
+.cy-settings-page .ant-btn-default:hover {
+  border-color: var(--rb-border-focus);
+  color: var(--rb-accent);
+}
+
+.cy-settings-page .ant-btn-primary,
+.cy-settings-theme-modal .ant-btn-primary {
+  border-color: var(--rb-accent);
+  color: var(--rb-text-on-accent, #fff);
+  background: var(--rb-accent);
+  box-shadow: none;
+}
+
+.cy-settings-page .ant-btn-primary:not(:disabled):not(.ant-btn-disabled):hover,
+.cy-settings-theme-modal .ant-btn-primary:not(:disabled):not(.ant-btn-disabled):hover {
+  border-color: var(--rb-accent-hover);
+  color: var(--rb-text-on-accent, #fff);
+  background: var(--rb-accent-hover);
+}
+
+.cy-settings-page .ant-btn-primary:not(:disabled):not(.ant-btn-disabled):active,
+.cy-settings-theme-modal .ant-btn-primary:not(:disabled):not(.ant-btn-disabled):active {
+  border-color: var(--rb-accent-hover);
+  color: var(--rb-text-on-accent, #fff);
+  background: color-mix(in srgb, var(--rb-accent-hover) 88%, #000);
+}
+
+.cy-settings-page .ant-btn-primary:focus-visible,
+.cy-settings-theme-modal .ant-btn-primary:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--rb-accent) 55%, transparent);
+  outline-offset: 2px;
+  box-shadow: none;
+}
+
+.cy-settings-page .ant-btn-primary:disabled,
+.cy-settings-page .ant-btn-primary.ant-btn-disabled,
+.cy-settings-theme-modal .ant-btn-primary:disabled,
+.cy-settings-theme-modal .ant-btn-primary.ant-btn-disabled {
+  border-color: color-mix(in srgb, var(--rb-accent) 35%, var(--rb-border-default));
+  color: var(--rb-text-on-accent, #fff);
+  background: color-mix(in srgb, var(--rb-accent) 55%, var(--rb-surface-elevated));
+}
+
+.cy-settings-page .ant-switch.ant-switch-checked {
+  background: var(--rb-accent);
+}
+
+.cy-settings-icon-options {
+  display: flex;
+  gap: 10px;
+}
+
+.cy-settings-icon-option {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  padding: 3px;
+  border: 1px solid var(--rb-border-default);
+  border-radius: 10px;
+  background: var(--rb-surface-elevated);
+  cursor: pointer;
+}
+
+.cy-settings-icon-option img {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+}
+
+.cy-settings-icon-option:hover,
+.cy-settings-icon-option.is-active {
+  border-color: var(--rb-accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--rb-accent) 18%, transparent);
+}
+
+.cy-settings-status {
+  min-height: 22px;
+  margin-top: 12px;
+  color: var(--rb-text-secondary);
+  font: var(--rb-text-micro);
+  text-align: right;
+}
+
+.cy-settings-preferences-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 14px;
+  margin-top: 12px;
+}
+
+.cy-settings-preferences-actions .cy-settings-status {
+  flex: 1;
+}
+
+.cy-settings-page .ant-segmented {
+  flex: none;
+  color: var(--rb-text-secondary);
+  background: var(--rb-surface-muted, var(--rb-surface-hover));
+}
+
+.cy-settings-page .ant-segmented .ant-segmented-item-selected {
+  color: var(--rb-text-primary);
+  background: var(--rb-surface-elevated);
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--rb-text-primary) 12%, transparent);
+}
+
+.cy-settings-style-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px 0;
+}
+
+.cy-settings-style-section + .cy-settings-style-section {
+  border-top: 1px solid var(--rb-border-subtle);
+}
+
+.cy-settings-style-section > strong {
+  color: var(--rb-text-primary);
+  font: var(--rb-text-small-em);
+}
+
+.cy-settings-style-value {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.cy-settings-style-value .ant-slider {
+  flex: 1;
+  margin: 8px 0;
+}
+
+.cy-settings-page .ant-radio-button-wrapper {
+  border-color: var(--rb-border-default);
+  color: var(--rb-text-secondary);
+  background: var(--rb-surface-elevated);
+  transition: color 0.16s ease, border-color 0.16s ease, background-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.cy-settings-page .ant-radio-button-wrapper:not(.ant-radio-button-wrapper-disabled):hover {
+  border-color: var(--rb-accent-hover);
+  color: var(--rb-accent-hover);
+  background: color-mix(in srgb, var(--rb-accent) 7%, var(--rb-surface-elevated));
+}
+
+.cy-settings-page .ant-radio-button-wrapper-checked:not(.ant-radio-button-wrapper-disabled) {
+  border-color: var(--rb-accent);
+  color: var(--rb-accent);
+  background: color-mix(in srgb, var(--rb-accent) 8%, var(--rb-surface-elevated));
+}
+
+.cy-settings-page .ant-radio-button-wrapper-checked:not(.ant-radio-button-wrapper-disabled):hover {
+  border-color: var(--rb-accent-hover);
+  color: var(--rb-accent-hover);
+  background: color-mix(in srgb, var(--rb-accent) 14%, var(--rb-surface-elevated));
+}
+
+.cy-settings-page .ant-radio-button-wrapper:not(.ant-radio-button-wrapper-disabled):focus-within {
+  z-index: 2;
+  outline: 2px solid color-mix(in srgb, var(--rb-accent) 55%, transparent);
+  outline-offset: 1px;
+  box-shadow: none;
+}
+
+.cy-settings-page .ant-radio-button-wrapper:not(:first-child)::before {
+  background-color: var(--rb-border-default);
+}
+
+.cy-settings-page .ant-radio-button-wrapper-checked:not(.ant-radio-button-wrapper-disabled)::before {
+  background-color: var(--rb-accent);
+}
+
+.cy-settings-alert {
+  margin-bottom: 20px;
+}
+
+.cy-settings-loading {
+  display: grid;
+  min-height: 220px;
+  place-items: center;
+}
+
+@media (max-width: 900px) {
+  .cy-settings-page .cy-settings-sidebar {
+    width: 172px;
+  }
+
+  .cy-settings-content {
+    padding-inline: 18px;
+  }
+
+  .cy-settings-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .cy-settings-row__control.cy-settings-slider {
+    width: 100%;
+  }
+
+  .cy-settings-row .ant-segmented,
+  .cy-settings-row .cy-settings-button-group {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .cy-settings-row .cy-settings-button-group {
+    flex-wrap: wrap;
+  }
+}

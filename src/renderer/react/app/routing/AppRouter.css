@@ -1,0 +1,15 @@
+.cy-app-router {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.cy-app-router__view {
+  position: absolute;
+  inset: 0;
+}
+
+.cy-app-router__view.is-hidden {
+  display: none;
+}
