@@ -5,7 +5,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { PendingChatMessageInput } from "../../../shared/chat-types";
+import type { PendingChatMessageInput } from "./chats-store";
 
 const mocks = vi.hoisted(() => ({
   userDataDir: "",
@@ -592,21 +592,6 @@ describe("chats pending claim & dispatch", () => {
 
     expect(store.claimPendingMessage(session.id)).toEqual(expect.objectContaining({ ok: true, claimed: true }));
     expect(store.getSession(session.id)?.title).toBe("请帮我制定机器学习计划");
-  });
-
-  it("入队携带的恢复 run 标识随认领带出，供续派启动模型时使用", async () => {
-    const store = await import("./chats-store");
-    store.initialize();
-    const session = store.createSession({ mode: "work" });
-    store.enqueuePendingMessage(session.id, entry({
-      id: "q-resume",
-      rawContent: "继续上次任务",
-      visibleContent: "继续上次任务",
-      resumeFromRunId: "run-old",
-    }));
-
-    const claim = store.claimPendingMessage(session.id);
-    expect(claim).toEqual(expect.objectContaining({ ok: true, claimed: true, resumeFromRunId: "run-old" }));
   });
 });
 

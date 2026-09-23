@@ -142,7 +142,6 @@ const aguiApi = {
     sessionId: string;
     imageAttachments?: { name: string; filePath: string; mime?: string }[];
     recoveryContext?: string;
-    resumeFromRunId?: string;
     takeoverFromRunId?: string;
     transcriptRewind?: { anchorUserTurnId: string; disposition: "keep_user" | "replace_user" };
   }) =>
@@ -166,9 +165,6 @@ const aguiApi = {
   reportRunPersisted: (payload: { runId: string; finalMessageId?: string }) => {
     ipcRenderer.send(IPC.AGUI_RUN_PERSISTED, payload);
   },
-  getInterruptedRun: (sessionId: string) => ipcRenderer.invoke(IPC.HARNESS_GET_INTERRUPTED_RUN, sessionId) as Promise<{
-    runId: string; rounds: number; todoCount: number; updatedAt: number;
-  } | null>,
 };
 
 contextBridge.exposeInMainWorld("agui", aguiApi);

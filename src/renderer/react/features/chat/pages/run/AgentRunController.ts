@@ -56,7 +56,6 @@ export interface AgentRunInput {
   attachments: ComposerAttachment[];
   /** 原始用户文本对应的 UI 展示文本；表情包标记不进入模型 text。 */
   visibleContent?: string;
-  resumeFromRunId?: string;
   takeoverFromRunId?: string;
   /**
    * 待发队列认领派发：用户消息已由主进程认领写入历史（非本控制器追加）。
@@ -284,7 +283,6 @@ export class AgentRunController {
         styleId: general?.currentStyleId,
         sessionId: this.input.sessionId,
         recoveryContext: buildTodoRecoveryContext(this.input.session.messages, this.input.assistantId),
-        ...(this.input.resumeFromRunId ? { resumeFromRunId: this.input.resumeFromRunId } : {}),
         ...(this.input.takeoverFromRunId ? { takeoverFromRunId: this.input.takeoverFromRunId } : {}),
         ...(this.input.transcriptRewind ? { transcriptRewind: this.input.transcriptRewind } : {}),
         imageAttachments: this.input.attachments

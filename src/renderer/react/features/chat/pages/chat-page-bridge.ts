@@ -19,7 +19,6 @@ export type PendingClaimResult =
       claimed: true;
       userMessage: ChatMessage;
       visibleContent: string;
-      resumeFromRunId?: string;
       remainingQueue: PendingChatMessage[];
       session: ChatSession;
     }
@@ -133,7 +132,6 @@ export interface AguiApi {
     sessionId: string;
     imageAttachments?: Array<{ name: string; filePath: string; mime?: string }>;
     recoveryContext?: string;
-    resumeFromRunId?: string;
     takeoverFromRunId?: string;
     /** 桌面 edit / regenerate 的轨迹回退锚点（主进程写 turn_rewind；渲染端只传元数据）。 */
     transcriptRewind?: {
@@ -145,7 +143,6 @@ export interface AguiApi {
   cancel: (runId?: string) => Promise<unknown>;
   // 落盘确认（单向通知）：终态消息写入会话存储后上报，供插件轮次事件使用
   reportRunPersisted?: (payload: { runId: string; finalMessageId?: string }) => void;
-  getInterruptedRun?: (sessionId: string) => Promise<{ runId: string; rounds: number; todoCount: number; updatedAt: number } | null>;
 }
 
 export interface ChoiceApi {

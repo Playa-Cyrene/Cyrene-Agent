@@ -154,8 +154,6 @@ export interface AguiRunInput {
   imageAttachments?: { name: string; filePath: string; mime?: string }[];
   /** 同一会话上一次异常中断的只读恢复检查点。 */
   recoveryContext?: string;
-  /** 用户点击“继续任务”时指定的中断 Harness Run。 */
-  resumeFromRunId?: string;
   /** 显式接管：终止指定 run 并接管该会话（渲染端识别 SESSION_RUN_ACTIVE 后重发时携带）。 */
   takeoverFromRunId?: string;
   /** 只由主进程根据会话持久化字段注入，渲染端传值不可信。 */
@@ -424,17 +422,6 @@ export function registerAgUiIpc(
     });
   }
 
-  ipc.handle(IPC.HARNESS_GET_INTERRUPTED_RUN, (_event, conversationId: unknown) => {
-    if (typeof conversationId !== "string" || !conversationId) return null;
-    const run = getHarnessRunStore(app.getPath("userData")).getLatestInterrupted(conversationId);
-    return run ? {
-      runId: run.runId,
-      rounds: run.rounds,
-      todoCount: run.state.todoItems.length,
-      updatedAt: run.updatedAt,
-    } : null;
-  });
-
   const onFinished = onRunFinished;
   ipc.handle(IPC.AGUI_RUN, async (event: IpcMainInvokeEvent, rawInput: unknown) => {
     if (!buildOptionsFn || !onFinished) {
@@ -698,13 +685,6 @@ export function registerAgUiIpc(
       .filter((value): value is string => Boolean(value?.trim()))
       .join("\n\n");
     if (mergedRecoveryContext) options.recoveryContext = mergedRecoveryContext;
-    // 只有明确的非空 run ID 才代表用户要求继续中断运行；普通轮次不得
-    // 因空白/旧兼容字段意外进入恢复路径，更不会自动继承 cancelled run。
-    if (typeof input.resumeFromRunId === "string" && input.resumeFromRunId.trim()) {
-      options.resumeFromRunId = input.resumeFromRunId.trim();
-    } else {
-      delete options.resumeFromRunId;
-    }
     options.conversationMode = mode;
     // 把 bridge 创建的 canonical runId 注入 CyreneRunOptions，
     // 一路传到 Agent / Harness adapter / ToolContext / 所有 AG-UI 事件。

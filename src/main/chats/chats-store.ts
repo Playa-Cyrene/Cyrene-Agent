@@ -657,7 +657,6 @@ function normalizePendingMessage(id: string, entry: PendingChatMessageInput): Pe
     visibleContent,
     ...(attachments ? { attachments } : {}),
     ...(typeof entry.userSticker === "string" && entry.userSticker.trim() ? { userSticker: entry.userSticker.trim() } : {}),
-    ...(typeof entry.resumeFromRunId === "string" && entry.resumeFromRunId.trim() ? { resumeFromRunId: entry.resumeFromRunId.trim() } : {}),
     enqueuedAt: Date.now(),
   };
 }
@@ -669,7 +668,6 @@ function normalizePendingMessage(id: string, entry: PendingChatMessageInput): Pe
 function pendingEntryEquals(a: PendingChatMessage, b: PendingChatMessage): boolean {
   if (a.rawContent !== b.rawContent || a.visibleContent !== b.visibleContent) return false;
   if ((a.userSticker ?? "") !== (b.userSticker ?? "")) return false;
-  if ((a.resumeFromRunId ?? "") !== (b.resumeFromRunId ?? "")) return false;
   const aAtt = a.attachments ?? [];
   const bAtt = b.attachments ?? [];
   if (aAtt.length !== bAtt.length) return false;
@@ -761,8 +759,6 @@ export type ClaimPendingResult =
       userMessage: ChatMessage;
       /** 队首展示内容（剥离表情包标记）：渲染端占位消息直接使用，避免回读 rawContent。 */
       visibleContent: string;
-      /** 队首携带的恢复 run 标识（中断任务续跑）；无则省略。 */
-      resumeFromRunId?: string;
       /** 认领后剩余的待发队列（权威快照，供页面投影对账）。 */
       remainingQueue: PendingChatMessage[];
       /** 认领后的完整会话（runModel 上下文输入）。 */
@@ -860,7 +856,6 @@ export function claimPendingMessage(sessionId: string): ClaimPendingResult {
       claimed: true,
       userMessage,
       visibleContent: head.visibleContent,
-      ...(head.resumeFromRunId ? { resumeFromRunId: head.resumeFromRunId } : {}),
       remainingQueue: remaining.map((item) => ({ ...item })),
       session: composeSession(record, [userMessage]),
     };
@@ -891,7 +886,6 @@ export function claimPendingMessage(sessionId: string): ClaimPendingResult {
     claimed: true,
     userMessage,
     visibleContent: head.visibleContent,
-    ...(head.resumeFromRunId ? { resumeFromRunId: head.resumeFromRunId } : {}),
     remainingQueue: remaining.map((item) => ({ ...item })),
     session,
   };

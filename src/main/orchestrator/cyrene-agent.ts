@@ -104,8 +104,6 @@ export interface CyreneRunOptions {
    *   不得再各自生成 harness-${Date.now()} 等本地 ID。
    */
   runId?: string;
-  /** 用户明确要求继续的旧 Harness Run；仅由恢复入口注入。 */
-  resumeFromRunId?: string;
   /** 原始消息（不含 system）。system 由 chat-loop / harness-adapter 按 promptLayers 组装，不随消息持久化。 */
   messages: ChatMessage[];
   conversationId?: string;

@@ -234,8 +234,6 @@ export interface PendingChatMessage {
   attachments?: PendingChatAttachment[];
   /** 用户表情包 ID（内置或自定义）。 */
   userSticker?: string;
-  /** 恢复指定旧 run（中断任务续跑）：随条目入队，认领派发时透传给模型运行。 */
-  resumeFromRunId?: string;
   /**
    * 调整目标运行 id：非空表示该条目已被请求"插入当前运行下一步"。
    * 注入成功后条目转为正式用户消息并移出队列；运行结束/取消时未注入的

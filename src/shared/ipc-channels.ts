@@ -71,7 +71,6 @@ export const IPC = {
   AGUI_CANCEL: "agui:cancel",
   // 渲染端→主进程单向通知：本轮 run 的终态消息已写入会话存储（插件轮次事件的落盘确认）
   AGUI_RUN_PERSISTED: "agui:run-persisted",
-  HARNESS_GET_INTERRUPTED_RUN: "harness:get-interrupted-run",
   SCHEDULER_EVENT: "scheduler:event",
 
   // 注意力 Toast 中心（右下角提醒弹窗；main 为生命周期唯一权威，渲染页纯表现层）

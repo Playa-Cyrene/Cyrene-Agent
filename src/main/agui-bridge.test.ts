@@ -754,42 +754,6 @@ describe("agui-bridge sticker event ordering", () => {
     expect(mocks.runCyreneAgent).not.toHaveBeenCalled();
   });
 
-  it("does not forward an empty resume marker on an ordinary new turn", async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-bridge-empty-resume-"));
-    mocks.userDataRoot = root;
-    vi.resetModules();
-    mocks.handlers.clear();
-    mocks.runCyreneAgent.mockClear();
-    mocks.getSession.mockReturnValue({ id: "chat-new-turn", mode: "chat" });
-    const { registerAgUiIpc } = await import("./agui-bridge");
-    const buildOptions = vi.fn(async () => ({
-      options: {
-        settings: { provider: "test", baseUrl: "", model: "", apiKey: "", contextWindowTokens: 256000 },
-        messages: [{ role: "user", content: "new turn" }],
-        timeoutMs: 1000,
-        toolSystemContent: "TOOL",
-        soulSystemBaseContent: "SOUL",
-      },
-      latestUserText: "new turn",
-    }));
-    registerAgUiIpc(buildOptions, async () => {}, () => null);
-    const handler = mocks.handlers.get(IPC.AGUI_RUN);
-    if (!handler) throw new Error("AGUI_RUN handler was not registered");
-
-    try {
-      await handler({ sender: { isDestroyed: () => false, send: () => {} } }, {
-        sessionId: "chat-new-turn",
-        resumeFromRunId: "   ",
-        messages: [{ role: "user", content: "new turn" }],
-      });
-
-      expect(mocks.runCyreneAgent).toHaveBeenCalledWith(expect.not.objectContaining({ resumeFromRunId: expect.anything() }));
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-      mocks.userDataRoot = "";
-    }
-  });
-
   // ── canonical runId 与 exactly-once settlement ────────────
 
   it("propagates the canonical runId through ack, RUN_STARTED, options, and RUN_FINISHED", async () => {

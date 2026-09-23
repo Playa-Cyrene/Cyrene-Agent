@@ -54,7 +54,6 @@ export interface PendingQueueFlow {
       visibleContent: string;
       attachments?: ComposerAttachment[];
       userSticker?: string;
-      resumeFromRunId?: string;
     },
     notifyError?: boolean,
   ): Promise<boolean>;
@@ -109,7 +108,6 @@ export function createPendingQueueFlow(getHost: () => PendingQueueFlowHost): Pen
       visibleContent: string;
       attachments?: ComposerAttachment[];
       userSticker?: string;
-      resumeFromRunId?: string;
     },
     notifyError = true,
   ): Promise<boolean> {
@@ -156,7 +154,6 @@ export function createPendingQueueFlow(getHost: () => PendingQueueFlowHost): Pen
         visibleContent: entry.visibleContent,
         ...(stableAttachments.length > 0 ? { attachments: stableAttachments } : {}),
         ...(entry.userSticker ? { userSticker: entry.userSticker } : {}),
-        ...(entry.resumeFromRunId ? { resumeFromRunId: entry.resumeFromRunId } : {}),
       });
     } catch (error) {
       // 入队请求异常（IPC 断连等）：结果未知，缓存原 id 供重试去重
@@ -272,7 +269,6 @@ export function createPendingQueueFlow(getHost: () => PendingQueueFlowHost): Pen
     claim: {
       userMessage: ChatMessage;
       visibleContent: string;
-      resumeFromRunId?: string;
       session: ChatSession;
     },
   ): Promise<void> {
@@ -319,7 +315,6 @@ export function createPendingQueueFlow(getHost: () => PendingQueueFlowHost): Pen
       session: claim.session,
       attachments,
       visibleContent: claim.visibleContent,
-      ...(claim.resumeFromRunId ? { resumeFromRunId: claim.resumeFromRunId } : {}),
       claimedPendingMessageId: claim.userMessage.id,
     });
   }

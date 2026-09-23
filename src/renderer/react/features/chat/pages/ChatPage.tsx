@@ -146,7 +146,7 @@ interface NavActions {
   openProject: (workspaceRoot: string) => void;
 }
 
-export function ChatPage() {
+export function ChatPage({ onOpenSettings }: { onOpenSettings?: () => void } = {}) {
   const { t } = useTranslation();
   // 统一反馈入口：错误轻提示 / 需阅读的错误弹窗 / 危险确认
   const feedback = useFeedback();
@@ -196,7 +196,6 @@ export function ChatPage() {
     Record<string, { content: string; planPath: string; phase: PlanReviewPhase }>
   >({});
   const [planDrawerOpen, setPlanDrawerOpen] = useState(false);
-  const [interruptedRun, setInterruptedRun] = useState<{ runId: string; rounds: number; todoCount: number } | null>(null);
   // 会话守卫冲突（SESSION_RUN_ACTIVE）：主进程拒绝了并发 run，
   // 等用户决定是否终止旧 run 并接管重开本轮。仅 UX 层；正确性由主进程守卫保证。
   const [sessionTakeover, setSessionTakeover] = useState<{
@@ -567,20 +566,6 @@ export function ChatPage() {
       active.queue.cancel();
       activeEarlyTtsRef.current = null;
     }
-  }, [activeSessionId, mode]);
-
-  useEffect(() => {
-    const sessionId = activeSessionId;
-    const api = aguiApi();
-    if (!sessionId || !api?.getInterruptedRun || mode === "chat") {
-      setInterruptedRun(null);
-      return;
-    }
-    let active = true;
-    void api.getInterruptedRun(sessionId).then((run) => {
-      if (active) setInterruptedRun(run ? { runId: run.runId, rounds: run.rounds, todoCount: run.todoCount } : null);
-    }).catch(() => { if (active) setInterruptedRun(null); });
-    return () => { active = false; };
   }, [activeSessionId, mode]);
 
   // 计划模式事件（Plan Mode）：review/approved/exited 在 run 结束后由主进程发出
@@ -1201,7 +1186,7 @@ export function ChatPage() {
   }
 
 
-  async function sendMessage(content: string, resumeFromRunId?: string) {
+  async function sendMessage(content: string) {
     const parsedMessage = parseComposerMessage(mode, content);
     const message = parsedMessage.rawContent;
     if (!message) return;
@@ -1252,7 +1237,6 @@ export function ChatPage() {
       visibleContent: visibleMessage,
       attachments: attachmentsForMessage,
       userSticker,
-      ...(resumeFromRunId ? { resumeFromRunId } : {}),
     });
     if (!enqueued) return;
     // 请求期间用户继续输入时不清掉新内容：仅当草稿仍是发送时的文本才清空；
@@ -1558,7 +1542,10 @@ export function ChatPage() {
   const navMinimize = useCallback(() => window.chat?.minimize(), []);
   const navMaximize = useCallback(() => window.chat?.toggleMaximize(), []);
   const navCloseWindow = useCallback(() => window.chat?.close(), []);
-  const navOpenSettings = useCallback(() => sidebarApi()?.openSettings("appearance"), []);
+  const navOpenSettings = useCallback(() => {
+    if (onOpenSettings) onOpenSettings();
+    else sidebarApi()?.openSettings("appearance");
+  }, [onOpenSettings]);
 
   return (
     <div className={`cy-page ${collapsed ? "is-collapsed" : ""}`}>
@@ -1639,11 +1626,9 @@ export function ChatPage() {
           />
         )}
         <RunRecoveryNotices
-          interruptedRun={interruptedRun}
           sessionTakeover={sessionTakeover}
           activeSessionId={activeSessionId}
           isRunning={isCurrentScopeRunning}
-          onResume={(runId) => void sendMessage(t("chatPage.resumeLastTaskMessage"), runId)}
           onTakeover={() => {
             const takeover = sessionTakeover;
             if (!takeover) return;

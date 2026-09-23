@@ -46,8 +46,10 @@ function fingerprintPersistedCall(session: HarnessRunSession, toolCallId: string
 }
 
 /**
- * 只恢复 Harness 的执行状态，不重放或修补旧 run 的消息。
- * 会话消息始终由 journal 提供；这里仅消费 runStore 的状态、缓存和工具执行分类。
+ * 崩溃对账：从意外中断（running→interrupted）的运行中提取不确定的外部副作用。
+ * 只消费 runStore 的状态、缓存和工具执行分类，不重放或修补旧 run 的消息；
+ * 会话消息始终由 journal 提供。本函数不对模型注入任何「继续任务」上下文，
+ * 仅产出崩溃对账所需的墨迹与不确定副作用，供转录投影补齐。
  */
 export function prepareHarnessRecoveryState(
   session: HarnessRunSession,
@@ -63,21 +65,12 @@ export function prepareHarnessRecoveryState(
 
   const state = clone(session.state);
   const differences: string[] = [];
-  if ((environment.provider && environment.provider !== session.request.provider)
-    || (environment.model && environment.model !== session.request.model)) {
-    differences.push(`模型已变化：原为 ${session.request.provider}/${session.request.model}，当前为 ${environment.provider ?? session.request.provider}/${environment.model ?? session.request.model}。`);
-  }
+
   const previousToolIds = session.request.enabledToolIds ?? [];
   if (environment.enabledToolIds && previousToolIds.length > 0) {
     const currentTools = new Set(environment.enabledToolIds);
     const missing = previousToolIds.filter((id) => !currentTools.has(id));
     if (missing.length > 0) differences.push(`恢复时不可用的旧工具：${missing.join(", ")}。不得假装调用成功。`);
-  }
-  if (environment.promptFingerprint && environment.promptFingerprint !== session.request.promptFingerprint) {
-    differences.push("恢复时提示词指纹已变化，缓存上下文将重新建立。");
-  }
-  if (environment.toolSchemaFingerprint && environment.toolSchemaFingerprint !== session.request.toolSchemaFingerprint) {
-    differences.push("恢复时工具目录指纹已变化，缓存上下文将重新建立。");
   }
 
   const plannedTools: string[] = [];
@@ -102,13 +95,7 @@ export function prepareHarnessRecoveryState(
   return {
     state,
     cacheState: { cacheEpoch: session.cache.cacheEpoch + 1, epochReason: "recovery" },
-    recoveryContext: [
-      `这是从意外中断的运行 ${session.runId} 恢复的任务。`,
-      `已完成轮数：${session.rounds}；Todo 是可变工作笔记，应据真实进展更新。`,
-      "中断中的外部副作用已标为未知：不得自动重放，必须先查证、询问用户，或诚实说明无法确认。",
-      ...(plannedTools.length > 0 ? [`尚未启动的工具调用（${plannedTools.join(", ")}）保持 not_executed，不自动执行。`] : []),
-      ...differences,
-    ].join("\n"),
+    recoveryContext: undefined,
     uncertainEffects: clone(state.uncertainEffects),
   };
 }

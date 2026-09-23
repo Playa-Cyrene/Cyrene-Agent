@@ -57,7 +57,6 @@ export async function runHarnessWithAdapter(
     vendorConfig,
     tools,
     runStore,
-    recovered,
     promptLayers,
     harnessPromptLayers,
     systemPrompt,
@@ -74,8 +73,6 @@ export async function runHarnessWithAdapter(
     usageParts: promptLayers.usageParts,
     messages: runMessages,
     runId,
-    ...(recovered ? { initialState: recovered.state } : {}),
-    ...(recovered ? { initialCache: recovered.cacheState } : {}),
     tools,
     vendorConfig,
     config: {

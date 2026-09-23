@@ -150,7 +150,6 @@ describe("页面待发队列流程", () => {
     store.get.mockResolvedValue(makeSession());
     store.pendingClaim.mockResolvedValue(makeClaimed({
       remainingQueue: [makeQueueEntry("q-2")],
-      resumeFromRunId: "run-old",
     }));
     await flow.consume("chat", "s1");
 
@@ -160,13 +159,12 @@ describe("页面待发队列流程", () => {
     // 渲染态追加用户消息 + 助手占位各一条
     expect(calls.appended).toHaveLength(1);
     expect(calls.appended[0].items.map((item) => item.role)).toEqual(["user", "assistant"]);
-    // run 输入：认领派发标识 + 恢复 runId，绝不再追加用户消息
+    // run 输入：认领派发标识，绝不再追加用户消息
     expect(calls.runs).toHaveLength(1);
     expect(calls.runs[0]).toMatchObject({
       sessionId: "s1",
       userMessageId: "q-1",
       claimedPendingMessageId: "q-1",
-      resumeFromRunId: "run-old",
     });
     expect(calls.refreshedModes).toContain("chat");
   });
