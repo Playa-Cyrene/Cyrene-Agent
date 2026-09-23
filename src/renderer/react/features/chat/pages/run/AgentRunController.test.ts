@@ -73,6 +73,7 @@ function createRecordingHost() {
       todoState = updater(todoState);
     }),
     updateContextUsage: vi.fn(),
+    updatePlanReview: vi.fn(),
     setCompressingContext: vi.fn(),
     setModeBusy: vi.fn(),
     requestTakeover: vi.fn(),

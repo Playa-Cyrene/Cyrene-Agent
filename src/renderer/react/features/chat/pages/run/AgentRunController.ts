@@ -69,6 +69,11 @@ export interface AgentRunInput {
   };
 }
 
+/** 计划面板更新：submit_plan 交卷（载入全文并打开面板）与执行收尾（阶段标记）。 */
+export type PlanReviewUpdate =
+  | { kind: "submitted"; planContent: string; planPath: string }
+  | { kind: "completed" };
+
 /**
  * 运行宿主：控制器与 React 世界之间的全部通道。
  * 宿主只是端口——不要求把控制器每一次内部状态变化都暴露成一个方法，
@@ -87,6 +92,8 @@ export interface AgentRunHost {
   updateTodos(sessionId: string, updater: (current: TodoStateBySession) => TodoStateBySession): void;
   /** 会话级上下文容量快照更新（环形图优先读取点）。 */
   updateContextUsage(sessionId: string, snapshot: ContextUsageSnapshot): void;
+  /** 会话级计划面板更新：submit_plan 交卷与执行收尾（事件均在 run 内到达）。 */
+  updatePlanReview(sessionId: string, update: PlanReviewUpdate): void;
   /** 上下文压缩中提示。sessionId 供宿主未来按会话映射，当前实现为全局单值。 */
   setCompressingContext(sessionId: string, value: boolean): void;
   /** 模式级 busy 标记（ref 与渲染状态由宿主同步维护）。 */
@@ -1050,6 +1057,22 @@ export class AgentRunController {
     } else if (event.type === "CUSTOM" && event.name === "cyrene.choice.dismiss") {
       this.deps.host.dismissAskIfMatched(this.input.sessionId, event.value);
       void this.checkpointRun("running", true);
+    } else if (event.type === "CUSTOM" && event.name === "cyrene.plan.review") {
+      // submit_plan 交卷：计划全文经 run 内事件链到达，载入面板供用户在审批等待期间审阅。
+      const value = event.value as { sessionId?: unknown; planPath?: unknown; planContent?: unknown } | null | undefined;
+      if (
+        typeof value?.sessionId === "string" && value.sessionId === this.input.sessionId
+        && typeof value.planContent === "string" && value.planContent.trim()
+      ) {
+        this.deps.host.updatePlanReview(this.input.sessionId, {
+          kind: "submitted",
+          planContent: value.planContent,
+          planPath: typeof value.planPath === "string" ? value.planPath : "",
+        });
+      }
+    } else if (event.type === "CUSTOM" && event.name === "cyrene.plan.completed") {
+      // 执行收尾通知（completePlanRun 在 run 内发出，不带 sessionId）：面板阶段标记为已完成。
+      this.deps.host.updatePlanReview(this.input.sessionId, { kind: "completed" });
     } else if (event.type === "CUSTOM" && event.name === "cyrene.taskPlan") {
       const taskPlan = normalizeTaskPlanPresentation(event.value);
       if (taskPlan) {

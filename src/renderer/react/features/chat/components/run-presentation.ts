@@ -384,16 +384,6 @@ export function normalizeChoiceInteraction(value: unknown): AskUserInteraction |
   };
 }
 
-/** Routes a post-run plan approval card only to the conversation that owns it. */
-export function normalizeDeferredPlanChoice(
-  value: unknown,
-  activeSessionId: string,
-): AskUserInteraction | undefined {
-  const card = asRecord(value);
-  if (asNonEmptyString(card?.sessionId) !== activeSessionId) return undefined;
-  return normalizeChoiceInteraction(value);
-}
-
 /**
  * 边界校验主进程推来的抽查卡片。畸形 payload 直接判失效（不渲染），
  * 与 ask 卡片同款防线；主进程 10s 幂等重播，短暂畸形不会卡住用户。

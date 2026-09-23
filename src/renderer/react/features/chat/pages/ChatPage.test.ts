@@ -1,19 +1,9 @@
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { shouldListenForDeferredPlanEvents } from "./conversation-run-policy";
 
 const chatPageSource = fs.readFileSync(fileURLToPath(new URL("./ChatPage.tsx", import.meta.url)), "utf8");
 const runControllerSource = fs.readFileSync(fileURLToPath(new URL("./run/AgentRunController.ts", import.meta.url)), "utf8");
-
-describe("React Code conversation run policy", () => {
-  it("keeps the post-run plan listener active in both Code and Chat modes", () => {
-    expect(shouldListenForDeferredPlanEvents("code")).toBe(true);
-    expect(shouldListenForDeferredPlanEvents("chat")).toBe(true);
-    expect(shouldListenForDeferredPlanEvents("work")).toBe(false);
-    expect(shouldListenForDeferredPlanEvents("learn")).toBe(false);
-  });
-});
 
 describe("ChatPage feedback", () => {
   it("统一反馈入口承接错误上报与确认流程，不残留浏览器默认弹窗", () => {

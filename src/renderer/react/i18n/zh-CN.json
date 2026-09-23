@@ -47,7 +47,6 @@
     "scrollToBottom": "滚动到底部",
     "screenshotAttachmentName": "截图_{{ts}}.png",
     "pastedImageAttachmentName": "粘贴图片_{{ts}}.png",
-    "planApprovedAutoMessage": "已批准计划，请开始执行。",
     "resumeLastTaskMessage": "继续上次任务",
     "errorModelServiceNotReady": "模型请求失败：AG-UI 模型服务尚未就绪",
     "toolCallFallbackName": "工具调用",

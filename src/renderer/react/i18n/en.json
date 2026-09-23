@@ -47,7 +47,6 @@
     "scrollToBottom": "Scroll to bottom",
     "screenshotAttachmentName": "screenshot_{{ts}}.png",
     "pastedImageAttachmentName": "pasted-image_{{ts}}.png",
-    "planApprovedAutoMessage": "Plan approved — go ahead and start.",
     "resumeLastTaskMessage": "Resume last task",
     "errorModelServiceNotReady": "Model request failed: the AG-UI model service isn't ready yet",
     "toolCallFallbackName": "Tool call",

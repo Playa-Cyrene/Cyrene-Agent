@@ -7,7 +7,6 @@ import {
   describeRunStage,
   isAskComplete,
   normalizeChoiceInteraction,
-  normalizeDeferredPlanChoice,
   normalizePopQuizCard,
   normalizeTaskPlanPresentation,
   resolveComposerSlot,
@@ -100,36 +99,6 @@ describe("work run presentation", () => {
       responseKind: "clarification",
       questions: [{ id: "format", options: [{ id: "docx", label: "Word" }] }],
     });
-  });
-
-  it("accepts a deferred plan approval only for its owning session", () => {
-    const payload = {
-      sessionId: "session-plan",
-      interactionId: "plan-approval-1",
-      runId: "run-finished",
-      revision: 1,
-      mode: "semantic_clarification",
-      intro: "计划已生成",
-      questions: [{
-        id: "plan_decision",
-        prompt: "是否批准此计划？",
-        required: true,
-        multiple: false,
-        options: [
-          { id: "approve", label: "批准计划，开始执行" },
-          { id: "supplement", label: "我要修改 / 补充" },
-        ],
-        customInput: { enabled: false },
-      }],
-    };
-
-    expect(normalizeDeferredPlanChoice(payload, "session-plan")).toMatchObject({
-      kind: "ask",
-      id: "plan-approval-1",
-      question: "是否批准此计划？",
-    });
-    expect(normalizeDeferredPlanChoice(payload, "session-other")).toBeUndefined();
-    expect(normalizeDeferredPlanChoice({ ...payload, sessionId: undefined }, "session-plan")).toBeUndefined();
   });
 
   it("normalizes the opaque public Ask payload without requiring canonical option values", () => {

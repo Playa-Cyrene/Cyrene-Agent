@@ -9,7 +9,6 @@ import { CodeGitPanel } from "../components/CodeGitPanel";
 import type { PlanReviewPhase } from "../components/PlanReviewPanel";
 import { ChatPageInspector } from "../components/ChatPageInspector";
 import {
-  normalizeDeferredPlanChoice,
   normalizePopQuizCard,
   shouldDismissAsk,
   type ComposerInteraction,
@@ -35,7 +34,6 @@ import { type ContextUsageSnapshot } from "../../../../../shared/context-usage";
 import { ChatPagePanelHost } from "../components/ChatPagePanelHost";
 import { useUserCallPreference } from "../../../hooks/useUserNickname";
 import { resolveRevisableLastTurn } from "../components/last-turn-actions";
-import { shouldListenForDeferredPlanEvents } from "./conversation-run-policy";
 
 import {
   aguiApi,
@@ -568,73 +566,6 @@ export function ChatPage({ onOpenSettings }: { onOpenSettings?: () => void } = {
     }
   }, [activeSessionId, mode]);
 
-  // 计划模式事件（Plan Mode）：review/approved/exited 在 run 结束后由主进程发出
-  // （run 订阅已解除），必须持久监听；completed 在 run 内发出，run 订阅无此分支，
-  // 也统一在这里处理。批准后自动发送执行消息（sendMessage 自带 busy 排队机制）。
-  useEffect(() => {
-    const api = aguiApi();
-    if (!api?.onEvent || !shouldListenForDeferredPlanEvents(mode) || !activeSessionId) return;
-    const off = api.onEvent((event) => {
-      if (event.type !== "CUSTOM" || typeof event.name !== "string") return;
-      if (event.name === "cyrene.choice") {
-        const interaction = normalizeDeferredPlanChoice(event.value, activeSessionId);
-        if (interaction) setInteractionForSession(activeSessionId, interaction);
-        return;
-      }
-      if (event.name === "cyrene.choice.dismiss") {
-        // run 事件闸之外的 dismiss（老版选择卡超时 / run 结束后发出的结算）：
-        // 匹配当前 ask 卡时清掉，避免留下点不出结果的僵尸卡。
-        setInteractionsBySession((current) => {
-          const entry = current[activeSessionId];
-          if (!entry || entry.interaction.kind !== "ask" || !shouldDismissAsk(entry.interaction, event.value)) return current;
-          return clearSessionInteraction(current, activeSessionId);
-        });
-        return;
-      }
-      if (!event.name.startsWith("cyrene.plan.")) return;
-      const value = (event.value ?? null) as { sessionId?: string; planPath?: string; planContent?: string; text?: string } | null;
-      if (value?.sessionId && value.sessionId !== activeSessionId) return;
-      switch (event.name) {
-        case "cyrene.plan.review":
-          if (value?.sessionId && typeof value.planContent === "string" && value.planContent.trim()) {
-            setPlanReviewBySession((current) => ({
-              ...current,
-              [value.sessionId!]: {
-                content: value.planContent!,
-                planPath: value.planPath ?? "",
-                phase: "review",
-              },
-            }));
-            setPlanDrawerOpen(true);
-            setActiveTabId(`plan:${value.sessionId}`);
-          }
-          break;
-        case "cyrene.plan.approved":
-          if (value?.sessionId) {
-            setPlanReviewBySession((current) => current[value.sessionId!]
-              ? { ...current, [value.sessionId!]: { ...current[value.sessionId!], phase: "executing" } }
-              : current);
-            void sendMessage(t("chatPage.planApprovedAutoMessage"));
-          }
-          break;
-        case "cyrene.plan.supplement":
-          // 第二段补充卡提交的文本：作为用户消息发给模型修改计划，改完会重新走审批
-          if (value?.sessionId && typeof value.text === "string" && value.text.trim()) {
-            void sendMessage(value.text);
-          }
-          break;
-        case "cyrene.plan.completed":
-          // adapter 发出时不带 sessionId；按当前计划会话处理
-          setPlanReviewBySession((current) => current[activeSessionId]
-            ? { ...current, [activeSessionId]: { ...current[activeSessionId], phase: "completed" } }
-            : current);
-          break;
-      }
-    });
-    return off;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, activeSessionId]);
-
   function setInteractionForSession(sessionId: string, interaction: ComposerInteraction): void {
     setInteractionsBySession((current) => setSessionInteraction(current, sessionId, interaction));
   }
@@ -852,6 +783,26 @@ export function ChatPage({ onOpenSettings }: { onOpenSettings?: () => void } = {
           ...current,
           [sessionId]: snapshot,
         })),
+        updatePlanReview: (sessionId, update) => {
+          if (update.kind === "submitted") {
+            // submit_plan 交卷：载入计划全文并打开计划面板，供用户在审批等待期间审阅
+            setPlanReviewBySession((current) => ({
+              ...current,
+              [sessionId]: {
+                content: update.planContent,
+                planPath: update.planPath,
+                phase: "review",
+              },
+            }));
+            setPlanDrawerOpen(true);
+            setActiveTabId(`plan:${sessionId}`);
+            return;
+          }
+          // 执行收尾：已有面板条目标记为已完成，无条目不新建
+          setPlanReviewBySession((current) => current[sessionId]
+            ? { ...current, [sessionId]: { ...current[sessionId], phase: "completed" } }
+            : current);
+        },
         setCompressingContext: (_sessionId, value) => setIsCompressingContext(value),
         setModeBusy: (targetMode, busy) => {
           if (busy) {

@@ -185,8 +185,8 @@ export async function runHarnessWithAdapter(
 
   // ── 计划模式 run 尾钩──
   // 执行 run 结束（无论成败/取消）自动摘牌回 NORMAL；planPath 供前端"施工已完成"标注。
-  // PLAN_DISCUSSING → PLAN_REVIEW 的转换不在 adapter 做：审批流由 agui-bridge 在
-  // RUN_FINISHED 之后触发（需要 buildOptions 重开执行 run 的能力）。
+  // PLAN_DISCUSSING → PLAN_REVIEW 的迁移由 submit_plan 工具在 run 内完成（回执等待也在 run 内），
+  // adapter 只负责执行收尾广播。
   completePlanRun({
     mode: options.conversationMode,
     threadId,
