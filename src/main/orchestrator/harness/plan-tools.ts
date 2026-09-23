@@ -69,28 +69,6 @@ function conversationIdOf(ctx?: ToolContext): string {
   return ctx?.conversationId ?? "default";
 }
 
-/** 计划文件落在工作区 .cyrene/ 下时，确保项目 .gitignore 忽略它（幂等，失败静默降级）。 */
-async function ensureCyreneIgnored(workspaceRoot: string): Promise<void> {
-  try {
-    const gitignorePath = path.join(workspaceRoot, ".gitignore");
-    let current = "";
-    try {
-      current = await fs.promises.readFile(gitignorePath, "utf8");
-    } catch {
-      // 无 .gitignore（可能尚未 git init）：新建一个仅含忽略规则的文件
-    }
-    if (/(^|\n)\s*\.cyrene\/?\s*(\n|$)/.test(current)) return;
-    const addition = current.endsWith("\n") || current === "" ? "" : "\n";
-    await fs.promises.writeFile(
-      gitignorePath,
-      `${current}${addition}\n# Cyrene agent\n.cyrene/\n`,
-      "utf8",
-    );
-  } catch {
-    // 只读目录 / 权限问题：不阻塞计划写入，仅放弃忽略
-  }
-}
-
 export async function executeEnterPlanMode(
   call: ToolCall,
   ctx: ToolContext | undefined,
@@ -145,10 +123,6 @@ export async function executeWritePlan(
   const planPath = getPlanPath(conversationId);
   try {
     await fs.promises.mkdir(path.dirname(planPath), { recursive: true });
-    // 计划在项目工作区下时，顺带确保 .cyrene/ 不进 git（幂等）
-    if (planPath.includes(".cyrene") && ctx?.resolvedWorkspaceRoot) {
-      await ensureCyreneIgnored(ctx.resolvedWorkspaceRoot);
-    }
     await fs.promises.writeFile(planPath, content, "utf8");
   } catch (err) {
     return {

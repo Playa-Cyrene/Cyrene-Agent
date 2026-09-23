@@ -1,9 +1,8 @@
 import { app } from "electron";
 import type { BaseEvent } from "@ag-ui/core";
 import type { ToolDefinition } from "../../tools/registry/tool-registry";
-import { toolRegistry } from "../../tools/registry/tool-registry";
+import { resolveEffectKind, toolRegistry } from "../../tools/registry/tool-registry";
 import { checkPermission, type ToolRiskLevel } from "../../../permission";
-import { policyFor } from "../../../permission-policy";
 import { isPlanReadOnly } from "../../plan-mode";
 import { contextRefRegistry, extractLastUserQuery, type ToolContext } from "../../tools/registry/tool-context";
 import type { HarnessInput } from "../index";
@@ -37,19 +36,24 @@ export function prepareToolRuntime(input: {
     toolId: string,
     args: Record<string, unknown>,
   ): Promise<boolean> => {
-    // allow_all 是显式总开关，会跳过后续权限检查；普通权限模式下才先执行计划只读拦截。
-    if (options.permissionMode === "allow_all") return true;
+    // 计划只读不变量：必须先于 allow_all 判断。
+    // 用户说"先规划不要动"是对本轮对话的契约，任何权限档位都不能越过。
+    // 判断依据从 risk（危险程度）换成 effectKind（是否改变世界），只放行纯读取工具；
+    // 未注册工具也拒绝（fail-closed：MCP/插件工具必须显式声明 effectKind 才能参与计划阶段）。
     if (
       (options.conversationMode === "code" || options.conversationMode === "chat")
       && isPlanReadOnly(threadId)
     ) {
-      const planTool = toolRegistry.getById(toolId) as (ToolDefinition & { risk?: ToolRiskLevel }) | undefined;
-      const planRisk: ToolRiskLevel = planTool?.risk ?? "safe";
-      if (policyFor("read-only", planRisk) !== "allow") {
-        console.log(`[HarnessAdapter] [Plan] read-only enforcement blocked tool=${toolId} risk=${planRisk}`);
+      const planTool = toolRegistry.getById(toolId);
+      if (!planTool) return false;
+      const effect = resolveEffectKind(planTool, args);
+      if (effect !== "read") {
+        console.log(`[HarnessAdapter] [Plan] read-only enforcement blocked tool=${toolId} effect=${effect}`);
         return false;
       }
     }
+    // 契约检查完毕后，allow_all 才生效（只影响执行阶段语义）
+    if (options.permissionMode === "allow_all") return true;
     const tool = toolRegistry.getById(toolId);
     if (!tool) return false;
     const risk: ToolRiskLevel = (tool as ToolDefinition & { risk?: ToolRiskLevel }).risk ?? "safe";

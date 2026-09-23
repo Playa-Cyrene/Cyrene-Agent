@@ -282,6 +282,7 @@ export function registerTravelTools(): void {
       "- mode（可选，默认驾车）：出行方式——驾车/开车、步行/走路、骑行/骑车/自行车、公交/公共交通/地铁\n" +
       "- city（公交必填）：城市名，如「北京」「上海」。仅公交模式需要",
     enabled: true,
+    effectKind: "read",
     risk: "network",
     modes: ["work"],
     inputSchema: {

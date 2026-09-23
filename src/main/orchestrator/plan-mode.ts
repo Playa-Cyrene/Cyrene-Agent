@@ -5,7 +5,7 @@
  * - 会话级内存 Map，v1 不持久化（重启回 NORMAL，计划文件仍在磁盘）
  * - 本模块保持纯净（无 electron / fs 依赖），userData 兜底根由 initPlanPaths 注入
  * - 计划文件优先落工作区 `<workspaceRoot>/.cyrene/docs/plan-<时间戳>.md`
- *   （项目产物归项目，且 .cyrene 由 write_plan 自动加 .gitignore）；
+ *   （项目产物归项目；.cyrene 是否进 git 由用户自己决定，Plan Mode 不代劳改 .gitignore）；
  *   拿不到 workspaceRoot 时回落 userData/plans/<conversationId>/plan.md
  * - code 与 chat（开启工具走 harness）模式参与；work 预留接口（调用方按 conversationMode 决定是否进入）
  */

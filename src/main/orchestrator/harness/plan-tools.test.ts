@@ -187,31 +187,18 @@ describe("plan-tools", () => {
       expect(hasPlanWrittenThisRun("conv-1")).toBe(true);
     });
 
-    it("自动把 .cyrene/ 加入 .gitignore（保留原有内容且幂等）", async () => {
-      fs.writeFileSync(path.join(workspaceRoot, ".gitignore"), "node_modules\n", "utf8");
+    it("write_plan 不修改项目 .gitignore（是否忽略由用户决定）", async () => {
+      const gitignorePath = path.join(workspaceRoot, ".gitignore");
+      fs.writeFileSync(gitignorePath, "node_modules\n", "utf8");
       enterPlanDiscussing("conv-1", workspaceRoot);
 
       await executeWritePlan(makeCall({ content: PLAN_CONTENT }), makeCtx());
       await executeWritePlan(makeCall({ content: `${PLAN_CONTENT}\n\n补充一节。` }), makeCtx());
 
-      const gitignore = fs.readFileSync(path.join(workspaceRoot, ".gitignore"), "utf8");
-      expect(gitignore).toContain("node_modules");
-      expect(gitignore).toContain("# Cyrene agent");
-      expect(gitignore.match(/\.cyrene\//g)).toHaveLength(1);
       // 覆盖写入后文件为最新内容
       expect(await readActivePlan("conv-1")).toContain("补充一节。");
-    });
-
-    it(".gitignore 已包含 .cyrene/ 时不重复追加", async () => {
-      fs.writeFileSync(path.join(workspaceRoot, ".gitignore"), "node_modules\n.cyrene/\n", "utf8");
-      enterPlanDiscussing("conv-1", workspaceRoot);
-
-      const observation = await executeWritePlan(makeCall({ content: PLAN_CONTENT }), makeCtx());
-
-      expect(observation.outcome).toBe("success");
-      const gitignore = fs.readFileSync(path.join(workspaceRoot, ".gitignore"), "utf8");
-      expect(gitignore.match(/\.cyrene\//g)).toHaveLength(1);
-      expect(gitignore).not.toContain("# Cyrene agent");
+      // Plan Mode 承诺不改项目：.gitignore 原样保留
+      expect(fs.readFileSync(gitignorePath, "utf8")).toBe("node_modules\n");
     });
 
     it("无 workspaceRoot 时回落 userData 计划路径并落盘", async () => {
