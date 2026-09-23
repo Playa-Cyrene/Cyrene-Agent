@@ -157,6 +157,15 @@ function mutationToolCall(id = "call-1"): ToolCall {
   };
 }
 
+/** 与注册的 readTool（effectKind: "read"）匹配的读取调用：retry backoff 场景需要可重试的副作用分类。 */
+function readToolCall(id = "call-1"): ToolCall {
+  return {
+    id,
+    name: "read_file",
+    arguments: JSON.stringify({ path: "/tmp/x" }),
+  };
+}
+
 function successDispatchResult(callId = "call-1"): ToolDispatchResult {
   return {
     outcome: "success",
@@ -382,8 +391,8 @@ describe("CyreneHarness cancellation propagation", () => {
       signal: controller.signal,
     });
 
-    // 第一轮：模型调用工具
-    fetchMock.nextResolve(assistantResponse({ toolCalls: [mutationToolCall("call-1")] }));
+    // 第一轮：模型调用工具（read_file 与注册的 readTool 匹配，transient 失败才可重试）
+    fetchMock.nextResolve(assistantResponse({ toolCalls: [readToolCall("call-1")] }));
     await vi.waitFor(() => expect(mockedDispatch).toHaveBeenCalled());
 
     // 工具失败（transient → 决定 retry，进入 backoff sleep）
