@@ -260,12 +260,11 @@ export async function executeSubmitPlan(
     };
   }
 
-  // 需要修改：REVIEW → DISCUSSING，收意见全文后回执带修订指引
+  // 需要修改：REVIEW → DISCUSSING。意见经 option_with_text 随档位同卡回传，不再弹第二段纯文本卡
   if (decision?.selectedValues?.includes("revise")) {
     supplementPlan(conversationId);
-    const reviseAnswer = await requestUserClarification(buildPlanReviseCard()) as AskUserAnswer;
-    const reviseText = reviseAnswer.answers.find((a) => a.field === "plan_revise")?.customText?.trim();
-    // 第二段结算即计划流终点（无论是否填意见），清理注意力提醒（幂等）
+    const reviseText = decision.customText?.trim();
+    // 审批卡结算即计划流终点（无论是否带意见），清理注意力提醒（幂等）
     toastEvents.publishPlanReviewEnded({ sessionId: conversationId, runId });
     if (reviseText) {
       return {
@@ -280,7 +279,7 @@ export async function executeSubmitPlan(
         ].join("\n"),
       };
     }
-    // 未填意见（第二段超时/空答案）：回讨论态等用户消息，模型引导用户说清要改什么
+    // 意见缺失（协议层已拦空文本，防御兜底）：回讨论态等用户消息，模型引导用户说清要改什么
     return {
       outcome: "success",
       tool: SUBMIT_PLAN_TOOL_ID,
@@ -311,13 +310,15 @@ export async function executeSubmitPlan(
 
 /**
  * 计划审批卡（三档：批准 / 需要修改 / 不批准）。
- * 过渡形态：复用 single_select 协议，渲染端以现有单选卡样式呈现；
- * 第二批施工替换为专属三按钮卡片 UI（原地展开输入框 + Ctrl+Enter 提交）。
+ * mode=plan_approval：渲染端专属三按钮面板按此识别（批准/不批准直接提交，
+ * 需要修改原地展开输入框附意见）；选项顺序是渲染端的位置契约
+ * （第 1 个=批准、第 2 个=需要修改、第 3 个=不批准），不可调整。
+ * allowCustom=true 使"需要修改"档能把意见原文随档位同卡回传（option_with_text），不再弹第二段纯文本卡。
  * 等待档位 plan_approval：审批要通读计划，超时用 planApprovalTimeout 而非快问快答配置。
  */
-export function buildPlanApprovalCard(planPath: string): AskClarificationCard & { planPath: string } {
+export function buildPlanApprovalCard(planPath: string): AskClarificationCard {
   return {
-    mode: "semantic_clarification",
+    mode: "plan_approval",
     intro: "计划已提交，请审阅计划内容后决定",
     questions: [
       {
@@ -329,35 +330,12 @@ export function buildPlanApprovalCard(planPath: string): AskClarificationCard & 
           { label: "需要修改", value: "revise" },
           { label: "不批准", value: "reject" },
         ],
-        allowCustom: false,
-        freeTextPlaceholder: "",
+        allowCustom: true,
+        freeTextPlaceholder: "请描述你想修改的内容…",
       },
     ],
     deferredFields: [],
     waitTimeoutTone: "plan_approval",
     planPath,
-  };
-}
-
-/**
- * 计划修改意见卡（"需要修改"后的第二段，纯文本输入，复用同一 ask 卡片样式）。
- * 等待档位同为 plan_approval：写修改意见不是快问快答。
- */
-export function buildPlanReviseCard(): AskClarificationCard {
-  return {
-    mode: "semantic_clarification",
-    intro: "请描述你想修改的内容，我会更新计划后再次提交审批",
-    questions: [
-      {
-        field: "plan_revise",
-        question: "请描述你的修改意见：",
-        type: "text",
-        options: [],
-        allowCustom: true,
-        freeTextPlaceholder: "例如：第三步改成先写测试；补充一个回滚方案…",
-      },
-    ],
-    deferredFields: [],
-    waitTimeoutTone: "plan_approval",
   };
 }

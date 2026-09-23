@@ -222,6 +222,83 @@ describe("buildAskCard", () => {
     });
   });
 
+  it("maps a plan revise decision with its feedback text in one answer", () => {
+    const publication = publishAskCard({
+      mode: "plan_approval",
+      intro: "计划已提交，请审阅计划内容后决定",
+      questions: [{
+        field: "plan_decision",
+        question: "是否批准此计划？",
+        type: "single_select",
+        options: [
+          { value: "approve", label: "批准" },
+          { value: "revise", label: "需要修改" },
+          { value: "reject", label: "不批准" },
+        ],
+        allowCustom: true,
+        freeTextPlaceholder: "请描述你想修改的内容…",
+      }],
+      deferredFields: [],
+    }, { interactionId: "choice-plan", runId: "run-plan", revision: 1 });
+
+    // 档位与意见同卡回传：选项映射 canonical 值，意见原文 trim 后随行
+    expect(resolveAskCardSubmission(publication, {
+      interactionId: "choice-plan",
+      runId: "run-plan",
+      revision: 1,
+      answers: [{
+        questionId: "question-1",
+        source: "option_with_text",
+        optionId: "question-1-option-2",
+        text: "  第三步改成先写测试  ",
+      }],
+    })).toEqual({
+      requestId: "choice-plan",
+      answers: [{ field: "plan_decision", selectedValues: ["revise"], customText: "第三步改成先写测试" }],
+    });
+
+    // 空意见：没有信息量的"需要修改"一律拒绝
+    expect(() => resolveAskCardSubmission(publication, {
+      interactionId: "choice-plan",
+      runId: "run-plan",
+      revision: 1,
+      answers: [{ questionId: "question-1", source: "option_with_text", optionId: "question-1-option-2", text: "   " }],
+    })).toThrow("E_ASK_ANSWER_INVALID");
+    // 伪造选项 id：同选项规则拒绝
+    expect(() => resolveAskCardSubmission(publication, {
+      interactionId: "choice-plan",
+      runId: "run-plan",
+      revision: 1,
+      answers: [{ questionId: "question-1", source: "option_with_text", optionId: "forged", text: "意见" }],
+    })).toThrow("E_ASK_ANSWER_INVALID");
+  });
+
+  it("does not accept option_with_text for a runtime-owned fixed-choice card", () => {
+    const publication = publishAskCard({
+      mode: "semantic_clarification",
+      intro: "确认一下。",
+      questions: [{
+        field: "decision",
+        question: "是否继续？",
+        type: "single_select",
+        options: [
+          { value: "yes", label: "继续" },
+          { value: "no", label: "停止" },
+        ],
+        allowCustom: false,
+        freeTextPlaceholder: "",
+      }],
+      deferredFields: [],
+    }, { interactionId: "choice-fixed", runId: "run-fixed", revision: 1 });
+
+    expect(() => resolveAskCardSubmission(publication, {
+      interactionId: "choice-fixed",
+      runId: "run-fixed",
+      revision: 1,
+      answers: [{ questionId: "question-1", source: "option_with_text", optionId: "question-1-option-1", text: "附言" }],
+    })).toThrow("E_ASK_ANSWER_INVALID");
+  });
+
   it("publishes mixed single, multiple, and text questions with their real custom-input policy", () => {
     const publication = publishAskCard({
       mode: "semantic_clarification",

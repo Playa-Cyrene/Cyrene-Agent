@@ -438,7 +438,15 @@
     "quizPendingHint": "这题 Cyrene 稍后逐字讲评。",
     "quizIncompleteError": "还有题目没答完，答完再提交哦。",
     "quizInvalidError": "作答内容好像有点问题，调整一下再试试。",
-    "quizNotFoundError": "这次抽查已经结束啦。"
+    "quizNotFoundError": "这次抽查已经结束啦。",
+    "planApprovalTitle": "计划待审批",
+    "planApprovalIntro": "计划已提交，请审阅右侧计划面板后决定",
+    "planApprovalApprove": "批准",
+    "planApprovalRevise": "需要修改",
+    "planApprovalReject": "不批准",
+    "planApprovalRevisePlaceholder": "请描述你想修改的内容…",
+    "planApprovalReviseSubmit": "提交修改意见",
+    "planApprovalReviseRequired": "请先填写修改意见，再提交"
   },
   "review": {
     "kindModified": "修改",

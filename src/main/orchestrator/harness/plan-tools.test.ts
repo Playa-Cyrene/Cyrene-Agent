@@ -9,7 +9,6 @@ import {
   WRITE_PLAN_TOOL_ID,
   SUBMIT_PLAN_TOOL_ID,
   buildPlanApprovalCard,
-  buildPlanReviseCard,
   executeEnterPlanMode,
   executeWritePlan,
   executeSubmitPlan,
@@ -259,7 +258,8 @@ describe("plan-tools", () => {
     it("生成三档审批卡片（批准 / 需要修改 / 不批准）", () => {
       const card = buildPlanApprovalCard("E:/ws/.cyrene/docs/plan-20260915-120000.md");
 
-      expect(card.mode).toBe("semantic_clarification");
+      // 专属三按钮面板按 mode 识别
+      expect(card.mode).toBe("plan_approval");
       expect(card.planPath).toBe("E:/ws/.cyrene/docs/plan-20260915-120000.md");
       // 审批等待独立计时：user-choice 靠该档位区分快问快答
       expect(card.waitTimeoutTone).toBe("plan_approval");
@@ -267,29 +267,15 @@ describe("plan-tools", () => {
       const question = card.questions[0]!;
       expect(question.field).toBe("plan_decision");
       expect(question.type).toBe("single_select");
-      expect(question.allowCustom).toBe(false);
+      // "需要修改"档的意见随档位同卡回传（option_with_text），依赖 allowCustom 放行
+      expect(question.allowCustom).toBe(true);
+      expect(question.freeTextPlaceholder).not.toBe("");
+      // 选项顺序是渲染端位置契约：第 1 个=批准、第 2 个=需要修改、第 3 个=不批准
       expect(question.options).toEqual([
         { label: "批准", value: "approve" },
         { label: "需要修改", value: "revise" },
         { label: "不批准", value: "reject" },
       ]);
-      expect(card.deferredFields).toEqual([]);
-    });
-  });
-
-  describe("buildPlanReviseCard", () => {
-    it("生成纯文本修改意见卡片并沿用审批等待档位", () => {
-      const card = buildPlanReviseCard();
-
-      expect(card.mode).toBe("semantic_clarification");
-      expect(card.waitTimeoutTone).toBe("plan_approval");
-      expect(card.questions).toHaveLength(1);
-      const question = card.questions[0]!;
-      expect(question.field).toBe("plan_revise");
-      expect(question.type).toBe("text");
-      expect(question.allowCustom).toBe(true);
-      expect(question.options).toEqual([]);
-      expect(question.freeTextPlaceholder).not.toBe("");
       expect(card.deferredFields).toEqual([]);
     });
   });
@@ -412,17 +398,12 @@ describe("plan-tools", () => {
       expect(approvedSpy).toHaveBeenCalledWith({ sessionId: "conv-1", runId: "run-1" });
     });
 
-    it("需要修改：收意见全文后回讨论态，回执带修订指引", async () => {
+    it("需要修改：意见随档位同卡回传，单卡结算回讨论态", async () => {
       await setupSubmittedPlan();
-      const requestClarification = vi.fn()
-        .mockResolvedValueOnce({
-          requestId: "req-1",
-          answers: [{ field: "plan_decision", selectedValues: ["revise"] }],
-        })
-        .mockResolvedValueOnce({
-          requestId: "req-2",
-          answers: [{ field: "plan_revise", customText: "第三步改成先写测试" }],
-        });
+      const requestClarification = vi.fn(async () => ({
+        requestId: "req-1",
+        answers: [{ field: "plan_decision", selectedValues: ["revise"], customText: "第三步改成先写测试" }],
+      }));
 
       const observation = await executeSubmitPlan(
         makeCall({}, SUBMIT_PLAN_TOOL_ID),
@@ -435,20 +416,16 @@ describe("plan-tools", () => {
       expect(observation.message).toContain("第三步改成先写测试");
       expect(observation.message).toContain("write_plan 整份覆盖");
       expect(getPlanState("conv-1")).toBe("PLAN_DISCUSSING");
-      expect(requestClarification).toHaveBeenCalledTimes(2);
-      // 第二段等待的是纯文本修改意见卡
-      const reviseCard = requestClarification.mock.calls[1]![0] as { questions: Array<{ field: string }> };
-      expect(reviseCard.questions[0]!.field).toBe("plan_revise");
+      // 一张卡承载决定与意见，不再弹第二段纯文本卡
+      expect(requestClarification).toHaveBeenCalledTimes(1);
     });
 
-    it("需要修改但未填意见：回讨论态并提示与用户确认", async () => {
+    it("需要修改但未带意见：防御兜底回讨论态并提示与用户确认", async () => {
       await setupSubmittedPlan();
-      const requestClarification = vi.fn()
-        .mockResolvedValueOnce({
-          requestId: "req-1",
-          answers: [{ field: "plan_decision", selectedValues: ["revise"] }],
-        })
-        .mockResolvedValueOnce({ requestId: "req-2", answers: [] });
+      const requestClarification = vi.fn(async () => ({
+        requestId: "req-1",
+        answers: [{ field: "plan_decision", selectedValues: ["revise"] }],
+      }));
 
       const observation = await executeSubmitPlan(
         makeCall({}, SUBMIT_PLAN_TOOL_ID),

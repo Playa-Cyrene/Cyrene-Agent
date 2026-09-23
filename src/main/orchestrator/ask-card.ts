@@ -121,6 +121,20 @@ export function resolveAskCardSubmission(
       if (!question.allowCustom || !customText) invalidAnswer();
       return { field: question.field, customText };
     }
+    // 计划审批"需要修改"：档位与意见同卡回传——选项按选项规则校验，意见按自定义输入规则校验
+    if (answer.source === "option_with_text") {
+      const customText = answer.text?.trim();
+      const optionIds = answer.optionIds ?? (answer.optionId ? [answer.optionId] : []);
+      if (!question.allowCustom || !customText || optionIds.length === 0
+        || (!question.type.startsWith("multi") && optionIds.length !== 1)) invalidAnswer();
+      const values = optionIds.map((optionId) => question.options.get(optionId));
+      if (values.some((value) => value === undefined)) invalidAnswer();
+      return {
+        field: question.field,
+        selectedValues: values as string[],
+        customText,
+      };
+    }
     if (answer.source !== "option" || "text" in answer) invalidAnswer();
     const optionIds = answer.optionIds ?? (answer.optionId ? [answer.optionId] : []);
     if (optionIds.length === 0 || (!question.type.startsWith("multi") && optionIds.length !== 1)) invalidAnswer();

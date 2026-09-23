@@ -55,6 +55,11 @@ export interface AskClarificationCard {
    * "plan_approval" 走审批专用超时（planApprovalTimeout）——审批是重决策，等待时长独立配置。
    */
   waitTimeoutTone?: "plan_approval";
+  /**
+   * 计划审批卡（mode="plan_approval"）专用：计划文件路径。
+   * 主进程侧元数据，不随 AskCardPayload 下发渲染端。
+   */
+  planPath?: string;
 }
 
 export interface AskUserAnswer {
@@ -66,7 +71,7 @@ export interface AskUserAnswer {
   }>;
 }
 
-export type AskCardMode = "action_parameters" | "semantic_clarification";
+export type AskCardMode = "action_parameters" | "semantic_clarification" | "plan_approval";
 
 /** Renderer-visible Ask contract. It intentionally contains no tool binding or canonical value. */
 export interface AskCardPayload {
@@ -106,6 +111,14 @@ export type AskAnswerSubmission =
   | {
       questionId: string;
       source: "custom";
+      text: string;
+    }
+  | {
+      /** 计划审批"需要修改"档：选定档位并同时附上修改意见原文 */
+      questionId: string;
+      source: "option_with_text";
+      optionId?: string;
+      optionIds?: string[];
       text: string;
     };
 

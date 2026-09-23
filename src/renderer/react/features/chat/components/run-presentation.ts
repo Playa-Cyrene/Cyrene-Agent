@@ -1,5 +1,5 @@
 import { t } from "../../../i18n";
-import type { AskCardSubmission } from "../../../../../shared/ask-clarification";
+import type { AskCardMode, AskCardSubmission } from "../../../../../shared/ask-clarification";
 
 export type AgentRunStageKind =
   | "understanding"
@@ -35,6 +35,8 @@ export interface AskUserInteraction {
   source?: "agent";
   runId?: string;
   revision?: number;
+  /** 卡片模式沿用主进程下发的 AskCardPayload.mode；plan_approval 走专属三按钮审批面板。 */
+  cardMode?: AskCardMode;
   intro?: string;
   question: string;
   options: Array<{
@@ -285,6 +287,12 @@ function normalizePublicOptions(value: unknown): AskUserQuestion["options"] {
   });
 }
 
+function asAskCardMode(value: unknown): AskCardMode | undefined {
+  return value === "plan_approval" || value === "semantic_clarification" || value === "action_parameters"
+    ? value
+    : undefined;
+}
+
 /**
  * Accepts the two card payloads already emitted by main. Keeping this at the
  * renderer boundary makes malformed CUSTOM events inert instead of interactive.
@@ -324,6 +332,7 @@ export function normalizeChoiceInteraction(value: unknown): AskUserInteraction |
       id: interactionId,
       runId,
       revision,
+      cardMode: asAskCardMode(card.mode),
       intro: asNonEmptyString(card.intro),
       responseKind: "submission",
       question: questions[0].question,
@@ -504,6 +513,38 @@ export function buildAskSubmission(
         ? { questionId: question.id, source: "option" as const, optionIds: draft.optionIds }
         : { questionId: question.id, source: "option" as const, optionId: draft.optionIds[0] };
     }),
+  };
+}
+
+/**
+ * 构造计划审批卡的提交：批准 / 不批准直接回传档位；需要修改把意见原文随档位同卡附上。
+ * 选项顺序是位置契约（第 1 个=批准、第 2 个=需要修改、第 3 个=不批准），与主进程建卡端约定一致。
+ */
+export function buildPlanApprovalSubmission(
+  interaction: AskUserInteraction,
+  decision: "approve" | "revise" | "reject",
+  reviseText?: string,
+): AskCardSubmission {
+  if (interaction.responseKind !== "submission"
+    || interaction.cardMode !== "plan_approval"
+    || !interaction.runId
+    || interaction.revision === undefined) {
+    throw new Error("E_ASK_SUBMISSION_INCOMPLETE");
+  }
+  const question = interaction.questions?.[0];
+  // 空意见的"需要修改"没有信息量，提交前必须已填写
+  const text = reviseText?.trim();
+  if (decision === "revise" && !text) throw new Error("E_ASK_SUBMISSION_INCOMPLETE");
+  const optionIndex = decision === "approve" ? 0 : decision === "revise" ? 1 : 2;
+  const optionId = question?.options[optionIndex]?.id;
+  if (!question || !optionId) throw new Error("E_ASK_SUBMISSION_INCOMPLETE");
+  return {
+    interactionId: interaction.id,
+    runId: interaction.runId,
+    revision: interaction.revision,
+    answers: [decision === "revise"
+      ? { questionId: question.id, source: "option_with_text" as const, optionId, text: text! }
+      : { questionId: question.id, source: "option" as const, optionId }],
   };
 }
 

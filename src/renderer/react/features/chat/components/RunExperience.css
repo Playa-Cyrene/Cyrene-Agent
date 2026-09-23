@@ -274,6 +274,27 @@
 .cy-interaction-panel__actions button.is-primary { border-color: var(--cy-accent, #ff5b8a); background: var(--cy-accent, #ff5b8a); color: #fff; }
 .cy-interaction-panel__actions button:disabled { cursor: wait; opacity: .58; }
 
+/* ── 计划审批三档卡（批准 / 需要修改 / 不批准） ── */
+.cy-plan-approval__decisions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.cy-plan-approval__decisions button {
+  flex: 1; min-width: 88px; padding: 9px 12px;
+  border: 1px solid var(--cy-accent, #ff5b8a); border-radius: 9px;
+  background: var(--cy-accent, #ff5b8a); color: #fff;
+  font: 500 13px/1.2 var(--rb-font-sans, sans-serif); cursor: pointer;
+}
+.cy-plan-approval__decisions button:hover:not(:disabled) { filter: brightness(1.05); }
+.cy-plan-approval__decisions button:disabled { cursor: wait; opacity: .58; }
+.cy-plan-approval__revise { display: grid; gap: 8px; margin-top: 10px; }
+.cy-plan-approval__revise textarea {
+  width: 100%; box-sizing: border-box; padding: 9px 10px;
+  border: 1px solid var(--cy-border, #e7e2e5); border-radius: 9px;
+  color: var(--cy-text, #2f2d31); font: 400 13px/1.5 var(--rb-font-sans, sans-serif);
+  outline: none; resize: vertical;
+}
+.cy-plan-approval__revise textarea:focus { border-color: rgba(255, 91, 138, .5); box-shadow: 0 0 0 3px rgb(255 91 138 / 10%); }
+.cy-plan-approval__error { margin: 0; color: #d4496c; font: 400 12px/1.4 var(--rb-font-sans, sans-serif); }
+.cy-plan-approval__revise .cy-interaction-panel__actions { margin-top: 0; }
+
 /* ── pop_quiz 抽查卡片 ─────────────────────────────────── */
 
 /* 考察知识点标签：弱化呈现，不与题干抢视觉 */

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildAskSubmission,
+  buildPlanApprovalSubmission,
   createAskDrafts,
   describePermissionRequest,
   describeRunStage,
@@ -154,6 +155,7 @@ describe("work run presentation", () => {
       id: "choice-3",
       runId: "run-7",
       revision: 2,
+      cardMode: "semantic_clarification",
       intro: "还需要确认两个细节。",
       responseKind: "submission",
       question: "希望生成哪种格式？",
@@ -302,6 +304,92 @@ describe("work run presentation", () => {
       revision: 4,
       reason: "timeout",
     })).toBe(true);
+  });
+
+  it("keeps the plan_approval card mode so the composer slot can route to the approval panel", () => {
+    const payload = {
+      interactionId: "choice-plan",
+      runId: "run-plan",
+      revision: 1,
+      mode: "plan_approval",
+      intro: "计划已提交，请审阅计划内容后决定",
+      questions: [{
+        id: "question-1",
+        prompt: "是否批准此计划？",
+        required: true,
+        multiple: false,
+        options: [
+          { id: "question-1-option-1", label: "批准" },
+          { id: "question-1-option-2", label: "需要修改" },
+          { id: "question-1-option-3", label: "不批准" },
+        ],
+        customInput: { enabled: true, placeholder: "请描述你想修改的内容…" },
+      }],
+    };
+
+    expect(normalizeChoiceInteraction(payload)).toMatchObject({
+      kind: "ask",
+      id: "choice-plan",
+      cardMode: "plan_approval",
+      responseKind: "submission",
+    });
+    // 未知 mode 不进 plan_approval 分支，普通询问卡照常渲染
+    expect(normalizeChoiceInteraction({ ...payload, mode: "unknown_mode" })).toMatchObject({
+      cardMode: undefined,
+    });
+  });
+
+  it("builds plan approval submissions by option position with revise text attached", () => {
+    const interaction = normalizeChoiceInteraction({
+      interactionId: "choice-plan",
+      runId: "run-plan",
+      revision: 3,
+      mode: "plan_approval",
+      intro: "计划已提交，请审阅计划内容后决定",
+      questions: [{
+        id: "question-1",
+        prompt: "是否批准此计划？",
+        required: true,
+        multiple: false,
+        options: [
+          { id: "question-1-option-1", label: "批准" },
+          { id: "question-1-option-2", label: "需要修改" },
+          { id: "question-1-option-3", label: "不批准" },
+        ],
+        customInput: { enabled: true, placeholder: "请描述你想修改的内容…" },
+      }],
+    })!;
+
+    // 位置契约：第 1 个=批准、第 2 个=需要修改、第 3 个=不批准
+    expect(buildPlanApprovalSubmission(interaction, "approve")).toEqual({
+      interactionId: "choice-plan",
+      runId: "run-plan",
+      revision: 3,
+      answers: [{ questionId: "question-1", source: "option", optionId: "question-1-option-1" }],
+    });
+    expect(buildPlanApprovalSubmission(interaction, "reject")).toEqual({
+      interactionId: "choice-plan",
+      runId: "run-plan",
+      revision: 3,
+      answers: [{ questionId: "question-1", source: "option", optionId: "question-1-option-3" }],
+    });
+    expect(buildPlanApprovalSubmission(interaction, "revise", "  第三步改成先写测试  ")).toEqual({
+      interactionId: "choice-plan",
+      runId: "run-plan",
+      revision: 3,
+      answers: [{
+        questionId: "question-1",
+        source: "option_with_text",
+        optionId: "question-1-option-2",
+        text: "第三步改成先写测试",
+      }],
+    });
+
+    // 空意见 / 非 plan_approval 卡：拒绝构造提交
+    expect(() => buildPlanApprovalSubmission(interaction, "revise", "   ")).toThrow("E_ASK_SUBMISSION_INCOMPLETE");
+    expect(() => buildPlanApprovalSubmission(interaction, "revise")).toThrow("E_ASK_SUBMISSION_INCOMPLETE");
+    const plain = { ...interaction, cardMode: undefined } as typeof interaction;
+    expect(() => buildPlanApprovalSubmission(plain, "approve")).toThrow("E_ASK_SUBMISSION_INCOMPLETE");
   });
 
   it("keeps one plan card updated from task-plan snapshots", () => {

@@ -438,7 +438,15 @@
     "quizPendingHint": "Cyrene will go over this one with you shortly.",
     "quizIncompleteError": "You still have unanswered questions — finish them before submitting.",
     "quizInvalidError": "Your answers look a bit off — please adjust and try again.",
-    "quizNotFoundError": "This quiz has already ended."
+    "quizNotFoundError": "This quiz has already ended.",
+    "planApprovalTitle": "Plan awaiting approval",
+    "planApprovalIntro": "The plan has been submitted — review it in the plan panel, then decide",
+    "planApprovalApprove": "Approve",
+    "planApprovalRevise": "Request changes",
+    "planApprovalReject": "Reject",
+    "planApprovalRevisePlaceholder": "Describe what you'd like changed…",
+    "planApprovalReviseSubmit": "Send feedback",
+    "planApprovalReviseRequired": "Please describe your changes before submitting"
   },
   "review": {
     "kindModified": "Modified",
