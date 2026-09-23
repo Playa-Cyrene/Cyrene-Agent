@@ -7,6 +7,7 @@
  */
 
 import { app, BrowserWindow, dialog, screen } from "electron";
+import * as fs from "fs";
 import * as path from "path";
 import { autoUpdater } from "electron-updater";
 
@@ -68,11 +69,15 @@ import { registerAllTools } from "../orchestrator/tools/registry/tool-registrati
 import { LspManager } from "../lsp/manager";
 import { initSandbox } from "../orchestrator/sandbox/sandbox-exec";
 import {
+  encodePlanSessionKey,
   enterPlanDiscussing,
   exitPlanMode,
   getPlanState,
   initPlanPaths,
   initPlanStateBroadcaster,
+  initPlanStatePersister,
+  restorePlanSession,
+  type PlanStateSnapshot,
 } from "../orchestrator/plan-mode";
 import { initMcpManager, pruneMcpServersByIds } from "../orchestrator/mcp-manager";
 import { syncPlaywrightMcp, REMOVED_BUILTIN_MCP_IDS } from "../sync-mcp-builtin";
@@ -172,6 +177,38 @@ async function reconcileUserMemoryIndex(): Promise<void> {
     warn: (message, error) => console.warn(`[Memory/RAG] ${message}:`, error),
   });
   logger.info(LogTag.RAG, "reconciliation:", report);
+}
+
+/**
+ * 启动崩溃恢复：扫描 userData/plans/*/state.json，把中断的非 NORMAL 会话还原。
+ * 只恢复事实不恢复执行权——统一降级 PLAN_DISCUSSING，REVIEW/EXECUTING 来源
+ * 由 [PLAN_RECOVERY] 注入中断事实，模型先查证工作区再修订计划重新审批。
+ * 快照的会话键取自文件内容（原始 conversationId），目录名只是物理位置；
+ * 单个快照损坏只跳过该会话，不阻塞其他恢复。
+ */
+function recoverInterruptedPlanSessions(plansRoot: string): void {
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(plansRoot);
+  } catch {
+    return; // plans 目录不存在 = 从未用过计划模式
+  }
+  for (const entry of entries) {
+    const stateFile = path.join(plansRoot, entry, "state.json");
+    try {
+      if (!fs.existsSync(stateFile)) continue;
+      const snapshot = JSON.parse(fs.readFileSync(stateFile, "utf8")) as PlanStateSnapshot;
+      const conversationId = typeof snapshot.conversationId === "string" ? snapshot.conversationId : entry;
+      const result = restorePlanSession(conversationId, snapshot);
+      if (result.ok) {
+        console.log(`[PlanMode] 恢复中断会话 ${conversationId}: ${snapshot.state} → PLAN_DISCUSSING`);
+      } else {
+        console.warn(`[PlanMode] 跳过非法快照 ${entry}: ${result.reason}`);
+      }
+    } catch (err) {
+      console.warn(`[PlanMode] 读取快照失败 ${stateFile}:`, err);
+    }
+  }
 }
 
 export function createDefaultApplicationDependencies(): ApplicationDependencies {
@@ -410,8 +447,20 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
       initSandbox: () => initSandbox(),
 
       initPlanMode: () => {
-        // 计划模式路径根注入：write_plan / plan.md 读写基于 userData/plans/<conversationId>/
+        const plansRoot = path.join(app.getPath("userData"), "plans");
+        // 计划模式路径根注入：write_plan / plan.md 读写基于 userData/plans/<会话键>/
         initPlanPaths(app.getPath("userData"));
+        // 状态持久化（durable transition）：同步写盘，approvePlan 返回时 state.json 已落盘，
+        // 崩溃恢复不丢"执行正在进行"的事实；null = 回 NORMAL，删除 state.json 清尸
+        initPlanStatePersister((conversationId, snapshot) => {
+          const stateFile = path.join(plansRoot, encodePlanSessionKey(conversationId), "state.json");
+          if (!snapshot) {
+            fs.rmSync(stateFile, { force: true });
+            return;
+          }
+          fs.mkdirSync(path.dirname(stateFile), { recursive: true });
+          fs.writeFileSync(stateFile, JSON.stringify(snapshot, null, 2), "utf8");
+        });
         // 计划模式状态广播：所有状态切换都广播到所有窗口
         initPlanStateBroadcaster((conversationId, state) => {
           const payload = { conversationId, state };
@@ -419,6 +468,8 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
             win.webContents.send(IPC.PLAN_STATE_CHANGED, payload);
           }
         });
+        // 启动崩溃恢复：非 NORMAL 快照统一降级 PLAN_DISCUSSING，不自动恢复执行权
+        recoverInterruptedPlanSessions(plansRoot);
       },
 
       // 工具注册：集中到一个显式入口（依赖沙箱/Git/LSP 就绪）
