@@ -153,7 +153,7 @@ claimed（认领即落轨迹：reconcile 在 claim IPC 返回前完成）
 |------|----------|---------|---------|
 | `user_cancelled` | ✅ | 已有 `interruption(reason: "user_cancel")` | `[上一轮由用户主动停止，未完整结束。不要自行延续上一轮；以用户最新消息为准。]` |
 | `failed`（技术失败，含 timeout） | ✅ | 现状缺失，本次补写 | `[上一轮因系统错误未完整结束，没有生成完整回答。请结合用户最新消息决定是否继续。]` |
-| `crashed`（进程崩溃） | ❌ **明确列为后续非目标** | 崩溃时无人写入，需启动对账 | （后续） |
+| `crashed`（进程崩溃） | ✅（第三层，v3.1） | 崩溃时无人写入，启动对账补写 | `[上一轮因应用崩溃未完整结束……]`（见第三层方案） |
 | `superseded`（被编辑/重新生成取代） | N/A | `turn_rewind` 已把旧分支从 active 序列裁掉，模型看不到 | 不需要——轨迹结构本身已表达 |
 | `delivery_failed`（送达失败） | ✅ **已实现，无需改动** | `delivery_receipt` + `failedDeliveryNotesWithSources` 现有实现 | 现有实现 |
 
@@ -187,9 +187,33 @@ claimed（认领即落轨迹：reconcile 在 claim IPC 返回前完成）
 9. **[conversation-transcript-projection.ts](e:\Cyrene-Agent\src\main\orchestrator\conversation-transcript-projection.ts)**：新增 `interruptionNotesWithSources`（同构 delivery note 算法，见 2.4）+ 插入机制泛化为 `insertInternalNotes`（同一 beforeSeq 多条提示按来源 seq 排序成组插入，中断提示与送达失败提示不互相覆盖）；接入 `buildFullModelContextWithSources` / `buildCompactionSourceView` / `buildModelContextFromCompactedView` 三个模型上下文出口；**UI 投影不接入**（提示只进模型上下文）
 10. **测试**：sink 层 runtime_error 闭合（类别/文案/幂等）；投影层 5 用例（注入位置与文案、runtime_error 语义、闭合判定、工具调用 assistant 不误判闭合、尾部暂不注入）
 
-### 第三层：崩溃对账（本次明确不做，列入后续非目标）
+### 第三层：崩溃对账（v3.1 已实施，正式方案）
 
-启动对账发现未闭合 run → 补写 `interruption(reason: "crashed")`。留待后续版本，本次验收不含。
+**崩溃信号（与终态路径天然区分）**：
+
+正常终态（completed / cancelled / failed）在 [harness-adapter.ts](e:\Cyrene-Agent\src\main\orchestrator\harness-adapter.ts#L171) 都会 `markTerminal` 写 run-store 终态，且写 `interruption` 边界。只有进程崩溃会让 run 在 run-store 里滞留 `running`（closeInterruption 从未执行、transcript 无该 runId 的 interruption 边界）。启动时 [run-store initialize](e:\Cyrene-Agent\src\main\orchestrator\harness\run-store.ts#L239) 把 `running→interrupted` 并记 `run_interrupted` 事件——**重启后 status=="interrupted" 的集合即崩溃独有集合**（resume 已删，没有任何路径会主动留下 interrupted 记录）。
+
+**对账逻辑（一次启动跑一次，异步、失败仅日志不阻塞）**：
+
+1. run-store 新增 `listInterruptedRuns()`，返回全部 `status=="interrupted"` 的 session
+2. 对每个 interrupted run：读取其会话 transcript，检查是否已有 `runId === 本 run` 的 `interruption` 条目
+3. 无 → 幂等补写 `interruption(reason: "crashed")`（id `${runId}:interruption:crashed`，确定性首写有效）
+4. 有 → 跳过
+
+**幂等性**：crashed run 首次启动被翻转为 interrupted + 补写边界；下次启动 status 仍是 interrupted 但已有边界 → 跳过。崩溃正好发生在 closeInterruption 与 markTerminal 之间时，transcript 已含 `user_cancel`/`runtime_error` 边界且 run 仍 running→被翻转→已有边界 → 跳过，不误改写。旧版本遗留的 interrupted run 也在此次对账被一次补上（顺带收敛遗留数据）。
+
+**crashed 的 started/planned 工具闭合无需在此补**：closeInterruption 崩溃时从未执行，但 run-store `recordTool` 已持久化工具分类，投影 `materializeNodes` 依据 run-store 状态已能合成 unknown / not_executed 工具消息与 uncertainEffects——与运行时一致，不重复。
+
+**改动清单（第三层）**：
+
+11. **[run-store.ts](e:\Cyrene-Agent\src\main\orchestrator\harness\run-store.ts)**：新增 `listInterruptedRuns()`（返回 interrupted sessions）
+12. **[conversation-transcript-types.ts](e:\Cyrene-Agent\src\main\orchestrator\conversation-transcript-types.ts)**：`interruption.payload.reason` 扩为 `"user_cancel" | "runtime_error" | "crashed"`
+13. **[conversation-transcript-store.ts](e:\Cyrene-Agent\src\main\orchestrator\conversation-transcript-store.ts)**：interruption 值域校验同步加入 `"crashed"`
+14. **[conversation-transcript-projection.ts](e:\Cyrene-Agent\src\main\orchestrator\conversation-transcript-projection.ts)**：`interruptionNotesWithSources` 的文案选择增加 crashed 分支；digest `interruption:crashed`
+15. **新增对账模块**：`runInterruptionReconciliation` 纯函数（注入 runStore + transcriptStore，便于单测），接线函数在 composition root（app ready 后异步调一次、失败仅日志）
+16. **测试**：对账模块（补写/已存在跳过/幂等/多 run）；投影 crashed 文案；store 校验接受 crashed
+
+**crashed 提示文案**（沿用"未完整结束"口径）：`[上一轮因应用崩溃未完整结束。请基于现有记录与用户最新消息决定如何继续。]`
 
 ### 明确不做的事
 
@@ -197,7 +221,6 @@ claimed（认领即落轨迹：reconcile 在 claim IPC 返回前完成）
 - 不伪造 assistant 消息
 - `superseded` 不加提示（turn_rewind 已裁掉旧分支）
 - `delivery_failed` 不改（现有 `failedDeliveryNotesWithSources` 已覆盖）
-- `crashed` 本次不做（见上）
 - 不动 scheduler / proactive 触发链
 
 ---
@@ -228,7 +251,7 @@ claimed（认领即落轨迹：reconcile 在 claim IPC 返回前完成）
 
 ## 五、实施顺序与提交策略
 
-- 顺序：第一层 → 第二层（每层独立可验证）；第三层为后续非目标
+- 顺序：第一层 → 第二层 → 第三层（每层独立可验证）；第三层 v3.1 已实施
 - 提交：待全部完成并经用户验证后，与 AG-UI 升级、Fix A/B 分别独立 commit（具体拆分届时由用户决定）
 
 ---
