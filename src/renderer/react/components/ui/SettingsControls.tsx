@@ -44,6 +44,7 @@ export function SettingsSelect<T extends string>({
   id,
   disabled = false,
   className,
+  placeholder,
 }: {
   value: T;
   options: SettingsSelectOption<T>[];
@@ -52,11 +53,12 @@ export function SettingsSelect<T extends string>({
   id?: string;
   disabled?: boolean;
   className?: string;
+  placeholder?: string;
 }) {
   return (
     <Select.Root value={value} onValueChange={onChange}>
       <Select.Trigger id={id} className={`cy-control-select ${className ?? ""}`.trim()} aria-label={ariaLabel} disabled={disabled}>
-        <Select.Value />
+        <Select.Value placeholder={placeholder} />
         <Select.Icon className="cy-control-select__icon"><ChevronDown size={15} aria-hidden="true" /></Select.Icon>
       </Select.Trigger>
       <Select.Portal>
