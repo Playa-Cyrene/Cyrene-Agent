@@ -6,6 +6,7 @@ import { DayPicker } from "react-day-picker";
 import { Dialog, Popover } from "radix-ui";
 import { FALLBACK_TIMEZONE, normalizeTimezoneOptionValue, TIMEZONE_OPTIONS } from "../../../settings/timezone-options";
 import { useTranslation } from "../../i18n";
+import { SettingsSelect } from "./SettingsControls";
 import "react-day-picker/style.css";
 import "./UserProfileDialog.css";
 
@@ -238,9 +239,12 @@ export function UserProfileDialog({ open, onOpenChange, avatarUrl }: UserProfile
 
               <label className="cy-user-profile__field">
                 <span>{t("ui.profile.timezone")}</span>
-                <select name="timezone" value={profile.timezone} onChange={(event) => updateProfile("timezone", normalizeTimezoneOptionValue(event.target.value))}>
-                  {TIMEZONE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                </select>
+                <SettingsSelect
+                  value={profile.timezone}
+                  options={TIMEZONE_OPTIONS.map(({ value, label }) => ({ value, label }))}
+                  onChange={(value) => updateProfile("timezone", normalizeTimezoneOptionValue(value))}
+                  ariaLabel={t("ui.profile.timezone")}
+                />
               </label>
             </div>
             {error && <p className="cy-user-profile__error" role="alert">{error}</p>}

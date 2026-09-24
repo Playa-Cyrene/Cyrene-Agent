@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { UserAvatar } from "./UserAvatar";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+Object.assign(Element.prototype, { scrollIntoView: vi.fn() });
 
 const roots: Root[] = [];
 
@@ -57,11 +58,18 @@ describe("UserAvatar profile dialog", () => {
     await act(async () => { birthdayPicker!.click(); });
     expect(document.querySelector(".cy-user-profile__calendar-popover .rdp-root")).not.toBeNull();
 
+    const timezone = dialog?.querySelector<HTMLButtonElement>('[aria-label="时区"]');
+    expect(timezone).not.toBeNull();
+    await act(async () => { timezone!.click(); });
+    const tokyoOption = Array.from(document.querySelectorAll<HTMLElement>('[role="option"]')).find((option) => option.textContent?.includes("东京时间"));
+    expect(tokyoOption).toBeDefined();
+    await act(async () => { tokyoOption!.click(); });
+
     const save = Array.from(dialog!.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent?.trim() === "保存");
     await act(async () => { save!.click(); });
     expect((window as typeof window & { user: { saveProfile: ReturnType<typeof vi.fn> } }).user.saveProfile).toHaveBeenCalledWith({
       nickname: "小昔", gender: "female", callPreference: "阿澄", birthday: "2000-06-18",
-      defaultCity: "上海", timezone: "Asia/Shanghai",
+      defaultCity: "上海", timezone: "Asia/Tokyo",
     });
   });
 });
