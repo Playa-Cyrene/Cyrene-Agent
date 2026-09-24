@@ -109,6 +109,24 @@ describe("MODEL_REASONING_RULES — 9 家全部存在性", () => {
     expect(cap.supportsProMode).toBe(true);
   });
 
+  test("chatgpt gpt-6-sol → effort 五档 + 可关闭（none 档）+ supportsProMode（2026-09-22 发布）", () => {
+    const cap = resolveReasoningCapability("chatgpt", "gpt-6-sol");
+    expect(cap.control).toBe("effort");
+    expect(cap.requestStyle).toBe("openai-effort");
+    expect(cap.supportedEfforts).toEqual(["low", "medium", "high", "xhigh", "max"]);
+    // 官方模型页：effort 支持 none → 可关闭，与 Astra（不支持 none）不同
+    expect(cap.supportsDisable).toBe(true);
+    expect(cap.supportsProMode).toBe(true);
+  });
+
+  test("chatgpt gpt-6-luna → 与 Sol 同规则（专属条目优先于 Astra 的 ^gpt-6）", () => {
+    const cap = resolveReasoningCapability("chatgpt", "gpt-6-luna");
+    expect(cap.control).toBe("effort");
+    // 若被 ^gpt-6（Astra）规则先吞，supportsDisable 会是 false
+    expect(cap.supportsDisable).toBe(true);
+    expect(cap.defaultEffort).toBe("medium");
+  });
+
   test("chatgpt gpt-5.6 → effort + openai-effort + supportedEfforts 含 max + supportsProMode", () => {
     const cap = resolveReasoningCapability("chatgpt", "gpt-5.6");
     expect(cap.control).toBe("effort");
@@ -264,6 +282,15 @@ describe("MODEL_REASONING_RULES — 9 家全部存在性", () => {
     const cap = resolveReasoningCapability("mimo", "mimo-v2.5-pro");
     expect(cap.control).toBe("toggle");
     expect(cap.requestStyle).toBe("thinking-type");
+  });
+
+  test("mimo v2.6 全系（pro/flash/pro-ultraspeed）→ 复用 v2 系列 toggle（2026-09-22 发布，与 2.5 同控制面）", () => {
+    for (const model of ["mimo-v2.6-pro", "mimo-v2.6-flash", "mimo-v2.6-pro-ultraspeed"]) {
+      const cap = resolveReasoningCapability("mimo", model);
+      expect(cap.control).toBe("toggle");
+      expect(cap.requestStyle).toBe("thinking-type");
+      expect(cap.supportsDisable).toBe(true);
+    }
   });
 
   test("doubao seed 2.1 → toggle + thinking-type", () => {

@@ -27,7 +27,21 @@ export const CHATGPT_REGISTRY = defineVendor({
   shortName: "ChatGPT",
   reasoningRules: [
     // ── chatgpt（OpenAI）──
-    // 按具体型号拆分；GPT-6 Astra（2026-09-03 发布）：effort 五档与 5.6 相同，
+    // 按具体型号拆分。
+    // GPT-6 Sol / Luna（2026-09-22 发布）：Astra 能力下放的日常工作款。官方模型页
+    // effort 支持 none/low/medium(默认)/high/xhigh/max —— 与 Astra 不同，可关闭
+    // 思考（off → reasoning_effort:"none"）；pro mode 与 GPT-6 系一致支持。
+    // 官方限制：Chat Completions 下函数调用仅 effort=none 可用，走 Responses
+    // transport 不受限（capability 默认 transport 已是 responses）。
+    { providerId: "chatgpt", modelPattern: /^gpt-6-(?:sol|luna)/i, capability: {
+      control: "effort",
+      supportedEfforts: ["low", "medium", "high", "xhigh", "max"],
+      defaultEffort: "medium",
+      requestStyle: "openai-effort",
+      supportsDisable: true,
+      supportsProMode: true,
+    } },
+    // GPT-6 Astra（2026-09-03 发布）：effort 五档与 5.6 相同，
     // 官方迁移说明明确不支持 none 档 → supportsDisable=false，off 折叠为 on 落
     // defaultEffort；pro mode 与 5.6 一致继续支持（官方迁移指南）。
     // defaultEffort 是 Cyrene 的产品默认档（质量/延迟/成本的平衡点），非官方 API 默认。

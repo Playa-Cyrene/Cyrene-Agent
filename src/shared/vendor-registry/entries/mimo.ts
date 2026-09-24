@@ -11,7 +11,8 @@ export const MIMO_REGISTRY = defineVendor({
     baseUrl: "https://api.xiaomimimo.com/v1",
     // 官方文档：/v1 与 /anthropic 都支持 Authorization: Bearer
     authStyle: "bearer",
-    defaultModel: "mimo-v2.5-pro",
+    // V2.6（2026-09-22 发布，原生全模态）为当前默认；V2.5 官方 2026-10-21 下线
+    defaultModel: "mimo-v2.6-pro",
     supportsTools: true,
     supportsThinking: true,
     thinkingField: "reasoning_content",
@@ -27,6 +28,8 @@ export const MIMO_REGISTRY = defineVendor({
   reasoningRules: [
     // ── mimo（小米）──
     // 跨 transport 共用：OpenAI 入口 + Anthropic 入口都生成 thinking.type。
+    // V2.5 / V2.6 同一控制面（官方文档请求体一致）：thinking.type 仅 enabled/disabled
+    // 开关、无 effort 档位，V2.6 无需单独条目。
     { providerId: "mimo", modelPattern: /^mimo-v2\./i, capability: {
       control: "toggle",
       requestStyle: "thinking-type",

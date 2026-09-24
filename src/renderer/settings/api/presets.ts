@@ -92,9 +92,10 @@ export const MODEL_PRESETS: ModelPreset[] = [
     // 官方主推 Responses（o 系列完整思考摘要仅此协议有），新建档案默认预填 responses。
     transport: "responses",
     // 官方入口只推荐已纳入结构化输出 Profile 的型号；代理与自定义型号走“自定义端点”。
-    // gpt-6-astra 为 2026-09-03 新旗舰（API 正在分批开放中）；gpt-5.6 为别名，
-    // 路由到旗舰 Sol；terra/luna 为平衡与低成本档。
-    mainModels: ["gpt-6-astra", "gpt-5.6", "gpt-5.6-terra", "gpt-5.6-luna"],
+    // gpt-6-astra 为 2026-09-03 新旗舰；gpt-6-sol / gpt-6-luna（2026-09-22 发布）为
+    // Astra 能力下放的复杂任务与高吞吐款；gpt-5.6 为别名，路由到旗舰 Sol；
+    // terra/luna 为平衡与低成本档。
+    mainModels: ["gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-5.6", "gpt-5.6-terra", "gpt-5.6-luna"],
     iconUrl: "../icons/providers/openai.svg",
     websiteUrl: "https://platform.openai.com/",
   },
@@ -115,14 +116,14 @@ export const MODEL_PRESETS: ModelPreset[] = [
     baseUrl: "https://api.xiaomimimo.com/v1",
     anthropicBaseUrl: "https://api.xiaomimimo.com/anthropic",
     transport: "openai",
-    mainModels: ["mimo-v2.5-pro"],
+    mainModels: ["mimo-v2.6-pro", "mimo-v2.6-flash", "mimo-v2.6-pro-ultraspeed"],
     iconUrl: "../icons/providers/xiaomimimo.svg",
     websiteUrl: "https://mimo.mi.com/",
     visionBaseUrl: "https://api.xiaomimimo.com/v1",
-    // 主模型 mimo-v2.5-pro 不适合做视觉（视觉模型是 mimo-v2.5）；
-    // 多模态开关默认全开，仅在此预填独立视觉模型候选，用户自行决定。
-    defaultVisionModel: "mimo-v2.5",
-    visionModels: ["mimo-v2.5"],
+    // V2.6（2026-09-22 发布）全系原生全模态，主模型即可做视觉（V2.5 时代需要
+    // 独立的 mimo-v2.5 视觉档）；多模态开关默认全开，预填候选用户自行决定。
+    defaultVisionModel: "mimo-v2.6-pro",
+    visionModels: ["mimo-v2.6-pro", "mimo-v2.6-flash"],
   },
   {
     providerName: CUSTOM_ENDPOINT_PROVIDERS.cloud,

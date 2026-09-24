@@ -11,6 +11,27 @@ const EXPECTED = [
   {
     "providerId": "chatgpt",
     "pattern": {
+      "source": "^gpt-6-(?:sol|luna)",
+      "flags": "i"
+    },
+    "capability": {
+      "control": "effort",
+      "supportedEfforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "defaultEffort": "medium",
+      "requestStyle": "openai-effort",
+      "supportsDisable": true,
+      "supportsProMode": true
+    }
+  },
+  {
+    "providerId": "chatgpt",
+    "pattern": {
       "source": "^gpt-6",
       "flags": "i"
     },

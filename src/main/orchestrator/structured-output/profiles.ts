@@ -24,8 +24,8 @@ const DEFINITIONS: readonly ProfileDefinition[] = [
     id: "openai-structured-output",
     provider: "chatgpt",
     transport: "openai",
-    // gpt-6 只按已发布的家族前缀匹配（gpt-6 / gpt-6-astra），不预测未来小版本号，
-    // 协议兼容矩阵比 UI 能力表更保守。
+    // gpt-6 按家族前缀匹配（已发布型号自动覆盖：astra / sol / luna），
+    // 不预测未来小版本号，协议兼容矩阵比 UI 能力表更保守。
     modelPattern: /^(?:gpt-6(?:$|-)|gpt-5(?:\.\d+)?(?:-(?:sol|terra|luna))?|gpt-4\.1(?:$|-)|gpt-4o-mini(?:$|-)|gpt-4o-(?:2024-08-06|2024-11-20)|o[134](?:$|-))/i,
     tier: "A",
     mode: "provider_json_schema",
@@ -90,7 +90,9 @@ const DEFINITIONS: readonly ProfileDefinition[] = [
     id: "mimo-json-object",
     provider: "mimo",
     transport: "openai",
-    modelPattern: /^mimo-v2\.5(?:$|-)/i,
+    // V2.6（2026-09-22 发布）与 V2.5 同 API 面（官方文档请求体一致），json_object
+    // 同适用；V2.5 官方 2026-10-21 下线，模式保留至下线后清理。
+    modelPattern: /^mimo-v2\.(?:5|6)(?:$|-)/i,
     tier: "B",
     mode: "provider_json_object",
     verification: "official",
