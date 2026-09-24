@@ -190,6 +190,9 @@ export const IPC = {
   CHATS_MIGRATE_LEGACY: "chats:migrate-legacy",
   // 任意会话变动后 main → 所有渲染窗口 broadcast，触发列表/标题刷新
   CHATS_CHANGED: "chats:changed",
+  CHATS_SIDEBAR_ORGANIZATION_GET: "chats:sidebar-organization:get",
+  CHATS_SIDEBAR_ORGANIZATION_APPLY: "chats:sidebar-organization:apply",
+  CHATS_SIDEBAR_ORGANIZATION_CHANGED: "chats:sidebar-organization:changed",
   // 状态栏 → main：要求打开/复用 reactChatWindow 并加载指定 sessionId
   CHATS_OPEN_IN_REACT_WINDOW: "chats:open-in-react-window",
   // main → reactChatWindow：要求切到指定 sessionId（窗口已存在时用）

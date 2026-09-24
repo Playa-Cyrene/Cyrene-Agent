@@ -42,6 +42,12 @@
   white-space: nowrap;
 }
 
+.cy-side-action--search kbd {
+  margin-left: auto;
+  color: var(--cy-text-muted, #8e8e93);
+  font: 400 10px/1 var(--rb-font-sans, sans-serif);
+}
+
 /* 侧栏动作按钮的未读红点：不显示数字，贴在图标右上角的小圆点 */
 .cy-side-action-dot {
   position: absolute;

@@ -9,22 +9,20 @@
   place-items: center;
   width: 30px;
   height: 30px;
-  border-radius: 50%;
-  border: 1px solid var(--cy-border);
-  background: var(--cy-bg-workspace);
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
   color: var(--cy-text-muted);
   cursor: pointer;
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  transition: background 0.15s, color 0.15s;
 }
 
 .cy-winbtn:hover {
   background: var(--cy-bg-hover);
-  border-color: var(--cy-border);
   color: var(--cy-text);
 }
 
 .cy-winbtn--close:hover {
   background: #ff5f57;
-  border-color: #ff5f57;
   color: #fff;
 }

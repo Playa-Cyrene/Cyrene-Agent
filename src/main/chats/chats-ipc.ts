@@ -18,6 +18,7 @@ import { IPC } from "../../shared/ipc-channels";
 import { createIpcScope, type IpcScope } from "../application/ipc-scope";
 import type { ChatMessage, ChatsSetSessionModelResult, ConversationMode, ConversationWorkspaceBinding } from "../../shared/chat-types";
 import * as chatsStore from "./chats-store";
+import * as sidebarOrganizationStore from "./sidebar-organization-store";
 import * as fs from "fs";
 import * as path from "path";
 import { ensureVaultStructure, isEmptyDirectory } from "../learn/obsidian/vault-init";
@@ -110,6 +111,18 @@ export function registerChatsIpc(
     IPC.CHATS_LIST,
     (_event, options?: { mode?: ConversationMode }) => chatsStore.listSessions(options),
   );
+
+  ipc.handle(IPC.CHATS_SIDEBAR_ORGANIZATION_GET, () => sidebarOrganizationStore.getSnapshot());
+  ipc.handle(IPC.CHATS_SIDEBAR_ORGANIZATION_APPLY, (event, payload: { expectedRevision: number; draft: Parameters<typeof sidebarOrganizationStore.applyDraft>[1] }) => {
+    const result = sidebarOrganizationStore.applyDraft(payload?.expectedRevision, payload?.draft);
+    if (result.ok) {
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (win.isDestroyed() || win.webContents === event.sender) continue;
+        try { win.webContents.send(IPC.CHATS_SIDEBAR_ORGANIZATION_CHANGED); } catch { /* window may be closing */ }
+      }
+    }
+    return result;
+  });
 
   ipc.handle(IPC.CHATS_GET, async (_event, id: string) => {
     if (!id) return null;

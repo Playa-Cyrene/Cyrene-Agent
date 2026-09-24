@@ -11,6 +11,7 @@ import type {
   SpeechInputCommitRequest,
   SpeechInputCommitResult,
 } from "../../../../../shared/ipc-channels";
+import type { SidebarOrganizationDraft, SidebarOrganizationResult, SidebarOrganizationSnapshot } from "../../../../../shared/sidebar-organization";
 
 /** 认领队首的返回形状（与主进程 chats-store 的 ClaimPendingResult 对齐）。 */
 export type PendingClaimResult =
@@ -38,6 +39,9 @@ import type {
 
 export interface ChatStoreApi {
   list: (options?: { mode?: ConversationMode }) => Promise<ChatSessionMeta[]>;
+  getSidebarOrganization: () => Promise<SidebarOrganizationSnapshot>;
+  applySidebarOrganization: (expectedRevision: number, draft: SidebarOrganizationDraft) => Promise<SidebarOrganizationResult>;
+  onSidebarOrganizationChanged: (callback: () => void) => () => void;
   get: (id: string) => Promise<ChatSession | null>;
   create: (input: { identityId: null; mode: ConversationMode; title?: string }) => Promise<ChatSession>;
   checkpointPresentation: (

@@ -1,13 +1,13 @@
 /* ===== 设计变量 ===== */
 :root {
   /* 背景 */
-  --cy-bg-page: #FAF4F8;
-  --cy-bg-workspace: #FFFBFC;
+  --cy-bg-page: #ECECEE;
+  --cy-bg-workspace: #FFFFFF;
   --cy-bg-hover: #fff1f6;
   --cy-bg-active: #fde0ed;
-  
+
   /* 边框 */
-  --cy-border: #F2F2F2;
+  --cy-border: rgba(0, 0, 0, 0.08);
   
   /* 文字 */
   --cy-text: #1d1d1f;
@@ -122,10 +122,18 @@ html, body {
 .cy-page-sidebar {
   display: flex;
   flex-direction: column;
-  width: 192px;
+  width: 252px;
   flex-shrink: 0;
   min-height: 0;
+  background: transparent;
+  border-radius: 0;
   transition: width 0.25s ease, opacity 0.2s ease;
+}
+
+@media (max-width: 900px) {
+  .cy-page-sidebar {
+    width: 172px;
+  }
 }
 
 .cy-page.is-collapsed .cy-page-sidebar {
@@ -367,4 +375,3 @@ html, body {
   0%, 100% { transform: translateY(0); }
   50% { transform: translateY(-8px); }
 }
-
