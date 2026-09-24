@@ -2,7 +2,19 @@
   display: flex;
   align-items: center;
   gap: 6px;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  text-align: left;
   cursor: pointer;
+}
+
+.cy-user-avatar:focus-visible {
+  outline: 2px solid var(--cy-accent);
+  outline-offset: 3px;
+  border-radius: 999px;
 }
 
 .cy-user-avatar:hover .cy-user-avatar-label {
