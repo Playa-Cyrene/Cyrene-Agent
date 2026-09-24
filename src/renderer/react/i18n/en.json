@@ -943,8 +943,6 @@
       "windowsDescription": "Control the status and schedule windows and remember their positions.",
       "sidebar": "Status window",
       "sidebarDescription": "Reopen the status window here if it was closed accidentally.",
-      "tasks": "Schedule window",
-      "tasksDescription": "Control the schedule and task window on the right.",
       "rememberWindowState": "Remember window positions",
       "rememberWindowStateDescription": "Restore settings and music window size and position after restart.",
       "system": "System behavior",

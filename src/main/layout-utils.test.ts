@@ -59,14 +59,7 @@ function computePanelLayout(
   const sidebarX = Math.min(chatPos.x + panels[0].width + gap, sidebarMaxX);
   const sidebarPos = clampWindowToWorkArea({ x: sidebarX, y: baseY }, panels[1], workArea);
 
-  const tasksX = Math.min(sidebarPos.x, sidebarMaxX);
-  const tasksPos = clampWindowToWorkArea(
-    { x: tasksX, y: sidebarPos.y + 48 },
-    panels[2],
-    workArea,
-  );
-
-  return [chatPos, sidebarPos, tasksPos];
+  return [chatPos, sidebarPos];
 }
 
 function visibleArea(
@@ -82,54 +75,53 @@ function visibleArea(
 const PANELS = [
   { width: 1280, height: 760 },
   { width: 320, height: 760 },
-  { width: 320, height: 760 },
 ];
 
 describe("computePanelLayout", () => {
-  it("2560x1440: 三窗口水平排列，垂直居中（y > 0）", () => {
+  it("2560x1440: 工作区和侧栏水平排列，垂直居中（y > 0）", () => {
     const wa = { x: 0, y: 0, width: 2560, height: 1440 };
     const positions = computePanelLayout(wa, PANELS, 8);
-    expect(positions).toHaveLength(3);
+    expect(positions).toHaveLength(2);
     // 高度 1440 >= 面板高度 760，垂直居中
     expect(positions[0].y).toBeGreaterThan(0);
     expect(positions[0].y).toBe(wa.y + Math.floor((wa.height - 760) / 2));
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 2; i++) {
       const v = visibleArea(positions[i], PANELS[i], wa);
       expect(v.w).toBeGreaterThanOrEqual(120);
       expect(v.h).toBeGreaterThanOrEqual(80);
     }
   });
 
-  it("1920x1080: 三窗口水平排列，垂直居中（y > 0）", () => {
+  it("1920x1080: 工作区和侧栏水平排列，垂直居中（y > 0）", () => {
     const wa = { x: 0, y: 0, width: 1920, height: 1080 };
     const positions = computePanelLayout(wa, PANELS, 8);
-    expect(positions).toHaveLength(3);
+    expect(positions).toHaveLength(2);
     // 高度 1080 >= 面板高度 760，垂直居中
     expect(positions[0].y).toBeGreaterThan(0);
     expect(positions[0].y).toBe(wa.y + Math.floor((wa.height - 760) / 2));
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 2; i++) {
       const v = visibleArea(positions[i], PANELS[i], wa);
       expect(v.w).toBeGreaterThanOrEqual(120);
       expect(v.h).toBeGreaterThanOrEqual(80);
     }
   });
 
-  it("1366x768: 阶梯布局，三窗口至少 120x80 可见", () => {
+  it("1366x768: 两窗口至少 120x80 可见", () => {
     const wa = { x: 0, y: 0, width: 1366, height: 768 };
     const positions = computePanelLayout(wa, PANELS, 8);
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 2; i++) {
       const v = visibleArea(positions[i], PANELS[i], wa);
       expect(v.w, `panel[${i}] width`).toBeGreaterThanOrEqual(120);
       expect(v.h, `panel[${i}] height`).toBeGreaterThanOrEqual(80);
     }
   });
 
-  it("1280x720: 阶梯布局，y = workArea.y（高度不足，顶部对齐）", () => {
+  it("1280x720: y = workArea.y（高度不足，顶部对齐）", () => {
     const wa = { x: 0, y: 0, width: 1280, height: 720 };
     const positions = computePanelLayout(wa, PANELS, 8);
     // 高度 720 < 面板高度 760，顶部对齐
     expect(positions[0].y).toBe(wa.y);
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 2; i++) {
       const v = visibleArea(positions[i], PANELS[i], wa);
       expect(v.w).toBeGreaterThanOrEqual(120);
       expect(v.h).toBeGreaterThanOrEqual(80);

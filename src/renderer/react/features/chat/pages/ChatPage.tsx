@@ -145,13 +145,16 @@ interface NavActions {
   openProject: (workspaceRoot: string) => void;
 }
 
-export function ChatPage({ onOpenSettings }: { onOpenSettings?: () => void } = {}) {
+export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onOpenSettings?: () => void; scheduledTasksNavigation?: number } = {}) {
   const { t } = useTranslation();
   // 统一反馈入口：错误轻提示 / 需阅读的错误弹窗 / 危险确认
   const feedback = useFeedback();
   const preferredAddress = useUserCallPreference();
   const [collapsed, setCollapsed] = useState(false);
   const [activePanel, setActivePanel] = useState<ChatPagePanel | null>(null);
+  useEffect(() => {
+    if (scheduledTasksNavigation > 0) setActivePanel("scheduledTasks");
+  }, [scheduledTasksNavigation]);
   /** 右侧面板已打开的 diff 标签，ID 规范 diff:<runId>:<文件路径>，同 ID 只激活不重开 */
   const [diffTabs, setDiffTabs] = useState<
     { id: string; runId: string; fileIndex: number; filePath: string }[]

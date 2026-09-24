@@ -95,7 +95,7 @@ function ExtensionToolPanels() {
   </section>;
 }
 
-export function ToolSettingsPanel() {
+export function ToolSettingsPanel({ musicSettingsNavigation = 0 }: { musicSettingsNavigation?: number }) {
   const { t } = useTranslation();
   const [values, setValues] = useState<ToolValues>(defaults);
   const [permission, setPermission] = useState<PermissionLevel>("read-only");
@@ -109,6 +109,10 @@ export function ToolSettingsPanel() {
   const [confirmSeconds, setConfirmSeconds] = useState(5);
   const [musicCount, setMusicCount] = useState<number | null>(null);
   const [musicStatus, setMusicStatus] = useState("");
+
+  useEffect(() => {
+    if (musicSettingsNavigation > 0) setMusicSettingsOpen(true);
+  }, [musicSettingsNavigation]);
 
   useEffect(() => {
     let disposed = false;

@@ -7,9 +7,7 @@ const windowEntries = [
   "index.html",
   "call/index.html",
   "sidebar/index.html",
-  "tasks/index.html",
   "sticker-manager/index.html",
-  "settings/index.html",
   "react/index.html",
 ];
 

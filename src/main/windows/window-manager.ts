@@ -4,10 +4,8 @@ import { createPetWindow, PET_WINDOW_BASE_HEIGHT, PET_WINDOW_BASE_WIDTH, type Pe
 import {
   createCallWindow,
   createReactChatWindowShell,
-  createSettingsWindow,
   createSidebarWindow,
   createStickerManagerWindow,
-  createTasksWindow,
   loadReactChatWindowPage,
   type ReactChatWindowHandle,
   showReactChatWindow,
@@ -31,8 +29,8 @@ export interface WindowManager {
   /** 打开聊天窗口：必要时创建壳并加载页面，然后显示并分发会话。 */
   openReactChatWindow(sessionId?: string): Promise<BrowserWindow>;
   createSidebarWindow(): void;
-  createSettingsWindow(section?: string): void;
-  createTasksWindow(): void;
+  openSettings(section?: string): Promise<void>;
+  openScheduledTasks(): Promise<void>;
   createStickerManagerWindow(): void;
   createCallWindow(): void;
   createMusicPlayerWindow(): void;
@@ -165,8 +163,14 @@ export function createWindowManager(options: WindowManagerOptions): WindowManage
     },
 
     createSidebarWindow,
-    createSettingsWindow,
-    createTasksWindow,
+    async openSettings(section = "appearance"): Promise<void> {
+      const window = await this.openReactChatWindow();
+      window.webContents.send(IPC.SETTINGS_SWITCH_SECTION, section);
+    },
+    async openScheduledTasks(): Promise<void> {
+      const window = await this.openReactChatWindow();
+      window.webContents.send(IPC.SETTINGS_SWITCH_SECTION, "tasks");
+    },
     createStickerManagerWindow,
     createCallWindow,
     createMusicPlayerWindow,

@@ -32,8 +32,8 @@ export function clampWindowToWorkArea(
  * 计算多面板自适应布局。
  *
  * 策略：
- * - 水平排列：totalWidth <= workArea.width → 三面板水平居中
- * - 阶梯排列：totalWidth > workArea.width → sidebar/tasks 贴右边缘并垂直错开
+ * - 水平排列：totalWidth <= workArea.width → 工作区与侧栏水平居中
+ * - 阶梯排列：totalWidth > workArea.width → 工作区居中，侧栏贴右
  *
  * 所有窗口均 clampWindowToWorkArea 保证至少 120×80 可见。
  */
@@ -74,24 +74,14 @@ export function computePanelLayout(
   const sidebarMaxX = workArea.x + workArea.width - panels[1].width;
   const sidebarX = Math.min(chatPos.x + panels[0].width + gap, sidebarMaxX);
   const sidebarPos = clampWindowToWorkArea({ x: sidebarX, y: baseY }, panels[1], workArea);
-
-  // tasks: 贴右边缘，y 与 sidebar 错开 48px
-  const tasksX = Math.min(sidebarPos.x, sidebarMaxX);
-  const tasksY = clampWindowToWorkArea(
-    { x: tasksX, y: sidebarPos.y + 48 },
-    panels[2],
-    workArea,
-  );
-
-  return [chatPos, sidebarPos, tasksY];
+  return [chatPos, sidebarPos];
 }
 
-// 计算 chat / sidebar / tasks 三个窗口的初始位置。
+// 计算 chat / sidebar 两个窗口的初始位置。
 // 规则：优先鼠标所在 display；窗口自适应 workArea，保证至少 120×80 可见。
 export function computeLayout(): {
   chat: PanelLayout;
   sidebar: PanelLayout;
-  tasks: PanelLayout;
 } {
   const cursor = screen.getCursorScreenPoint();
   const displays = screen.getAllDisplays();
@@ -105,8 +95,7 @@ export function computeLayout(): {
   const panels = [
     { width: 1280, height: 760 }, // chat
     { width: 320, height: 760 },  // sidebar
-    { width: 320, height: 760 },  // tasks
   ];
-  const [chatPos, sidebarPos, tasksPos] = computePanelLayout(workArea, panels, 8);
-  return { chat: chatPos, sidebar: sidebarPos, tasks: tasksPos };
+  const [chatPos, sidebarPos] = computePanelLayout(workArea, panels, 8);
+  return { chat: chatPos, sidebar: sidebarPos };
 }

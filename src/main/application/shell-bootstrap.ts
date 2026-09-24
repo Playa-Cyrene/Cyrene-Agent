@@ -96,7 +96,7 @@ export async function startShell(deps: ShellDependencies): Promise<ShellResult> 
           windowManager.createSidebarWindow();
           break;
         case "settings":
-          windowManager.createSettingsWindow(request.section);
+          await windowManager.openSettings(request.section);
           break;
         case "music":
           windowManager.createMusicPlayerWindow();

@@ -213,18 +213,7 @@ const sidebarApi = {
   openCall: () => ipcRenderer.send(IPC.SIDEBAR_OPEN_CALL),
 };
 
-const tasksApi = {
-  minimize: () => ipcRenderer.send(IPC.TASKS_MINIMIZE),
-  close: () => ipcRenderer.send(IPC.TASKS_CLOSE),
-  onSchedulerChanged: (callback: () => void) => {
-    const handler = () => callback();
-    ipcRenderer.on(IPC.SCHEDULER_CHANGED, handler);
-    return () => ipcRenderer.removeListener(IPC.SCHEDULER_CHANGED, handler);
-  },
-};
-
 contextBridge.exposeInMainWorld("sidebar", sidebarApi);
-contextBridge.exposeInMainWorld("tasks", tasksApi);
 
 // 注意力 Toast 中心 API：渲染页纯表现层。
 // 点击/关闭只上报 toast id，跳转目标由主进程查权威状态解析；高度上报服务于高度协议。
@@ -352,8 +341,6 @@ const cyreneAppearanceApi = {
 contextBridge.exposeInMainWorld("cyreneAppearance", cyreneAppearanceApi);
 
 const settingsApi = {
-  minimize: () => ipcRenderer.send(IPC.SETTINGS_MINIMIZE),
-  close: () => ipcRenderer.send(IPC.SETTINGS_CLOSE),
   getConfig: () => ipcRenderer.invoke(IPC.SETTINGS_GET_CONFIG),
   saveConfig: (config: unknown) => ipcRenderer.invoke(IPC.SETTINGS_SAVE_CONFIG, config),
   listModelProfiles: () => ipcRenderer.invoke(IPC.SETTINGS_MODEL_PROFILES_LIST),
@@ -375,10 +362,6 @@ const settingsApi = {
   pickUiFont: () => ipcRenderer.invoke(IPC.SETTINGS_PICK_UI_FONT) as Promise<string | null>,
   importUiFont: (sourcePath: string) => ipcRenderer.invoke(IPC.SETTINGS_IMPORT_UI_FONT, sourcePath) as Promise<UiFont>,
   resetUiFont: () => ipcRenderer.invoke(IPC.SETTINGS_RESET_UI_FONT) as Promise<UiFont>,
-  openSidebar: () => ipcRenderer.send(IPC.SETTINGS_OPEN_SIDEBAR),
-  closeSidebar: () => ipcRenderer.send(IPC.SETTINGS_CLOSE_SIDEBAR),
-  openTasks: () => ipcRenderer.send(IPC.SETTINGS_OPEN_TASKS),
-  closeTasks: () => ipcRenderer.send(IPC.SETTINGS_CLOSE_TASKS),
   openChromeGpu: () => ipcRenderer.send(IPC.SETTINGS_OPEN_CHROME_GPU),
   setPetAlwaysOnTop: (value: boolean) => ipcRenderer.send(IPC.SETTINGS_SET_PET_ALWAYS_ON_TOP, value),
   setPetVisible: (value: boolean) => ipcRenderer.send(IPC.SETTINGS_SET_PET_VISIBLE, value),

@@ -101,10 +101,6 @@ export const IPC = {
   SIDEBAR_OPEN_TASKS: "sidebar:open-tasks",
   SIDEBAR_OPEN_CALL: "sidebar:open-call",
 
-  // tasks window (read-only display, no per-element interactions)
-  TASKS_CLOSE: "tasks:close",
-  TASKS_MINIMIZE: "tasks:minimize",
-
   // Moments（动态 / 朋友圈）
   MOMENTS_LIST: "moments:list",
   MOMENTS_GET_POST: "moments:get-post",
@@ -117,8 +113,6 @@ export const IPC = {
   MOMENTS_LIST_CHARACTERS: "moments:list-characters",
 
   // settings window
-  SETTINGS_MINIMIZE: "settings:minimize",
-  SETTINGS_CLOSE: "settings:close",
   // main → settings 窗口：要求切到指定标签（已打开时用）
   SETTINGS_SWITCH_SECTION: "settings:switch-section",
   SETTINGS_GET_CONFIG: "settings:get-config",
@@ -145,10 +139,6 @@ export const IPC = {
   SETTINGS_PICK_UI_FONT: "settings:pick-ui-font",
   SETTINGS_IMPORT_UI_FONT: "settings:import-ui-font",
   SETTINGS_RESET_UI_FONT: "settings:reset-ui-font",
-  SETTINGS_OPEN_SIDEBAR: "settings:open-sidebar",
-  SETTINGS_CLOSE_SIDEBAR: "settings:close-sidebar",
-  SETTINGS_OPEN_TASKS: "settings:open-tasks",
-  SETTINGS_CLOSE_TASKS: "settings:close-tasks",
   SETTINGS_SET_PET_ALWAYS_ON_TOP: "settings:set-pet-always-on-top",
   SETTINGS_SET_PET_VISIBLE: "settings:set-pet-visible",
   SETTINGS_SET_PET_ZOOM: "settings:set-pet-zoom",

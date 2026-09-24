@@ -53,6 +53,7 @@ interface ChatWindowApi {
 /** 设置窗口通过 contextBridge 暴露的 window.settings（对应 preload 的 settingsApi）。
  *  只声明聊天页技能/工具模式面板用到的子集，完整实现见 src/preload/index.ts。 */
 interface SettingsWindowApi {
+  onSwitchSection?: (callback: (section: string) => void) => (() => void) | void;
   getSkillCatalog: () => Promise<unknown>;
   getSkillModeOverrides: () => Promise<unknown>;
   /** 重新扫描技能目录；失败返回 ok=false + error */

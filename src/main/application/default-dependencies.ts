@@ -29,8 +29,6 @@ import {
   reactChatWindow,
   setGetCurrentAppIconPath,
   sidebarWindow,
-  settingsWindow,
-  tasksWindow,
 } from "../windows/window-state";
 import { loadModelSettings, resolveModelSettingsProfile, saveModelSettings } from "../settings/model-settings";
 import { getConversationTranscriptStore } from "../orchestrator/conversation-transcript-store";
@@ -154,7 +152,7 @@ const SPLASH_MIN_MS = 2500;
 const SHUTDOWN_TIMEOUT_MS = 10_000;
 
 function broadcastToAuxWindows(channel: string, payload: unknown): void {
-  for (const win of [reactChatWindow, sidebarWindow, tasksWindow, settingsWindow]) {
+  for (const win of [reactChatWindow, sidebarWindow]) {
     if (win && !win.isDestroyed()) {
       win.webContents.send(channel, payload);
     }
@@ -534,8 +532,8 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
           agentRuntime: runtime,
           // 插件启停后让调度引擎重新归一化逾期任务并重排计时器（不补跑）。
           onPluginRunningStateChange: () => scheduler.engine.refreshPluginTasks(),
-          // 两种设置界面都能承载插件面板；窗口引用须在请求时刻读取。
-          getPanelHostWebContents: () => [settingsWindow, reactChatWindow]
+          // 插件面板仅由工作区设置页承载。
+          getPanelHostWebContents: () => [reactChatWindow]
             .filter((window) => window && !window.isDestroyed())
             .map((window) => window!.webContents),
         });
@@ -686,7 +684,7 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
           bus: toastEvents,
           window: toastWindowController,
           activate: (request) => { activation.request(request); },
-          openTasksWindow: () => { windowManager.createTasksWindow(); },
+          openTasksWindow: () => { void windowManager.openScheduledTasks(); },
           // 音效总开关：设置页可关；每次弹窗时读取，改动即时生效
           isSoundEnabled: () => loadGeneralSettings().toastSoundEnabled,
           shouldSuppressNotify: (event) => {

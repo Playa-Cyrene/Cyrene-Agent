@@ -4,8 +4,6 @@ import { createIpcScope, type IpcScope } from "../application/ipc-scope";
 import { clearUsage, getUsageReport } from "../token-usage-store";
 import {
   sidebarWindow,
-  tasksWindow,
-  settingsWindow,
   musicPlayerWindow,
 } from "./window-state";
 import type { WindowManager } from "./window-manager";
@@ -75,30 +73,15 @@ export function registerWindowSystemIpc(deps: WindowSystemIpcDependencies): void
   });
 
   ipc.on(IPC.SIDEBAR_OPEN_TASKS, () => {
-    deps.windowManager?.createTasksWindow();
+    void deps.windowManager?.openScheduledTasks();
   });
 
   ipc.on(IPC.SIDEBAR_OPEN_SETTINGS, (_event, section?: string) => {
-    deps.windowManager?.createSettingsWindow(section);
+    void deps.windowManager?.openSettings(section);
   });
 
   ipc.on(IPC.SIDEBAR_OPEN_CALL, () => {
     deps.windowManager?.createCallWindow();
-  });
-
-  ipc.on(IPC.TASKS_MINIMIZE, () => {
-    tasksWindow?.minimize();
-  });
-
-  ipc.on(IPC.TASKS_CLOSE, () => {
-    tasksWindow?.close();
-  });
-  ipc.on(IPC.SETTINGS_MINIMIZE, () => {
-    settingsWindow?.minimize();
-  });
-
-  ipc.on(IPC.SETTINGS_CLOSE, () => {
-    settingsWindow?.close();
   });
 
   // 音乐播放器窗口控制
@@ -113,8 +96,7 @@ export function registerWindowSystemIpc(deps: WindowSystemIpcDependencies): void
     return true;
   });
   ipc.handle(IPC.MUSIC_OPEN_SETTINGS, (_event, section?: string) => {
-    deps.windowManager?.createSettingsWindow(section);
-    return true;
+    return deps.windowManager?.openSettings(section ?? "music").then(() => true) ?? false;
   });
 
   ipc.on(IPC.SETTINGS_OPEN_CHROME_GPU, async () => {

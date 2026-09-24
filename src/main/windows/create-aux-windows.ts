@@ -2,7 +2,6 @@ import { app, BrowserWindow, screen } from "electron";
 import * as path from "path";
 import { IPC } from "../../shared/ipc-channels";
 import { isDev } from "../env";
-import { loadGeneralSettings } from "../settings/settings-facade";
 import { computeLayout } from "../window-layout";
 import { stopCall, setCallWindow } from "../call/call-manager";
 import {
@@ -12,15 +11,11 @@ import {
   reactChatWindow,
   setCallWindowLocal,
   setReactChatWindow,
-  setSettingsWindow,
   setSidebarWindow,
   setStickerManagerWindow,
-  setTasksWindow,
-  settingsWindow,
   showWindowWhenStartupReady,
   sidebarWindow,
   stickerManagerWindow,
-  tasksWindow,
 } from "./window-state";
 
 /**
@@ -182,120 +177,6 @@ export function createSidebarWindow(): void {
 }
 
 /**
- * 创建/复用今日日程窗口。
- */
-export function createTasksWindow(): void {
-  if (tasksWindow && !tasksWindow.isDestroyed()) {
-    tasksWindow.show();
-    tasksWindow.focus();
-    return;
-  }
-
-  const layout = computeLayout();
-  const window = new BrowserWindow({
-    x: layout.tasks.x,
-    y: layout.tasks.y,
-    width: 320,
-    height: 760,
-    minHeight: 540,
-    title: "昔涟 · 今日日程",
-    icon: getCurrentAppIconPath(),
-    backgroundColor: "#00000000",
-    autoHideMenuBar: true,
-    show: false,
-    frame: false,
-    transparent: true,
-    resizable: true,
-    webPreferences: {
-      preload: path.join(app.getAppPath(), "dist", "preload", "preload", "index.js"),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: false,
-    },
-  });
-  setTasksWindow(window);
-
-  if (isDev) {
-    window.loadURL("http://localhost:5173/tasks/");
-  } else {
-    window.loadFile(
-      path.join(app.getAppPath(), "dist", "renderer", "tasks", "index.html")
-    );
-  }
-
-  window.once("ready-to-show", () => {
-    showWindowWhenStartupReady(window);
-  });
-
-  window.on("closed", () => {
-    setTasksWindow(null);
-  });
-}
-
-/**
- * 创建/复用设置窗口。
- */
-export function createSettingsWindow(section?: string): void {
-  if (settingsWindow && !settingsWindow.isDestroyed()) {
-    settingsWindow.show();
-    settingsWindow.focus();
-    // 窗口已存在：发事件让 settings 页切标签（loadURL 不会重新触发）
-    if (section) {
-      settingsWindow.webContents.send(IPC.SETTINGS_SWITCH_SECTION, section);
-    }
-    return;
-  }
-
-  const display = screen.getPrimaryDisplay();
-  const { x: dx, y: dy, width: dw, height: dh } = display.workArea;
-  const width = 1060;
-  const height = 920;
-  const rememberWindowState = loadGeneralSettings().rememberWindowState;
-  const window = new BrowserWindow({
-    ...persistedWindowState("cyrene.settings", rememberWindowState),
-    x: dx + Math.max(0, Math.floor((dw - width) / 2)),
-    y: dy + Math.max(0, Math.floor((dh - height) / 2)),
-    width,
-    height,
-    minWidth: 920,
-    minHeight: 580,
-    title: "昔涟 · 设置",
-    icon: getCurrentAppIconPath(),
-    backgroundColor: "#00000000",
-    autoHideMenuBar: true,
-    show: false,
-    frame: false,
-    transparent: true,
-    resizable: true,
-    webPreferences: {
-      preload: path.join(app.getAppPath(), "dist", "preload", "preload", "index.js"),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: false,
-    },
-  });
-  setSettingsWindow(window);
-
-  const hash = section ? `#${section}` : "";
-  if (isDev) {
-    window.loadURL("http://localhost:5173/settings/" + hash);
-  } else {
-    window.loadFile(
-      path.join(app.getAppPath(), "dist", "renderer", "settings", "index.html"),
-      { hash: section || "" }
-    );
-  }
-
-  window.once("ready-to-show", () => {
-    showWindowWhenStartupReady(window);
-  });
-
-  window.on("closed", () => {
-    setSettingsWindow(null);
-  });
-}
-
-/**
  * 创建/复用表情包管理窗口。
  */
 export async function createStickerManagerWindow(): Promise<{ ok: boolean; error?: string }> {
@@ -306,7 +187,7 @@ export async function createStickerManagerWindow(): Promise<{ ok: boolean; error
     return { ok: true };
   }
 
-  const parentBounds = settingsWindow?.getBounds();
+  const parentBounds = reactChatWindow?.getBounds();
   const display = screen.getPrimaryDisplay();
   const { x: dx, y: dy, width: dw, height: dh } = display.workArea;
   const width = 520;
@@ -325,7 +206,7 @@ export async function createStickerManagerWindow(): Promise<{ ok: boolean; error
     frame: false,
     transparent: true,
     resizable: true,
-    parent: settingsWindow ?? undefined,
+    parent: reactChatWindow ?? undefined,
     webPreferences: {
       preload: path.join(app.getAppPath(), "dist", "preload", "preload", "index.js"),
       contextIsolation: true,
@@ -427,4 +308,3 @@ export function createCallWindow(): void {
   // 绑定给 call-manager
   setCallWindow(window);
 }
-

@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 
 const settingsRoot = fileURLToPath(new URL(".", import.meta.url));
 const files = [
-  "mcp/panel.ts", "scheduler/panel.ts", "tokens/panel.ts", "settings.ts",
+  "mcp/panel.ts", "scheduler/panel.ts", "tokens/panel.ts",
   "channels/panel.ts", "memory/panel.ts", "preferences/panel.ts",
   "tts/panel.ts", "rag/panel.ts",
 ];

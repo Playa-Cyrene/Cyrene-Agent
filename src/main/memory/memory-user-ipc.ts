@@ -18,8 +18,6 @@ import type { WindowManager } from "../windows/window-manager";
 import {
   reactChatWindow,
   sidebarWindow,
-  tasksWindow,
-  settingsWindow,
   stickerManagerWindow,
 } from "../windows/window-state";
 import type { EmbeddingIndexService } from "../services/embedding/embedding-index-service";
@@ -36,7 +34,7 @@ export interface MemoryUserToolIpcDependencies {
 }
 
 function broadcastToAuxWindows(channel: string, payload: unknown): void {
-  for (const win of [reactChatWindow, sidebarWindow, tasksWindow, settingsWindow]) {
+  for (const win of [reactChatWindow, sidebarWindow]) {
     if (win && !win.isDestroyed()) {
       win.webContents.send(channel, payload);
     }

@@ -52,7 +52,6 @@ export interface GeneralSettings extends ChatAppearanceSettings {
   petWindowY?: number;
   disableGpuElectron?: boolean;
   sidebarVisible: boolean;
-  tasksVisible: boolean;
   /** 提醒中心音效总开关：关闭后所有 toast 静音，弹窗行为不受影响。 */
   toastSoundEnabled: boolean;
   launchAtLogin: boolean;

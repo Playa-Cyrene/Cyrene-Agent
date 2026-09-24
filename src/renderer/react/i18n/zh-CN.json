@@ -1018,8 +1018,6 @@
       "windowsDescription": "控制状态栏和日程栏窗口的显示与窗口位置记忆。",
       "sidebar": "状态栏窗口",
       "sidebarDescription": "不小心关闭后，可以从这里重新打开。",
-      "tasks": "日程栏窗口",
-      "tasksDescription": "控制右侧日程与任务展示窗口。",
       "rememberWindowState": "记住窗口位置",
       "rememberWindowStateDescription": "记忆设置与音乐窗口的位置和大小，重启后恢复。",
       "system": "系统行为",
