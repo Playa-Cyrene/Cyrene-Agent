@@ -823,6 +823,19 @@
 .cy-model-field .ant-input-number-group-addon { color: var(--rb-text-secondary); background: var(--rb-surface-hover); }
 .cy-model-field .ant-input::placeholder, .cy-model-field .ant-input-number-input::placeholder { color: var(--rb-text-disabled); }
 
+/* 档案编辑区的模型清单：每行 = 单选默认标记 + 模型 ID + 移除按钮；底部为添加行 */
+.cy-model-list-editor { display: flex; flex-direction: column; gap: 2px; padding: 4px; border: 1px solid var(--rb-border-default); border-radius: 8px; background: var(--rb-surface-elevated); }
+.cy-model-list-item { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 6px; }
+.cy-model-list-item:hover { background: var(--rb-surface-hover); }
+.cy-model-list-item__radio { display: inline-flex; align-items: center; gap: 8px; flex: 1; min-width: 0; cursor: pointer; }
+.cy-model-list-item__radio input[type="radio"] { accent-color: var(--rb-accent); flex-shrink: 0; }
+.cy-model-list-item__radio code { color: var(--rb-text-primary); font: var(--rb-text-small); overflow-wrap: anywhere; }
+.cy-model-list-item .cy-model-default-tag { margin: 0; flex-shrink: 0; }
+.cy-model-list-item__remove { flex-shrink: 0; color: var(--rb-text-secondary); }
+.cy-model-list-item__remove:not(:disabled):hover { color: var(--rb-danger); }
+.cy-model-list-add { display: flex; align-items: center; gap: 4px; padding: 2px 4px; }
+.cy-model-list-add .cy-control-input { flex: 1; min-width: 0; }
+
 .cy-model-provider-option { display: inline-flex; align-items: center; gap: 8px; }
 .cy-model-provider-option svg { max-width: 23px; max-height: 23px; }
 .cy-model-provider-fallback { display: inline-grid; width: 22px; height: 22px; place-items: center; border-radius: 7px; color: var(--rb-accent); background: color-mix(in srgb, var(--rb-accent) 12%, var(--rb-surface-elevated)); font-weight: 650; }

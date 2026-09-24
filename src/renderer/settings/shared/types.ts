@@ -248,8 +248,8 @@ export interface SettingsApi {
   close: () => void;
   getConfig: () => Promise<ModelSettings>;
   saveConfig: (config: Partial<ModelSettings>) => Promise<ModelSettings>;
-  listModelProfiles?: () => Promise<{ profiles: Array<{ id: string; provider: string; displayName?: string; baseUrl: string; model: string; apiKey: string; explicitTransport?: ApiTransport; reasoning?: ReasoningPreference; contextWindowTokens?: number; multimodal?: boolean }>; defaultModelProfileId?: string }>;
-  saveModelProfile?: (profile: { id?: string; provider: string; displayName?: string; baseUrl: string; model: string; apiKey: string; explicitTransport?: ApiTransport; reasoning?: ReasoningPreference; contextWindowTokens?: number; multimodal?: boolean }) => Promise<{ added: boolean; profiles: unknown[]; defaultModelProfileId?: string }>;
+  listModelProfiles?: () => Promise<{ profiles: Array<{ id: string; provider: string; displayName?: string; baseUrl: string; model: string; apiKey: string; explicitTransport?: ApiTransport; reasoning?: ReasoningPreference; contextWindowTokens?: number; multimodal?: boolean; models?: string[] }>; defaultModelProfileId?: string }>;
+  saveModelProfile?: (profile: { id?: string; provider: string; displayName?: string; baseUrl: string; model: string; apiKey: string; explicitTransport?: ApiTransport; reasoning?: ReasoningPreference; contextWindowTokens?: number; multimodal?: boolean; models?: string[] }) => Promise<{ added: boolean; profiles: unknown[]; defaultModelProfileId?: string }>;
   deleteModelProfile?: (id: string) => Promise<unknown>;
   setDefaultModelProfile?: (id: string) => Promise<unknown>;
   getGeneral: () => Promise<GeneralSettings>;

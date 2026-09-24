@@ -33,6 +33,7 @@ import {
   Sparkles,
   Trash2,
   Wrench,
+  X,
 } from "lucide-react";
 import type { CSSProperties, ReactNode } from "react";
 import type { ApiTransport } from "../../../../shared/api-endpoint";
@@ -64,6 +65,8 @@ interface ModelProfile {
   reasoning?: ReasoningPreference;
   contextWindowTokens?: number;
   multimodal?: boolean;
+  /** 档案内可切换的模型清单；缺省 = 单模型档案 */
+  models?: string[];
 }
 
 interface RuntimeValues {
@@ -131,6 +134,19 @@ function transportUrl(preset: ModelPreset, transport: ApiTransport): string {
   return preset.baseUrl;
 }
 
+// 编辑视图不变量：旧档案（无 models）进编辑页 = 以当前模型构成的单元素清单，不能显示空列表
+function editableModelsOf(profile: ModelProfile): string[] {
+  if (profile.models?.length) return [...profile.models];
+  return profile.model ? [profile.model] : [];
+}
+
+// 新建档案预填：默认模型（mainModels[0]）置于清单首位去重，杜绝默认值不在清单里被改写
+function presetModelsOf(preset: ModelPreset): string[] {
+  const first = preset.mainModels[0];
+  const candidates = first ? [first, ...preset.mainModels] : preset.mainModels;
+  return [...new Set(candidates)];
+}
+
 export function ModelSettingsPanel() {
   const { t } = useTranslation();
   const [profiles, setProfiles] = useState<ModelProfile[]>([]);
@@ -140,6 +156,9 @@ export function ModelSettingsPanel() {
   const [displayName, setDisplayName] = useState(MODEL_PRESETS[0].shortName);
   const [baseUrl, setBaseUrl] = useState(MODEL_PRESETS[0].baseUrl);
   const [model, setModel] = useState(MODEL_PRESETS[0].mainModels[0] ?? "");
+  // 档案内可切换的模型清单（编辑态）；model 只作"新对话默认模型"的单选标记
+  const [models, setModels] = useState<string[]>(presetModelsOf(MODEL_PRESETS[0]));
+  const [newModel, setNewModel] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [transport, setTransport] = useState<ApiTransport>(MODEL_PRESETS[0].transport);
   const [contextWindow, setContextWindow] = useState<number | null>(256000);
@@ -213,12 +232,14 @@ export function ModelSettingsPanel() {
     setProvider(profile.provider);
     setDisplayName(profile.displayName ?? nextPreset.shortName);
     setBaseUrl(profile.baseUrl || transportUrl(nextPreset, nextTransport));
+    setModels(editableModelsOf(profile));
     setModel(profile.model ?? "");
     setApiKey(profile.apiKey === LOCAL_ENDPOINT_AUTH_FALLBACK ? "" : profile.apiKey ?? "");
     setTransport(nextTransport);
     setContextWindow(profile.contextWindowTokens ?? 256000);
     setMultimodal(profile.multimodal ?? true);
     setReasoning(profile.reasoning);
+    setNewModel("");
     setStatus(undefined);
   }
 
@@ -228,12 +249,14 @@ export function ModelSettingsPanel() {
     setProvider(nextProvider);
     setDisplayName(nextPreset.shortName);
     setBaseUrl(nextPreset.baseUrl);
+    setModels(presetModelsOf(nextPreset));
     setModel(nextPreset.mainModels[0] ?? "");
     setApiKey("");
     setTransport(nextPreset.transport);
     setContextWindow(256000);
     setMultimodal(true);
     setReasoning(undefined);
+    setNewModel("");
     setStatus(undefined);
   }
 
@@ -243,9 +266,11 @@ export function ModelSettingsPanel() {
     setProvider(nextProvider);
     setDisplayName(nextPreset.shortName);
     setBaseUrl(nextPreset.baseUrl);
+    setModels(presetModelsOf(nextPreset));
     setModel(nextPreset.mainModels[0] ?? "");
     setApiKey("");
     setTransport(nextPreset.transport);
+    setNewModel("");
     if (nextMode === "local") setApiKey("");
     setStatus(undefined);
   }
@@ -263,6 +288,28 @@ export function ModelSettingsPanel() {
     setDisplayName(mode === "cloud" ? t("settingsPage.modelSettings.customCloud") : t("settingsPage.modelSettings.customLocal"));
     setApiKey("");
     setStatus(undefined);
+  }
+
+  // 添加模型到清单：重复拒绝；清单为空时首项自动成为默认模型
+  function addModel() {
+    const value = newModel.trim();
+    if (!value) return;
+    if (models.some((item) => item === value)) {
+      setStatus({ kind: "error", text: t("settingsPage.modelSettings.modelListDuplicate") });
+      return;
+    }
+    setModels([...models, value]);
+    if (!model) setModel(value);
+    setNewModel("");
+    setStatus(undefined);
+  }
+
+  // 删除模型：最后一条禁删（UI 层禁止 + normalize 防御双保险）；删默认时默认顺位首项
+  function removeModel(value: string) {
+    if (models.length <= 1) return;
+    const next = models.filter((item) => item !== value);
+    setModels(next);
+    if (model === value) setModel(next[0] ?? "");
   }
 
   function currentApiKey() {
@@ -304,6 +351,8 @@ export function ModelSettingsPanel() {
         displayName: displayName.trim(),
         baseUrl: baseUrl.trim(),
         model: model.trim(),
+        // 清单随档案全量保存；单元素清单由主进程 normalize 剥除（旧档案零变化）
+        models: models.map((item) => item.trim()).filter(Boolean),
         apiKey: currentApiKey(),
         explicitTransport: transport,
         reasoning,
@@ -588,11 +637,57 @@ export function ModelSettingsPanel() {
                     <Radio.Button value="responses">Responses</Radio.Button>
                   </Radio.Group>
                 </div>
-                <label className="cy-model-field">
-                  <span>{t("settingsPage.modelSettings.model")}</span>
-                  <SettingsInput value={model} onChange={(event) => setModel(event.target.value)} placeholder={preset.mainModels[0] ?? t("settingsPage.modelSettings.modelPlaceholder")} list="cy-model-suggestions" />
-                  <datalist id="cy-model-suggestions">{preset.mainModels.map((item) => <option key={item} value={item} />)}</datalist>
-                </label>
+                <div className="cy-model-field">
+                  <span>{t("settingsPage.modelSettings.modelList")}</span>
+                  <div className="cy-model-list-editor">
+                    {models.map((item) => (
+                      <div className="cy-model-list-item" key={item}>
+                        <label className="cy-model-list-item__radio">
+                          <input
+                            type="radio"
+                            name="cy-model-default-model"
+                            checked={item === model}
+                            onChange={() => setModel(item)}
+                            aria-label={t("settingsPage.modelSettings.modelListDefaultAria", { model: item })}
+                          />
+                          <code>{item}</code>
+                        </label>
+                        {item === model && <Tag className="cy-model-default-tag">{t("settingsPage.modelSettings.default")}</Tag>}
+                        <Button
+                          type="text"
+                          size="small"
+                          className="cy-model-list-item__remove"
+                          disabled={models.length <= 1}
+                          aria-label={t("settingsPage.modelSettings.modelListRemoveAria", { model: item })}
+                          title={t("settingsPage.modelSettings.modelListRemoveAria", { model: item })}
+                          onClick={() => removeModel(item)}
+                        >
+                          <X size={14} />
+                        </Button>
+                      </div>
+                    ))}
+                    <div className="cy-model-list-add">
+                      <SettingsInput
+                        value={newModel}
+                        onChange={(event) => setNewModel(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            addModel();
+                          }
+                        }}
+                        placeholder={t("settingsPage.modelSettings.modelListAddPlaceholder")}
+                        aria-label={t("settingsPage.modelSettings.modelListAdd")}
+                        list="cy-model-suggestions"
+                      />
+                      <Button type="text" size="small" onClick={addModel} aria-label={t("settingsPage.modelSettings.modelListAdd")} title={t("settingsPage.modelSettings.modelListAdd")}>
+                        <Plus size={14} />
+                      </Button>
+                    </div>
+                    <datalist id="cy-model-suggestions">{preset.mainModels.map((item) => <option key={item} value={item} />)}</datalist>
+                  </div>
+                  <small>{t("settingsPage.modelSettings.modelListHint")}</small>
+                </div>
                 <label className="cy-model-field">
                   <span>{t("settingsPage.modelSettings.contextWindow")}</span>
                   <InputNumber min={4096} step={4096} value={contextWindow} onChange={setContextWindow} addonAfter="Tokens" />

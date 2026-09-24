@@ -90,6 +90,8 @@ interface SettingsWindowApi {
     reasoning?: import("../shared/reasoning").ReasoningPreference;
     contextWindowTokens?: number;
     multimodal?: boolean;
+    /** 档案内可切换的模型清单；缺省 = 单模型档案（编辑页按 [model] 展示） */
+    models?: string[];
   }>; defaultModelProfileId?: string }>;
   saveModelProfile: (profile: {
     id?: string;
@@ -102,6 +104,7 @@ interface SettingsWindowApi {
     reasoning?: import("../shared/reasoning").ReasoningPreference;
     contextWindowTokens?: number;
     multimodal?: boolean;
+    models?: string[];
   }) => Promise<{ added: boolean; profiles: unknown[]; defaultModelProfileId?: string }>;
   deleteModelProfile: (id: string) => Promise<unknown>;
   setDefaultModelProfile: (id: string) => Promise<unknown>;
