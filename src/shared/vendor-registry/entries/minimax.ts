@@ -25,6 +25,7 @@ export const MINIMAX_REGISTRY = defineVendor({
     // 三协议全支持（协议矩阵 2026-08-21）
     supportedTransports: ["anthropic", "openai", "responses"],
   },
+  shortName: "MiniMax",
   // 厂商怪癖：OpenAI 兼容文本 API 的 tool_choice 文档仅支持 auto/none，
   // must-call 一律首选 auto。
   toolChoiceQuirk: {

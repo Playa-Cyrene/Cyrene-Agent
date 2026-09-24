@@ -20,6 +20,7 @@ export const QWEN_REGISTRY = defineVendor({
     // 官方 OpenAI 兼容；Responses 由阿里云百炼中转（协议矩阵 2026-08-21）
     supportedTransports: ["openai", "responses"],
   },
+  shortName: "Qwen",
   reasoningRules: [
     // ── qwen（通义千问）──
     // /-thinking$/ 必须在 /^qwen3/ 之前。

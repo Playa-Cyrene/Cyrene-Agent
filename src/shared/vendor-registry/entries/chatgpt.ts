@@ -24,6 +24,7 @@ export const CHATGPT_REGISTRY = defineVendor({
     // 端点级标记：仅 OpenAI 官方端点支持 encrypted reasoning 回放
     responsesEncryptedReasoning: true,
   },
+  shortName: "ChatGPT",
   reasoningRules: [
     // ── chatgpt（OpenAI）──
     // 按具体型号拆分；GPT-6 Astra（2026-09-03 发布）：effort 五档与 5.6 相同，

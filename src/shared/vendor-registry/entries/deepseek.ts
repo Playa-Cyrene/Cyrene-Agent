@@ -22,6 +22,7 @@ export const DEEPSEEK_REGISTRY = defineVendor({
     // 三格式原生全支持（官方文档）
     supportedTransports: ["openai", "anthropic", "responses"],
   },
+  shortName: "DeepSeek",
   // 厂商怪癖：思考时拒绝一切 tool_choice（must-call 也省略字段），
   // 思考开启时普通 FC 轮同样省略 tool_choice；非思考轮不受影响。
   toolChoiceQuirk: {

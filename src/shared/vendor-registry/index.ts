@@ -61,3 +61,15 @@ export const REASONING_VENDOR_ORDER: readonly VendorRegistryEntry[] = [
 
 export const MODEL_REASONING_RULES: readonly ModelReasoningRule[] =
   REASONING_VENDOR_ORDER.flatMap((entry) => entry.reasoningRules);
+
+/**
+ * 按厂商显示名查短名（去括号后缀）。参数仍是 displayName——过渡态：
+ * 用户已保存配置的存储键在持久化迁移完成前仍是 displayName，改名需走
+ * PROVIDER_RENAMES 迁移；迁移完成后可切换为按 providerId 查找。
+ * 未命中返回 undefined，兜底逻辑（原样显示）留给调用方。
+ */
+export function getVendorShortName(displayName: string): string | undefined {
+  return VENDOR_REGISTRY.find(
+    (entry) => entry.capability.displayName === displayName,
+  )?.shortName;
+}

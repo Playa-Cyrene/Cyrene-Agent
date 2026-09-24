@@ -10,6 +10,7 @@ export const MODEL_PRESETS: ModelPreset[] = [
   // 顺序按使用频率 + 适配优先级；未在此清单内的厂商已硬删，需要时再补回。
   {
     providerName: "MiniMax（稀宇科技）",
+    providerId: "minimax",
     shortName: "MiniMax",
     baseUrl: "https://api.minimaxi.com/v1",
     anthropicBaseUrl: "https://api.minimaxi.com/anthropic",
@@ -28,6 +29,7 @@ export const MODEL_PRESETS: ModelPreset[] = [
     // 旧名 v4-flash / v4-flash-vision-exp 是它的别名；v4-pro 官方将于 2026-09-14
     // 起路由到 V4.1 Flash，保留在列表里供存量配置参考。
     providerName: "DeepSeek（深度求索）",
+    providerId: "deepseek",
     shortName: "DeepSeek",
     baseUrl: "https://api.deepseek.com",
     anthropicBaseUrl: "https://api.deepseek.com/anthropic",
@@ -38,6 +40,7 @@ export const MODEL_PRESETS: ModelPreset[] = [
   },
   {
     providerName: "豆包（火山方舟）",
+    providerId: "doubao",
     shortName: "豆包",
     baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
     transport: "openai",
@@ -52,6 +55,7 @@ export const MODEL_PRESETS: ModelPreset[] = [
   },
   {
     providerName: "GLM（智谱）",
+    providerId: "glm",
     shortName: "GLM",
     baseUrl: "https://open.bigmodel.cn/api/paas/v4",
     anthropicBaseUrl: "https://open.bigmodel.cn/api/anthropic",
@@ -62,6 +66,7 @@ export const MODEL_PRESETS: ModelPreset[] = [
   },
   {
     providerName: "Kimi（月之暗面）",
+    providerId: "kimi",
     shortName: "Kimi",
     baseUrl: "https://api.moonshot.cn/v1",
     transport: "openai",
@@ -71,6 +76,7 @@ export const MODEL_PRESETS: ModelPreset[] = [
   },
   {
     providerName: "Qwen（通义千问）",
+    providerId: "qwen",
     shortName: "Qwen",
     baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
     transport: "openai",
@@ -80,6 +86,7 @@ export const MODEL_PRESETS: ModelPreset[] = [
   },
   {
     providerName: "ChatGPT（OpenAI）",
+    providerId: "chatgpt",
     shortName: "ChatGPT",
     baseUrl: "https://api.openai.com/v1",
     // 官方主推 Responses（o 系列完整思考摘要仅此协议有），新建档案默认预填 responses。
@@ -93,6 +100,7 @@ export const MODEL_PRESETS: ModelPreset[] = [
   },
   {
     providerName: "Claude（Anthropic）",
+    providerId: "claude",
     shortName: "Claude",
     baseUrl: "https://api.anthropic.com/v1",
     transport: "anthropic",
@@ -102,6 +110,7 @@ export const MODEL_PRESETS: ModelPreset[] = [
   },
   {
     providerName: "MiMo（小米）",
+    providerId: "mimo",
     shortName: "MiMo",
     baseUrl: "https://api.xiaomimimo.com/v1",
     anthropicBaseUrl: "https://api.xiaomimimo.com/anthropic",
@@ -117,6 +126,7 @@ export const MODEL_PRESETS: ModelPreset[] = [
   },
   {
     providerName: CUSTOM_ENDPOINT_PROVIDERS.cloud,
+    providerId: "custom-cloud",
     shortName: "自定义",
     baseUrl: "",
     transport: "openai",
@@ -126,6 +136,7 @@ export const MODEL_PRESETS: ModelPreset[] = [
   },
   {
     providerName: CUSTOM_ENDPOINT_PROVIDERS.local,
+    providerId: "custom-local",
     shortName: "本地模型",
     baseUrl: "",
     transport: "openai",

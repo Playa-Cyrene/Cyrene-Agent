@@ -7,6 +7,7 @@ import type { StickerSize } from "../../shared/sticker-types";
 import { getSettingsPath } from "../settings-store";
 import { migrateLegacyMinimaxDefaults } from "../orchestrator/vendors/minimax-defaults";
 import { getCapabilityOrOpenAI } from "../orchestrator/vendors/capabilities";
+import { getVendorShortName } from "../../shared/vendor-registry";
 import { addModelProfile, resolveDefaultModelProfile, updateModelProfile, type SavedModelProfile } from "./model-catalog";
 
 /**
@@ -546,19 +547,6 @@ export function saveModelSettings(settings: Partial<ModelSettings>): ModelSettin
   return final;
 }
 
-// 厂商短名映射（与 settings.ts 的 MODEL_PRESETS.shortName 镜像，需手动同步）。
-// 状态栏"正在喂养"在用户没填昵称时用这个兜底。
-const PROVIDER_SHORT_NAMES: Record<string, string> = {
-  "MiniMax（稀宇科技）": "MiniMax",
-  "DeepSeek（深度求索）": "DeepSeek",
-  "豆包（火山方舟）": "豆包",
-  "GLM（智谱）": "GLM",
-  "Kimi（月之暗面）": "Kimi",
-  "Qwen（通义千问）": "Qwen",
-  "ChatGPT（OpenAI）": "ChatGPT",
-  "Claude（Anthropic）": "Claude",
-  "MiMo（小米）": "MiMo",
-};
 
 export function getPublicModelConfig(settings = loadModelSettings()): PublicModelConfig {
   // 状态面板表达“是否已有可用的已保存模型”，不能只看顶层默认镜像。
@@ -570,7 +558,7 @@ export function getPublicModelConfig(settings = loadModelSettings()): PublicMode
     mode: settings.mode,
     provider: settings.provider,
     displayName: settings.displayName,
-    shortName: PROVIDER_SHORT_NAMES[settings.provider] ?? settings.provider,
+    shortName: getVendorShortName(settings.provider) ?? settings.provider,
     model: settings.model,
     connected: hasSavedModel,
     runtimeSync: settings.runtimeSync,

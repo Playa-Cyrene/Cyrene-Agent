@@ -20,6 +20,7 @@ export const GLM_REGISTRY = defineVendor({
     // OpenAI 兼容 + Anthropic 兼容（协议矩阵 2026-08-21，用户确认）
     supportedTransports: ["openai", "anthropic"],
   },
+  shortName: "GLM",
   reasoningRules: [
     // ── glm（智谱）──
     // 精确型号在前；glm-5 基础型号放在精确型号之后（兜底更宽的 glm-5 系列）。

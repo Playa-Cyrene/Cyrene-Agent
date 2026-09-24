@@ -20,6 +20,7 @@ export const CLAUDE_REGISTRY = defineVendor({
     // 自家协议 only
     supportedTransports: ["anthropic"],
   },
+  shortName: "Claude",
   reasoningRules: [
     // ── claude（Anthropic）──
     { providerId: "claude", modelPattern: /^claude-fable-5/i, capability: {

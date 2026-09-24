@@ -152,15 +152,17 @@ export interface ToolChoiceQuirk {
 }
 
 /**
- * 厂商注册表条目：一厂商一 entry，聚合该厂商的全部运行时语义。
- * shortName 等 UI 展示字段后续迁入；capability 是必填的关联锚点，
- * entry.capability.id 即该厂商的静态关联键（presets / 一致性测试都按它对齐）。
+ * 厂商注册表条目：一厂商一 entry，聚合该厂商的全部运行时语义
+ * 与短名展示字段。capability 是必填的关联锚点，entry.capability.id
+ * 即该厂商的静态关联键（presets / 一致性测试都按它对齐）。
  * toolChoiceQuirk 只声明有怪癖的厂商；不写 = 走通用规则。
  */
 export interface VendorRegistryEntry {
   capability: ProviderCapability;
   /** 推理规则：厂商内 first-match-wins，具体型号在前，表尾通配兜底引用共享单例 */
   reasoningRules: readonly ModelReasoningRule[];
+  /** 厂商短名（去括号后缀），状态栏"正在喂养"与昵称默认值兜底；与 presets.shortName 一致 */
+  shortName: string;
   /** tool_choice 厂商怪癖（可选；无怪癖厂商不写，走 policy 通用规则） */
   toolChoiceQuirk?: ToolChoiceQuirk;
 }

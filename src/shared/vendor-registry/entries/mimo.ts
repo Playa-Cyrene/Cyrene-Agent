@@ -23,6 +23,7 @@ export const MIMO_REGISTRY = defineVendor({
     // 三格式原生全支持（协议矩阵 2026-08-21）
     supportedTransports: ["openai", "anthropic", "responses"],
   },
+  shortName: "MiMo",
   reasoningRules: [
     // ── mimo（小米）──
     // 跨 transport 共用：OpenAI 入口 + Anthropic 入口都生成 thinking.type。

@@ -19,6 +19,7 @@ export const DOUBAO_REGISTRY = defineVendor({
     // 火山方舟三格式全兼容（官方文档）
     supportedTransports: ["openai", "anthropic", "responses"],
   },
+  shortName: "豆包",
   reasoningRules: [
     // ── doubao（火山方舟）──
     { providerId: "doubao", modelPattern: /^doubao-seed-/i, capability: {
