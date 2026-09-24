@@ -557,6 +557,7 @@ const PROVIDER_SHORT_NAMES: Record<string, string> = {
   "Qwen（通义千问）": "Qwen",
   "ChatGPT（OpenAI）": "ChatGPT",
   "Claude（Anthropic）": "Claude",
+  "MiMo（小米）": "MiMo",
 };
 
 export function getPublicModelConfig(settings = loadModelSettings()): PublicModelConfig {
