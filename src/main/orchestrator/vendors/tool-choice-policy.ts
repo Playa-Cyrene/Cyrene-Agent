@@ -1,5 +1,7 @@
 import { resolveEffectiveReasoning, resolveReasoningCapability, type ReasoningPreference } from "../../../shared/reasoning";
 import { getVendorRuntimeSettings } from "./runtime-settings";
+import { VENDOR_REGISTRY } from "../../../shared/vendor-registry";
+import type { ToolChoiceQuirk, VendorRegistryEntry } from "../../../shared/vendor-registry/types";
 import type { Transport } from "./types";
 
 export type ToolChoicePolicy =
@@ -19,6 +21,18 @@ export interface ToolChoicePolicyInput {
 
 export type AutomaticToolChoicePolicyInput = Omit<ToolChoicePolicyInput, "requestedToolName">;
 
+// 厂商 tool_choice 怪癖查表：数据事实源在注册表 entries/ 各厂商文件，
+// 此处只按 capability.id 查找；无怪癖的厂商不进 Map，走下方通用规则。
+// VENDOR_REGISTRY 的 satisfies 保留各 entry 字面量的精确形状——没写 quirk 的
+// 厂商连可选属性都不在类型上；此处按接口放宽后再访问可选字段
+// （BuiltinProviderId 的字面量推导不受影响，只在本循环放宽）。
+const quirkById = new Map<string, ToolChoiceQuirk>();
+for (const entry of VENDOR_REGISTRY as readonly VendorRegistryEntry[]) {
+  if (entry.toolChoiceQuirk) {
+    quirkById.set(entry.capability.id, entry.toolChoiceQuirk);
+  }
+}
+
 function isThinkingEnabled(input: AutomaticToolChoicePolicyInput): boolean {
   // reasoning=auto 时不排除 thinking -- 服务端可能默认开启
   // 只有明确 mode="off" 才认为 thinking 关闭
@@ -32,7 +46,7 @@ function isThinkingEnabled(input: AutomaticToolChoicePolicyInput): boolean {
 
 /** Map an ordinary optional Function Calling turn to auto, unless the active mode rejects tool_choice. */
 export function resolveAutomaticToolChoicePolicy(input: AutomaticToolChoicePolicyInput): "auto" | "omit" {
-  if (input.providerId === "deepseek" && isThinkingEnabled(input)) return "omit";
+  if (quirkById.get(input.providerId)?.omitAutoTurnWhenThinking && isThinkingEnabled(input)) return "omit";
   if (input.supportedModes && !input.supportedModes.includes("auto")) return "omit";
   return "auto";
 }
@@ -52,13 +66,15 @@ export function resolveToolChoicePolicy(input: ToolChoicePolicyInput): ToolChoic
     return { kind: "omit" };
   };
 
-  // MiniMax OpenAI-compatible text API documents auto/none only.
-  if (input.providerId === "minimax") return choose("auto");
+  // 厂商怪癖：must-call 首选档位按注册表声明；when 条件不满足时
+  // 落到下方协议级/通用分支（preferred 仍走 choose 的 supportedModes 降级链）。
+  const quirk = quirkById.get(input.providerId);
+  if (quirk && (quirk.mustCall.when === "always" || thinkingEnabled)) {
+    return choose(quirk.mustCall.preferred);
+  }
+  // anySearch 是网页搜索后端标识（search-backend-filter.ts 的 SearchBackend），
+  // 非聊天厂商、无注册表 entry，must-call 固定首选 auto。
   if (input.providerId === "anySearch") return choose("auto");
-  // DeepSeek thinking rejects tool_choice entirely, while non-thinking accepts named selection.
-  if (input.providerId === "deepseek" && thinkingEnabled) return choose("omit");
-  // Kimi fixed/thinking models reject specified selection; auto keeps native Function Calling enabled.
-  if (input.providerId === "kimi" && thinkingEnabled) return choose("auto");
   // Anthropic extended thinking supports auto/none, not any/tool.
   if (input.transport === "anthropic" && thinkingEnabled) return choose("auto");
   // thinking 可能开启时，所有 vendor 默认降级到 auto

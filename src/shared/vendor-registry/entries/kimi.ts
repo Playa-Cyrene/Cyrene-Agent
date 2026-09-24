@@ -21,6 +21,11 @@ export const KIMI_REGISTRY = defineVendor({
     // 官方仅兼容 Chat Completions（协议矩阵 2026-08-21）
     supportedTransports: ["openai"],
   },
+  // 厂商怪癖：fixed-thinking / 思考中的模型拒绝指定工具选择，
+  // must-call 首选 auto 保持原生 Function Calling。
+  toolChoiceQuirk: {
+    mustCall: { preferred: "auto", when: "thinking-only" },
+  },
   reasoningRules: [
     // ── kimi（月之暗面）──
     // K3：旗舰思考模型（2026-07 发布）。思考始终开启（Preserved Thinking 常开），

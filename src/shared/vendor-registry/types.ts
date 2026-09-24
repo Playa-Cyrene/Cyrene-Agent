@@ -131,14 +131,38 @@ export interface ProviderCapability {
 }
 
 /**
+ * 厂商 tool_choice 怪癖：只描述"厂商事实"（布尔/枚举开关），
+ * 决策算法留在 tool-choice-policy 代码。preferred 仍走 choose() 的
+ * supportedModes 降级链，不是硬结果；不再为它发明条件语言
+ * （未来出现 unless/exceptWhen 需求时回 policy 写 if，不给 quirk 加字段）。
+ */
+export interface ToolChoiceQuirk {
+  /**
+   * must-call 意图的首选档位及其生效条件：
+   * - when "always"：无论思考与否（如 MiniMax 文档仅支持 auto/none）
+   * - when "thinking-only"：仅思考开启时（如 DeepSeek 思考拒绝一切 tool_choice）
+   * 条件不满足时落到 policy 的协议级/通用分支。
+   */
+  mustCall: {
+    preferred: "named" | "required" | "auto" | "omit";
+    when: "always" | "thinking-only";
+  };
+  /** 思考开启时普通 FC 轮（无 must-call 意图）也省略 tool_choice（DeepSeek）。 */
+  omitAutoTurnWhenThinking?: boolean;
+}
+
+/**
  * 厂商注册表条目：一厂商一 entry，聚合该厂商的全部运行时语义。
  * shortName 等 UI 展示字段后续迁入；capability 是必填的关联锚点，
  * entry.capability.id 即该厂商的静态关联键（presets / 一致性测试都按它对齐）。
+ * toolChoiceQuirk 只声明有怪癖的厂商；不写 = 走通用规则。
  */
 export interface VendorRegistryEntry {
   capability: ProviderCapability;
   /** 推理规则：厂商内 first-match-wins，具体型号在前，表尾通配兜底引用共享单例 */
   reasoningRules: readonly ModelReasoningRule[];
+  /** tool_choice 厂商怪癖（可选；无怪癖厂商不写，走 policy 通用规则） */
+  toolChoiceQuirk?: ToolChoiceQuirk;
 }
 
 /**

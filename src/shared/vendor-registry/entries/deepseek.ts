@@ -22,6 +22,12 @@ export const DEEPSEEK_REGISTRY = defineVendor({
     // 三格式原生全支持（官方文档）
     supportedTransports: ["openai", "anthropic", "responses"],
   },
+  // 厂商怪癖：思考时拒绝一切 tool_choice（must-call 也省略字段），
+  // 思考开启时普通 FC 轮同样省略 tool_choice；非思考轮不受影响。
+  toolChoiceQuirk: {
+    mustCall: { preferred: "omit", when: "thinking-only" },
+    omitAutoTurnWhenThinking: true,
+  },
   reasoningRules: [
     // ── deepseek ──
     // V4.1 Flash（2026-09-10 发布，模型名 deepseek-flash，原生多模态）与 V4 旧名
