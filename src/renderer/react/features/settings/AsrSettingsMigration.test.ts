@@ -6,6 +6,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppearanceSettingsPage } from "./AppearanceSettingsPage";
 
 vi.mock("./ModelSettingsPanel", () => ({ ModelSettingsPanel: () => null }));
+vi.mock("./McpSettingsPanel", () => ({ McpSettingsPanel: () => null }));
+vi.mock("@lobehub/icons", () => ({ MCP: () => null }));
 
 Object.assign(globalThis, {
   IS_REACT_ACT_ENVIRONMENT: true,

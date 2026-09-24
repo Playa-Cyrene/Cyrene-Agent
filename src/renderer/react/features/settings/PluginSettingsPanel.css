@@ -1,0 +1,95 @@
+.cy-settings-plugin-panel {
+  --cy-bg-workspace: transparent;
+  --cy-bg-page: color-mix(in srgb, var(--rb-text-primary) 4%, var(--rb-surface-elevated));
+  --cy-bg-active: color-mix(in srgb, var(--rb-accent) 11%, var(--rb-surface-elevated));
+  --cy-text: var(--rb-text-primary);
+  --cy-text-muted: var(--rb-text-secondary);
+  --cy-border: var(--rb-border-default);
+  --cy-accent: var(--rb-accent);
+  --cy-accent-hover: var(--rb-accent-hover);
+  --cy-pill-border: color-mix(in srgb, var(--rb-accent) 42%, var(--rb-border-default));
+  --cy-danger: var(--rb-feedback-danger);
+  min-width: 0;
+}
+
+.cy-settings-plugin-panel .plugin-panel {
+  height: auto;
+  overflow: visible;
+  background: transparent;
+  user-select: text;
+}
+
+.cy-settings-plugin-panel .plugin-panel__header {
+  align-items: flex-start;
+  padding: 0 0 8px;
+}
+
+.cy-settings-plugin-panel .plugin-panel__title {
+  color: var(--rb-text-primary);
+  font: 500 24px/1.2 var(--rb-font-sans);
+  letter-spacing: -0.025em;
+}
+
+.cy-settings-plugin-panel .plugin-panel__subtitle {
+  color: var(--rb-text-secondary);
+  font: var(--rb-text-small);
+  line-height: 1.55;
+}
+
+.cy-settings-plugin-panel .plugin-panel__heading-icon {
+  width: 34px;
+  height: 34px;
+}
+
+.cy-settings-plugin-panel .plugin-panel__icon-button {
+  border-radius: 999px;
+}
+
+.cy-settings-plugin-panel .plugin-panel__search-row,
+.cy-settings-plugin-panel .plugin-panel__source-switch,
+.cy-settings-plugin-panel .plugin-panel__notices {
+  padding-inline: 0;
+}
+
+.cy-settings-plugin-panel .plugin-panel__grid {
+  padding: 14px 0 24px;
+}
+
+.cy-settings-plugin-panel .plugin-card-ui {
+  border: 1px solid color-mix(in srgb, var(--rb-text-primary) 9%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--rb-surface-hover) 35%, var(--rb-surface-elevated));
+}
+
+.cy-settings-plugin-panel .plugin-card-ui:hover {
+  background: color-mix(in srgb, var(--rb-surface-hover) 70%, var(--rb-surface-elevated));
+}
+
+.cy-settings-plugin-panel .plugin-panel__search {
+  border-color: var(--rb-border-default);
+  border-radius: 10px;
+  color: var(--rb-text-primary);
+  background: var(--rb-surface-elevated);
+  font: var(--rb-text-small);
+}
+
+.cy-settings-plugin-panel .plugin-panel__search:focus {
+  border-color: var(--rb-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--rb-accent) 15%, transparent);
+}
+
+.cy-settings-plugin-panel .plugin-card-ui__name { color: var(--rb-text-primary); }
+.cy-settings-plugin-panel .plugin-card-ui__description,
+.cy-settings-plugin-panel .plugin-card-ui__developer,
+.cy-settings-plugin-panel .plugin-card-ui__error { color: var(--rb-text-secondary); }
+.cy-settings-plugin-panel .plugin-card-ui__button { font: var(--rb-text-micro); }
+
+.cy-settings-plugin-panel :is(button, input, a):focus-visible {
+  outline: 2px solid var(--rb-accent);
+  outline-offset: 2px;
+}
+
+@media (max-width: 760px) {
+  .cy-settings-plugin-panel .plugin-panel__header { flex-wrap: wrap; }
+  .cy-settings-plugin-panel .plugin-panel__grid { grid-template-columns: minmax(0, 1fr); }
+}

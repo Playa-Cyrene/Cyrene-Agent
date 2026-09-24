@@ -25,6 +25,33 @@ afterEach(async () => {
 });
 
 describe("tool settings music entry", () => {
+  it("uses the shared rounded switch and select without changing their settings behavior", async () => {
+    const saveGeneral = vi.fn(async () => ({}));
+    Object.assign(window, {
+      settings: {
+        getGeneral: async () => ({ weatherEnabled: false, weatherSource: "open-meteo" }),
+        getPermissionLevel: async () => ({ level: "read-only" }),
+        saveGeneral,
+      },
+      music: { getCachedTracks: async () => ({ ok: true, data: [] }) },
+    });
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: () => ({ matches: false, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {} }),
+    });
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    roots.push(root);
+    await act(async () => { root.render(createElement(ToolSettingsPanel)); });
+
+    expect(host.querySelector(".cy-settings-tools__select.cy-control-select")).not.toBeNull();
+    const weatherToggle = host.querySelector<HTMLButtonElement>(".cy-control-switch[role=switch]");
+    expect(weatherToggle).not.toBeNull();
+    await act(async () => { weatherToggle!.click(); });
+    expect(saveGeneral).toHaveBeenCalledWith({ weatherEnabled: true });
+  });
+
   it("opens music configuration in this React window instead of the legacy settings window", async () => {
     const openLegacySettings = vi.fn(async () => true);
     Object.assign(window, {

@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { Alert, Button, Segmented, Spin, Switch } from "antd";
+import { Alert, Button, Spin } from "antd";
 import { Info, Monitor, Settings2 } from "lucide-react";
 import packageJson from "../../../../../package.json";
+import { SettingsSegmented, SettingsSwitch } from "../../components/ui/SettingsControls";
 import { useTranslation } from "../../i18n";
 
 interface GeneralValues {
@@ -102,19 +103,19 @@ export function GeneralSettingsPanel() {
         <section className="cy-settings-section">
           <div className="cy-settings-section__heading"><h2><Settings2 size={18} />{t("settingsPage.general.windows")}</h2><p>{t("settingsPage.general.windowsDescription")}</p></div>
           <div className="cy-settings-card">
-            <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.general.sidebar")}</strong><span>{t("settingsPage.general.sidebarDescription")}</span></div><Switch checked={values.sidebarVisible} onChange={(checked) => void saveImmediate("sidebarVisible", checked)} /></div>
-            <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.general.tasks")}</strong><span>{t("settingsPage.general.tasksDescription")}</span></div><Switch checked={values.tasksVisible} onChange={(checked) => void saveImmediate("tasksVisible", checked)} /></div>
-            <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.general.rememberWindowState")}</strong><span>{t("settingsPage.general.rememberWindowStateDescription")}</span></div><Switch checked={values.rememberWindowState} onChange={(checked) => void saveImmediate("rememberWindowState", checked)} /></div>
+            <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.general.sidebar")}</strong><span>{t("settingsPage.general.sidebarDescription")}</span></div><SettingsSwitch ariaLabel={t("settingsPage.general.sidebar")} checked={values.sidebarVisible} onChange={(checked) => void saveImmediate("sidebarVisible", checked)} /></div>
+            <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.general.tasks")}</strong><span>{t("settingsPage.general.tasksDescription")}</span></div><SettingsSwitch ariaLabel={t("settingsPage.general.tasks")} checked={values.tasksVisible} onChange={(checked) => void saveImmediate("tasksVisible", checked)} /></div>
+            <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.general.rememberWindowState")}</strong><span>{t("settingsPage.general.rememberWindowStateDescription")}</span></div><SettingsSwitch ariaLabel={t("settingsPage.general.rememberWindowState")} checked={values.rememberWindowState} onChange={(checked) => void saveImmediate("rememberWindowState", checked)} /></div>
           </div>
         </section>
 
         <section className="cy-settings-section">
           <div className="cy-settings-section__heading"><h2><Monitor size={18} />{t("settingsPage.general.system")}</h2><p>{t("settingsPage.general.systemDescription")}</p></div>
           <div className="cy-settings-card">
-          <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.general.toastSound")}</strong><span>{t("settingsPage.general.toastSoundDescription")}</span></div><Switch checked={values.toastSoundEnabled} onChange={(checked) => { setValues((current) => ({ ...current, toastSoundEnabled: checked })); setStatus(t("settingsPage.preferences.unsaved")); }} /></div>
-            <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.general.launchAtLogin")}</strong><span>{t("settingsPage.general.launchAtLoginDescription")}</span></div><Switch checked={values.launchAtLogin} onChange={(checked) => { setValues((current) => ({ ...current, launchAtLogin: checked })); setStatus(t("settingsPage.preferences.unsaved")); }} /></div>
-            <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.general.language")}</strong><span>{t("settingsPage.general.languageDescription")}</span></div><Segmented value="zh-CN" options={[{ label: t("settingsPage.general.chinese"), value: "zh-CN" }, { label: "English", value: "en", disabled: true }, { label: t("settingsPage.general.japanese"), value: "ja", disabled: true }, { label: t("settingsPage.general.korean"), value: "ko", disabled: true }]} /></div>
-            <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.general.disableGpu")}</strong><span>{t("settingsPage.general.disableGpuDescription")}</span><span className="cy-settings-general__notice">{t("settingsPage.general.restartNotice")}</span></div><div className="cy-settings-row__control cy-settings-button-group"><Switch checked={values.disableGpuElectron} onChange={(checked) => void saveImmediate("disableGpuElectron", checked)} /><Button onClick={() => window.settings?.openChromeGpu()}>{t("settingsPage.general.gpuInternals")}</Button></div></div>
+          <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.general.toastSound")}</strong><span>{t("settingsPage.general.toastSoundDescription")}</span></div><SettingsSwitch ariaLabel={t("settingsPage.general.toastSound")} checked={values.toastSoundEnabled} onChange={(checked) => { setValues((current) => ({ ...current, toastSoundEnabled: checked })); setStatus(t("settingsPage.preferences.unsaved")); }} /></div>
+            <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.general.launchAtLogin")}</strong><span>{t("settingsPage.general.launchAtLoginDescription")}</span></div><SettingsSwitch ariaLabel={t("settingsPage.general.launchAtLogin")} checked={values.launchAtLogin} onChange={(checked) => { setValues((current) => ({ ...current, launchAtLogin: checked })); setStatus(t("settingsPage.preferences.unsaved")); }} /></div>
+            <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.general.language")}</strong><span>{t("settingsPage.general.languageDescription")}</span></div><SettingsSegmented value="zh-CN" options={[{ label: t("settingsPage.general.chinese"), value: "zh-CN" }, { label: "English", value: "en", disabled: true }, { label: t("settingsPage.general.japanese"), value: "ja", disabled: true }, { label: t("settingsPage.general.korean"), value: "ko", disabled: true }]} /></div>
+            <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.general.disableGpu")}</strong><span>{t("settingsPage.general.disableGpuDescription")}</span><span className="cy-settings-general__notice">{t("settingsPage.general.restartNotice")}</span></div><div className="cy-settings-row__control cy-settings-button-group"><SettingsSwitch ariaLabel={t("settingsPage.general.disableGpu")} checked={values.disableGpuElectron} onChange={(checked) => void saveImmediate("disableGpuElectron", checked)} /><Button onClick={() => window.settings?.openChromeGpu()}>{t("settingsPage.general.gpuInternals")}</Button></div></div>
           </div>
         </section>
 

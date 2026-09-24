@@ -9,7 +9,6 @@ import {
   Radio,
   Select,
   Spin,
-  Switch,
   Tag,
 } from "antd";
 import {
@@ -45,6 +44,7 @@ import { CUSTOM_ENDPOINT_PROVIDERS, getCustomEndpointMode, type CustomEndpointMo
 import { MODEL_PRESETS } from "../../../settings/api/presets";
 import type { ModelPreset } from "../../../settings/shared/types";
 import { useTranslation } from "../../i18n";
+import { SettingsInput, SettingsPasswordInput, SettingsSwitch } from "../../components/ui/SettingsControls";
 
 type ProviderIcon = (props: { size?: number | string; style?: CSSProperties }) => ReactNode;
 
@@ -475,7 +475,7 @@ export function ModelSettingsPanel() {
         </label>
         <label className="cy-model-field">
           <span>{t("settingsPage.modelSettings.parallel")}</span>
-          <InputNumber min={1} max={8} step={1} value={runtime.maxParallelToolCalls} onChange={(value) => setRuntime((current) => ({ ...current, maxParallelToolCalls: value }))} />
+          <SettingsInput className="cy-model-runtime__parallel" type="number" min={1} max={8} step={1} value={runtime.maxParallelToolCalls ?? ""} aria-label={t("settingsPage.modelSettings.parallel")} onChange={(event) => setRuntime((current) => ({ ...current, maxParallelToolCalls: event.target.value === "" ? null : Number(event.target.value) }))} />
           <small>{t("settingsPage.modelSettings.parallelHint")}</small>
         </label>
         <label className="cy-model-field">
@@ -554,7 +554,7 @@ export function ModelSettingsPanel() {
                 </label>
                 <label className="cy-model-field">
                   <span>{t("settingsPage.modelSettings.profileName")}</span>
-                  <Input value={displayName} onChange={(event) => setDisplayName(event.target.value)} maxLength={80} />
+                  <SettingsInput value={displayName} onChange={(event) => setDisplayName(event.target.value)} maxLength={80} />
                 </label>
               </div>
               {customMode && <div className="cy-model-custom-mode">
@@ -572,7 +572,7 @@ export function ModelSettingsPanel() {
               <div className="cy-model-fields">
                 <label className="cy-model-field">
                   <span>{t("settingsPage.modelSettings.apiKey")}</span>
-                  <Input.Password value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={customMode === "local" ? t("settingsPage.modelSettings.apiKeyOptional") : "sk-…"} autoComplete="new-password" />
+                  <SettingsPasswordInput showLabel={t("settingsPage.asr.showSecret")} hideLabel={t("settingsPage.asr.hideSecret")} value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={customMode === "local" ? t("settingsPage.modelSettings.apiKeyOptional") : "sk-…"} autoComplete="new-password" />
                   {customMode === "local" && <small>{t("settingsPage.modelSettings.localApiKeyHint")}</small>}
                 </label>
                 <label className="cy-model-field">
@@ -590,7 +590,7 @@ export function ModelSettingsPanel() {
                 </div>
                 <label className="cy-model-field">
                   <span>{t("settingsPage.modelSettings.model")}</span>
-                  <Input value={model} onChange={(event) => setModel(event.target.value)} placeholder={preset.mainModels[0] ?? t("settingsPage.modelSettings.modelPlaceholder")} list="cy-model-suggestions" />
+                  <SettingsInput value={model} onChange={(event) => setModel(event.target.value)} placeholder={preset.mainModels[0] ?? t("settingsPage.modelSettings.modelPlaceholder")} list="cy-model-suggestions" />
                   <datalist id="cy-model-suggestions">{preset.mainModels.map((item) => <option key={item} value={item} />)}</datalist>
                 </label>
                 <label className="cy-model-field">
@@ -599,7 +599,7 @@ export function ModelSettingsPanel() {
                 </label>
                 <div className="cy-model-switch-row">
                   <div><strong>{t("settingsPage.modelSettings.multimodal")}</strong><small>{t("settingsPage.modelSettings.multimodalDescription")}</small></div>
-                  <Switch checked={multimodal} onChange={setMultimodal} />
+                  <SettingsSwitch ariaLabel={t("settingsPage.modelSettings.multimodal")} checked={multimodal} onChange={setMultimodal} />
                 </div>
               </div>
             </div>
@@ -607,16 +607,16 @@ export function ModelSettingsPanel() {
             <div className="cy-model-card__section">
               <div className="cy-model-section-heading"><h3><Eye size={17} />{t("settingsPage.modelSettings.visionSection")}</h3><p>{t("settingsPage.modelSettings.visionDescription")}</p></div>
               <div className="cy-model-fields cy-model-fields--two">
-                <label className="cy-model-field"><span>{t("settingsPage.modelSettings.baseUrl")}</span><Input value={vision.baseUrl} onChange={(event) => setVision((current) => ({ ...current, baseUrl: event.target.value }))} placeholder="https://api.openai.com/v1" /></label>
-                <label className="cy-model-field"><span>{t("settingsPage.modelSettings.apiKey")}</span><Input.Password value={vision.apiKey} onChange={(event) => setVision((current) => ({ ...current, apiKey: event.target.value }))} autoComplete="new-password" /></label>
-                <label className="cy-model-field"><span>{t("settingsPage.modelSettings.visionModel")}</span><Input value={vision.model} onChange={(event) => setVision((current) => ({ ...current, model: event.target.value }))} placeholder="gpt-4o / qwen-vl-max" /></label>
+                <label className="cy-model-field"><span>{t("settingsPage.modelSettings.baseUrl")}</span><SettingsInput value={vision.baseUrl} onChange={(event) => setVision((current) => ({ ...current, baseUrl: event.target.value }))} placeholder="https://api.openai.com/v1" /></label>
+                <label className="cy-model-field"><span>{t("settingsPage.modelSettings.apiKey")}</span><SettingsPasswordInput showLabel={t("settingsPage.asr.showSecret")} hideLabel={t("settingsPage.asr.hideSecret")} value={vision.apiKey} onChange={(event) => setVision((current) => ({ ...current, apiKey: event.target.value }))} autoComplete="new-password" /></label>
+                <label className="cy-model-field"><span>{t("settingsPage.modelSettings.visionModel")}</span><SettingsInput value={vision.model} onChange={(event) => setVision((current) => ({ ...current, model: event.target.value }))} placeholder="gpt-4o / qwen-vl-max" /></label>
                 <div className="cy-model-field cy-model-vision-action"><span>{t("settingsPage.modelSettings.visionTestLabel")}</span><Button loading={testingVision} onClick={() => void testVision()} icon={<Eye size={15} />}>{t("settingsPage.modelSettings.testVision")}</Button>{visionStatus && <small>{visionStatus}</small>}</div>
               </div>
               <Collapse className="cy-model-advanced" items={[{
                 key: "advanced",
                 label: <span className="cy-model-advanced__label"><ChevronDown size={15} />{t("settingsPage.modelSettings.advancedOptions")}</span>,
                 children: <div className="cy-model-advanced__controls">
-                  <div className="cy-model-switch-row"><div><strong>{t("settingsPage.modelSettings.disableMaxToken")}</strong><small>{t("settingsPage.modelSettings.disableMaxTokenDescription")}</small></div><Switch checked={disableMaxToken} onChange={setDisableMaxToken} disabled={!customMode} /></div>
+                  <div className="cy-model-switch-row"><div><strong>{t("settingsPage.modelSettings.disableMaxToken")}</strong><small>{t("settingsPage.modelSettings.disableMaxTokenDescription")}</small></div><SettingsSwitch ariaLabel={t("settingsPage.modelSettings.disableMaxToken")} checked={disableMaxToken} onChange={setDisableMaxToken} disabled={!customMode} /></div>
                   <div className="cy-model-field"><span>{t("settingsPage.modelSettings.thinkingOverride")}</span><Radio.Group value={thinkingOverride} onChange={(event) => setThinkingOverride(event.target.value)} optionType="button" buttonStyle="solid" disabled={!customMode}>
                     <Radio.Button value={0}>{t("settingsPage.modelSettings.thinkingAuto")}</Radio.Button><Radio.Button value={1}>{t("settingsPage.modelSettings.thinkingOn")}</Radio.Button><Radio.Button value={-1}>{t("settingsPage.modelSettings.thinkingOff")}</Radio.Button>
                   </Radio.Group><small>{t("settingsPage.modelSettings.customOnly")}</small></div>

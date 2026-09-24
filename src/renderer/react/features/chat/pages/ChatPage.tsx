@@ -88,7 +88,6 @@ import "../../../components/ui/WindowControls.css";
 import "../../../components/ui/SettingsButton.css";
 import "../../../components/ui/UserAvatar.css";
 import "../../../components/ui/NewTaskButton.css";
-import "../../../components/ui/ToolModeButton.css";
 import "../components/ChatComposer.css";
 import "../components/ReasoningControl.css";
 import "../components/StyleControl.css";
@@ -1539,7 +1538,7 @@ export function ChatPage({ onOpenSettings }: { onOpenSettings?: () => void } = {
       >
         <FileDropOverlay visible={isDraggingFiles} />
         {/* 白色工作区右上角：打开菜单 + 分割线 + 右侧面板展开/收起开关（左上角 SidebarToggle 的镜像同款动画）。
-            仅在会话对话视图显示：产生过消息、且当前不在插件/工具/技能/模型/动态等面板页时才挂载 */}
+            仅在会话对话视图显示：产生过消息、且当前不在工具/技能/动态等面板页时才挂载 */}
         {(hasMessages && !activePanel && (activeSession?.workspaceBinding || inspectorTabIds.length > 0)) && (
           <span className="cy-inspector-toggle-float">
             {activeSession?.workspaceBinding && activeSessionId && (

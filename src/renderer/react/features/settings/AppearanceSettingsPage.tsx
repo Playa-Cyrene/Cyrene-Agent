@@ -1,13 +1,16 @@
-import { useEffect, useState } from "react";
-import { Alert, Button, Slider, Spin, Switch } from "antd";
-import { ArrowLeft, Boxes, Brain, Headphones, Heart, Monitor, Palette, Settings2, Type, Wrench } from "lucide-react";
+import { useEffect, useState, type ReactNode } from "react";
+import { Alert, Button, Spin } from "antd";
+import { ArrowLeft, AudioLines, BarChart3, Boxes, Brain, FileText, Headphones, Heart, Monitor, Palette, Power, Puzzle, Settings2, Sparkles, Type, Wrench } from "lucide-react";
 import { MCP } from "@lobehub/icons";
+import packageJson from "../../../../../package.json";
 import { normalizeUiFont, type UiFont } from "../../../../shared/ui-font";
 import { normalizeUiIcon, UI_ICON_PRESETS, type UiIcon } from "../../../../shared/ui-icon";
 import { normalizeWindowCornerRadius } from "../../../../shared/window-corner-radius";
 import { useTranslation } from "../../i18n";
 import { applyWindowCornerRadius } from "../../../ui/window-corner-radius";
 import { WindowControls } from "../../components/ui/WindowControls";
+import { SettingsSlider, SettingsSwitch } from "../../components/ui/SettingsControls";
+import "../../components/ui/NewTaskButton.css";
 import { PreferencesSettingsPanel } from "./PreferencesSettingsPanel";
 import { GeneralSettingsPanel } from "./GeneralSettingsPanel";
 import { ModelSettingsPanel } from "./ModelSettingsPanel";
@@ -15,7 +18,13 @@ import { ToolSettingsPanel } from "./ToolSettingsPanel";
 import { MemorySettingsPanel } from "./MemorySettingsPanel";
 import { CyreneSettingsPanel } from "./CyreneSettingsPanel";
 import { AsrSettingsPanel } from "./AsrSettingsPanel";
+import { TtsSettingsPanel } from "./TtsSettingsPanel";
+import { PluginSettingsPanel } from "./PluginSettingsPanel";
 import { McpSettingsPanel } from "./McpSettingsPanel";
+import { UsageStatsPanel } from "./UsageStatsPanel";
+import { DisclaimerSettingsPanel } from "./DisclaimerSettingsPanel";
+import { SkillSettingsPanel } from "./SkillSettingsPanel";
+import { ToolToggleSettingsPanel } from "./ToolToggleSettingsPanel";
 import settingsLogoUrl from "../../../settings/100.png";
 import "../../components/ui/WindowControls.css";
 import "./AppearanceSettingsPage.css";
@@ -64,10 +73,36 @@ function readAppearance(value: unknown): AppearanceValues {
   };
 }
 
+export type SettingsSection =
+  | "appearance" | "preferences" | "models" | "usage" | "general" | "toolToggle" | "tools" | "plugins" | "memory" | "cyrene" | "skill" | "asr" | "tts" | "mcp" | "disclaimer";
+
 export interface AppearanceSettingsPageProps {
-  section: "appearance" | "preferences" | "models" | "general" | "tools" | "memory" | "cyrene" | "asr" | "mcp";
-  onSelectSection: (section: "appearance" | "preferences" | "models" | "general" | "tools" | "memory" | "cyrene" | "asr" | "mcp") => void;
+  section: SettingsSection;
+  onSelectSection: (section: SettingsSection) => void;
   onBackToWorkspace: () => void;
+}
+
+interface SettingsNavItemProps {
+  section: SettingsSection;
+  currentSection: SettingsSection;
+  icon: ReactNode;
+  label: string;
+  onSelect: (section: SettingsSection) => void;
+}
+
+function SettingsNavItem({ section, currentSection, icon, label, onSelect }: SettingsNavItemProps) {
+  const active = section === currentSection;
+  return (
+    <button
+      className={`cy-side-action cy-settings-nav-item ${active ? "is-active" : ""}`}
+      type="button"
+      aria-current={active ? "page" : undefined}
+      onClick={() => onSelect(section)}
+    >
+      <span className="cy-side-action-icon">{icon}</span>
+      <span className="cy-side-action-label">{label}</span>
+    </button>
+  );
 }
 
 export function AppearanceSettingsPage({ section, onSelectSection, onBackToWorkspace }: AppearanceSettingsPageProps) {
@@ -190,96 +225,33 @@ export function AppearanceSettingsPage({ section, onSelectSection, onBackToWorks
         <Button className="cy-settings-back" type="text" icon={<ArrowLeft size={16} />} onClick={onBackToWorkspace}>
           {t("settingsPage.backToWorkspace")}
         </Button>
+        <nav className="cy-settings-sidebar__nav" aria-label={t("settingsPage.navigation")}>
         <div className="cy-settings-sidebar__group-title">{t("settingsPage.basicSettings")}</div>
-        <Button
-          className={`cy-settings-nav-item ${section === "models" ? "is-active" : ""}`}
-          type="text"
-          icon={<Boxes size={16} />}
-          aria-current={section === "models" ? "page" : undefined}
-          onClick={() => onSelectSection("models")}
-        >
-          {t("settingsPage.modelSettings.title")}
-        </Button>
-        <Button
-          className={`cy-settings-nav-item ${section === "appearance" ? "is-active" : ""}`}
-          type="text"
-          icon={<Palette size={16} />}
-          aria-current={section === "appearance" ? "page" : undefined}
-          onClick={() => onSelectSection("appearance")}
-        >
-          {t("settingsPage.appearance")}
-        </Button>
-        <Button
-          className={`cy-settings-nav-item ${section === "preferences" ? "is-active" : ""}`}
-          type="text"
-          icon={<Monitor size={16} />}
-          aria-current={section === "preferences" ? "page" : undefined}
-          onClick={() => onSelectSection("preferences")}
-        >
-          {t("settingsPage.preferencesLabel")}
-        </Button>
-        <Button
-          className={`cy-settings-nav-item ${section === "general" ? "is-active" : ""}`}
-          type="text"
-          icon={<Settings2 size={16} />}
-          aria-current={section === "general" ? "page" : undefined}
-          onClick={() => onSelectSection("general")}
-        >
-          {t("settingsPage.general.title")}
-        </Button>
+        <SettingsNavItem section="general" currentSection={section} icon={<Settings2 size={18} strokeWidth={1.8} />} label={t("settingsPage.general.title")} onSelect={onSelectSection} />
+        <SettingsNavItem section="appearance" currentSection={section} icon={<Palette size={18} strokeWidth={1.8} />} label={t("settingsPage.appearance")} onSelect={onSelectSection} />
+        <SettingsNavItem section="preferences" currentSection={section} icon={<Monitor size={18} strokeWidth={1.8} />} label={t("settingsPage.preferencesLabel")} onSelect={onSelectSection} />
+        <SettingsNavItem section="models" currentSection={section} icon={<Boxes size={18} strokeWidth={1.8} />} label={t("settingsPage.modelSettings.title")} onSelect={onSelectSection} />
+        <SettingsNavItem section="usage" currentSection={section} icon={<BarChart3 size={18} strokeWidth={1.8} />} label={t("settingsPage.usage.title")} onSelect={onSelectSection} />
         <div className="cy-settings-sidebar__group-title cy-settings-sidebar__group-title--spaced">{t("settingsPage.agentAbilities")}</div>
-        <Button
-          className={`cy-settings-nav-item ${section === "memory" ? "is-active" : ""}`}
-          type="text"
-          icon={<Brain size={16} />}
-          aria-current={section === "memory" ? "page" : undefined}
-          onClick={() => onSelectSection("memory")}
-        >
-          {t("settingsPage.memory.title")}
-        </Button>
-        <Button
-          className={`cy-settings-nav-item ${section === "cyrene" ? "is-active" : ""}`}
-          type="text"
-          icon={<Heart size={16} />}
-          aria-current={section === "cyrene" ? "page" : undefined}
-          onClick={() => onSelectSection("cyrene")}
-        >
-          {t("settingsPage.cyrene.title")}
-        </Button>
-        <Button
-          className={`cy-settings-nav-item ${section === "tools" ? "is-active" : ""}`}
-          type="text"
-          icon={<Wrench size={16} />}
-          aria-current={section === "tools" ? "page" : undefined}
-          onClick={() => onSelectSection("tools")}
-        >
-          {t("settingsPage.tools.title")}
-        </Button>
-        <Button
-          className={`cy-settings-nav-item ${section === "mcp" ? "is-active" : ""}`}
-          type="text"
-          icon={<MCP size={16} />}
-          aria-current={section === "mcp" ? "page" : undefined}
-          onClick={() => onSelectSection("mcp")}
-        >
-          {t("settingsPage.mcp.menuLabel")}
-        </Button>
+        <SettingsNavItem section="toolToggle" currentSection={section} icon={<Power size={18} strokeWidth={1.8} />} label={t("settingsPage.toolToggle.title")} onSelect={onSelectSection} />
+        <SettingsNavItem section="tools" currentSection={section} icon={<Wrench size={18} strokeWidth={1.8} />} label={t("settingsPage.tools.title")} onSelect={onSelectSection} />
+        <SettingsNavItem section="plugins" currentSection={section} icon={<Puzzle size={18} strokeWidth={1.8} />} label={t("pluginPanel.title")} onSelect={onSelectSection} />
+        <SettingsNavItem section="mcp" currentSection={section} icon={<MCP size={18} />} label={t("settingsPage.mcp.menuLabel")} onSelect={onSelectSection} />
+        <SettingsNavItem section="memory" currentSection={section} icon={<Brain size={18} strokeWidth={1.8} />} label={t("settingsPage.memory.title")} onSelect={onSelectSection} />
+        <SettingsNavItem section="cyrene" currentSection={section} icon={<Heart size={18} strokeWidth={1.8} />} label={t("settingsPage.cyrene.title")} onSelect={onSelectSection} />
+        <SettingsNavItem section="skill" currentSection={section} icon={<Sparkles size={18} strokeWidth={1.8} />} label={t("settingsPage.skill.title")} onSelect={onSelectSection} />
         <div className="cy-settings-sidebar__group-title cy-settings-sidebar__group-title--spaced">{t("settingsPage.voiceAbilities")}</div>
-        <Button
-          className={`cy-settings-nav-item ${section === "asr" ? "is-active" : ""}`}
-          type="text"
-          icon={<Headphones size={16} />}
-          aria-current={section === "asr" ? "page" : undefined}
-          onClick={() => onSelectSection("asr")}
-        >
-          {t("settingsPage.asr.title")}
-        </Button>
-        <div className="cy-settings-sidebar__footer">{t("settingsPage.moreSettingsLater")}</div>
+        <SettingsNavItem section="tts" currentSection={section} icon={<AudioLines size={18} strokeWidth={1.8} />} label={t("settingsPage.tts.title")} onSelect={onSelectSection} />
+        <SettingsNavItem section="asr" currentSection={section} icon={<Headphones size={18} strokeWidth={1.8} />} label={t("settingsPage.asr.title")} onSelect={onSelectSection} />
+        <div className="cy-settings-sidebar__group-title cy-settings-sidebar__group-title--spaced">{t("settingsPage.usageNotice")}</div>
+        <SettingsNavItem section="disclaimer" currentSection={section} icon={<FileText size={18} strokeWidth={1.8} />} label={t("settingsPage.disclaimer.navLabel")} onSelect={onSelectSection} />
+        </nav>
+        <div className="cy-settings-sidebar__footer">v{packageJson.version}</div>
       </aside>
 
       <main className="cy-workspace is-empty cy-settings-content">
         <div className="cy-settings-content__inner">
-          {section === "preferences" ? <PreferencesSettingsPanel /> : section === "models" ? <ModelSettingsPanel /> : section === "general" ? <GeneralSettingsPanel /> : section === "tools" ? <ToolSettingsPanel /> : section === "memory" ? <MemorySettingsPanel /> : section === "cyrene" ? <CyreneSettingsPanel /> : section === "asr" ? <AsrSettingsPanel /> : section === "mcp" ? <McpSettingsPanel /> : <>
+          {section === "preferences" ? <PreferencesSettingsPanel /> : section === "models" ? <ModelSettingsPanel /> : section === "usage" ? <UsageStatsPanel /> : section === "general" ? <GeneralSettingsPanel /> : section === "toolToggle" ? <ToolToggleSettingsPanel /> : section === "tools" ? <ToolSettingsPanel /> : section === "plugins" ? <PluginSettingsPanel /> : section === "memory" ? <MemorySettingsPanel /> : section === "cyrene" ? <CyreneSettingsPanel /> : section === "skill" ? <SkillSettingsPanel /> : section === "asr" ? <AsrSettingsPanel /> : section === "tts" ? <TtsSettingsPanel /> : section === "mcp" ? <McpSettingsPanel /> : section === "disclaimer" ? <DisclaimerSettingsPanel /> : <>
             <h1>{t("settingsPage.appearance")}</h1>
             <p className="cy-settings-intro">{t("settingsPage.description")}</p>
 
@@ -295,7 +267,7 @@ export function AppearanceSettingsPage({ section, onSelectSection, onBackToWorks
                   <div className="cy-settings-row">
                     <div className="cy-settings-row__copy"><strong>{t("settingsPage.windowRadius")}</strong><span>{t("settingsPage.windowRadiusDescription")}</span></div>
                     <div className="cy-settings-row__control cy-settings-slider">
-                      <Slider min={0} max={40} step={1} value={values.windowCornerRadius} tooltip={{ formatter: (value) => `${value}px` }} onChange={(value) => updateNumber("windowCornerRadius", Number(value))} onChangeComplete={(value) => void savePatch({ windowCornerRadius: Number(value) })} />
+                      <SettingsSlider min={0} max={40} step={1} value={values.windowCornerRadius} ariaLabel={t("settingsPage.windowRadius")} onChange={(value) => updateNumber("windowCornerRadius", value)} onChangeComplete={(value) => void savePatch({ windowCornerRadius: value })} />
                       <span>{values.windowCornerRadius}px</span>
                     </div>
                   </div>
@@ -309,14 +281,14 @@ export function AppearanceSettingsPage({ section, onSelectSection, onBackToWorks
                   <div className="cy-settings-row">
                     <div className="cy-settings-row__copy"><strong>{t("settingsPage.chatLineHeight")}</strong><span>{t("settingsPage.chatLineHeightDescription")}</span></div>
                     <div className="cy-settings-row__control cy-settings-slider">
-                      <Slider min={1.2} max={2} step={0.05} value={values.chatLineHeight} tooltip={{ formatter: (value) => Number(value).toFixed(2) }} onChange={(value) => updateNumber("chatLineHeight", Number(value))} onChangeComplete={(value) => void savePatch({ chatLineHeight: Number(value) })} />
+                      <SettingsSlider min={1.2} max={2} step={0.05} value={values.chatLineHeight} ariaLabel={t("settingsPage.chatLineHeight")} onChange={(value) => updateNumber("chatLineHeight", value)} onChangeComplete={(value) => void savePatch({ chatLineHeight: value })} />
                       <span>{values.chatLineHeight.toFixed(2)}</span>
                     </div>
                   </div>
                   <div className="cy-settings-row">
                     <div className="cy-settings-row__copy"><strong>{t("settingsPage.chatParagraphSpacing")}</strong><span>{t("settingsPage.chatParagraphSpacingDescription")}</span></div>
                     <div className="cy-settings-row__control cy-settings-slider">
-                      <Slider min={0.2} max={1.2} step={0.05} value={values.chatParaSpacing} tooltip={{ formatter: (value) => `${Number(value).toFixed(2)}em` }} onChange={(value) => updateNumber("chatParaSpacing", Number(value))} onChangeComplete={(value) => void savePatch({ chatParaSpacing: Number(value) })} />
+                      <SettingsSlider min={0.2} max={1.2} step={0.05} value={values.chatParaSpacing} ariaLabel={t("settingsPage.chatParagraphSpacing")} onChange={(value) => updateNumber("chatParaSpacing", value)} onChangeComplete={(value) => void savePatch({ chatParaSpacing: value })} />
                       <span>{values.chatParaSpacing.toFixed(2)}em</span>
                     </div>
                   </div>
@@ -341,16 +313,16 @@ export function AppearanceSettingsPage({ section, onSelectSection, onBackToWorks
                 <div className="cy-settings-card">
                   <div className="cy-settings-row">
                     <div className="cy-settings-row__copy"><strong>{t("settingsPage.petAlwaysOnTop")}</strong><span>{t("settingsPage.petAlwaysOnTopDescription")}</span></div>
-                    <Switch checked={values.petAlwaysOnTop} onChange={(checked) => updatePetBoolean("petAlwaysOnTop", checked)} />
+                    <SettingsSwitch ariaLabel={t("settingsPage.petAlwaysOnTop")} checked={values.petAlwaysOnTop} onChange={(checked) => updatePetBoolean("petAlwaysOnTop", checked)} />
                   </div>
                   <div className="cy-settings-row">
                     <div className="cy-settings-row__copy"><strong>{t("settingsPage.petVisible")}</strong><span>{t("settingsPage.petVisibleDescription")}</span></div>
-                    <Switch checked={values.petVisible} onChange={(checked) => updatePetBoolean("petVisible", checked)} />
+                    <SettingsSwitch ariaLabel={t("settingsPage.petVisible")} checked={values.petVisible} onChange={(checked) => updatePetBoolean("petVisible", checked)} />
                   </div>
                   <div className="cy-settings-row">
                     <div className="cy-settings-row__copy"><strong>{t("settingsPage.petZoom")}</strong><span>{t("settingsPage.petZoomDescription")}</span></div>
                     <div className="cy-settings-row__control cy-settings-slider">
-                      <Slider min={0.5} max={2} step={0.1} value={values.petZoom} tooltip={{ formatter: (value) => `${Math.round(Number(value) * 100)}%` }} onChange={(value) => updateNumber("petZoom", Number(value))} onChangeComplete={(value) => { const zoom = Number(value); window.settings?.setPetZoom(zoom); setStatus(t("settingsPage.applied")); }} />
+                      <SettingsSlider min={0.5} max={2} step={0.1} value={values.petZoom} ariaLabel={t("settingsPage.petZoom")} onChange={(value) => updateNumber("petZoom", value)} onChangeComplete={(zoom) => { window.settings?.setPetZoom(zoom); setStatus(t("settingsPage.applied")); }} />
                       <span>{Math.round(values.petZoom * 100)}%</span>
                     </div>
                   </div>

@@ -8,17 +8,8 @@ vi.mock("../../../components/ui/SidebarToggle", () => ({
 vi.mock("../../../components/ui/ModeSwitch", () => ({
   ModeSwitch: () => createElement("span", null, "mode-switch"),
 }));
-vi.mock("../../../components/ui/ToolModeButton", () => ({
-  ToolModeButton: ({ active }: { active: boolean }) => createElement("span", null, `tool-button:${active}`),
-}));
-vi.mock("../../../components/ui/SkillModeButton", () => ({
-  SkillModeButton: () => createElement("span", null, "skill-button"),
-}));
-vi.mock("../../../components/ui/ModelModeButton", () => ({
-  ModelModeButton: () => createElement("span", null, "model-button"),
-}));
-vi.mock("../../../components/ui/PluginModeButton", () => ({
-  PluginModeButton: ({ active }: { active: boolean }) => createElement("span", null, `plugin-button:${active}`),
+vi.mock("../../../components/ui/MomentsModeButton", () => ({
+  MomentsModeButton: () => createElement("span", null, "moments-button"),
 }));
 vi.mock("../../../components/ui/WindowControls", () => ({
   WindowControls: () => createElement("span", null, "window-controls"),
@@ -38,10 +29,10 @@ vi.mock("./ConversationSidebar", () => ({
 import { ChatPageNavigation } from "./ChatPageNavigation";
 
 describe("ChatPageNavigation", () => {
-  it("hides the mode switch while a tool panel is open", () => {
+  it("hides the mode switch while a panel is open", () => {
     const html = renderToStaticMarkup(createElement(ChatPageNavigation, {
       collapsed: false,
-      activePanel: "tool",
+      activePanel: "moments",
       mode: "chat",
       sessions: [],
       activeSessionId: undefined,
@@ -61,14 +52,14 @@ describe("ChatPageNavigation", () => {
     }));
 
     expect(html).not.toContain("mode-switch");
-    expect(html).toContain("tool-button:true");
+    expect(html).toContain("moments-button");
     expect(html).toContain("conversation-sidebar");
   });
 
-  it("places the plugin entry after the model entry and marks it active", () => {
+  it("does not expose model management in the chat sidebar", () => {
     const html = renderToStaticMarkup(createElement(ChatPageNavigation, {
       collapsed: false,
-      activePanel: "plugin",
+      activePanel: null,
       mode: "chat",
       sessions: [],
       activeSessionId: undefined,
@@ -87,7 +78,8 @@ describe("ChatPageNavigation", () => {
       onOpenSettings: () => undefined,
     }));
 
-    expect(html.indexOf("model-button")).toBeLessThan(html.indexOf("plugin-button:true"));
-    expect(html).not.toContain("mode-switch");
+    expect(html).not.toContain("model-button");
+    expect(html).toContain("moments-button");
+    expect(html).toContain("mode-switch");
   });
 });

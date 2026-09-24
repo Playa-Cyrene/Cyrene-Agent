@@ -1,53 +1,42 @@
-/* ===== 技能面板：顶部 tabs（通用/Work/Code/Learn）+ 单列卡片列表 ===== */
-.skill-panel {
-  display: flex;
-  flex-direction: column;
-  width: 100%;
-  height: 100%;
-  min-width: 0;
-  min-height: 0;
-  box-sizing: border-box;
-  background: var(--cy-bg-workspace, #fff);
-  user-select: none;
-  overflow-y: auto;
-  overflow-x: hidden;
+/* ===== 技能设置面板：从聊天窗口 SkillModePanel.css 迁移，适配设置页卡片容器 ===== */
+
+/* 卡片容器内的技能管理区：滚动交给设置页内容区，卡片自身不设固定高度。 */
+.cy-skill-settings {
+  padding: 0;
+  overflow: hidden;
 }
 
-.skill-panel__header {
-  padding: 22px 28px 4px;
-  flex-shrink: 0;
-}
-
-.skill-panel__title {
-  margin: 0;
-  font-size: 22px;
-  font-weight: 700;
-  color: var(--cy-text, #1d1d1f);
-}
-
-.skill-panel__subtitle {
-  margin: 6px 0 0;
-  font-size: 12px;
-  color: var(--cy-text-muted, #8e8e93);
-}
-
-.skill-panel__header-row {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.skill-panel__actions {
+/* 顶部工具行：搜索框 + 重新扫描按钮 */
+.skill-panel__toolbar {
   display: flex;
   align-items: center;
-  gap: 6px;
-  flex-shrink: 0;
+  gap: 8px;
+  padding: 14px 16px 0;
+}
+
+.skill-panel__search {
+  flex: 1;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 9px 16px;
+  font-size: 13px;
+  color: var(--cy-text, #1d1d1f);
+  background: var(--cy-bg-page, #f8f7f6);
+  border: 1px solid var(--cy-border, #f2f2f2);
+  border-radius: 10px;
+  outline: none;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.skill-panel__search:focus {
+  border-color: var(--cy-pill-border, #ff9fbd);
+  box-shadow: 0 0 0 3px rgba(255, 91, 138, 0.1);
 }
 
 .skill-panel__icon-btn {
   width: 32px;
   height: 32px;
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -70,34 +59,11 @@
   cursor: not-allowed;
 }
 
-.skill-panel__search-row {
-  padding: 14px 28px 0;
-  flex-shrink: 0;
-}
-
-.skill-panel__search {
-  width: 100%;
-  box-sizing: border-box;
-  padding: 9px 16px;
-  font-size: 13px;
-  color: var(--cy-text, #1d1d1f);
-  background: var(--cy-bg-page, #f8f7f6);
-  border: 1px solid var(--cy-border, #f2f2f2);
-  border-radius: 10px;
-  outline: none;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
-}
-
-.skill-panel__search:focus {
-  border-color: var(--cy-pill-border, #ff9fbd);
-  box-shadow: 0 0 0 3px rgba(255, 91, 138, 0.1);
-}
-
+/* 模式标签（Work / Code / Learn） */
 .skill-panel__tabs {
   display: flex;
   gap: 4px;
-  padding: 14px 28px 10px;
-  flex-shrink: 0;
+  padding: 12px 16px 10px;
 }
 
 .skill-panel__tab {
@@ -121,11 +87,11 @@
   color: var(--cy-accent, #ff5b8a);
 }
 
+/* 来源过滤（全部 / 内置 / 用户） */
 .skill-panel__filter-row {
   display: flex;
   gap: 8px;
-  padding: 0 28px 10px;
-  flex-shrink: 0;
+  padding: 0 16px 10px;
 }
 
 .skill-panel__filter-tab {
@@ -149,15 +115,12 @@
   color: var(--cy-text, #1d1d1f);
 }
 
+/* 技能卡片列表：单列 */
 .skill-panel__list {
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
-  box-sizing: border-box;
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 6px 28px 24px;
+  padding: 6px 12px 16px;
 }
 
 .skill-panel__loading,
@@ -168,7 +131,6 @@
   color: var(--cy-text-muted, #8e8e93);
 }
 
-/* 技能卡片：单列 */
 .skill-card {
   display: flex;
   flex-direction: column;
@@ -314,27 +276,4 @@
 
 .skill-card__pill.is-on .skill-card__pill-knob {
   transform: translateX(16px);
-}
-
-.skill-panel::-webkit-scrollbar {
-  width: 6px;
-}
-
-.skill-panel::-webkit-scrollbar-thumb {
-  background: var(--cy-border, #f2f2f2);
-  border-radius: 3px;
-}
-/* 头部左侧：图标 + 标题/副标题两行网格 */
-.skill-panel__header-row > div:first-child {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  column-gap: 14px;
-  align-items: center;
-}
-
-.skill-panel__heading-icon {
-  grid-row: span 2;
-  width: 38px;
-  height: 38px;
-  object-fit: contain;
 }

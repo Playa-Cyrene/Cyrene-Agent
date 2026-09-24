@@ -1,11 +1,11 @@
 .cy-settings-page {
-  padding: 20px 10px 10px;
+  padding: 50px 10px 10px;
   gap: 10px;
   --rb-font-sans: var(--rb-font-ui);
-  --rb-text-title: 600 20px/1.4 var(--rb-font-ui);
-  --rb-text-h2: 600 32px/1.25 var(--rb-font-ui);
+  --rb-text-title: 400 20px/1.4 var(--rb-font-ui);
+  --rb-text-h2: 400 32px/1.25 var(--rb-font-ui);
   --rb-text-small: 400 14px/1.5 var(--rb-font-ui);
-  --rb-text-small-em: 500 14px/1.5 var(--rb-font-ui);
+  --rb-text-small-em: 400 14px/1.5 var(--rb-font-ui);
   --rb-text-caption: 400 13px/1.7 var(--rb-font-ui);
   --rb-text-micro: 400 12px/1.5 var(--rb-font-ui);
   --rb-text-primary: #0d0d0d;
@@ -25,6 +25,42 @@
 
 .cy-settings-sidebar {
   padding: 0 0 8px;
+  overflow: hidden;
+}
+
+.cy-settings-sidebar__nav {
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 0 2px 8px 0;
+  overscroll-behavior: contain;
+  app-region: no-drag;
+}
+
+.cy-settings-sidebar__nav,
+.cy-settings-content {
+  scrollbar-color: var(--rb-border-strong, var(--cy-border)) transparent;
+  scrollbar-width: thin;
+}
+
+.cy-settings-sidebar__nav::-webkit-scrollbar,
+.cy-settings-content::-webkit-scrollbar {
+  width: 12px;
+}
+
+.cy-settings-sidebar__nav::-webkit-scrollbar-track,
+.cy-settings-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.cy-settings-sidebar__nav::-webkit-scrollbar-thumb,
+.cy-settings-content::-webkit-scrollbar-thumb {
+  min-height: 32px;
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: var(--rb-border-strong, var(--cy-border));
+  background-clip: padding-box;
 }
 
 .cy-settings-brand {
@@ -35,6 +71,7 @@
   margin: 0 8px 14px;
   font-size: 14px;
   font-weight: 650;
+  flex: none;
 }
 
 .cy-settings-brand__logo {
@@ -53,6 +90,7 @@
   padding-inline: 12px;
   color: var(--rb-text-secondary);
   text-align: left;
+  flex: none;
 }
 
 .cy-settings-page .cy-settings-back.ant-btn:hover {
@@ -65,49 +103,14 @@
   color: color-mix(in oklab, #404040 40%, transparent);
   font-family: var(--rb-font-ui);
   font-size: 12px;
-  font-weight: 500;
+  font-weight: 400;
   line-height: 1.5;
 }
 
 .cy-settings-sidebar__group-title--spaced { margin-top: 16px; }
 
-.cy-settings-nav-item {
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 8px;
-  width: 100%;
-  min-height: 36px;
-  height: 36px;
-  padding: 0 12px;
-  border-radius: 8px;
-  text-align: left;
-  color: var(--rb-text-primary);
-  font-family: var(--rb-font-ui);
-  font-size: 14px;
-  font-weight: 400;
-  line-height: 1.5;
-}
-
-.cy-settings-page .cy-settings-nav-item.ant-btn-variant-text:not(:disabled):not(.ant-btn-disabled):hover {
-  color: var(--rb-text-primary);
-  background: var(--rb-surface-hover);
-}
-
-.cy-settings-page .cy-settings-nav-item.ant-btn-variant-text.is-active:not(:disabled):not(.ant-btn-disabled),
-.cy-settings-page .cy-settings-nav-item.ant-btn-variant-text.is-active:not(:disabled):not(.ant-btn-disabled):hover {
-  color: var(--rb-text-primary);
-  background: var(--rb-surface-active);
-  font-weight: 500;
-}
-
-.cy-settings-page .cy-settings-nav-item.ant-btn-variant-text[aria-current="page"],
-.cy-settings-page .cy-settings-nav-item.ant-btn-variant-text[aria-current="page"]:hover {
-  background-color: var(--rb-surface-active) !important;
-}
-
 .cy-settings-sidebar__footer {
-  margin-top: auto;
+  flex: none;
   padding: 12px 10px 0;
   color: var(--rb-text-disabled);
   font: var(--rb-text-micro);
@@ -129,7 +132,7 @@
 .cy-settings-content h1 {
   margin: 0 0 26px;
   color: var(--rb-text-primary);
-  font: 600 24px/1.2 var(--rb-font-sans);
+  font: 400 24px/1.2 var(--rb-font-sans);
   letter-spacing: -0.025em;
 }
 
@@ -232,7 +235,9 @@
   width: min(360px, 52%);
 }
 
-.cy-settings-tools__field .ant-input-affix-wrapper { min-width: 0; }
+.cy-settings-tools__field .ant-input-affix-wrapper,
+.cy-settings-tools__field .cy-control-password,
+.cy-settings-tools__field .cy-control-input { min-width: 0; flex: 1; }
 .cy-settings-tools__field .ant-btn { flex: none; }
 .cy-settings-tools__actions { justify-content: flex-end; }
 .cy-settings-tools__levels { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; }
@@ -364,6 +369,12 @@
 }
 
 .cy-settings-slider .ant-slider {
+  flex: 1;
+  margin: 10px 0;
+}
+
+.cy-settings-slider .cy-control-slider {
+  min-width: 0;
   flex: 1;
   margin: 10px 0;
 }
@@ -511,15 +522,22 @@
 }
 
 .cy-settings-page .ant-segmented {
+  height: 28px;
+  min-height: 28px;
+  padding: 2px;
+  border-radius: 999px;
   flex: none;
   color: var(--rb-text-secondary);
-  background: var(--rb-surface-muted, var(--rb-surface-hover));
+  background: color-mix(in srgb, var(--rb-text-primary) 5%, var(--rb-surface-elevated));
 }
+
+.cy-settings-page .ant-segmented .ant-segmented-item,
+.cy-settings-page .ant-segmented .ant-segmented-thumb { border-radius: 999px; }
 
 .cy-settings-page .ant-segmented .ant-segmented-item-selected {
   color: var(--rb-text-primary);
   background: var(--rb-surface-elevated);
-  box-shadow: 0 1px 3px color-mix(in srgb, var(--rb-text-primary) 12%, transparent);
+  box-shadow: none;
 }
 
 .cy-settings-style-section {
@@ -544,10 +562,12 @@
   gap: 20px;
 }
 
-.cy-settings-style-value .ant-slider {
+.cy-settings-style-value .cy-control-slider {
   flex: 1;
   margin: 8px 0;
 }
+
+.cy-settings-style-value .cy-control-input { width: 96px; flex: none; text-align: right; }
 
 .cy-settings-page .ant-radio-button-wrapper {
   border-color: var(--rb-border-default);
@@ -840,6 +860,7 @@
 .cy-memory-fields label { display: grid; min-width: 0; gap: 6px; color: var(--rb-text-primary); font: var(--rb-text-small-em); }
 .cy-memory-fields label.is-wide { grid-column: 1 / -1; }
 .cy-memory-fields .ant-input[disabled] { color: var(--rb-text-primary); background: var(--rb-surface-elevated); }
+.cy-memory-fields .cy-control-input:disabled { color: var(--rb-text-primary); background: var(--rb-surface-elevated); opacity: 1; }
 .cy-memory-card__actions, .cy-memory-vault-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
 .cy-memory-vault-actions > span { flex: 1; min-width: 0; color: var(--rb-text-secondary); font: var(--rb-text-small); overflow-wrap: anywhere; }
 .cy-memory-vault-path { padding: 10px 12px; border-radius: 8px; color: var(--rb-text-primary); background: var(--rb-surface-elevated); font: var(--rb-text-small); overflow-wrap: anywhere; }
@@ -854,6 +875,7 @@
 .cy-memory-record--document { grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
 .cy-memory-record--document > div { display: grid; min-width: 0; gap: 4px; }
 .cy-cyrene-note { min-height: 0; color: var(--rb-text-secondary); font: var(--rb-text-micro); }
+.cy-settings-row .cy-cyrene-dimensions { width: min(180px, 48%); flex: none; }
 .cy-cyrene-actions { justify-content: flex-end; min-height: 56px; }
 .cy-cyrene-model-choice { max-width: 48%; overflow: hidden; text-overflow: ellipsis; }
 .cy-settings-form-footer { display: flex; justify-content: flex-end; margin-top: 20px; }
@@ -869,18 +891,18 @@
 .cy-settings-theme-modal .ant-input:focus, .cy-settings-theme-modal .ant-input-focused { border-color: var(--rb-border-focus); box-shadow: 0 0 0 2px color-mix(in srgb, var(--rb-accent) 14%, transparent); }
 
 .cy-asr-select { width: min(300px, 52%); min-width: 0; }
-.cy-settings-page .cy-asr-select .ant-select-selector,
-.cy-settings-page .cy-asr-fields .ant-select-selector,
+.cy-settings-page .cy-asr-select.ant-select,
+.cy-settings-page .cy-asr-fields .ant-select,
 .cy-settings-page .cy-asr-fields .ant-input,
 .cy-settings-page .cy-asr-fields .ant-input-affix-wrapper,
 .cy-settings-page .cy-asr-number { border-color: var(--rb-border-default); color: var(--rb-text-primary); background: var(--rb-surface-elevated); box-shadow: none; }
-.cy-settings-page .cy-asr-select.ant-select-focused .ant-select-selector,
-.cy-settings-page .cy-asr-fields .ant-select-focused .ant-select-selector,
+.cy-settings-page .cy-asr-select.ant-select-focused,
+.cy-settings-page .cy-asr-fields .ant-select-focused,
 .cy-settings-page .cy-asr-fields .ant-input:focus,
 .cy-settings-page .cy-asr-fields .ant-input-affix-wrapper-focused,
 .cy-settings-page .cy-asr-number.ant-input-number-focused { border-color: var(--rb-border-focus); box-shadow: 0 0 0 2px color-mix(in srgb, var(--rb-accent) 14%, transparent); }
-.cy-asr-select-popup .ant-select-item-option-active:not(.ant-select-item-option-disabled) { background: color-mix(in srgb, var(--rb-accent) 8%, var(--rb-surface-elevated)); }
-.cy-asr-select-popup .ant-select-item-option-selected:not(.ant-select-item-option-disabled) { color: var(--rb-accent); background: color-mix(in srgb, var(--rb-accent) 14%, var(--rb-surface-elevated)); }
+.cy-asr-select-popup .ant-select-item-option-active:not(.ant-select-item-option-disabled) { background: color-mix(in srgb, var(--rb-accent) 8%, var(--rb-surface-elevated)) !important; }
+.cy-asr-select-popup .ant-select-item-option-selected:not(.ant-select-item-option-disabled) { color: var(--rb-accent); background: color-mix(in srgb, var(--rb-accent) 14%, var(--rb-surface-elevated)) !important; }
 .cy-asr-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; padding: 16px; }
 .cy-asr-fields label { display: grid; gap: 7px; min-width: 0; color: var(--rb-text-primary); font: var(--rb-text-small-em); }
 .cy-asr-fields label .ant-select { width: 100%; }
@@ -934,10 +956,6 @@
 }
 
 @media (max-width: 900px) {
-  .cy-settings-page .cy-settings-sidebar {
-    width: 172px;
-  }
-
   .cy-settings-content {
     padding-inline: 16px;
   }

@@ -1,0 +1,61 @@
+/* 免责声明面板：从旧版设置窗口迁移，颜色改用主题 token 以适配明暗主题。 */
+.cy-settings-disclaimer {
+  display: grid;
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.cy-disclaimer-section {
+  padding: 14px 16px;
+}
+
+.cy-disclaimer-section h2 {
+  margin: 0 0 8px;
+  color: var(--rb-text-strong, var(--rb-text-primary));
+  font: var(--rb-text-small-em);
+}
+
+.cy-disclaimer-section p,
+.cy-disclaimer-section li {
+  margin: 0 0 8px;
+  color: color-mix(in srgb, var(--rb-text-primary) 76%, transparent);
+  font: var(--rb-text-small);
+  line-height: 1.7;
+}
+
+.cy-disclaimer-section p:last-child,
+.cy-disclaimer-section ul:last-child li:last-child {
+  margin-bottom: 0;
+}
+
+.cy-disclaimer-section ul {
+  margin: 0 0 8px;
+  padding-left: 18px;
+  list-style: disc outside;
+}
+
+.cy-disclaimer-section ul:last-child {
+  margin-bottom: 0;
+}
+
+.cy-disclaimer-section a {
+  color: var(--rb-accent);
+  text-decoration: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--rb-accent) 42%, transparent);
+  transition: color 140ms ease, border-color 140ms ease;
+}
+
+.cy-disclaimer-section a:hover {
+  color: var(--rb-text-primary);
+  border-color: var(--rb-text-primary);
+}
+
+/* 列表行内联系方式图标：跟随文字大小与基线。 */
+.cy-disclaimer-icon {
+  flex: none;
+  width: 1em;
+  height: 1em;
+  line-height: 1;
+  vertical-align: -2px;
+  color: var(--rb-text-secondary);
+}

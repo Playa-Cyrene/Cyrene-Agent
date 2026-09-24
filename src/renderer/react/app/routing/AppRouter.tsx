@@ -1,11 +1,11 @@
 import { useCallback, useState } from "react";
 import { ChatPage } from "../../features/chat/pages/ChatPage";
-import { AppearanceSettingsPage } from "../../features/settings/AppearanceSettingsPage";
+import { AppearanceSettingsPage, type SettingsSection } from "../../features/settings/AppearanceSettingsPage";
 import "./AppRouter.css";
 
 export function AppRouter() {
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsSection, setSettingsSection] = useState<"appearance" | "preferences" | "models" | "general" | "tools" | "memory" | "cyrene" | "asr" | "mcp">("appearance");
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>("appearance");
 
   const openSettings = useCallback(() => {
     setSettingsSection("appearance");

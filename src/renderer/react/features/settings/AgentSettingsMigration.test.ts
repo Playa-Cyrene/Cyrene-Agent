@@ -4,10 +4,13 @@ import { act, createElement, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { siObsidian } from "simple-icons";
+import packageJson from "../../../../../package.json";
 import { AppearanceSettingsPage } from "./AppearanceSettingsPage";
 
 // The model page is outside these routes and pulls in browser-only icon assets.
 vi.mock("./ModelSettingsPanel", () => ({ ModelSettingsPanel: () => null }));
+vi.mock("./McpSettingsPanel", () => ({ McpSettingsPanel: () => null }));
+vi.mock("@lobehub/icons", () => ({ MCP: () => null }));
 
 Object.assign(globalThis, {
   IS_REACT_ACT_ENVIRONMENT: true,
@@ -49,6 +52,13 @@ afterEach(async () => {
 });
 
 describe("agent settings migration", () => {
+  it("shows the current app version in the settings sidebar footer", async () => {
+    Object.assign(window, { settings: { getGeneral: async () => ({}) } });
+    const host = await renderSettings();
+
+    expect(host.querySelector(".cy-settings-sidebar__footer")?.textContent).toBe(`v${packageJson.version}`);
+  });
+
   it("opens memory in the React settings workspace and saves an edited long-term profile", async () => {
     const payload = {
       l0: { preferredName: "小明", occupation: "学生", longTermInterests: "音乐", language: "中文", permanentNote: "" },

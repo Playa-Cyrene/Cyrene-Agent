@@ -1,52 +1,22 @@
-/* ===== 工具面板：顶部 tabs（通用/Work/Code/Learn）+ 两列卡片网格 ===== */
-.tool-panel {
-  display: flex;
-  flex-direction: column;
-  width: 100%;
-  height: 100%;
-  min-width: 0;
-  min-height: 0;
-  box-sizing: border-box;
-  background: var(--cy-bg-workspace, #fff);
-  user-select: none;
-  overflow-y: auto;
-  overflow-x: hidden;
+/* ===== 工具开关设置面板：从聊天窗口 ToolModePanel.css 迁移，适配设置页卡片容器 ===== */
+
+/* 卡片容器：滚动交给设置页内容区，卡片自身不设固定高度。 */
+.cy-tool-toggle {
+  padding: 0;
+  overflow: hidden;
 }
 
-.tool-panel__header {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  column-gap: 14px;
-  align-items: center;
-  padding: 22px 28px 4px;
-  flex-shrink: 0;
-}
-
-.tool-panel__title {
-  margin: 0;
-  font-size: 22px;
-  font-weight: 700;
-  color: var(--cy-text, #1d1d1f);
-}
-
-.tool-panel__subtitle {
-  margin: 6px 0 0;
-  font-size: 12px;
-  color: var(--cy-text-muted, #8e8e93);
-}
-
-/* Chat 模式工具增强总开关行：标题 + 说明 + 复用卡片 pill 开关。 */
+/* Chat 工具增强总开关行：标题 + 说明 + 复用卡片 pill 开关。 */
 .tool-panel__master {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  margin: 14px 28px 0;
+  margin: 14px 16px 0;
   padding: 12px 16px;
   border: 1px solid var(--cy-border, #f2f2f2);
   border-radius: 12px;
   background: var(--cy-bg-page, #f8f7f6);
-  flex-shrink: 0;
 }
 
 .tool-panel__master-text {
@@ -71,9 +41,9 @@
   flex: none;
 }
 
-.tool-panel__search-row {
-  padding: 14px 28px 0;
-  flex-shrink: 0;
+/* 搜索工具行 */
+.tool-panel__toolbar {
+  padding: 12px 16px 0;
 }
 
 .tool-panel__search {
@@ -94,11 +64,12 @@
   box-shadow: 0 0 0 3px rgba(255, 91, 138, 0.1);
 }
 
+/* 模式标签（Work / Code / Learn / Chat）+ 右侧当前模式提示 */
 .tool-panel__tabs {
   display: flex;
+  align-items: center;
   gap: 4px;
-  padding: 14px 28px 10px;
-  flex-shrink: 0;
+  padding: 12px 16px 10px;
 }
 
 .tool-panel__tab {
@@ -122,16 +93,21 @@
   color: var(--cy-accent, #ff5b8a);
 }
 
+.tool-panel__mode-hint {
+  margin-left: auto;
+  font-size: 11.5px;
+  color: var(--cy-text-muted, #8e8e93);
+}
+
+/* 工具卡片网格：两列，窄屏退化为单列 */
 .tool-panel__grid {
-  flex: 1;
   min-width: 0;
-  min-height: 0;
   box-sizing: border-box;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px 16px;
   align-content: start;
-  padding: 6px 28px 24px;
+  padding: 6px 12px 16px;
 }
 
 @media (max-width: 760px) {
@@ -254,20 +230,4 @@
 
 .tool-card__pill.is-on .tool-card__pill-knob {
   transform: translateX(16px);
-}
-
-.tool-panel::-webkit-scrollbar {
-  width: 6px;
-}
-
-.tool-panel::-webkit-scrollbar-thumb {
-  background: var(--cy-border, #f2f2f2);
-  border-radius: 3px;
-}
-
-.tool-panel__heading-icon {
-  grid-row: span 2;
-  width: 38px;
-  height: 38px;
-  object-fit: contain;
 }

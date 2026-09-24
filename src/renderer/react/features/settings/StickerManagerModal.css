@@ -1,0 +1,129 @@
+/* ===== 表情包管理弹窗样式 ===== */
+
+.cy-settings-theme-modal .cy-sticker-modal__loading,
+.cy-settings-theme-modal .cy-sticker-modal__empty {
+  padding: 40px 0;
+  text-align: center;
+  font-size: 12px;
+  color: var(--cy-text-secondary, #6e6e73);
+}
+
+/* 四列瀑布布局，沿用旧版 .sticker-grid 的 column-count 思路（不同高度也能自适应） */
+.cy-settings-theme-modal .cy-sticker-modal__grid {
+  column-count: 4;
+  column-gap: 12px;
+  padding: 4px 0 8px;
+}
+
+@media (max-width: 720px) {
+  .cy-settings-theme-modal .cy-sticker-modal__grid { column-count: 3; }
+}
+
+@media (max-width: 520px) {
+  .cy-settings-theme-modal .cy-sticker-modal__grid { column-count: 2; }
+}
+
+/* 表情包卡片 */
+.cy-settings-theme-modal .cy-sticker-modal__card {
+  position: relative;
+  display: block;
+  margin-bottom: 12px;
+  break-inside: avoid;
+  padding: 10px;
+  background: var(--cy-bg-page, #f8f7f6);
+  border: 1px solid var(--cy-border, #f2f2f2);
+  border-radius: 14px;
+  overflow: hidden;
+  transition: opacity 0.16s ease, filter 0.16s ease, transform 0.16s ease, background 0.16s ease;
+}
+
+.cy-settings-theme-modal .cy-sticker-modal__card:hover {
+  background: var(--cy-bg-active, #fde0ed);
+}
+
+.cy-settings-theme-modal .cy-sticker-modal__card img {
+  display: block;
+  width: 100%;
+  max-height: 140px;
+  object-fit: contain;
+  user-select: none;
+  -webkit-user-drag: none;
+  transition: opacity 0.16s ease, filter 0.16s ease, transform 0.16s ease;
+}
+
+.cy-settings-theme-modal .cy-sticker-modal__card.is-off {
+  opacity: 0.55;
+}
+
+.cy-settings-theme-modal .cy-sticker-modal__card.is-off img {
+  filter: grayscale(0.65);
+  transform: scale(0.94);
+}
+
+/* 右上角胶囊开关：复用工具/技能面板同款主题粉样式 */
+.cy-settings-theme-modal .cy-sticker-modal__pill {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 36px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: #e4e4e8;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.cy-settings-theme-modal .cy-sticker-modal__pill:hover:not(:disabled) {
+  box-shadow: 0 0 0 3px rgba(255, 91, 138, 0.08);
+}
+
+.cy-settings-theme-modal .cy-sticker-modal__pill.is-on {
+  background: var(--cy-accent, #FF5B8A);
+}
+
+.cy-settings-theme-modal .cy-sticker-modal__pill:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.cy-settings-theme-modal .cy-sticker-modal__pill-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+  transition: transform 0.2s ease;
+}
+
+.cy-settings-theme-modal .cy-sticker-modal__pill.is-on .cy-sticker-modal__pill-knob {
+  transform: translateX(16px);
+}
+
+/* 内置徽标 */
+.cy-settings-theme-modal .cy-sticker-modal__badge {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  padding: 1px 7px;
+  font-size: 10px;
+  font-weight: 500;
+  color: #5f27cd;
+  background: #efeafc;
+  border-radius: 999px;
+}
+
+/* 卡片底部 ID/描述 */
+.cy-settings-theme-modal .cy-sticker-modal__id {
+  display: block;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--cy-text-secondary, #6e6e73);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}

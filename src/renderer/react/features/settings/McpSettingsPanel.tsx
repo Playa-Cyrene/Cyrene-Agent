@@ -2,10 +2,11 @@
 // 表单字段设计与 ZCode 的 McpServerForm 对齐：名称、类型（本地进程/远程 HTTP/远程 SSE）、
 // 本地填命令+参数，远程填 URL；环境变量/请求头以 JSON 文本折叠在"高级"里。
 import { useEffect, useState } from "react";
-import { Alert, Button, Collapse, Input, Modal, Popconfirm, Segmented, Select, Spin, Switch } from "antd";
+import { Alert, Button, Collapse, Input, Modal, Popconfirm, Spin } from "antd";
 import { MCP } from "@lobehub/icons";
 import { FolderOpen, Plus, UtensilsCrossed } from "lucide-react";
 import { useTranslation } from "../../i18n";
+import { SettingsInput, SettingsSegmented, SettingsSelect, SettingsSwitch } from "../../components/ui/SettingsControls";
 import type { McpServerConfigView } from "../../../settings/shared/types";
 
 type McpTransport = "stdio" | "http" | "sse";
@@ -315,7 +316,7 @@ function AddMcpServerModal({ open, initialForm, existingIds, onClose, onAdded }:
     rootClassName="cy-settings-mcp-modal"
   >
     <div className="cy-settings-mcp-modal__body">
-      <Segmented
+      <SettingsSegmented
         value={mode}
         onChange={(value) => switchMode(value as "form" | "json")}
         options={[
@@ -326,25 +327,25 @@ function AddMcpServerModal({ open, initialForm, existingIds, onClose, onAdded }:
       {mode === "form" ? <>
         <div className="cy-settings-mcp-modal__field">
           <label htmlFor="cy-mcp-name">{t("settingsPage.mcp.name")}</label>
-          <Input id="cy-mcp-name" value={form.name} placeholder={t("settingsPage.mcp.namePlaceholder")} onChange={(event) => updateForm({ name: event.target.value })} />
+          <SettingsInput id="cy-mcp-name" value={form.name} placeholder={t("settingsPage.mcp.namePlaceholder")} onChange={(event) => updateForm({ name: event.target.value })} />
         </div>
         <div className="cy-settings-mcp-modal__field">
           <label htmlFor="cy-mcp-type">{t("settingsPage.mcp.type")}</label>
-          <Select id="cy-mcp-type" value={form.transport} onChange={(transport) => updateForm({ transport })} options={MCP_TRANSPORTS.map((value) => ({ value, label: t(`settingsPage.mcp.transport.${value}`) }))} />
+          <SettingsSelect id="cy-mcp-type" ariaLabel={t("settingsPage.mcp.type")} value={form.transport} onChange={(transport) => updateForm({ transport })} options={MCP_TRANSPORTS.map((value) => ({ value, label: t(`settingsPage.mcp.transport.${value}`) }))} />
         </div>
         {form.transport === "stdio" ? <>
           <div className="cy-settings-mcp-modal__field">
             <label htmlFor="cy-mcp-command">{t("settingsPage.mcp.command")}</label>
-            <Input id="cy-mcp-command" value={form.command} placeholder={t("settingsPage.mcp.commandPlaceholder")} onChange={(event) => updateForm({ command: event.target.value })} autoComplete="off" spellCheck={false} />
+            <SettingsInput id="cy-mcp-command" value={form.command} placeholder={t("settingsPage.mcp.commandPlaceholder")} onChange={(event) => updateForm({ command: event.target.value })} autoComplete="off" spellCheck={false} />
           </div>
           <div className="cy-settings-mcp-modal__field">
             <label htmlFor="cy-mcp-args">{t("settingsPage.mcp.args")}</label>
-            <Input id="cy-mcp-args" value={form.args} placeholder={t("settingsPage.mcp.argsPlaceholder")} onChange={(event) => updateForm({ args: event.target.value })} autoComplete="off" spellCheck={false} />
+            <SettingsInput id="cy-mcp-args" value={form.args} placeholder={t("settingsPage.mcp.argsPlaceholder")} onChange={(event) => updateForm({ args: event.target.value })} autoComplete="off" spellCheck={false} />
           </div>
         </> : (
           <div className="cy-settings-mcp-modal__field">
             <label htmlFor="cy-mcp-url">{t("settingsPage.mcp.url")}</label>
-            <Input id="cy-mcp-url" value={form.url} placeholder={t("settingsPage.mcp.urlPlaceholder")} onChange={(event) => updateForm({ url: event.target.value })} autoComplete="off" spellCheck={false} />
+            <SettingsInput id="cy-mcp-url" value={form.url} placeholder={t("settingsPage.mcp.urlPlaceholder")} onChange={(event) => updateForm({ url: event.target.value })} autoComplete="off" spellCheck={false} />
           </div>
         )}
         <Collapse ghost items={[{
@@ -522,7 +523,8 @@ export function McpSettingsPanel() {
               <span>{t("settingsPage.mcp.fsDescription")}</span>
             </div>
             <div className="cy-settings-row__control">
-              <Switch
+              <SettingsSwitch
+                ariaLabel={t("settingsPage.mcp.fsLabel")}
                 checked={fsEnabled === true}
                 loading={fsEnabled === null}
                 onChange={(checked) => void toggleFilesystemMcp(checked)}

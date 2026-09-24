@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, Button, Input, Modal, Spin } from "antd";
 import { siNeteasecloudmusic } from "simple-icons";
 import { BrandIcon } from "../../components/ui/BrandIcon";
+import { SettingsInput } from "../../components/ui/SettingsControls";
 import { useTranslation } from "../../i18n";
 import { deriveNeteaseViewState, type MusicStatusSnapshot } from "../../../../shared/music-view-state";
 import type { MusicIpcResult } from "../../../settings/music/types";
@@ -219,7 +220,7 @@ export function MusicSettingsModal({ open, onClose }: { open: boolean; onClose: 
         <h3>{t("settingsPage.tools.neteaseModal.openapiTitle")}</h3>
         <p>{t("settingsPage.tools.neteaseModal.openapiHint")}</p>
         <label htmlFor="cy-music-app-id">{t("settingsPage.tools.neteaseModal.appId")}</label>
-        <Input id="cy-music-app-id" value={appId} onChange={(event) => setAppId(event.target.value)} autoComplete="off" />
+        <SettingsInput id="cy-music-app-id" value={appId} onChange={(event) => setAppId(event.target.value)} autoComplete="off" />
         <label htmlFor="cy-music-private-key">{t("settingsPage.tools.neteaseModal.privateKey")}</label>
         <Input.TextArea id="cy-music-private-key" value={privateKey} onChange={(event) => setPrivateKey(event.target.value)} rows={3} autoComplete="off" spellCheck={false} />
         <span className="cy-settings-music-modal__hint">{t("settingsPage.tools.neteaseModal.privateKeyHint")}</span>

@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Alert, Button, Empty, Input, Modal, Spin, Switch } from "antd";
+import { Alert, Button, Empty, Input, Modal, Spin } from "antd";
 import { Brain, Clock3, FileSearch, FolderOpen, History, Pencil, Trash2 } from "lucide-react";
 import { siObsidian } from "simple-icons";
 import { BrandIcon } from "../../components/ui/BrandIcon";
 import type { MemoryPanelPayload, ObsidianVaultConfig } from "../../../settings/shared/types";
 import { formatDateTime } from "../../../settings/shared/format";
 import { useTranslation } from "../../i18n";
+import { SettingsInput, SettingsSwitch } from "../../components/ui/SettingsControls";
 
 type L0 = MemoryPanelPayload["l0"];
 type L1 = MemoryPanelPayload["l1"];
@@ -151,7 +152,7 @@ export function MemorySettingsPanel() {
           <div className="cy-memory-card__top"><span className="cy-memory-card__badge">L0</span><span>{t("settingsPage.memory.manualPriority")}</span></div>
           <div className="cy-memory-fields">{draftL0 && l0Fields.map(({ key, label, multiline }) => <label key={key} className={multiline ? "is-wide" : ""}><span>{label}</span>{multiline
             ? <Input.TextArea value={draftL0[key]} disabled={editing !== "l0"} rows={2} placeholder={t("settingsPage.memory.notSet")} onChange={(event) => setDraftL0((current) => current && { ...current, [key]: event.target.value })} />
-            : <Input value={draftL0[key]} disabled={editing !== "l0"} placeholder={t("settingsPage.memory.notSet")} onChange={(event) => setDraftL0((current) => current && { ...current, [key]: event.target.value })} />}</label>)}</div>
+            : <SettingsInput value={draftL0[key]} disabled={editing !== "l0"} placeholder={t("settingsPage.memory.notSet")} onChange={(event) => setDraftL0((current) => current && { ...current, [key]: event.target.value })} />}</label>)}</div>
           <div className="cy-memory-card__actions">{editing === "l0" ? <><Button onClick={() => cancelEdit("l0")}>{t("settingsPage.memory.cancel")}</Button><Button type="primary" loading={busy === "l0"} onClick={() => void saveTier("l0")}>{t("settingsPage.memory.save")}</Button></> : <Button icon={<Pencil size={14} />} onClick={() => setEditing("l0")}>{t("settingsPage.memory.edit")}</Button>}</div>
         </div>
       </section>
@@ -174,7 +175,7 @@ export function MemorySettingsPanel() {
         <div className="cy-settings-card cy-memory-list">{data.reflections.length ? data.reflections.map((item) => <article className="cy-memory-record" key={item.id}><strong>{item.title}</strong><span>{item.body}</span><small>{item.meta}</small></article>) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("settingsPage.memory.noReflections")} />}</div>
       </section>
       <section className="cy-settings-section"><div className="cy-settings-section__heading"><h2><BrandIcon icon={siObsidian} size={18} label="Obsidian" />{t("settingsPage.memory.vault.title")}</h2><p>{t("settingsPage.memory.vault.description")}</p></div>
-        <div className="cy-settings-card cy-memory-card">{vault?.vaultPath ? <><div className="cy-memory-vault-path">{vault.vaultPath}</div><div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.memory.vault.autoSync")}</strong><span>{t("settingsPage.memory.vault.autoSyncDescription")}</span></div><Switch checked={vault.autoSync} onChange={(checked) => void setAutoSync(checked)} /></div><div className="cy-memory-vault-actions"><span>{vault.lastSyncAt ? t("settingsPage.memory.vault.lastSync", { time: formatDateTime(vault.lastSyncAt) }) : t("settingsPage.memory.vault.neverSynced")}</span><Button loading={busy === "sync"} onClick={() => void vaultAction("sync")}>{t("settingsPage.memory.vault.sync")}</Button><Button loading={busy === "unbind"} onClick={() => void vaultAction("unbind")}>{t("settingsPage.memory.vault.unbind")}</Button></div></> : <div className="cy-memory-vault-actions"><span>{t("settingsPage.memory.vault.notBound")}</span><Button loading={busy === "bind"} onClick={() => void vaultAction("bind")}>{t("settingsPage.memory.vault.bind")}</Button></div>}</div>
+        <div className="cy-settings-card cy-memory-card">{vault?.vaultPath ? <><div className="cy-memory-vault-path">{vault.vaultPath}</div><div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.memory.vault.autoSync")}</strong><span>{t("settingsPage.memory.vault.autoSyncDescription")}</span></div><SettingsSwitch ariaLabel={t("settingsPage.memory.vault.autoSync")} checked={vault.autoSync} onChange={(checked) => void setAutoSync(checked)} /></div><div className="cy-memory-vault-actions"><span>{vault.lastSyncAt ? t("settingsPage.memory.vault.lastSync", { time: formatDateTime(vault.lastSyncAt) }) : t("settingsPage.memory.vault.neverSynced")}</span><Button loading={busy === "sync"} onClick={() => void vaultAction("sync")}>{t("settingsPage.memory.vault.sync")}</Button><Button loading={busy === "unbind"} onClick={() => void vaultAction("unbind")}>{t("settingsPage.memory.vault.unbind")}</Button></div></> : <div className="cy-memory-vault-actions"><span>{t("settingsPage.memory.vault.notBound")}</span><Button loading={busy === "bind"} onClick={() => void vaultAction("bind")}>{t("settingsPage.memory.vault.bind")}</Button></div>}</div>
       </section>
     </>}
     <Modal className="cy-settings-theme-modal" open={Boolean(deleteTarget)} title={t("settingsPage.memory.deleteTitle")} okText={t("settingsPage.memory.confirmDelete")} okButtonProps={{ danger: true, loading: busy === "delete" }} cancelText={t("settingsPage.memory.cancel")} onOk={() => void deleteDocument()} onCancel={() => setDeleteTarget(null)}><p>{t("settingsPage.memory.deleteMessage", { name: deleteTarget?.fileName })}</p></Modal>
