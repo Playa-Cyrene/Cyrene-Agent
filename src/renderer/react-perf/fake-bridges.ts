@@ -188,6 +188,7 @@ export function installFakeBridges(options: FakeBridgeOptions): FakeBridgeRuntim
     pendingAdjust: async () => ({ ok: false, error: "perf harness 不支持调整", queue: [...pendingQueue] }),
     setPinned: async () => cloneSession(session),
     setModelProfile: async () => cloneSession(session),
+    setSessionModel: async () => ({ ok: true, session: cloneSession(session) }),
     pickWorkspaceFolder: async () => ({ ok: false }),
     setWorkspace: async () => ({ ok: true }),
     initLearnWorkspace: async () => ({ ok: true }),

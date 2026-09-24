@@ -75,6 +75,12 @@ export interface ChatStoreApi {
   pendingAdjust: (id: string, messageId: string) => Promise<PendingMutationResult>;
   setPinned: (id: string, pinned: boolean) => Promise<ChatSession | null>;
   setModelProfile: (id: string, modelProfileId?: string) => Promise<ChatSession | null>;
+  // 会话级当前模型窄 IPC：只写会话（绑定 + 模型），不碰档案；
+  // 失败返回错误码（invalid-payload / session-not-found / no-profile / invalid-model）
+  setSessionModel: (
+    id: string,
+    model: string,
+  ) => Promise<{ ok: true; session: ChatSession } | { ok: false; error: string }>;
   pickWorkspaceFolder: () => Promise<{ ok: boolean; path?: string; displayName?: string; error?: string }>;
   setWorkspace: (sessionId: string, workspaceRoot: string) => Promise<{ ok: boolean; error?: string; isEmpty?: boolean }>;
   initLearnWorkspace: (sessionId: string) => Promise<{ ok: boolean; error?: string; created?: string[]; skipped?: string[] }>;

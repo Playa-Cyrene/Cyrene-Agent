@@ -542,7 +542,8 @@
   "modelSelector": {
     "switchTitle": "Switch model for this chat",
     "chooseModel": "Choose a model",
-    "emptyHint": "Save a model in settings first"
+    "emptyHint": "Save a model in settings first",
+    "switchSessionModelTitle": "Switch the model for this conversation"
   },
   "appUpdate": {
     "availableWithVersion": "New version v{{version}} available",

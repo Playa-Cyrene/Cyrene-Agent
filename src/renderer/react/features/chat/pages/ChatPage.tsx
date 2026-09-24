@@ -35,6 +35,7 @@ import { type ContextUsageSnapshot } from "../../../../../shared/context-usage";
 import { ChatPagePanelHost } from "../components/ChatPagePanelHost";
 import { useUserCallPreference } from "../../../hooks/useUserNickname";
 import { resolveRevisableLastTurn } from "../components/last-turn-actions";
+import { createSessionModelSwitcher, type SessionModelSwitcher } from "../components/session-model-switch";
 
 import {
   aguiApi,
@@ -429,6 +430,27 @@ export function ChatPage({ onOpenSettings }: { onOpenSettings?: () => void } = {
   const queueFlow = queueFlowRef.current;
   const sessions = sessionsByMode[mode] ?? EMPTY_SESSIONS;
   const [activeSession, setActiveSession] = useState<ChatSession | null>(null);
+  // 对话级模型切换的竞态防护两件套（barrier + operation token，阶段③）：
+  // 惰性创建一次，闭包捕获的 chatStore/setActiveSession 引用均稳定
+  const modelSwitcherRef = useRef<SessionModelSwitcher | null>(null);
+  if (!modelSwitcherRef.current) {
+    modelSwitcherRef.current = createSessionModelSwitcher<ChatSession>({
+      ipc: {
+        setModelProfile: (sessionId, modelProfileId) => {
+          const store = chatStore();
+          if (!store) return Promise.resolve(null);
+          return store.setModelProfile(sessionId, modelProfileId);
+        },
+        setSessionModel: (sessionId, model) => {
+          const store = chatStore();
+          if (!store) return Promise.resolve({ ok: false as const, error: "store-unavailable" });
+          return store.setSessionModel(sessionId, model);
+        },
+      },
+      onSessionUpdated: (session) => setActiveSession(session),
+    });
+  }
+  const modelSwitcher = modelSwitcherRef.current;
   // 会话级最新上下文快照（环形图优先读取点）：run 事件实时写入；
   // 手动压缩后随会话重载从 session.currentContextUsage 初始化（known-issues 问题 3）。
   const [sessionContextUsageBySession, setSessionContextUsageBySession] = useState<Record<string, ContextUsageSnapshot>>({});
@@ -1190,6 +1212,9 @@ export function ChatPage({ onOpenSettings }: { onOpenSettings?: () => void } = {
 
 
   async function sendMessage(content: string) {
+    // renderer barrier（决策 10）：等待最近一次模型状态变更提交完成再发送，
+    // 保证"选模型 → 立刻 Enter"时请求读到的是新模型（不赌 IPC handler 执行顺序）
+    await modelSwitcher.barrier();
     const parsedMessage = parseComposerMessage(mode, content);
     const message = parsedMessage.rawContent;
     if (!message) return;
@@ -1727,16 +1752,21 @@ export function ChatPage({ onOpenSettings }: { onOpenSettings?: () => void } = {
                 ? activeSession.modelProfileId
                 : pendingModelProfileByMode[mode]
             }
+            activeSessionModel={activeSession && activeSession.id === activeSessionId ? activeSession.model : undefined}
             contextUsage={latestContextUsage}
+            onSelectSessionModel={(model) => {
+              // 子下拉只在有会话时由 ModelSelector 渲染，这里防御性兜底
+              if (!activeSessionId) return;
+              modelSwitcher.switchModel(activeSessionId, model);
+            }}
             onSelectModelProfile={(modelProfileId) => {
               // 欢迎页（无会话）：暂存选择，ensureSession 建会话后落地；不再静默丢弃。
               if (!activeSessionId) {
                 setPendingModelProfileByMode((current) => ({ ...current, [mode]: modelProfileId }));
                 return;
               }
-              const store = chatStore();
-              if (!store) return;
-              void store.setModelProfile(activeSessionId, modelProfileId).then((session) => setActiveSession(session));
+              // operation token（决策 11）：最新一次切换独占 UI 更新权，迟到回调丢弃
+              modelSwitcher.switchProfile(activeSessionId, modelProfileId);
             }}
             />}
             interaction={composerInteraction}
