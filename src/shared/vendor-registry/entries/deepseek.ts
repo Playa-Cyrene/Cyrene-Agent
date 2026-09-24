@@ -1,0 +1,26 @@
+// deepseek（深度求索）的推理规则 —— 自 shared/reasoning.ts 原样迁入。
+import { defineVendor } from "../types";
+import { UNKNOWN_REASONING_CAPABILITY } from "../fallback";
+
+export const DEEPSEEK_REGISTRY = defineVendor({
+  id: "deepseek",
+  reasoningRules: [
+    // ── deepseek ──
+    // V4.1 Flash（2026-09-10 发布，模型名 deepseek-flash，原生多模态）与 V4 旧名
+    // （v4-pro / v4-flash / v4-flash-vision-exp，官方均已路由到 V4.1 Flash）统一规则：
+    // thinking 默认开启可关闭；effort 官方仅 high/max 两档，low/medium 会被服务端
+    // 映射为 high、xhigh 映射为 max（官方思考模式文档），故不再提供 low 档。
+    // auto 映射 high：服务端 auto 会给带工具的 agent 请求自动上 max，
+    // 与 GLM-5.3 同款的思考爆炸陷阱（2026-08-27 多轮循环场景）。
+    { providerId: "deepseek", modelPattern: /^deepseek-(?:v4|flash)/i, capability: {
+      control: "toggle-effort",
+      supportedEfforts: ["high", "max"],
+      defaultEffort: "high",
+      requestStyle: "thinking-type",
+      supportsDisable: true,
+      autoEffort: "high",
+    } },
+    { providerId: "deepseek", modelPattern: /^deepseek-(chat|reasoner)$/i, capability: UNKNOWN_REASONING_CAPABILITY },
+    { providerId: "deepseek", modelPattern: /.*/, capability: UNKNOWN_REASONING_CAPABILITY },
+  ],
+});
