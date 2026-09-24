@@ -131,6 +131,9 @@ scripts/test-cita-minimax.mjs
 
 # Debug previews / scratch files generated during UI work
 cyrene-*-preview.html
+# Cyrene harness 架构图产物（本地生成、可重新生成，不进 git）
+cyrene-harness-architecture.html
+cyrene-harness.architecture.json
 tmp_*.txt
 tmp/
 tmpr-build.log
@@ -162,6 +165,13 @@ sim-result/
 
 # OpenCode CLI 运行留痕
 .opencode*/
+
+# Agent 提交辅助临时目录（commit message / patch 暂存，会话级产物）
+.commit-tmp/
+# Agent 运行 trace 留痕（按 trace-id 生成的目录，运行时临时数据）
+transcripts/
+# Trae IDE scratch（skills / 文档缓存等，会话级产物）
+.trae/
 
 # Windows quirk: 'nul' is a reserved device name, ignore if created by accident
 nul
