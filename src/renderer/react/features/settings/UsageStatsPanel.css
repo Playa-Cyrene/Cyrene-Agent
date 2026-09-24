@@ -1,0 +1,369 @@
+/* 用量统计面板（UsageStatsPanel）——
+   汇总条、52 周热力图、趋势图与模型占比。
+   颜色全部走 settings/theme 的 --rb-* token，热力图色阶用 color-mix 实时混出。 */
+
+.cy-usage-summary {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--rb-text-primary) 10%, var(--rb-surface-elevated));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--rb-surface-hover) 42%, var(--rb-surface-elevated));
+}
+
+@media (min-width: 720px) {
+  .cy-usage-summary { flex-direction: row; align-items: center; }
+}
+
+.cy-usage-summary__item {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 12px 16px;
+  text-align: center;
+}
+
+@media (min-width: 720px) {
+  .cy-usage-summary__item + .cy-usage-summary__item {
+    border-left: 1px solid color-mix(in srgb, var(--rb-text-primary) 8%, transparent);
+  }
+}
+
+.cy-usage-summary__value {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  color: var(--rb-text-primary);
+  font: var(--rb-text-small-em);
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+}
+
+.cy-usage-summary__hint {
+  display: inline-flex;
+  align-items: center;
+  color: color-mix(in srgb, var(--rb-text-primary) 45%, transparent);
+  cursor: help;
+}
+
+.cy-usage-summary__label {
+  margin-top: 2px;
+  overflow: hidden;
+  color: color-mix(in srgb, var(--rb-text-primary) 52%, transparent);
+  font: var(--rb-text-micro);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ===== 热力图 ===== */
+
+.cy-usage-heatmap { padding: 12px; }
+
+.cy-usage-heatmap__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+/* 仅热力图的“每日 / 每周 / 累计”选择器对齐 ZCode 用量统计的胶囊式 Tabs。 */
+.cy-settings-page .cy-usage-heatmap__mode-selector.ant-segmented {
+  height: 28px;
+  padding: 2px;
+  border-radius: 999px;
+  color: var(--rb-text-secondary);
+  background: color-mix(in srgb, var(--rb-text-primary) 5%, var(--rb-surface-elevated));
+}
+
+.cy-settings-page .cy-usage-heatmap__mode-selector .ant-segmented-group { height: 100%; }
+
+.cy-settings-page .cy-usage-heatmap__mode-selector .ant-segmented-item {
+  display: flex;
+  min-height: 24px;
+  align-items: center;
+  border-radius: 999px;
+  color: var(--rb-text-secondary);
+  transition: color 140ms ease, background-color 140ms ease;
+}
+
+.cy-settings-page .cy-usage-heatmap__mode-selector .ant-segmented-item-label {
+  padding: 0 10px;
+  color: inherit;
+  font: var(--rb-text-micro);
+  line-height: 20px;
+}
+
+.cy-settings-page .cy-usage-heatmap__mode-selector .ant-segmented-item:not(.ant-segmented-item-selected):hover {
+  color: var(--rb-text-primary);
+}
+
+.cy-settings-page .cy-usage-heatmap__mode-selector.ant-segmented .ant-segmented-item-selected {
+  border-radius: 999px;
+  color: var(--rb-text-primary);
+  background: var(--rb-surface-elevated);
+  box-shadow: none;
+}
+
+/* Segmented 的滑动指示层与选项本身分离，需单独覆盖其默认小圆角。 */
+.cy-settings-page .cy-usage-heatmap__mode-selector.ant-segmented .ant-segmented-thumb {
+  border-radius: 999px;
+}
+
+.cy-settings-page .cy-usage-heatmap__mode-selector .ant-segmented-item:focus-visible {
+  outline: 2px solid var(--rb-accent);
+  outline-offset: 1px;
+}
+
+.cy-settings-page .cy-usage-heatmap__mode-selector .ant-segmented-item-focused {
+  outline: 2px solid var(--rb-accent);
+  outline-offset: 1px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cy-settings-page .cy-usage-heatmap__mode-selector .ant-segmented-item { transition: none; }
+}
+
+.cy-usage-heatmap__legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: color-mix(in srgb, var(--rb-text-primary) 52%, transparent);
+  font: var(--rb-text-micro);
+}
+
+/* 图例格是装饰元素：覆盖交互样式，避免悬停放大。 */
+.cy-usage-heatmap__legend .cy-usage-heat-cell {
+  width: 10px;
+  height: 10px;
+  border: none;
+  transition: none;
+}
+
+.cy-usage-heatmap__legend .cy-usage-heat-cell:hover { transform: none; }
+
+.cy-usage-heatmap__scroll {
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.cy-usage-heatmap__grid {
+  display: grid;
+  gap: 3px;
+  grid-template-columns: repeat(52, minmax(0, 1fr));
+  min-width: 560px;
+}
+
+.cy-usage-heatmap__column {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.cy-usage-heat-cell {
+  position: relative;
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  transition: transform 0.12s ease, border-color 0.12s ease;
+}
+
+/* 单格悬停：放大并高亮描边（对齐 ZCode 的 hover:scale-110）。 */
+.cy-usage-heat-cell:hover {
+  transform: scale(1.1);
+  border-color: color-mix(in srgb, var(--rb-text-primary) 26%, transparent);
+  z-index: 1;
+}
+
+/* 有用量的格子带一层浅描边，空格子保持透明融入卡片底色。 */
+.cy-usage-heat-cell--used {
+  border-color: color-mix(in srgb, var(--rb-text-primary) 10%, transparent);
+}
+
+/* 周/累计模式下整列是一个数据点：悬停时整列描边高亮。 */
+.cy-usage-heatmap__column.is-column-hover:hover .cy-usage-heat-cell {
+  border-color: color-mix(in srgb, var(--rb-text-primary) 26%, transparent);
+}
+
+/* 色阶 0-4：品牌粉按比例混入卡片底色，主题切换时自动跟随。
+   level-0 给一层极淡的中性灰（GitHub 语义：空格子可见但不喧宾夺主），
+   避免没数据时整片区域与卡片背景融为一体。 */
+.cy-usage-heat-cell--level-0 { background: color-mix(in srgb, var(--rb-text-primary) 5%, transparent); }
+.cy-usage-heat-cell--level-1 { background: color-mix(in oklab, var(--rb-pink-400) 24%, var(--rb-surface-elevated)); }
+.cy-usage-heat-cell--level-2 { background: color-mix(in oklab, var(--rb-pink-500) 42%, var(--rb-surface-elevated)); }
+.cy-usage-heat-cell--level-3 { background: color-mix(in oklab, var(--rb-pink-600) 62%, var(--rb-surface-elevated)); }
+.cy-usage-heat-cell--level-4 { background: color-mix(in oklab, var(--rb-pink-700) 82%, var(--rb-surface-elevated)); }
+
+.cy-usage-heatmap__months {
+  display: grid;
+  gap: 3px;
+  grid-template-columns: repeat(52, minmax(0, 1fr));
+  margin-top: 6px;
+  min-width: 560px;
+}
+
+.cy-usage-heatmap__month {
+  overflow: hidden;
+  color: color-mix(in srgb, var(--rb-text-primary) 52%, transparent);
+  font: var(--rb-text-micro);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ===== 趋势图 / 模型占比卡片 ===== */
+
+.cy-usage-card { padding: 12px; }
+
+.cy-usage-card__toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 8px;
+}
+
+/* 趋势图上方的模型图例：色点 + 模型名（对齐 ZCode 折线图图例）。 */
+.cy-usage-chart__legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  margin-bottom: 10px;
+  font: var(--rb-text-small);
+}
+
+.cy-usage-chart__legend > div {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.cy-usage-chart__legend-dot {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+}
+
+.cy-usage-chart__legend-name {
+  overflow: hidden;
+  max-width: 220px;
+  color: color-mix(in srgb, var(--rb-text-primary) 60%, transparent);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cy-usage-chart {
+  position: relative;
+  height: 240px;
+}
+
+.cy-usage-models {
+  display: grid;
+  gap: 16px;
+  align-items: center;
+}
+
+@media (min-width: 720px) {
+  .cy-usage-models { grid-template-columns: 220px minmax(0, 1fr); }
+}
+
+.cy-usage-models__donut {
+  position: relative;
+  height: 200px;
+}
+
+.cy-usage-models__center {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  pointer-events: none;
+  text-align: center;
+}
+
+.cy-usage-models__center strong {
+  font: var(--rb-text-small-em);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.cy-usage-models__center span {
+  font: var(--rb-text-micro);
+  opacity: 0.6;
+}
+
+.cy-usage-models__list {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* 两行式列表（对齐 ZCode）：第一行 色点+模型名+占比，第二行缩进的 Token 数。 */
+.cy-usage-models__row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 8px;
+  row-gap: 2px;
+  padding: 8px 2px;
+  border-bottom: 1px solid color-mix(in srgb, var(--rb-text-primary) 7%, transparent);
+  font: var(--rb-text-small);
+}
+
+.cy-usage-models__row:last-child { border-bottom: none; }
+
+.cy-usage-models__dot {
+  width: 9px;
+  height: 9px;
+  flex: none;
+  border-radius: 3px;
+}
+
+.cy-usage-models__name {
+  overflow: hidden;
+  font-family: var(--rb-font-ui);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cy-usage-models__share {
+  color: color-mix(in srgb, var(--rb-text-primary) 60%, transparent);
+  font-variant-numeric: tabular-nums;
+}
+
+.cy-usage-models__tokens {
+  grid-column: 2 / 3;
+  color: color-mix(in srgb, var(--rb-text-primary) 52%, transparent);
+  font: var(--rb-text-micro);
+  font-variant-numeric: tabular-nums;
+}
+
+.cy-usage-models__empty {
+  margin: 8px 0;
+  color: color-mix(in srgb, var(--rb-text-primary) 52%, transparent);
+  font: var(--rb-text-small);
+}
+
+.cy-usage-footer { gap: 8px; justify-content: flex-end; }
+
+.cy-usage-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 48px 16px;
+  border: 1px dashed color-mix(in srgb, var(--rb-text-primary) 14%, transparent);
+  border-radius: 12px;
+  color: color-mix(in srgb, var(--rb-text-primary) 52%, transparent);
+  text-align: center;
+}
+
+.cy-usage-empty strong { color: var(--rb-text-primary); font: var(--rb-text-small-em); }
+.cy-usage-empty span { font: var(--rb-text-small); }

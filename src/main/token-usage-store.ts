@@ -212,10 +212,25 @@ export function clearUsage(days?: Record<string, TokenUsageDay>): void {
   flushNow();
 }
 
+export interface TokenUsageDayReport {
+  date: string;
+  weekday: string;
+  input: number;
+  output: number;
+  hit: number;
+  miss: number;
+  cacheCreation: number;
+  requests: number;
+  attemptedRequests: number;
+  cacheUsageRequests: number;
+  /** 当天按真实模型名聚合的明细（v2 起记录）；趋势图按模型拆线用。 */
+  models?: Record<string, TokenUsageModel>;
+}
+
 /** 查询最近 N 天的用量数据，按日期升序返回（无数据的天填 0）。 */
-export function getUsage(days: number): Array<{ date: string; weekday: string; input: number; output: number; hit: number; miss: number; cacheCreation: number; requests: number; attemptedRequests: number; cacheUsageRequests: number }> {
+export function getUsage(days: number): TokenUsageDayReport[] {
   const store = ensureLoaded();
-  const result: Array<{ date: string; weekday: string; input: number; output: number; hit: number; miss: number; cacheCreation: number; requests: number; attemptedRequests: number; cacheUsageRequests: number }> = [];
+  const result: TokenUsageDayReport[] = [];
   const weekdays = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
   const now = new Date();
 
@@ -237,6 +252,7 @@ export function getUsage(days: number): Array<{ date: string; weekday: string; i
       requests: day?.requests ?? 0,
       attemptedRequests: day?.attemptedRequests ?? 0,
       cacheUsageRequests: day?.cacheUsageRequests ?? 0,
+      models: day?.models,
     });
   }
   return result;
