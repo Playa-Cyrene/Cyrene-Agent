@@ -253,7 +253,7 @@
           },
           "uiFont": {
             "title": "界面字体",
-            "current": "思源黑体（默认）",
+            "current": "系统字体（默认）",
             "importButton": "导入字体",
             "resetButton": "恢复默认"
           },
@@ -912,7 +912,7 @@
       "importingFont": "正在导入字体…",
       "fontApplied": "字体已应用",
       "importFontFailed": "导入字体失败",
-      "fontResetOk": "已恢复思源黑体",
+      "fontResetOk": "已恢复系统默认字体",
       "fontResetFailed": "恢复默认字体失败",
       "iconApplied": "图标已应用",
       "iconFailed": "应用图标失败",
@@ -944,7 +944,7 @@
     },
     "appearance": {
       "font": {
-        "defaultNotion": "思源黑体（默认）"
+        "defaultNotion": "系统字体（默认）"
       }
     },
     "preset": {

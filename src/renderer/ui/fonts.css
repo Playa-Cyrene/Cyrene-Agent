@@ -1,3 +1,2 @@
-/* Noto Sans SC (思源黑体) for UI text, JetBrains Mono for tech accents.
-   Both come from Google Fonts; we preconnect for faster first paint. */
-@import url("https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap");
+/* UI uses the native system sans stack; JetBrains Mono is reserved for code accents. */
+@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap");
