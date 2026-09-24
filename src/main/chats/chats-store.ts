@@ -398,6 +398,8 @@ export function createSession(opts?: {
   purpose?: ChatSessionPurpose;
   mode?: ConversationMode;
   modelProfileId?: string;
+  /** 创建即快照：绑定档案的默认模型（Invariant B）。缺省 = 旧式动态解析语义。 */
+  model?: string;
 }): ChatSession {
   const now = Date.now();
   const messages = opts?.initialMessages ?? [];
@@ -414,6 +416,7 @@ export function createSession(opts?: {
     titleIsCustom: opts?.purpose ? true : undefined,
     mode,
     modelProfileId: opts?.modelProfileId,
+    model: opts?.model,
   };
   writeSessionFile(session);
   upsertMeta(metaFromSession(session));
@@ -480,14 +483,65 @@ export function setSessionPinned(id: string, pinned: boolean): ChatSession | nul
   return sessionView(session);
 }
 
-export function setSessionModelProfile(id: string, modelProfileId: string | undefined): ChatSession | null {
+// ── 会话模型状态写点（全部经 enqueueSessionModelMutation 串行提交）──────
+
+/**
+ * 切档案 = 原子状态转换（Invariant B）：绑定与模型同一次写入，
+ * 模型重置为新档案的默认模型——不让旧档案的模型选择"串"进新档案。
+ * 新档案默认模型由调用方（IPC handler）在提交时刻解析后传入。
+ */
+export function setSessionModelProfile(id: string, modelProfileId: string | undefined, model: string | undefined): ChatSession | null {
   const session = readSessionRecordFile(id);
   if (!session) return null;
   session.modelProfileId = modelProfileId;
+  session.model = model;
   session.updatedAt = Date.now();
   writeWritableSession(session);
   upsertMeta(metaFromSession(session));
   return sessionView(session);
+}
+
+/**
+ * 会话级当前模型写入（窄 IPC CHATS_SET_SESSION_MODEL 后端）。
+ * 绑定与模型同一次原子写入：stale binding 时 modelProfileId 传回退档案 id
+ * 完成修复（决策 13），正常时传会话现有绑定。
+ */
+export function setSessionModel(id: string, modelProfileId: string | undefined, model: string): ChatSession | null {
+  const session = readSessionRecordFile(id);
+  if (!session) return null;
+  session.modelProfileId = modelProfileId;
+  session.model = model;
+  session.updatedAt = Date.now();
+  writeWritableSession(session);
+  upsertMeta(metaFromSession(session));
+  return sessionView(session);
+}
+
+// ── per-session 模型状态串行队列（Invariant D）──────────────────
+// 同一 session 的 profile/model mutation 必须串行提交，提交顺序 = 主进程接收顺序。
+// 持久化最终态 = 接收顺序的最后一笔（B 慢 C 快都成功 → 最终 C，跨窗口成立）。
+// 三层并发防护各管一层、互不替代：
+//   本队列 → 持久化状态顺序；renderer barrier → SET→SEND 因果序；operation token → UI 回调序。
+const sessionModelMutationQueues = new Map<string, Promise<unknown>>();
+
+/**
+ * 把一次会话模型状态 mutation 排进该会话的串行队列。
+ * 前一笔失败不阻塞后续（各自把结果带回给调用方）；不同会话互不阻塞。
+ * mutation 内部应在提交时刻读取最新配置/会话（晚到的排队反而拿到更新的状态）。
+ */
+export function enqueueSessionModelMutation<T>(sessionId: string, mutation: () => T | Promise<T>): Promise<T> {
+  const previous = sessionModelMutationQueues.get(sessionId) ?? Promise.resolve();
+  const run = previous.then(mutation, mutation);
+  // 队列记账：吞掉错误，不让某一笔失败卡死同会话后续提交
+  const tail = run.catch(() => {});
+  sessionModelMutationQueues.set(sessionId, tail);
+  void tail.then(() => {
+    // 收尾清理：仍是队尾时移除，避免已结束会话的队列条目常驻内存
+    if (sessionModelMutationQueues.get(sessionId) === tail) {
+      sessionModelMutationQueues.delete(sessionId);
+    }
+  });
+  return run;
 }
 
 /**

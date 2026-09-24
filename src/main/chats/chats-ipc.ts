@@ -16,12 +16,18 @@
 import { app, BrowserWindow, type WebContents, dialog, shell } from "electron";
 import { IPC } from "../../shared/ipc-channels";
 import { createIpcScope, type IpcScope } from "../application/ipc-scope";
-import type { ChatMessage, ConversationMode, ConversationWorkspaceBinding } from "../../shared/chat-types";
+import type { ChatMessage, ChatsSetSessionModelResult, ConversationMode, ConversationWorkspaceBinding } from "../../shared/chat-types";
 import * as chatsStore from "./chats-store";
 import * as fs from "fs";
 import * as path from "path";
 import { ensureVaultStructure, isEmptyDirectory } from "../learn/obsidian/vault-init";
-import { getDefaultModelProfile, loadModelSettings, resolveModelSettingsProfile } from "../settings/model-settings";
+import {
+  getDefaultModelProfile,
+  listSavedModelProfiles,
+  loadModelSettings,
+  resolveSessionModelSettings,
+} from "../settings/model-settings";
+import { planSessionModelUpdate } from "../../shared/session-model";
 import { FileToolOutputStore } from "../orchestrator/harness/tool-output/file-tool-output-store";
 import { getHarnessRunStore } from "../orchestrator/harness/run-store";
 import { getConversationTranscriptStore } from "../orchestrator/conversation-transcript-store";
@@ -73,7 +79,7 @@ export function registerChatsIpc(
     ? createConversationTitleService({
         getSession: chatsStore.getSession,
         setGeneratedTitle: chatsStore.setGeneratedTitle,
-        resolveSettings: (session) => resolveModelSettingsProfile(loadModelSettings(), session.modelProfileId),
+        resolveSettings: (session) => resolveSessionModelSettings(loadModelSettings(), session),
         isPrimaryModelBusy: options.isPrimaryModelBusy,
         llmClient: options.llmClient,
         enqueueTask: enqueueLLMTask,
@@ -124,11 +130,14 @@ export function registerChatsIpc(
       event,
       payload?: { title?: string; identityId?: string | null; mode?: ConversationMode },
     ) => {
+      // Invariant B：新会话创建即快照默认档案的默认模型（对话自持起点）
+      const defaultProfile = getDefaultModelProfile();
       const session = chatsStore.createSession({
         title: payload?.title,
         identityId: payload?.identityId ?? null,
         mode: payload?.mode,
-        modelProfileId: getDefaultModelProfile()?.id,
+        modelProfileId: defaultProfile?.id,
+        model: defaultProfile?.model || undefined,
       });
       broadcastChanged(event.sender);
       return session;
@@ -343,11 +352,39 @@ export function registerChatsIpc(
     },
   );
 
-  ipc.handle(IPC.CHATS_SET_MODEL_PROFILE, (event, payload: { id: string; modelProfileId?: string }) => {
+  // 切档案 = 原子状态转换（Invariant B）：绑定 + 模型重置为新档案默认，串行提交（Invariant D）。
+  // 新档案默认模型在提交时刻解析（不依赖 handler 同步执行的实现细节）。
+  ipc.handle(IPC.CHATS_SET_MODEL_PROFILE, async (event, payload: { id: string; modelProfileId?: string }) => {
     if (!payload || typeof payload.id !== "string") return null;
-    const session = chatsStore.setSessionModelProfile(payload.id, payload.modelProfileId);
+    const session = await chatsStore.enqueueSessionModelMutation(payload.id, () => {
+      const settings = loadModelSettings();
+      const target = payload.modelProfileId
+        ? listSavedModelProfiles(settings).find((profile) => profile.id === payload.modelProfileId)
+        : getDefaultModelProfile(settings);
+      return chatsStore.setSessionModelProfile(payload.id, payload.modelProfileId, target?.model || undefined);
+    });
     if (session) broadcastChanged(event.sender);
     return session;
+  });
+
+  // 会话级当前模型窄 IPC：只写会话（绑定 + 模型），不碰档案。
+  // validator 唯一规则 = selectableModels 成员校验（不留 free-form 旁门，决策 P0-2）；
+  // stale binding 时用户主动选择 = 确认接受回退档案，原子修复绑定（决策 13）。
+  ipc.handle(IPC.CHATS_SET_SESSION_MODEL, async (event, payload: { id?: unknown; model?: unknown }) => {
+    const sessionId = typeof payload?.id === "string" ? payload.id : "";
+    const model = typeof payload?.model === "string" ? payload.model.trim() : "";
+    if (!sessionId || !model) return { ok: false as const, error: "invalid-payload" as const };
+    const result = await chatsStore.enqueueSessionModelMutation(sessionId, (): ChatsSetSessionModelResult => {
+      const record = chatsStore.getSessionRecord(sessionId);
+      if (!record) return { ok: false as const, error: "session-not-found" as const };
+      const plan = planSessionModelUpdate(loadModelSettings(), record, model);
+      if (!plan.ok) return { ok: false as const, error: plan.error };
+      const session = chatsStore.setSessionModel(sessionId, plan.modelProfileId, plan.model);
+      if (!session) return { ok: false as const, error: "session-not-found" as const };
+      return { ok: true as const, session };
+    });
+    if (result.ok) broadcastChanged(event.sender);
+    return result;
   });
 
   ipc.handle(IPC.CHATS_OPEN_FOLDER, async () => {

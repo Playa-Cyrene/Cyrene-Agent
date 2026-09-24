@@ -3,7 +3,7 @@ import { IPC } from "../../shared/ipc-channels";
 
 const mocks = vi.hoisted(() => ({
   handlers: new Map<string, (...args: any[]) => unknown>(),
-  sessions: new Map<string, { id: string; modelProfileId?: string }>(),
+  sessions: new Map<string, { id: string; modelProfileId?: string; model?: string }>(),
   settings: {
     provider: "MiniMax（稀宇科技）",
     model: "MiniMax-M3",
@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
       id: "openai-profile",
       provider: "ChatGPT（OpenAI）",
       model: "gpt-5.6",
+      models: ["gpt-5.6", "gpt-5.6-mini"],
       baseUrl: "https://api.openai.com/v1",
       apiKey: "profile-key",
       explicitTransport: "openai" as const,
@@ -39,22 +40,38 @@ vi.mock("electron", () => ({
   },
 }));
 
-vi.mock("../settings/model-settings", () => ({
-  loadModelSettings: () => mocks.settings,
-  resolveModelSettingsProfile: (settings: typeof mocks.settings, id?: string) => {
-    const profile = settings.modelProfiles.find((candidate) => candidate.id === id);
-    return profile ? { ...settings, ...profile } : settings;
-  },
-  saveModelSettings: mocks.saveModelSettings,
-  listSavedModelProfiles: (settings: typeof mocks.settings) => settings.modelProfiles,
-  getDefaultModelProfile: (settings: typeof mocks.settings) =>
-    settings.modelProfiles.find((candidate: { id: string }) => candidate.id === settings.defaultModelProfileId)
+vi.mock("../settings/model-settings", async () => {
+  // 复用 shared 四件套的真实语义拼出④：mock 只替换磁盘读写，不手写解析规则
+  const sessionModel = await import("../../shared/session-model");
+  return {
+    loadModelSettings: () => mocks.settings,
+    resolveModelSettingsProfile: (settings: typeof mocks.settings, id?: string) => {
+      const profile = settings.modelProfiles.find((candidate) => candidate.id === id);
+      return profile ? { ...settings, ...profile } : settings;
+    },
+    resolveSessionModelSettings: (
+      settings: typeof mocks.settings,
+      session: { modelProfileId?: string; model?: string },
+    ) => {
+      const binding = sessionModel.resolveSessionProfileBinding(settings, session);
+      if (!binding.profile) return settings;
+      const profile = settings.modelProfiles.find((candidate) => candidate.id === binding.resolvedProfileId);
+      const expanded = profile ? { ...settings, ...profile } : settings;
+      const model = sessionModel.resolveEffectiveSessionModel(session, binding);
+      return model && model !== expanded.model ? { ...expanded, model } : expanded;
+    },
+    saveModelSettings: mocks.saveModelSettings,
+    listSavedModelProfiles: (settings: typeof mocks.settings) => settings.modelProfiles,
+    getDefaultModelProfile: (settings: typeof mocks.settings) =>
+      settings.modelProfiles.find((candidate: { id: string }) => candidate.id === settings.defaultModelProfileId)
       ?? settings.modelProfiles[0],
-  saveModelProfile: mocks.saveModelProfile,
-}));
+    saveModelProfile: mocks.saveModelProfile,
+  };
+});
 
 vi.mock("./chats-store", () => ({
   getSession: (id: string) => mocks.sessions.get(id),
+  getSessionRecord: (id: string) => mocks.sessions.get(id) ?? null,
 }));
 
 describe("chat reasoning IPC", () => {
@@ -168,5 +185,38 @@ describe("chat reasoning IPC", () => {
 
     expect(mocks.saveModelProfile).not.toHaveBeenCalled();
     expect(mocks.saveModelSettings).not.toHaveBeenCalled();
+  });
+
+  it("会话带清单内模型 → GET reasoning 按会话模型返回（UI 只认 effective）", async () => {
+    mocks.sessions.set("session-openai", {
+      id: "session-openai",
+      modelProfileId: "openai-profile",
+      model: "gpt-5.6-mini",
+    });
+    await register();
+    const handler = mocks.handlers.get(IPC.CHAT_GET_REASONING_STATE);
+    if (!handler) throw new Error("reasoning state handler was not registered");
+
+    expect(handler({}, { sessionId: "session-openai" })).toMatchObject({
+      model: "gpt-5.6-mini",
+      modelProfileId: "openai-profile",
+    });
+  });
+
+  it("会话绑定失效 → 回退默认档案默认模型，raw 会话模型不串档（#19）", async () => {
+    // raw model = gpt-5.6-mini（恰好在回退档案清单里也不认——绑定失效时一并失效）
+    mocks.sessions.set("session-stale", {
+      id: "session-stale",
+      modelProfileId: "deleted-profile",
+      model: "gpt-5.6-mini",
+    });
+    await register();
+    const handler = mocks.handlers.get(IPC.CHAT_GET_REASONING_STATE);
+    if (!handler) throw new Error("reasoning state handler was not registered");
+
+    expect(handler({}, { sessionId: "session-stale" })).toMatchObject({
+      model: "gpt-5.6",
+      modelProfileId: "openai-profile",
+    });
   });
 });

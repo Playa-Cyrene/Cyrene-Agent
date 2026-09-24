@@ -10,10 +10,12 @@ import {
   saveModelProfile,
   saveModelSettings,
   resolveModelSettingsProfile,
+  resolveSessionModelSettings,
 } from "../settings/model-settings";
+import { resolveSessionProfileBinding } from "../../shared/session-model";
 import { resolveVendorRuntimeSettings } from "../orchestrator/vendors/runtime-settings";
 import { resolveTransport } from "../orchestrator/vendors/transport-detector";
-import { getSession } from "./chats-store";
+import { getSession, getSessionRecord } from "./chats-store";
 import { describePendingAttachment } from "../rag/file-ingest";
 import { processDocumentIndexRequest } from "../rag/document-index-ipc";
 import {
@@ -83,13 +85,32 @@ export function registerChatUiIpc(deps: ChatUiIpcDependencies): void {
   ipc.handle(IPC.CHAT_GET_REASONING_STATE, (_event, payload?: { sessionId?: unknown; modelProfileId?: unknown }) => {
     const baseSettings = loadModelSettings();
     const sessionId = typeof payload?.sessionId === "string" ? payload.sessionId : undefined;
-    const session = sessionId ? getSession(sessionId) : undefined;
-    // 档案解析优先级：会话绑定 > 渲染端待定档案（欢迎页暂存）> 默认档案。
+    // 会话存在（v1/v2 都读）：统一走会话级解析（binding + effective model，Invariant C），
+    // 否则 UI 档位会按档案默认模型计算，与实际发送模型错档。
     // 不能回退顶层镜像：顶层可能是空壳（provider 指向别家、三件套全空），
-    // 与 channel bot 不回复是同一病根：不解析默认档案时拿到的是顶层空壳镜像配置。
+    // 与 channel bot 不回复是同一病根。
+    const sessionRecord = sessionId ? getSessionRecord(sessionId) : null;
+    if (sessionRecord) {
+      const settings = resolveSessionModelSettings(baseSettings, sessionRecord);
+      const cap = getCapabilityOrOpenAI(settings.provider);
+      return {
+        providerKey: settings.provider,
+        providerId: cap.id,
+        model: settings.model,
+        preference: settings.reasoning,
+        thinkingOverride: resolveVendorRuntimeSettings(settings).thinkingOverride,
+        // PRO 档（reasoning.mode="pro"）仅 Responses 协议存在，UI 据此决定是否显示
+        transport: resolveTransport({
+          baseUrl: settings.baseUrl,
+          explicitTransport: settings.explicitTransport,
+          provider: settings.provider,
+        }),
+        modelProfileId: resolveSessionProfileBinding(baseSettings, sessionRecord).resolvedProfileId ?? null,
+      };
+    }
+    // 欢迎页（无会话）：渲染端待定档案 > 默认档案（现状保留）。
     const profiles = listSavedModelProfiles(baseSettings);
-    const requestedId = session?.modelProfileId
-      ?? (typeof payload?.modelProfileId === "string" && payload.modelProfileId ? payload.modelProfileId : undefined);
+    const requestedId = typeof payload?.modelProfileId === "string" && payload.modelProfileId ? payload.modelProfileId : undefined;
     const profile = profiles.find((item) => item.id === requestedId) ?? getDefaultModelProfile(baseSettings);
     const settings = profile ? resolveModelSettingsProfile(baseSettings, profile.id) : baseSettings;
     const cap = getCapabilityOrOpenAI(settings.provider);
@@ -99,7 +120,6 @@ export function registerChatUiIpc(deps: ChatUiIpcDependencies): void {
       model: settings.model,
       preference: settings.reasoning,
       thinkingOverride: resolveVendorRuntimeSettings(settings).thinkingOverride,
-      // PRO 档（reasoning.mode="pro"）仅 Responses 协议存在，UI 据此决定是否显示
       transport: resolveTransport({
         baseUrl: settings.baseUrl,
         explicitTransport: settings.explicitTransport,
@@ -206,17 +226,15 @@ export function registerChatUiIpc(deps: ChatUiIpcDependencies): void {
   });
 
   ipc.handle(IPC.CHAT_GET_IMAGE_SEND_STRATEGY, (_event, payload: unknown) => {
-    // 按会话解析：会话绑定的档案若声明了 multimodal 则优先于全局值；
-    // 无 sessionId / 会话未绑档案 / 档案未声明 → 回退全局（现行为）。
+    // 按会话统一解析（binding + effective model）：会话绑定的档案若声明了 multimodal
+    // 则优先于全局值；无 sessionId / 会话不存在 → 回退全局（现行为）。
     const sessionId = payload && typeof payload === "object"
       ? (payload as { sessionId?: unknown }).sessionId
       : undefined;
     let settings = loadModelSettings();
     if (typeof sessionId === "string" && sessionId) {
-      const session = getSession(sessionId);
-      if (session?.modelProfileId) {
-        settings = resolveModelSettingsProfile(settings, session.modelProfileId);
-      }
+      const sessionRecord = getSessionRecord(sessionId);
+      if (sessionRecord) settings = resolveSessionModelSettings(settings, sessionRecord);
     }
     // 图片路由统一收口在 image-router；返回形状保持 { mode: "direct" | "caption" } 不变。
     // reject（纯文本主模型 + 未配视觉模型）映射为 caption：UI 侧转述请求会拿到路由的

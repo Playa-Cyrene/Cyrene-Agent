@@ -469,4 +469,156 @@ describe("chats IPC mode filtering", () => {
     expect(mocks.openPath).toHaveBeenCalledOnce();
     expect(mocks.openPath).toHaveBeenCalledWith(fs.realpathSync(workspaceRoot));
   });
+
+  // ── 会话级模型状态（Invariant B/D 的 IPC 层）──────────────────
+  // 预置带 A/B 两个档案的 model-settings.json，让真实 loadModelSettings 读到。
+  function writeModelSettings(profiles: unknown[], defaultId: string) {
+    fs.writeFileSync(path.join(mocks.userDataDir, "model-settings.json"), JSON.stringify({
+      schemaVersion: 2,
+      mode: "auto",
+      provider: "GLM（智谱）",
+      baseUrl: "https://open.bigmodel.cn/api/paas/v4",
+      model: "glm-5.3",
+      apiKey: "sk-test",
+      explicitTransport: "openai",
+      perProvider: {},
+      modelProfiles: profiles,
+      defaultModelProfileId: defaultId,
+      runtimeSync: "off",
+      stickerEnabled: true,
+      stickerSize: "standard",
+      stickerSimilarityThreshold: 0.55,
+      chatRequestTimeoutSec: 300,
+      citaRepairBudgetSec: 8,
+      rerankerMode: "standard",
+      embeddingModel: "bgem3",
+      multimodal: true,
+      contextWindowTokens: 256000,
+    }));
+  }
+
+  // A 多模型（默认 glm-x + 子模型 glm-a2）；B 默认 glm-b1，清单里带同名 glm-x
+  const PROFILE_A = {
+    id: "p-a", provider: "GLM（智谱）", baseUrl: "https://a.example", apiKey: "sk-a",
+    model: "glm-x", models: ["glm-x", "glm-a2"],
+  };
+  const PROFILE_B = {
+    id: "p-b", provider: "GLM（智谱）", baseUrl: "https://b.example", apiKey: "sk-b",
+    model: "glm-b1", models: ["glm-b1", "glm-x"],
+  };
+
+  it("#16 CHATS_CREATE 创建即快照默认模型；CHATS_SET_MODEL_PROFILE 原子重置为新档案默认", async () => {
+    writeModelSettings([PROFILE_A, PROFILE_B], "p-a");
+    const { registerChatsIpc } = await import("./chats-ipc");
+    registerChatsIpc();
+    const create = mocks.handlers.get(IPC.CHATS_CREATE);
+    const setSessionModel = mocks.handlers.get(IPC.CHATS_SET_SESSION_MODEL);
+    const setProfile = mocks.handlers.get(IPC.CHATS_SET_MODEL_PROFILE);
+    if (!create || !setSessionModel || !setProfile) {
+      throw new Error("model state IPC handlers were not registered");
+    }
+    const event = { sender: {} };
+
+    // 创建即快照：绑定 + 模型 = 默认档案（p-a）的默认模型
+    const session = await create(event, { mode: "chat" }) as {
+      id: string; modelProfileId?: string; model?: string;
+    };
+    expect(session).toMatchObject({ modelProfileId: "p-a", model: "glm-x" });
+
+    // 会话切到 A 的子模型，再切档案 B → 模型原子重置为 B 默认（不继承子模型选择）
+    await expect(setSessionModel(event, { id: session.id, model: "glm-a2" })).resolves.toEqual(
+      expect.objectContaining({ ok: true }),
+    );
+    const switched = await setProfile(event, { id: session.id, modelProfileId: "p-b" }) as {
+      modelProfileId?: string;
+      model?: string;
+    };
+    expect(switched).toMatchObject({ modelProfileId: "p-b", model: "glm-b1" });
+  });
+
+  it("#17 A 与 B 清单含同名模型：切 B 仍取 B 默认，同名不继承", async () => {
+    writeModelSettings([PROFILE_A, PROFILE_B], "p-a");
+    const { registerChatsIpc } = await import("./chats-ipc");
+    registerChatsIpc();
+    const create = mocks.handlers.get(IPC.CHATS_CREATE);
+    const setProfile = mocks.handlers.get(IPC.CHATS_SET_MODEL_PROFILE);
+    if (!create || !setProfile) throw new Error("model state IPC handlers were not registered");
+    const event = { sender: {} };
+
+    // 创建即快照 A 默认 glm-x；glm-x 同时也在 B 清单里——切档案必须取 B 默认
+    const session = await create(event, { mode: "chat" }) as { id: string; model?: string };
+    expect(session.model).toBe("glm-x");
+    const switched = await setProfile(event, { id: session.id, modelProfileId: "p-b" }) as {
+      model?: string;
+    };
+    expect(switched.model).toBe("glm-b1");
+  });
+
+  it("#24 stale 绑定下主动选择 → 原子修复为回退档案 + 选中模型", async () => {
+    writeModelSettings([PROFILE_A, PROFILE_B], "p-a");
+    const { registerChatsIpc } = await import("./chats-ipc");
+    const chatsStore = await import("./chats-store");
+    registerChatsIpc();
+    chatsStore.initialize();
+    const setSessionModel = mocks.handlers.get(IPC.CHATS_SET_SESSION_MODEL);
+    if (!setSessionModel) throw new Error("session model IPC handler was not registered");
+    const event = { sender: {} };
+
+    // 直建绑定失效的会话（绑定的档案不存在）；主动选择 = 确认接受回退档案 p-a
+    const session = chatsStore.createSession({ modelProfileId: "p-deleted", model: "glm-a2" });
+    await expect(setSessionModel(event, { id: session.id, model: "glm-a2" })).resolves.toEqual({
+      ok: true,
+      session: expect.objectContaining({ modelProfileId: "p-a", model: "glm-a2" }),
+    });
+    expect(chatsStore.getSessionRecord(session.id)).toMatchObject({
+      modelProfileId: "p-a",
+      model: "glm-a2",
+    });
+  });
+
+  it("validator 无旁门：回退档案清单之外的模型一律拒绝，会话保持原状", async () => {
+    writeModelSettings([PROFILE_A, PROFILE_B], "p-a");
+    const { registerChatsIpc } = await import("./chats-ipc");
+    const chatsStore = await import("./chats-store");
+    registerChatsIpc();
+    chatsStore.initialize();
+    const setSessionModel = mocks.handlers.get(IPC.CHATS_SET_SESSION_MODEL);
+    if (!setSessionModel) throw new Error("session model IPC handler was not registered");
+    const event = { sender: {} };
+
+    const session = chatsStore.createSession({ modelProfileId: "p-deleted", model: "glm-a2" });
+    // glm-b1 只存在于非回退档案 B → 拒绝（窄 IPC 不留 free-form 旁门）
+    await expect(setSessionModel(event, { id: session.id, model: "glm-b1" })).resolves.toEqual({
+      ok: false,
+      error: "invalid-model",
+    });
+    expect(chatsStore.getSessionRecord(session.id)).toMatchObject({
+      modelProfileId: "p-deleted",
+      model: "glm-a2",
+    });
+  });
+
+  it("CHATS_SET_SESSION_MODEL 入参校验：空模型 → invalid-payload；会话不存在 → session-not-found", async () => {
+    writeModelSettings([PROFILE_A], "p-a");
+    const { registerChatsIpc } = await import("./chats-ipc");
+    registerChatsIpc();
+    const setSessionModel = mocks.handlers.get(IPC.CHATS_SET_SESSION_MODEL);
+    const create = mocks.handlers.get(IPC.CHATS_CREATE);
+    if (!setSessionModel || !create) throw new Error("session model IPC handlers were not registered");
+    const event = { sender: {} };
+
+    const session = await create(event, { mode: "chat" }) as { id: string };
+    await expect(setSessionModel(event, { id: session.id, model: "" })).resolves.toEqual({
+      ok: false,
+      error: "invalid-payload",
+    });
+    await expect(setSessionModel(event, { model: "glm-x" })).resolves.toEqual({
+      ok: false,
+      error: "invalid-payload",
+    });
+    await expect(setSessionModel(event, { id: "missing", model: "glm-x" })).resolves.toEqual({
+      ok: false,
+      error: "session-not-found",
+    });
+  });
 });

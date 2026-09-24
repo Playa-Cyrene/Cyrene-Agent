@@ -183,6 +183,8 @@ export const IPC = {
   CHATS_PENDING_ADJUST: "chats:pending-adjust",
   CHATS_SET_PINNED: "chats:set-pinned",
   CHATS_SET_MODEL_PROFILE: "chats:set-model-profile",
+  // 会话级当前模型窄 IPC：只写会话单字段组（绑定+模型），不碰档案
+  CHATS_SET_SESSION_MODEL: "chats:set-session-model",
   CHATS_OPEN_FOLDER: "chats:open-folder",
   CHATS_OPEN_WORKSPACE: "chats:open-workspace",
   CHATS_MIGRATE_LEGACY: "chats:migrate-legacy",

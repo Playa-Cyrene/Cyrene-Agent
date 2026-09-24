@@ -35,6 +35,7 @@ import type { PendingTurnLifecycle } from "./plugin-host/pending-turn-lifecycle"
 import * as chatsStore from "./chats/chats-store";
 import { createRunAdjustmentPoller } from "./chats/pending-adjustment";
 import { broadcastChatsChanged } from "./chats/chats-ipc";
+import { loadModelSettings, resolveSessionModelSettings } from "./settings/model-settings";
 import type { ChatMessage, ConversationMode, PendingChatAttachment } from "../shared/chat-types";
 import { prepareTranscriptDispatch, type TranscriptRewindRequest } from "./orchestrator/conversation-transcript-coordinator";
 import { getConversationTranscriptStore } from "./orchestrator/conversation-transcript-store";
@@ -151,6 +152,13 @@ export interface AguiRunInput {
   takeoverFromRunId?: string;
   /** 只由主进程根据会话持久化字段注入，渲染端传值不可信。 */
   modelProfileId?: string;
+  /**
+   * 主进程按会话解析后的完整模型配置（含 effective model，四件套之④）。
+   * 桌面 run 由 bridge 注入；提供时 build-options 直接消费、不再按
+   * modelProfileId 重解析——防止 downstream 把会话模型覆盖回档案默认。
+   * 渲染端传值不可信。
+   */
+  sessionModelSettings?: import("./orchestrator/build-options").ModelSettingsLite;
   /** 桌面 edit / regenerate 的轨迹回退锚点（主进程写 turn_rewind；渲染端只传锚点元数据）。 */
   transcriptRewind?: TranscriptRewindRequest;
 }
@@ -546,6 +554,9 @@ export function registerAgUiIpc(
     try {
     // 运行时拒绝未知的历史旁路字段；类型层已不再声明 renderer messages。
     const { messages: _ignoredLegacyMessages, ...safeInput } = input as AguiRunInput & Record<string, unknown>;
+    // 会话级模型解析（consumer #4）：bridge 完成唯一一次解析（binding + effective model），
+    // build-options 直接消费，不再按 modelProfileId 重解析（#26：防 effective 被覆盖回默认）
+    const sessionModelSettings = resolveSessionModelSettings(loadModelSettings(), session);
     built = await perf.track("build_options", () => buildOptionsFn!({
       ...safeInput,
       mode,
@@ -557,6 +568,7 @@ export function registerAgUiIpc(
         modelContext,
       } : {}),
       modelProfileId: session.modelProfileId,
+      sessionModelSettings,
       executionMode: agentExecutionMode,
     }));
     } catch (error) {

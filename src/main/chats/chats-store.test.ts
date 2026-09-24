@@ -489,4 +489,99 @@ describe("chats store", () => {
     expect(store.setGeneratedTitle(changed.id, "old-first-user", "过期模型标题")).toBe(false);
     expect(store.getSession(changed.id)?.title).toBe("修改后的问题");
   });
+
+  it("#5 旧式会话语义零变化：createSession 不传模型字段 → 磁盘 JSON 不出现 model/modelProfileId", async () => {
+    const store = await import("./chats-store");
+    store.initialize();
+    const session = store.createSession({ title: "旧式会话" });
+
+    const file = path.join(store.getRootDir(), "sessions", `${session.id}.json`);
+    const disk = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
+    expect(disk).not.toHaveProperty("model");
+    expect(disk).not.toHaveProperty("modelProfileId");
+  });
+
+  it("#16 切档案原子转换：绑定与模型同一次写入，旧模型不串进新档案", async () => {
+    const store = await import("./chats-store");
+    store.initialize();
+    const session = store.createSession({ modelProfileId: "p-a", model: "a2" });
+
+    const updated = store.setSessionModelProfile(session.id, "p-b", "b1");
+    expect(updated).toMatchObject({ modelProfileId: "p-b", model: "b1" });
+    // 磁盘与内存一致：不存在"绑定已换、模型还是旧值"的中间态
+    const file = path.join(store.getRootDir(), "sessions", `${session.id}.json`);
+    expect(JSON.parse(fs.readFileSync(file, "utf8"))).toMatchObject({
+      modelProfileId: "p-b",
+      model: "b1",
+    });
+  });
+
+  it("#17 A 与 B 含同名模型：切 B 写入的是 B 的默认模型，不因同名继承旧值", async () => {
+    const store = await import("./chats-store");
+    store.initialize();
+    // 会话当前用 x；B 档案默认 b1，但 B 的清单里也有 x
+    const session = store.createSession({ modelProfileId: "p-a", model: "x" });
+
+    const updated = store.setSessionModelProfile(session.id, "p-b", "b1");
+    expect(updated).toMatchObject({ modelProfileId: "p-b", model: "b1" });
+  });
+
+  it("#22/#23 队列串行：慢 B 先入队、快 C 后入队 → 提交顺序 = 接收顺序，最终态为 C", async () => {
+    const store = await import("./chats-store");
+    store.initialize();
+    const session = store.createSession({ modelProfileId: "p-a", model: "a1" });
+
+    // 模拟 B 请求慢（提交前 await）、C 请求快：若没有串行队列，C 会先落盘被 B 覆盖
+    const slowB = store.enqueueSessionModelMutation(session.id, async () => {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      return store.setSessionModelProfile(session.id, "p-b", "b1");
+    });
+    const fastC = store.enqueueSessionModelMutation(session.id, () =>
+      store.setSessionModelProfile(session.id, "p-c", "c1"));
+    await Promise.all([slowB, fastC]);
+
+    expect(store.getSessionRecord(session.id)).toMatchObject({ modelProfileId: "p-c", model: "c1" });
+    const file = path.join(store.getRootDir(), "sessions", `${session.id}.json`);
+    expect(JSON.parse(fs.readFileSync(file, "utf8"))).toMatchObject({
+      modelProfileId: "p-c",
+      model: "c1",
+    });
+  });
+
+  it("队列前一笔失败不卡后续：各自把结果带回调用方，最终态由后一笔决定", async () => {
+    const store = await import("./chats-store");
+    store.initialize();
+    const session = store.createSession({ modelProfileId: "p-a", model: "a1" });
+
+    const failing = store.enqueueSessionModelMutation(session.id, async () => {
+      throw new Error("boom");
+    });
+    const next = store.enqueueSessionModelMutation(session.id, () =>
+      store.setSessionModelProfile(session.id, "p-d", "d1"));
+    await expect(failing).rejects.toThrow("boom");
+    await expect(next).resolves.toMatchObject({ modelProfileId: "p-d", model: "d1" });
+    expect(store.getSessionRecord(session.id)).toMatchObject({ modelProfileId: "p-d", model: "d1" });
+  });
+
+  it("不同会话的队列互不阻塞", async () => {
+    const store = await import("./chats-store");
+    store.initialize();
+    const first = store.createSession({ title: "会话一" });
+    const second = store.createSession({ title: "会话二" });
+
+    const slowFirst = store.enqueueSessionModelMutation(first.id, async () => {
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      return store.setSessionModelProfile(first.id, "p-b", "b1");
+    });
+    const fastSecond = store.enqueueSessionModelMutation(second.id, () =>
+      store.setSessionModelProfile(second.id, "p-c", "c1"));
+    // second 先完成（不等 first 的慢队列）
+    await expect(Promise.race([
+      fastSecond.then(() => "second"),
+      slowFirst.then(() => "first"),
+    ])).resolves.toBe("second");
+    await Promise.all([slowFirst, fastSecond]);
+    expect(store.getSessionRecord(first.id)).toMatchObject({ modelProfileId: "p-b", model: "b1" });
+    expect(store.getSessionRecord(second.id)).toMatchObject({ modelProfileId: "p-c", model: "c1" });
+  });
 });

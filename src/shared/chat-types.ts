@@ -305,6 +305,12 @@ export interface ChatSession {
   /** 当前会话选择的已保存模型；缺失时使用默认模型。 */
   modelProfileId?: string;
   /**
+   * 本对话固定的当前模型（从属于 modelProfileId 绑定，Invariant B）。
+   * 缺省 = 旧会话：继续跟随绑定档案默认模型的动态解析（兼容性例外，不回填）。
+   * 创建对话时快照档案默认模型；切档案时原子重置；手动切模型时写选中值。
+   */
+  model?: string;
+  /**
    * 会话级最新上下文容量快照：上下文环形图的唯一读取点（消息级 contextUsage 仅作历史兜底）。
    * 手动压缩等「不产生新 assistant 消息但改变上下文构成」的操作写这里，
    * 避免 UI 显示过期数据（known-issues 问题 3）。
@@ -326,6 +332,14 @@ export interface ChatSessionRecordV2 extends Omit<ChatSession, "messages" | "sch
 }
 
 export type ChatSessionRecord = ChatSession | ChatSessionRecordV2;
+
+/**
+ * 会话级模型切换 IPC（CHATS_SET_SESSION_MODEL）的返回。
+ * 失败原因机器可读：渲染层据此回滚 UI，不假装成功。
+ */
+export type ChatsSetSessionModelResult =
+  | { ok: true; session: ChatSession }
+  | { ok: false; error: "invalid-payload" | "session-not-found" | "no-profile" | "invalid-model" };
 
 // index.json 里的轻量元数据（列表渲染用）。
 export interface ChatSessionMeta {

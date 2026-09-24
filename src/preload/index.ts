@@ -723,6 +723,9 @@ const chatStoreApi = {
     ipcRenderer.invoke(IPC.CHATS_SET_PINNED, { id, pinned }),
   setModelProfile: (id: string, modelProfileId?: string) =>
     ipcRenderer.invoke(IPC.CHATS_SET_MODEL_PROFILE, { id, modelProfileId }),
+  // 会话级当前模型窄 IPC：主进程校验 + 原子写入，失败返回机器可读错误（UI 据此回滚）
+  setSessionModel: (id: string, model: string) =>
+    ipcRenderer.invoke(IPC.CHATS_SET_SESSION_MODEL, { id, model }),
   openFolder: () => ipcRenderer.invoke(IPC.CHATS_OPEN_FOLDER),
   openWorkspace: (workspaceRoot: string) =>
     ipcRenderer.invoke(IPC.CHATS_OPEN_WORKSPACE, workspaceRoot),

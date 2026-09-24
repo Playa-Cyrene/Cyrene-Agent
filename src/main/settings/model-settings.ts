@@ -8,6 +8,11 @@ import { getSettingsPath } from "../settings-store";
 import { migrateLegacyMinimaxDefaults } from "../orchestrator/vendors/minimax-defaults";
 import { getCapabilityOrOpenAI } from "../orchestrator/vendors/capabilities";
 import { getVendorShortName } from "../../shared/vendor-registry";
+import {
+  resolveSessionProfileBinding,
+  resolveEffectiveSessionModel,
+  type SessionModelBindingInput,
+} from "../../shared/session-model";
 import { addModelProfile, resolveDefaultModelProfile, updateModelProfile, type SavedModelProfile } from "./model-catalog";
 
 /**
@@ -31,7 +36,10 @@ export interface PublicModelConfig {
 // 单个厂商的可缓存配置：用户切到别的厂商再切回来，这三个字段从这里恢复。
 export interface ProviderProfile {
   baseUrl: string;
+  /** 此档案"新对话"的默认模型（语义降级：不再是运行时唯一真值）。 */
   model: string;
+  /** 档案内可切换的模型清单。缺省 = 单模型档案，行为与现状一致。 */
+  models?: string[];
   apiKey: string;
   displayName?: string;
   /**
@@ -218,9 +226,34 @@ function normalizeProviderProfile(
   const explicitTransport: ProviderProfile["explicitTransport"] =
     migrateLegacyExplicitTransport(input, provider);
   const rawContextWindow = (input as { contextWindowTokens?: unknown })?.contextWindowTokens;
+  const model = typeof input?.model === "string" ? input.model.trim() : "";
+  // 模型清单六步契约（顺序是业务数据，删除当前模型后的顺位 fallback 依赖它）：
+  // 1. trim model；2. models 逐项 trim → 去空；3. 稳定去重（保持首现顺序，大小写原样）；
+  // 4. 清单为空 → 移除字段、保留 model；5. model ∉ models → 顺位取 models[0]；
+  // 6. 清单长度 ≤ 1 → 移除字段（单模型档案不落盘清单，旧档案 JSON 零变化）。
+  let models: string[] | undefined;
+  const rawModels = (input as { models?: unknown })?.models;
+  if (Array.isArray(rawModels)) {
+    const seen = new Set<string>();
+    const cleaned: string[] = [];
+    for (const item of rawModels) {
+      if (typeof item !== "string") continue;
+      const trimmed = item.trim();
+      if (!trimmed || seen.has(trimmed)) continue;
+      seen.add(trimmed);
+      cleaned.push(trimmed);
+    }
+    if (cleaned.length > 0) models = cleaned;
+  }
+  let effectiveModel = model;
+  if (models) {
+    if (!models.includes(effectiveModel)) effectiveModel = models[0];
+    if (models.length <= 1) models = undefined;
+  }
   return {
     baseUrl: typeof input?.baseUrl === "string" ? input.baseUrl.trim() : "",
-    model: typeof input?.model === "string" ? input.model.trim() : "",
+    model: effectiveModel,
+    ...(models ? { models } : {}),
     apiKey: typeof input?.apiKey === "string" ? input.apiKey.trim() : "",
     displayName: typeof input?.displayName === "string" && input?.displayName.trim() ? input.displayName.trim() : undefined,
     explicitTransport,
@@ -414,6 +447,26 @@ export function resolveModelSettingsProfile(settings: ModelSettings, id?: string
     contextWindowTokens: profile.contextWindowTokens ?? settings.contextWindowTokens,
     multimodal: profile.multimodal ?? settings.multimodal,
   };
+}
+
+/**
+ * ④ 会话级完整模型配置（四件套之④，②+③ 组合）：全部会话感知消费点的统一入口。
+ * - 绑定命中原档案 且 session.model ∈ 档案清单 → 用会话模型（对话自持）
+ * - 绑定失效/无绑定 → 回退默认档案链，raw session.model 一并失效（Invariant B/C，
+ *   不许旧档案的模型选择"串"进回退档案）
+ * - 一个档案都没有 → 返回 settings 原样（顶层镜像，保持旧行为）
+ */
+export function resolveSessionModelSettings(
+  settings: ModelSettings,
+  session: SessionModelBindingInput,
+): ModelSettings {
+  const binding = resolveSessionProfileBinding(settings, session);
+  if (!binding.profile) return settings;
+  // resolvedProfileId 一定命中有效档案（命中绑定或回退默认链），展开不会落空
+  const expanded = resolveModelSettingsProfile(settings, binding.resolvedProfileId);
+  const model = resolveEffectiveSessionModel(session, binding);
+  if (!model || model === expanded.model) return expanded;
+  return { ...expanded, model };
 }
 
 export function saveModelProfile(input: Omit<SavedModelProfile, "id"> & { id?: string }): { settings: ModelSettings; added: boolean } {

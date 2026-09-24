@@ -521,7 +521,11 @@ export async function buildAgentRunOptions(
   input: BuildOptionsInput,
   deps: BuildOptionsDeps,
 ): Promise<{ options: CyreneRunOptions; latestUserText: string }> {
-  const settings = deps.loadModelSettings(input.modelProfileId);
+  // 会话级模型配置（consumer #4 的 request assembly boundary）：
+  // 桌面 bridge 已按会话解析好（含 effective model），直接消费；
+  // 只有非桌面入口（渠道等）才按 modelProfileId 解析——同一输入二选一，
+  // 不允许 downstream 再解析一遍把会话模型覆盖回档案默认。
+  const settings = input.sessionModelSettings ?? deps.loadModelSettings(input.modelProfileId);
   const styleSettings = deps.loadGeneralSettings();
   if (!settings.baseUrl) {
     throw new Error("还没有填写 API URL，请先在设置里保存 API 配置。");

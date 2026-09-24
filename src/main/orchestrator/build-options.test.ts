@@ -959,6 +959,42 @@ describe("build-options", () => {
       now: 100,
     })
   })
+
+  it("#26 sessionModelSettings 直达请求装配：会话模型不被 loadModelSettings 重解析覆盖", async () => {
+    const deps = createBuildDeps()
+    deps.loadModelSettings = vi.fn(() => ({
+      provider: "test", baseUrl: "https://example.test", model: "profile-default", apiKey: "k",
+    }))
+
+    const result = await buildAgentRunOptions({
+      sessionId: "session-override",
+      messages: [{ role: "user", content: "你好" }],
+      // 即便同时携带 modelProfileId，也不允许 downstream 据此把会话模型覆盖回档案默认
+      modelProfileId: "p-a",
+      sessionModelSettings: {
+        provider: "test", baseUrl: "https://example.test", model: "glm-session", apiKey: "k",
+      },
+    }, deps)
+
+    expect(result.options.settings.model).toBe("glm-session")
+    expect(deps.loadModelSettings).not.toHaveBeenCalled()
+  })
+
+  it("不传 sessionModelSettings 时按 modelProfileId 解析（非桌面入口回退路径不变）", async () => {
+    const deps = createBuildDeps()
+    deps.loadModelSettings = vi.fn((modelProfileId?: string) => ({
+      provider: "test", baseUrl: "https://example.test", model: `by-profile:${modelProfileId}`, apiKey: "k",
+    }))
+
+    const result = await buildAgentRunOptions({
+      sessionId: "channel-run",
+      messages: [{ role: "user", content: "你好" }],
+      modelProfileId: "p-b",
+    }, deps)
+
+    expect(deps.loadModelSettings).toHaveBeenCalledWith("p-b")
+    expect(result.options.settings.model).toBe("by-profile:p-b")
+  })
 })
 
 describe("moments context 注入（Phase 3 Chat Awareness）", () => {
