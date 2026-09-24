@@ -9,6 +9,42 @@ function tmpDir(): string {
 }
 
 describe("scheduler store", () => {
+  it("rejects a user scheduled task that is not bound to a workspace", () => {
+    const dir = tmpDir();
+    const store = createSchedulerStore({
+      tasksFile: path.join(dir, "scheduled-tasks.json"),
+      historyFile: path.join(dir, "scheduled-tasks-history.jsonl"),
+      now: () => new Date("2026-06-22T08:00:00.000Z"),
+      id: () => "id-1",
+    });
+    store.load();
+
+    expect(() => store.addTask({
+      title: "Workspace-bound",
+      prompt: "Run in a selected folder",
+      schedule: { kind: "daily", timeOfDay: "09:00" },
+    })).toThrow("必须绑定工作区");
+  });
+
+  it("rejects modes other than work and code for user scheduled tasks", () => {
+    const dir = tmpDir();
+    const store = createSchedulerStore({
+      tasksFile: path.join(dir, "scheduled-tasks.json"),
+      historyFile: path.join(dir, "scheduled-tasks-history.jsonl"),
+      now: () => new Date("2026-06-22T08:00:00.000Z"),
+      id: () => "id-1",
+    });
+    store.load();
+
+    expect(() => store.addTask({
+      title: "Invalid mode",
+      prompt: "Run",
+      schedule: { kind: "daily", timeOfDay: "09:00" },
+      workspaceBinding: { workspaceRoot: "E:/project", displayName: "project", boundAt: 1 },
+      mode: "chat",
+    })).toThrow("模式仅支持");
+  });
+
   it("adds and persists a normalized task", () => {
     const dir = tmpDir();
     const store = createSchedulerStore({
@@ -23,6 +59,8 @@ describe("scheduler store", () => {
       title: "  Morning  ",
       prompt: "  Summarize my day  ",
       schedule: { kind: "daily", timeOfDay: "09:00" },
+      workspaceBinding: { workspaceRoot: "E:/project", displayName: "project", boundAt: 1 },
+      mode: "code",
       toolMode: "allow-list",
       allowedToolIds: ["weather", "weather", "calendar"],
     });
@@ -30,6 +68,8 @@ describe("scheduler store", () => {
     expect(task.title).toBe("Morning");
     expect(task.prompt).toBe("Summarize my day");
     expect(task.allowedToolIds).toEqual(["weather", "calendar"]);
+    expect(task.workspaceBinding).toEqual({ workspaceRoot: "E:/project", displayName: "project", boundAt: 1 });
+    expect(task.mode).toBe("code");
     expect(task.nextFireAt).toBeTruthy();
 
     const store2 = createSchedulerStore({
@@ -41,6 +81,28 @@ describe("scheduler store", () => {
     store2.load();
     expect(store2.getTasks()).toHaveLength(1);
     expect(store2.getTasks()[0].title).toBe("Morning");
+  });
+
+  it("increments runCount on each scheduled occurrence and accepts an end condition", () => {
+    const dir = tmpDir();
+    const store = createSchedulerStore({
+      tasksFile: path.join(dir, "scheduled-tasks.json"),
+      historyFile: path.join(dir, "scheduled-tasks-history.jsonl"),
+      now: () => new Date("2026-06-22T08:00:00.000Z"),
+      id: () => "limited-task",
+    });
+    store.load();
+    const task = store.addTask({
+      title: "Limited",
+      prompt: "Run",
+      schedule: { kind: "weekdays", timeOfDay: "09:00" },
+      workspaceBinding: { workspaceRoot: "E:/project", displayName: "project", boundAt: 1 },
+      maxRuns: 3,
+    });
+    expect(task.runCount).toBe(0);
+    expect(store.updateTask(task.id, { lastFiredAt: "2026-06-22T09:00:00.000Z" }).runCount).toBe(1);
+    expect(store.updateTask(task.id, { lastFiredAt: "2026-06-23T09:00:00.000Z" }).runCount).toBe(2);
+    expect(() => store.updateTask(task.id, { maxRuns: 0 })).toThrow("1-10000");
   });
 
   it("keeps 50 history entries per task and 1000 globally", () => {
@@ -81,8 +143,8 @@ describe("scheduler store", () => {
     });
     store.load();
 
-    const first = store.addTask({ title: "A", prompt: "Run A", schedule: { kind: "daily", timeOfDay: "08:00" } });
-    const second = store.addTask({ title: "B", prompt: "Run B", schedule: { kind: "daily", timeOfDay: "09:00" } });
+    const first = store.addTask({ title: "A", prompt: "Run A", schedule: { kind: "daily", timeOfDay: "08:00" }, workspaceBinding: { workspaceRoot: "E:/project", displayName: "project", boundAt: 1 } });
+    const second = store.addTask({ title: "B", prompt: "Run B", schedule: { kind: "daily", timeOfDay: "09:00" }, workspaceBinding: { workspaceRoot: "E:/project", displayName: "project", boundAt: 1 } });
 
     expect(first.id).toBe("same-id");
     expect(second.id).not.toBe("same-id");
@@ -150,6 +212,7 @@ describe("scheduler store", () => {
       title: "Hourly",
       prompt: "Run hourly",
       schedule: { kind: "interval", every: 1, unit: "hours" },
+      workspaceBinding: { workspaceRoot: "E:/project", displayName: "project", boundAt: 1 },
     });
     expect(task.nextFireAt).toBe("2026-06-22T09:00:00.000Z");
 
@@ -235,8 +298,8 @@ describe("scheduler store", () => {
       expect(pluginTask?.toolMode).toBe("allow-list");
       expect(pluginTask?.pluginUserEnabled).toBe(true);
       expect(pluginTask?.approvalFingerprint).toBe("abc");
-      // 用户任务不受影响
-      expect(userTask?.enabled).toBe(true);
+      // 旧版用户任务没有冻结的工作区，不能静默在当前工作区执行。
+      expect(userTask?.enabled).toBe(false);
       expect(userTask?.ownerPluginId).toBeUndefined();
     });
 
@@ -301,7 +364,7 @@ describe("scheduler store", () => {
         })(),
       });
       store.load();
-      store.addTask({ title: "用户任务", prompt: "A", schedule: { kind: "daily", timeOfDay: "08:00" } });
+      store.addTask({ title: "用户任务", prompt: "A", schedule: { kind: "daily", timeOfDay: "08:00" }, workspaceBinding: { workspaceRoot: "E:/project", displayName: "project", boundAt: 1 } });
       store.addTask({ title: "插件 A 任务", prompt: "B", schedule: { kind: "daily", timeOfDay: "08:00" }, ownerPluginId: "plugin-a" });
       store.addTask({ title: "插件 A 任务 2", prompt: "C", schedule: { kind: "daily", timeOfDay: "09:00" }, ownerPluginId: "plugin-a" });
       store.addTask({ title: "插件 B 任务", prompt: "D", schedule: { kind: "daily", timeOfDay: "10:00" }, ownerPluginId: "plugin-b" });

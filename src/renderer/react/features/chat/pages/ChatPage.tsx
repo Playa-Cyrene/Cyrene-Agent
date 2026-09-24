@@ -30,6 +30,7 @@ import type {
   ConversationMode,
   PendingChatMessage,
 } from "../../../../../shared/chat-types";
+import type { SidebarOrganizationDraft, SidebarOrganizationSnapshot } from "../../../../../shared/sidebar-organization";
 import { type ContextUsageSnapshot } from "../../../../../shared/context-usage";
 import { ChatPagePanelHost } from "../components/ChatPagePanelHost";
 import { useUserCallPreference } from "../../../hooks/useUserNickname";
@@ -179,6 +180,8 @@ export function ChatPage({ onOpenSettings }: { onOpenSettings?: () => void } = {
     Partial<Record<ConversationMode, string>>
   >({});
   const [sessionsByMode, setSessionsByMode] = useState<Partial<Record<ConversationMode, ChatSessionMeta[]>>>({});
+  const [sidebarSessions, setSidebarSessions] = useState<ChatSessionMeta[]>(EMPTY_SESSIONS);
+  const [sidebarOrganization, setSidebarOrganization] = useState<SidebarOrganizationSnapshot | null>(null);
   const [activeSessionIds, setActiveSessionIds] = useState<Partial<Record<ConversationMode, string>>>({});
 
   const [modelBusyByMode, setModelBusyByMode] = useState<Partial<Record<ConversationMode, boolean>>>({});
@@ -204,6 +207,7 @@ export function ChatPage({ onOpenSettings }: { onOpenSettings?: () => void } = {
   const activeSessionIdsRef = useRef(activeSessionIds);
   const activeScopeRef = useRef(`mode:${mode}`);
   const sessionSelectionGeneration = useRef(0);
+  const sidebarSelectionRequest = useRef(0);
 
   const activeRunsBySession = useRef<Record<string, { assistantId: string; runId?: string; mode: ConversationMode }>>({});
   const runCheckpointBySessionRef = useRef<Record<string, (status: "running" | "waiting_user") => void>>({});
@@ -453,6 +457,7 @@ export function ChatPage({ onOpenSettings }: { onOpenSettings?: () => void } = {
     const store = chatStore();
     if (!store) return;
     const refresh = () => {
+      void refreshSidebarData();
       void refreshSessions(activeModeRef.current, true);
       // 队列投影对账：刷新当前各模式活跃会话与所有仍有投影的会话
       // （其他窗口可能入队/删除/认领；会话已删时 pendingList 返回 null 清除投影）
@@ -463,7 +468,9 @@ export function ChatPage({ onOpenSettings }: { onOpenSettings?: () => void } = {
       for (const sessionId of sessionIds) void queueFlow.syncProjection(sessionId);
     };
     const off = store.onChanged(refresh);
-    return off;
+    const offOrganization = store.onSidebarOrganizationChanged(refreshSidebarData);
+    void refreshSidebarData();
+    return () => { off(); offOrganization(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -732,6 +739,7 @@ export function ChatPage({ onOpenSettings }: { onOpenSettings?: () => void } = {
     const store = chatStore();
     if (!store) return;
     const listed = await store.list({ mode: targetMode });
+    void refreshSidebarData();
     // 内容未变时返回原引用：React 对同引用 state 会 bailout，导航/侧栏 memo 不再被重复刷新穿透
     setSessionsByMode((current) => {
       const existing = current[targetMode];
@@ -754,6 +762,51 @@ export function ChatPage({ onOpenSettings }: { onOpenSettings?: () => void } = {
     setWorkspaceNames((current) => ({ ...current, [targetMode]: undefined }));
     if (targetMode === activeModeRef.current) void store.setActiveSession(null, targetMode);
   }
+
+  async function refreshSidebarData() {
+    const store = chatStore();
+    if (!store) return;
+    try {
+      const [listed, organization] = await Promise.all([
+        store.list(),
+        store.getSidebarOrganization(),
+      ]);
+      const workAndCode = listed.filter((session) => session.mode === "work" || session.mode === "code");
+      setSidebarSessions((current) => sessionMetaListEqual(current, workAndCode) ? current : workAndCode);
+      setSidebarOrganization(organization);
+    } catch (error) {
+      console.error("[ChatPage] Failed to refresh sidebar organization:", error);
+    }
+  }
+
+  const saveSidebarOrganization = useCallback(async (draft: SidebarOrganizationDraft): Promise<boolean> => {
+    const store = chatStore();
+    if (!store) return false;
+    try {
+      const base = sidebarOrganization ?? await store.getSidebarOrganization();
+      const cleanDraft: SidebarOrganizationDraft = {
+        projects: draft.projects,
+        projectOrder: draft.projectOrder,
+        projectCategories: draft.projectCategories,
+        projectCategoryMembers: draft.projectCategoryMembers,
+        groups: draft.groups,
+        topLevelOrder: draft.topLevelOrder,
+        groupMembers: draft.groupMembers,
+      };
+      const result = await store.applySidebarOrganization(base.revision, cleanDraft);
+      setSidebarOrganization(result.snapshot);
+      if (!result.ok) {
+        if (result.reason === "conflict") void refreshSidebarData();
+        feedback.notice({ tone: "error", message: t("sidebar.organizationSaveFailed") });
+        return false;
+      }
+      return true;
+    } catch (error) {
+      console.error("[ChatPage] Failed to save sidebar organization:", error);
+      feedback.notice({ tone: "error", message: t("sidebar.organizationSaveFailed") });
+      return false;
+    }
+  }, [sidebarOrganization, feedback, t]);
 
   // 渲染期间同步安装真实实现，保证 mount effect 不会先观察到默认 no-op。
   refreshSessionsRef.current = refreshSessions;
@@ -1473,9 +1526,16 @@ export function ChatPage({ onOpenSettings }: { onOpenSettings?: () => void } = {
   const navTogglePanel = useCallback((panel: ChatPagePanel) => {
     setActivePanel((current) => current === panel ? null : panel);
   }, []);
-  const navSelectSession = useCallback((sessionId: string) => {
+  const navSelectSession = useCallback((sessionId: string, targetMode?: ConversationMode) => {
     setActivePanel(null);
-    void navActionsRef.current.selectSession(sessionId);
+    if (targetMode && targetMode !== activeModeRef.current) setMode(targetMode);
+    const modeToSelect = targetMode ?? activeModeRef.current;
+    const requestId = ++sidebarSelectionRequest.current;
+    void navActionsRef.current.selectSession(sessionId, modeToSelect).then(() => {
+      if (sidebarSelectionRequest.current === requestId && activeSessionIdsRef.current[modeToSelect] === sessionId) {
+        void chatStore()?.setActiveSession(sessionId, modeToSelect);
+      }
+    });
   }, []);
   const navOpenProject = useCallback((workspaceRoot: string) => {
     navActionsRef.current.openProject(workspaceRoot);
@@ -1504,6 +1564,9 @@ export function ChatPage({ onOpenSettings }: { onOpenSettings?: () => void } = {
         activePanel={activePanel}
         mode={mode}
         sessions={sessions}
+        sidebarSessions={sidebarSessions}
+        sidebarOrganization={sidebarOrganization}
+        onSaveSidebarOrganization={saveSidebarOrganization}
         activeSessionId={activeSessionId}
         onToggleCollapsed={navToggleCollapsed}
         onModeChange={navModeChange}
@@ -1554,7 +1617,17 @@ export function ChatPage({ onOpenSettings }: { onOpenSettings?: () => void } = {
           </span>
         )}
         {activePanel ? (
-          <ChatPagePanelHost panel={activePanel} />
+          <ChatPagePanelHost
+            panel={activePanel}
+            onPickWorkspace={async () => {
+              const store = chatStore();
+              return store ? store.pickWorkspaceFolder() : { ok: false, error: t("scheduler.workspacePickerUnavailable") };
+            }}
+            onOpenSession={(sessionId) => {
+              setActivePanel(null);
+              void openSessionById(sessionId);
+            }}
+          />
         ) : (
         <>
         {(mode === "work" || mode === "learn") && (

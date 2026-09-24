@@ -24,6 +24,8 @@ type LegacyRunOptions = Omit<CyreneRunOptions, "toolSystemContent" | "soulSystem
 
 interface RunnerDeps {
   buildOptions: (task: ScheduledTask) => Promise<LegacyRunOptions>;
+  /** 有绑定工作区的用户任务每次触发创建独立 Cyrene 会话，不复用当前活动聊天。 */
+  createRunSession?: (task: ScheduledTask) => string;
   getChatWebContents: () => WebContents | null;
   recordHistory: (entry: ScheduledTaskHistoryEntry) => void;
   id: () => string;
@@ -74,7 +76,18 @@ export function createSchedulerRunner(deps: RunnerDeps) {
     const effectiveToolIds = effectiveTools.map(t => t.id);
     // Freeze the UI target before any async build work; a later window switch
     // must not redirect this run's canonical facts or presentation events.
-    const conversationId = deps.getActiveConversation?.()?.sessionId ?? null;
+    let conversationId: string | null = null;
+    let sessionCreationError: Error | undefined;
+    if (task.workspaceBinding) {
+      try {
+        conversationId = deps.createRunSession?.(task) ?? null;
+        if (!conversationId) sessionCreationError = new Error("无法为定时任务创建独立会话");
+      } catch (error) {
+        sessionCreationError = error instanceof Error ? error : new Error(String(error));
+      }
+    } else {
+      conversationId = deps.getActiveConversation?.()?.sessionId ?? null;
+    }
     const runMode = task.mode ?? "work";
     const noticeId = `scheduler-notice-${historyId}`;
     const replyId = `scheduler-reply-${historyId}`;
@@ -98,6 +111,7 @@ export function createSchedulerRunner(deps: RunnerDeps) {
       status: "running",
       reason: manual ? "manual fireNow" : undefined,
       effectiveToolIds,
+      ...(conversationId ? { sessionId: conversationId } : {}),
     });
 
     const send = (event: unknown): void => {
@@ -122,6 +136,7 @@ export function createSchedulerRunner(deps: RunnerDeps) {
           reason: status,
           errorMessage: message,
           effectiveToolIds,
+          ...(conversationId ? { sessionId: conversationId } : {}),
         });
       } catch {
         // The UI error event remains the last-resort durable signal when history is unavailable.
@@ -193,6 +208,7 @@ export function createSchedulerRunner(deps: RunnerDeps) {
 
     let transcriptSink: ReturnType<ConversationJournalService["createRunSink"]> | undefined;
     try {
+      if (sessionCreationError) throw sessionCreationError;
       const legacyOptions = await deps.buildOptions(task);
       legacyOptions.tools = effectiveTools;
 
@@ -216,6 +232,7 @@ export function createSchedulerRunner(deps: RunnerDeps) {
         toolSystemContent,
         soulSystemBaseContent,
         ...(conversationId ? { conversationId, runId: historyId } : { runId: historyId }),
+        ...(task.workspaceBinding ? { resolvedWorkspaceRoot: task.workspaceBinding.workspaceRoot } : {}),
         ...(conversationId && deps.conversationJournal ? {
           transcriptSink: deps.conversationJournal.createRunSink({ conversationId, runId: historyId, assistantTurnId: replyId }),
         } : {}),
@@ -335,6 +352,7 @@ export function createSchedulerRunner(deps: RunnerDeps) {
         status: status === "success" ? "success" : "failed",
         outputPreview: displayReply.slice(0, 160),
         effectiveToolIds,
+        ...(conversationId ? { sessionId: conversationId } : {}),
       });
       deps.publishLifecycle?.publishTurnFinished({
         source: "scheduler",

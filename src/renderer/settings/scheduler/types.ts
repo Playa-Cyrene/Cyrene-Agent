@@ -1,10 +1,14 @@
 // Scheduler 面板类型定义
 // 从 settings.ts 抽离的纯类型,无运行时依赖。
+import type { ConversationWorkspaceBinding } from "../../../shared/chat-types";
 
 export type ScheduleConfig =
   | { kind: "once"; runAt: string }
   | { kind: "daily"; timeOfDay: string }
+  | { kind: "weekdays"; timeOfDay: string }
   | { kind: "weekly"; dayOfWeek: 0 | 1 | 2 | 3 | 4 | 5 | 6; timeOfDay: string }
+  | { kind: "monthly"; dayOfMonth: number; timeOfDay: string }
+  | { kind: "yearly"; month: number; dayOfMonth: number; timeOfDay: string }
   | { kind: "interval"; every: number; unit: "minutes" | "hours" };
 
 export type SchedulerToolMode = "all-enabled" | "allow-list";
@@ -16,6 +20,10 @@ export interface ScheduledTask {
   enabled: boolean;
   schedule: ScheduleConfig;
   nextFireAt: string | null;
+  runCount?: number;
+  maxRuns?: number;
+  endAt?: string;
+  workspaceBinding?: ConversationWorkspaceBinding;
   lastFiredAt?: string;
   toolMode: SchedulerToolMode;
   allowedToolIds: string[];
@@ -39,6 +47,7 @@ export interface ScheduledTaskHistoryEntry {
   outputPreview?: string;
   errorMessage?: string;
   effectiveToolIds: string[];
+  sessionId?: string;
 }
 
 export interface SchedulerToolInfo {
@@ -65,4 +74,5 @@ export interface SchedulerApi {
   fireNow: (id: string) => Promise<SchedulerResult<boolean>>;
   getHistory: (taskId: string, limit?: number) => Promise<SchedulerResult<ScheduledTaskHistoryEntry[]>>;
   getTools: () => Promise<SchedulerResult<SchedulerToolInfo[]>>;
+  onChanged?: (callback: () => void) => () => void;
 }

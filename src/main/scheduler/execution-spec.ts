@@ -9,8 +9,14 @@ function canonicalSchedule(schedule: ScheduleConfig): Record<string, unknown> {
       return { kind: "once", runAt: schedule.runAt };
     case "daily":
       return { kind: "daily", timeOfDay: schedule.timeOfDay };
+    case "weekdays":
+      return { kind: "weekdays", timeOfDay: schedule.timeOfDay };
     case "weekly":
       return { kind: "weekly", dayOfWeek: schedule.dayOfWeek, timeOfDay: schedule.timeOfDay };
+    case "monthly":
+      return { kind: "monthly", dayOfMonth: schedule.dayOfMonth, timeOfDay: schedule.timeOfDay };
+    case "yearly":
+      return { kind: "yearly", month: schedule.month, dayOfMonth: schedule.dayOfMonth, timeOfDay: schedule.timeOfDay };
     case "interval":
       return { kind: "interval", every: schedule.every, unit: schedule.unit };
   }
@@ -39,7 +45,7 @@ export function computeExecutionSpecFingerprint(spec: PluginScheduledExecutionSp
 /** 任务当前生效的执行规格；旧任务缺 mode 时按 work 归一化。 */
 export function taskExecutionSpec(task: ScheduledTask): PluginScheduledExecutionSpec {
   return {
-    schedule: task.schedule,
+    schedule: task.schedule as PluginScheduledExecutionSpec["schedule"],
     prompt: task.prompt,
     mode: task.mode ?? "work",
     allowedToolIds: task.allowedToolIds,

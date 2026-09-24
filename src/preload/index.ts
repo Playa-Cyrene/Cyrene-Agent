@@ -22,6 +22,7 @@ import { exposeMusicApi } from "./music";
 import { normalizeChatAppearance, type ChatAppearanceSettings } from "../shared/chat-appearance";
 import type { AppUpdateApi, AppUpdateState } from "../shared/app-update";
 import type { ConversationMode } from "../shared/chat-types";
+import type { SidebarOrganizationDraft, SidebarOrganizationResult, SidebarOrganizationSnapshot } from "../shared/sidebar-organization";
 import type { ToastItem, ToastPushPayload } from "../shared/toast-types";
 
 // 渲染目标标识：preload 每次加载（即每次页面初始化/重新加载）生成一次，
@@ -564,6 +565,11 @@ const schedulerApi = {
   fireNow: (id: string) => ipcRenderer.invoke(IPC.SCHEDULER_FIRE_NOW, id),
   getHistory: (taskId: string, limit?: number) => ipcRenderer.invoke(IPC.SCHEDULER_GET_HISTORY, taskId, limit),
   getTools: () => ipcRenderer.invoke(IPC.SCHEDULER_GET_TOOLS),
+  onChanged: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on(IPC.SCHEDULER_CHANGED, listener);
+    return () => ipcRenderer.removeListener(IPC.SCHEDULER_CHANGED, listener);
+  },
 };
 
 contextBridge.exposeInMainWorld("cyreneScheduler", schedulerApi);
@@ -675,6 +681,14 @@ contextBridge.exposeInMainWorld("live2dDiagnostics", live2dDiagnosticsApi);
 // 聊天会话存储（多对话历史）
 const chatStoreApi = {
   list: (options?: { mode?: "chat" | "work" | "code" | "learn" }) => ipcRenderer.invoke(IPC.CHATS_LIST, options),
+  getSidebarOrganization: () => ipcRenderer.invoke(IPC.CHATS_SIDEBAR_ORGANIZATION_GET) as Promise<SidebarOrganizationSnapshot>,
+  applySidebarOrganization: (expectedRevision: number, draft: SidebarOrganizationDraft) =>
+    ipcRenderer.invoke(IPC.CHATS_SIDEBAR_ORGANIZATION_APPLY, { expectedRevision, draft }) as Promise<SidebarOrganizationResult>,
+  onSidebarOrganizationChanged: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on(IPC.CHATS_SIDEBAR_ORGANIZATION_CHANGED, listener);
+    return () => ipcRenderer.removeListener(IPC.CHATS_SIDEBAR_ORGANIZATION_CHANGED, listener);
+  },
   get: (id: string) => ipcRenderer.invoke(IPC.CHATS_GET, id),
   getPage: (id: string, before: number | null, limit: number) =>
     ipcRenderer.invoke(IPC.CHATS_GET_PAGE, { id, before, limit }),

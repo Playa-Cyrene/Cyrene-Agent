@@ -48,6 +48,24 @@ describe("schedule calculator", () => {
     expect(next?.getMinutes()).toBe(30);
   });
 
+  it("computes weekdays without firing on a weekend", () => {
+    const friday = new Date(2026, 5, 26, 18, 0, 0, 0);
+    const next = computeInitialNextFireAt({ kind: "weekdays", timeOfDay: "09:00" }, friday);
+    expect(next?.getDay()).toBe(1);
+    expect(next?.getDate()).toBe(29);
+    expect(next?.getHours()).toBe(9);
+  });
+
+  it("computes monthly and yearly calendar schedules", () => {
+    const now = new Date(2026, 0, 20, 12, 0, 0, 0);
+    const monthly = computeInitialNextFireAt({ kind: "monthly", dayOfMonth: 15, timeOfDay: "08:30" }, now);
+    const yearly = computeInitialNextFireAt({ kind: "yearly", month: 3, dayOfMonth: 1, timeOfDay: "10:00" }, now);
+    expect(monthly?.getMonth()).toBe(1);
+    expect(monthly?.getDate()).toBe(15);
+    expect(yearly?.getMonth()).toBe(2);
+    expect(yearly?.getDate()).toBe(1);
+  });
+
   it("uses scheduledFireAt as interval baseline to avoid drift", () => {
     const scheduledFireAt = new Date("2026-06-22T08:00:00.000Z");
     const schedule: ScheduleConfig = { kind: "interval", every: 1, unit: "hours" };

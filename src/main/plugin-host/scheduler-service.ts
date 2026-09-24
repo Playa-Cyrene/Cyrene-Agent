@@ -111,7 +111,7 @@ export function createPluginSchedulerService(options: PluginSchedulerServiceOpti
     const projected: PluginScheduledTask = {
       id: task.id,
       title: task.title,
-      schedule: task.schedule,
+      schedule: task.schedule as PluginScheduledTask["schedule"],
       prompt: task.prompt,
       mode: task.mode ?? "work",
       allowedToolIds: [...task.allowedToolIds],
@@ -182,7 +182,7 @@ export function createPluginSchedulerService(options: PluginSchedulerServiceOpti
 
       // 合并出更新后的执行规格，用于判断规格是否实际变化。
       const nextSpec: PluginScheduledExecutionSpec = {
-        schedule: patch.schedule ?? current.schedule,
+        schedule: (patch.schedule ?? current.schedule) as PluginScheduledExecutionSpec["schedule"],
         prompt: patch.prompt !== undefined ? patch.prompt.trim() : current.prompt,
         mode: patch.mode ?? current.mode ?? "work",
         allowedToolIds: patch.allowedToolIds ?? current.allowedToolIds,

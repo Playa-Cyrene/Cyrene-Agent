@@ -154,7 +154,7 @@ describe("SchedulerEngine", () => {
       id: () => "task-a",
     });
     store.load();
-    store.addTask({ title: "Hourly", prompt: "Run", schedule: { kind: "interval", every: 1, unit: "hours" } });
+    store.addTask({ title: "Hourly", prompt: "Run", schedule: { kind: "interval", every: 1, unit: "hours" }, workspaceBinding: { workspaceRoot: "E:/project", displayName: "project", boundAt: 1 } });
     const engine = new SchedulerEngine({
       store,
       now: () => new Date("2026-06-22T12:15:00.000Z"),
@@ -177,7 +177,7 @@ describe("SchedulerEngine", () => {
         id: () => "task-a",
       });
       store.load();
-      store.addTask({ title: "Hourly", prompt: "Run", schedule: { kind: "interval", every: 1, unit: "hours" } });
+      store.addTask({ title: "Hourly", prompt: "Run", schedule: { kind: "interval", every: 1, unit: "hours" }, workspaceBinding: { workspaceRoot: "E:/project", displayName: "project", boundAt: 1 } });
       let now = new Date("2026-06-22T07:59:00.000Z");
       const engine = new SchedulerEngine({
         store,
@@ -190,6 +190,42 @@ describe("SchedulerEngine", () => {
       await vi.advanceTimersByTimeAsync(60 * 1000);
 
       expect(store.getTasks()[0].nextFireAt).toBe("2026-06-22T09:00:00.000Z");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stops a recurring task when its run limit is reached", async () => {
+    vi.useFakeTimers();
+    try {
+      const dir = tmpDir();
+      const store = createSchedulerStore({
+        tasksFile: path.join(dir, "scheduled-tasks.json"),
+        historyFile: path.join(dir, "scheduled-tasks-history.jsonl"),
+        now: () => new Date("2026-06-22T07:00:00.000Z"),
+        id: () => "limited-task",
+      });
+      store.load();
+      store.addTask({
+        title: "Limited",
+        prompt: "Run",
+        schedule: { kind: "interval", every: 1, unit: "hours" },
+        workspaceBinding: { workspaceRoot: "E:/project", displayName: "project", boundAt: 1 },
+        maxRuns: 1,
+      });
+      let now = new Date("2026-06-22T07:59:00.000Z");
+      const engine = new SchedulerEngine({
+        store,
+        now: () => now,
+        runTask: async (): Promise<ScheduledRunResult> => ({ ok: true, historyId: "h", effectiveToolIds: [] }),
+      });
+      engine.start();
+      now = new Date("2026-06-22T08:00:00.000Z");
+      await vi.advanceTimersByTimeAsync(60 * 1000);
+      expect(store.getTasks()[0].runCount).toBe(1);
+      expect(store.getTasks()[0].enabled).toBe(false);
+      expect(store.getTasks()[0].nextFireAt).toBeNull();
+      engine.stop();
     } finally {
       vi.useRealTimers();
     }

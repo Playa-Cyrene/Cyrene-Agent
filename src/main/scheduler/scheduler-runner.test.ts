@@ -13,6 +13,7 @@ const runnerMocks = vi.hoisted(() => ({
     terminal: undefined as undefined | { status: "success" | "timeout" | "cancelled" | "runtime_error" },
   },
   agentError: undefined as Error | undefined,
+  agentOptions: undefined as Record<string, unknown> | undefined,
 }));
 
 vi.mock("../orchestrator/cyrene-agent", () => ({
@@ -22,6 +23,7 @@ vi.mock("../orchestrator/cyrene-agent", () => ({
     }
 
     runWithEvents(options: any) {
+      runnerMocks.agentOptions = options;
       // 异步派发终态，避免订阅者解引用尚未完成赋值的 sub（TDZ）
       return {
         subscribe: ({ next, complete, error }: { next?: (event: any) => void; complete: () => void; error: (err: Error) => void }) => {
@@ -106,6 +108,7 @@ function makeRunnerDeps(overrides: Record<string, unknown> = {}) {
 beforeEach(() => {
   runnerMocks.agentResult = { reply: "调度回复", terminal: undefined };
   runnerMocks.agentError = undefined;
+  runnerMocks.agentOptions = undefined;
 });
 
 describe("scheduled Cyrene execution policy", () => {
@@ -135,6 +138,44 @@ describe("scheduled Cyrene execution policy", () => {
 });
 
 describe("createSchedulerRunner lifecycle events", () => {
+  it("runs a workspace-bound code task in its own bound session instead of the active chat", async () => {
+    const task = makeTask({
+      mode: "code",
+      workspaceBinding: { workspaceRoot: "E:/project", displayName: "project", boundAt: 1 },
+    });
+    const journal = {
+      appendUser: vi.fn(async () => undefined),
+      createRunSink: vi.fn(() => ({
+        appendAssistant: vi.fn(async () => "assistant-entry"),
+        appendToolResult: vi.fn(async () => undefined),
+        closeInterruption: vi.fn(async () => undefined),
+        getLastAssistantEntryId: vi.fn(() => "assistant-entry"),
+      })),
+      appendPresentationNext: vi.fn(async () => undefined),
+    };
+    const createRunSession = vi.fn(() => "scheduled-session");
+    const deps = makeRunnerDeps({
+      conversationJournal: journal,
+      createRunSession,
+      getActiveConversation: () => ({ sessionId: "currently-open-chat", mode: "work" }),
+    });
+
+    await createSchedulerRunner(deps as never).runScheduledTask(task, new Date(), false);
+
+    expect(createRunSession).toHaveBeenCalledWith(task);
+    expect(journal.appendUser).toHaveBeenCalledWith("scheduled-session", expect.any(Object));
+    expect(runnerMocks.agentOptions).toMatchObject({
+      conversationId: "scheduled-session",
+      resolvedWorkspaceRoot: "E:/project",
+      conversationMode: "code",
+      executionMode: "work",
+    });
+    expect(deps.recordHistory).toHaveBeenCalledWith(expect.objectContaining({
+      status: "running",
+      sessionId: "scheduled-session",
+    }));
+  });
+
   it("freezes the selected conversation and writes scheduler facts through the journal", async () => {
     const sink = {
       checkpoint: vi.fn(async () => undefined),

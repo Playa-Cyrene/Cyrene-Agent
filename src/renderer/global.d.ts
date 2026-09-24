@@ -142,6 +142,7 @@ declare global {
       loadSettings: () => Promise<Record<string, unknown>>;
       saveSettings: (patch: Record<string, unknown>) => Promise<unknown>;
     };
+    cyreneScheduler?: import("./settings/scheduler/types").SchedulerApi;
   }
 }
 

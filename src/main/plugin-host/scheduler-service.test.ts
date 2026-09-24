@@ -81,7 +81,7 @@ describe("插件调度服务", () => {
   it("listTasks 只返回自己的任务", async () => {
     const mine = await service("plugin-a").createTask(taskInput);
     await service("plugin-b").createTask({ ...taskInput, title: "别人的" });
-    store.addTask({ title: "用户任务", prompt: "p", schedule: { kind: "daily", timeOfDay: "10:00" } });
+    store.addTask({ title: "用户任务", prompt: "p", schedule: { kind: "daily", timeOfDay: "10:00" }, workspaceBinding: { workspaceRoot: "E:/project", displayName: "project", boundAt: 1 } });
 
     const tasks = await service("plugin-a").listTasks();
     expect(tasks).toHaveLength(1);
@@ -142,7 +142,7 @@ describe("插件调度服务", () => {
 
   it("不能改删查看其他插件或用户的任务", async () => {
     const other = await service("plugin-b").createTask(taskInput);
-    const userTask = store.addTask({ title: "用户任务", prompt: "p", schedule: { kind: "daily", timeOfDay: "10:00" } });
+    const userTask = store.addTask({ title: "用户任务", prompt: "p", schedule: { kind: "daily", timeOfDay: "10:00" }, workspaceBinding: { workspaceRoot: "E:/project", displayName: "project", boundAt: 1 } });
 
     const a = service("plugin-a");
     await expectHostError(a.updateTask(other.id, { title: "x" }), "E_NOT_OWNER");

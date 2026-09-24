@@ -49,6 +49,16 @@ export function computeInitialNextFireAt(schedule: ScheduleConfig, now: Date): D
       tomorrow.setDate(tomorrow.getDate() + 1);
       return tomorrow;
     }
+    case "weekdays": {
+      const candidate = atLocalTime(now, schedule.timeOfDay);
+      if (!candidate) return null;
+      for (let offset = 0; offset <= 7; offset += 1) {
+        const next = new Date(candidate);
+        next.setDate(candidate.getDate() + offset);
+        if (next.getDay() !== 0 && next.getDay() !== 6 && next.getTime() > now.getTime()) return next;
+      }
+      return null;
+    }
     case "weekly": {
       const candidate = atLocalTime(now, schedule.timeOfDay);
       if (!candidate) return null;
@@ -57,6 +67,27 @@ export function computeInitialNextFireAt(schedule: ScheduleConfig, now: Date): D
       if (candidate.getTime() > now.getTime()) return candidate;
       candidate.setDate(candidate.getDate() + 7);
       return candidate;
+    }
+    case "monthly": {
+      const candidate = atLocalTime(now, schedule.timeOfDay);
+      if (!candidate) return null;
+      for (let offset = 0; offset <= 1200; offset += 1) {
+        const next = new Date(now.getFullYear(), now.getMonth() + offset, schedule.dayOfMonth, candidate.getHours(), candidate.getMinutes());
+        if (next.getMonth() !== (now.getMonth() + offset) % 12) continue;
+        if (next.getTime() > now.getTime()) return next;
+      }
+      return null;
+    }
+    case "yearly": {
+      const candidate = atLocalTime(now, schedule.timeOfDay);
+      if (!candidate) return null;
+      for (let offset = 0; offset <= 400; offset += 1) {
+        const year = now.getFullYear() + offset;
+        const next = new Date(year, schedule.month - 1, schedule.dayOfMonth, candidate.getHours(), candidate.getMinutes());
+        if (next.getFullYear() !== year || next.getMonth() !== schedule.month - 1 || next.getDate() !== schedule.dayOfMonth) continue;
+        if (next.getTime() > now.getTime()) return next;
+      }
+      return null;
     }
     case "interval": {
       if (!Number.isInteger(schedule.every) || schedule.every <= 0) return null;
@@ -74,10 +105,31 @@ export function computeNextFireAtAfter(schedule: ScheduleConfig, scheduledFireAt
       next.setDate(next.getDate() + 1);
       return next;
     }
+    case "weekdays": {
+      const next = new Date(scheduledFireAt);
+      do { next.setDate(next.getDate() + 1); } while (next.getDay() === 0 || next.getDay() === 6);
+      return next;
+    }
     case "weekly": {
       const next = new Date(scheduledFireAt);
       next.setDate(next.getDate() + 7);
       return next;
+    }
+    case "monthly": {
+      for (let offset = 1; offset <= 1200; offset += 1) {
+        const monthIndex = scheduledFireAt.getMonth() + offset;
+        const next = new Date(scheduledFireAt.getFullYear(), monthIndex, schedule.dayOfMonth, scheduledFireAt.getHours(), scheduledFireAt.getMinutes());
+        if (next.getMonth() === ((monthIndex % 12) + 12) % 12) return next;
+      }
+      return null;
+    }
+    case "yearly": {
+      for (let offset = 1; offset <= 400; offset += 1) {
+        const year = scheduledFireAt.getFullYear() + offset;
+        const next = new Date(year, schedule.month - 1, schedule.dayOfMonth, scheduledFireAt.getHours(), scheduledFireAt.getMinutes());
+        if (next.getFullYear() === year && next.getMonth() === schedule.month - 1 && next.getDate() === schedule.dayOfMonth) return next;
+      }
+      return null;
     }
     case "interval": {
       if (!Number.isInteger(schedule.every) || schedule.every <= 0) return null;

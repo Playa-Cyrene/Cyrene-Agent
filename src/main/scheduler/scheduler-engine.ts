@@ -83,6 +83,11 @@ export class SchedulerEngine {
     const now = this.now();
     for (const task of this.deps.store.getTasks()) {
       if (!isTaskEnabled(task) || !task.nextFireAt) continue;
+      if ((task.maxRuns !== undefined && (task.runCount ?? 0) >= task.maxRuns)
+        || (task.endAt && Date.parse(task.endAt) <= now.getTime())) {
+        this.deps.store.updateTask(task.id, this.disablePatch(task));
+        continue;
+      }
       const next = new Date(task.nextFireAt);
       if (Number.isNaN(next.getTime())) {
         this.deps.store.updateTask(task.id, this.disablePatch(task));
@@ -103,6 +108,11 @@ export class SchedulerEngine {
         continue;
       }
       const normalized = normalizeOverdueNextFireAt(task.schedule, next, now);
+      if ((task.maxRuns !== undefined && (task.runCount ?? 0) >= task.maxRuns)
+        || (task.endAt && (!normalized || normalized.getTime() > Date.parse(task.endAt)))) {
+        this.deps.store.updateTask(task.id, this.disablePatch(task));
+        continue;
+      }
       this.deps.store.updateTask(task.id, { nextFireAt: normalized ? normalized.toISOString() : null });
     }
   }
@@ -130,6 +140,15 @@ export class SchedulerEngine {
     });
     for (const task of due) {
       const scheduledFireAt = task.nextFireAt ? new Date(task.nextFireAt) : now;
+      if (task.maxRuns !== undefined && (task.runCount ?? 0) >= task.maxRuns) {
+        this.deps.store.updateTask(task.id, this.disablePatch(task));
+        continue;
+      }
+      if (task.endAt && scheduledFireAt.getTime() > Date.parse(task.endAt)) {
+        this.deps.store.updateTask(task.id, this.disablePatch(task));
+        continue;
+      }
+      const nextRunCount = (task.runCount ?? 0) + 1;
       if (!this.canRun(task)) {
         // 插件停用：跳过本次执行，但照常推进下一次时间，既不补跑，
         // 也避免逾期任务让计时器进入零延迟循环。
@@ -142,15 +161,17 @@ export class SchedulerEngine {
           reason: "plugin not running",
           effectiveToolIds: [],
         });
-        if (task.schedule.kind === "once") {
-          this.deps.store.updateTask(task.id, { ...this.disablePatch(task), lastFiredAt: scheduledFireAt.toISOString() });
-        } else {
-          const rawNext = computeNextFireAtAfter(task.schedule, scheduledFireAt);
-          const next = rawNext && rawNext.getTime() <= now.getTime()
-            ? normalizeOverdueNextFireAt(task.schedule, rawNext, now)
-            : rawNext;
-          this.deps.store.updateTask(task.id, { nextFireAt: next ? next.toISOString() : null });
-        }
+        const rawNext = computeNextFireAtAfter(task.schedule, scheduledFireAt);
+        const next = rawNext && rawNext.getTime() <= now.getTime()
+          ? normalizeOverdueNextFireAt(task.schedule, rawNext, now)
+          : rawNext;
+        const finished = task.schedule.kind === "once"
+          || (task.maxRuns !== undefined && nextRunCount >= task.maxRuns)
+          || Boolean(task.endAt && (!next || next.getTime() > Date.parse(task.endAt)));
+        this.deps.store.updateTask(task.id, {
+          ...(finished ? this.disablePatch(task) : { nextFireAt: next ? next.toISOString() : null }),
+          lastFiredAt: scheduledFireAt.toISOString(),
+        });
         continue;
       }
       void this.runOne(task, scheduledFireAt, false);
@@ -158,11 +179,13 @@ export class SchedulerEngine {
       const next = rawNext && rawNext.getTime() <= now.getTime()
         ? normalizeOverdueNextFireAt(task.schedule, rawNext, now)
         : rawNext;
-      if (task.schedule.kind === "once") {
-        this.deps.store.updateTask(task.id, { ...this.disablePatch(task), lastFiredAt: scheduledFireAt.toISOString() });
-      } else {
-        this.deps.store.updateTask(task.id, { nextFireAt: next ? next.toISOString() : null, lastFiredAt: scheduledFireAt.toISOString() });
-      }
+      const finished = task.schedule.kind === "once"
+        || (task.maxRuns !== undefined && nextRunCount >= task.maxRuns)
+        || Boolean(task.endAt && (!next || next.getTime() > Date.parse(task.endAt)));
+      this.deps.store.updateTask(task.id, {
+        ...(finished ? this.disablePatch(task) : { nextFireAt: next ? next.toISOString() : null }),
+        lastFiredAt: scheduledFireAt.toISOString(),
+      });
     }
     this.scheduleNextTimer();
   }
