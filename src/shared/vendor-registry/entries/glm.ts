@@ -1,9 +1,25 @@
-// glm（智谱）的推理规则 —— 自 shared/reasoning.ts 原样迁入。
+// glm（智谱）的注册表条目 —— 推理规则自 shared/reasoning.ts、能力自 capabilities.ts 原样迁入。
 import { defineVendor } from "../types";
 import { UNKNOWN_REASONING_CAPABILITY } from "../fallback";
 
 export const GLM_REGISTRY = defineVendor({
-  id: "glm",
+  capability: {
+    id: "glm",
+    displayName: "GLM（智谱）",
+    transport: "openai",
+    baseUrl: "https://open.bigmodel.cn/api/paas/v4",
+    authStyle: "bearer",
+    defaultModel: "glm-5.2",
+    supportsTools: true,
+    supportsThinking: true,
+    thinkingField: "reasoning_content",
+    cacheStrategy: "auto",
+    testStrategy: "text",
+    // 视觉版是 glm-5v-turbo，默认 glm-5.2 不支持
+    supportsVision: false,
+    // OpenAI 兼容 + Anthropic 兼容（协议矩阵 2026-08-21，用户确认）
+    supportedTransports: ["openai", "anthropic"],
+  },
   reasoningRules: [
     // ── glm（智谱）──
     // 精确型号在前；glm-5 基础型号放在精确型号之后（兜底更宽的 glm-5 系列）。

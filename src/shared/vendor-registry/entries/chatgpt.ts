@@ -1,9 +1,29 @@
-// chatgpt（OpenAI）的推理规则 —— 自 shared/reasoning.ts 原样迁入。
+// chatgpt（OpenAI）的注册表条目 —— 推理规则自 shared/reasoning.ts、能力自 capabilities.ts 原样迁入。
 import { defineVendor } from "../types";
 import { UNKNOWN_REASONING_CAPABILITY } from "../fallback";
 
 export const CHATGPT_REGISTRY = defineVendor({
-  id: "chatgpt",
+  capability: {
+    id: "chatgpt",
+    displayName: "ChatGPT（OpenAI）",
+    // 官方主推 Responses（o 系列完整思考摘要仅此协议有）——默认切换（施工文档关键决策）。
+    // 旧档案已固化 explicitTransport，不受默认值影响；仅新建档案/无显式值时生效。
+    transport: "responses",
+    baseUrl: "https://api.openai.com/v1",
+    authStyle: "bearer",
+    defaultModel: "",
+    supportsTools: true,
+    supportsThinking: true,
+    thinkingField: "reasoning_content",
+    cacheStrategy: "auto",
+    testStrategy: "text",
+    // model 由用户填，保守 false；门控会按 supportsVision 拦截
+    supportsVision: false,
+    // 双协议：Chat Completions + Responses（Responses 为官方主推）
+    supportedTransports: ["openai", "responses"],
+    // 端点级标记：仅 OpenAI 官方端点支持 encrypted reasoning 回放
+    responsesEncryptedReasoning: true,
+  },
   reasoningRules: [
     // ── chatgpt（OpenAI）──
     // 按具体型号拆分；GPT-6 Astra（2026-09-03 发布）：effort 五档与 5.6 相同，

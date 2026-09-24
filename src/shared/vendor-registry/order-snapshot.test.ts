@@ -4,7 +4,7 @@
 // 顺序 first-match。调整规则请改 entries/ 下对应厂商文件，并同步更新此基准
 // （基准的更新必须是有意识的兼容性决策，而不是搬运事故）。
 import { describe, expect, test } from "vitest";
-import { MODEL_REASONING_RULES } from "./index";
+import { MODEL_REASONING_RULES, VENDOR_REGISTRY } from "./index";
 
 // 期望值结构：{ providerId, pattern: { source, flags }, capability }[]
 const EXPECTED = [
@@ -622,5 +622,27 @@ describe("规则表聚合 — 顺序与内容快照", () => {
       capability: r.capability,
     }));
     expect(normalized).toEqual(EXPECTED);
+  });
+});
+
+// 旧 capability 表的厂商排列（迁移前 capabilities.ts 的数组顺序，minimax 开头）。
+// PROVIDER_CAPABILITIES 由 VENDOR_REGISTRY map 派生，该顺序是导出数组的
+// 可观察行为；条目内容正确性由 capabilities.test / provider-contracts.test 兜底，
+// 此处只钉顺序。
+const EXPECTED_CAPABILITY_ORDER = [
+  "minimax",
+  "deepseek",
+  "doubao",
+  "glm",
+  "kimi",
+  "qwen",
+  "chatgpt",
+  "claude",
+  "mimo",
+];
+
+describe("能力表聚合 — 顺序快照", () => {
+  test("VENDOR_REGISTRY 与派生能力表保持旧 capability 表顺序", () => {
+    expect(VENDOR_REGISTRY.map((e) => e.capability.id)).toEqual(EXPECTED_CAPABILITY_ORDER);
   });
 });

@@ -4,12 +4,18 @@
 
 import type { ReasoningPreference } from "../../../shared/reasoning";
 import type { PromptLayerMetadata } from "../prompt-layers";
+import type { ProviderCapability, Transport } from "../../../shared/vendor-registry/types";
 
-export type Transport = "openai" | "anthropic" | "responses";
-export type AuthStyle = "bearer" | "x-api-key";
-export type ThinkingField = "reasoning_content" | "thinking" | "reasoning_details" | null;
-export type CacheStrategy = "prompt_cache_key" | "cache_control" | "auto" | "none";
-export type TestStrategy = "text" | "text+tool";
+// 厂商能力系类型已迁入 shared/vendor-registry/types（厂商注册表的类型事实源）；
+// 此处 re-export 保持既有 import 路径（./types）不变，调用方零改动。
+export type {
+  Transport,
+  AuthStyle,
+  ThinkingField,
+  CacheStrategy,
+  TestStrategy,
+  ProviderCapability,
+} from "../../../shared/vendor-registry/types";
 
 /** 调度层传入适配器的厂商运行时配置（结构兼容 main/index.ts 的 ModelSettings）。 */
 export interface VendorConfig {
@@ -192,51 +198,6 @@ export interface TestConnectionResult {
   latency: number;
   sample?: string;
   error?: string;
-}
-
-/**
- * 厂商能力表的一条记录。是 vendor adapter 的"事实来源"，
- * 避免调度层散落 if (provider === "kimi")。
- */
-export interface ProviderCapability {
-  id: string;
-  displayName: string;
-  transport: Transport;
-  baseUrl: string;
-  authStyle: AuthStyle;
-  /** Anthropic-compatible endpoints sometimes require a different auth header. */
-  anthropicAuthStyle?: AuthStyle;
-  defaultModel: string;
-  supportsTools: boolean;
-  supportsThinking: boolean;
-  thinkingField: ThinkingField;
-  cacheStrategy: CacheStrategy;
-  testStrategy: TestStrategy;
-  /** 是否支持视觉（图片）输入。非多模态模型禁止走 read_image。 */
-  supportsVision: boolean;
-  /** Supported must-call wire policies; Adapter maps required to OpenAI required / Anthropic any. */
-  toolChoiceModes?: ReadonlyArray<"named" | "required" | "auto" | "omit">;
-  /**
-   * 该厂商支持的协议清单（来自 docs/vendors 协议矩阵）。
-   * 仅用于新建档案时预填默认值 + UI 提示文案，**不拦截**用户在下拉框的选择——
-   * 用户填什么协议就走什么协议（自定义端点/中转站自行负责兼容性）。
-   * 不标 = 未核实，UI 按"仅 capability.transport"提示。
-   */
-  supportedTransports?: readonly Transport[];
-  /**
-   * Responses transport：端点是否按 OpenAI 官方语义支持
-   * `include: ["reasoning.encrypted_content"]`（store:false 下多轮回放加密 reasoning）。
-   * capability 标记只是必要条件；运行时还需 baseUrl 为 OpenAI 官方域名（api.openai.com）
-   * 才真正下发 include——中转站/第三方兼容端不发，避免报参数错误。
-   */
-  responsesEncryptedReasoning?: boolean;
-  /**
-   * 视觉模型的 OpenAI 兼容 baseUrl。仅当主聊天走 Anthropic 入口、视觉需走 OpenAI 入口时才需要标
-   * （如 MiniMax 主配 /anthropic，视觉要走 /v1）。不标 = 视觉用主配置 baseUrl。
-   */
-  visionBaseUrl?: string;
-  /** UI 是否允许选择（Claude 等 Anthropic adapter 未就绪前先禁用）。 */
-  disabled?: boolean;
 }
 
 /** 调度层只看到这一层接口。 */

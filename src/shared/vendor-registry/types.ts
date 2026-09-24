@@ -1,11 +1,12 @@
-// 厂商注册表的类型层 —— 推理系纯类型（自 shared/reasoning.ts 迁入）+ entry 接口。
+// 厂商注册表的类型层 —— 推理系纯类型（自 shared/reasoning.ts 迁入）
+// + 厂商能力系类型（自 main/orchestrator/vendors/types.ts 迁入）+ entry 接口。
 //
 // 本文件是注册表依赖图的叶子：不 import 任何运行时模块。
-// reasoning.ts 对外仍 re-export 这些类型，既有 import 路径全部不变；
-// 但类型的事实源在此，shared/reasoning.ts 只剩 resolver 与 normalize 逻辑。
+// shared/reasoning.ts 与 main/orchestrator/vendors/types.ts 对外仍
+// re-export 这些类型，既有 import 路径全部不变；类型的事实源在此。
 //
-// providerId 必须与 main/orchestrator/vendors/capabilities.ts 的 ProviderCapability.id
-// 完全一致：chatgpt / claude / deepseek / glm / kimi / qwen / minimax / mimo / doubao / unknown。
+// 规则里的 providerId 必须与 entry.capability.id 完全一致：
+// chatgpt / claude / deepseek / glm / kimi / qwen / minimax / mimo / doubao。
 
 export type ReasoningMode = "auto" | "off" | "on";
 
@@ -76,25 +77,76 @@ export interface ModelReasoningRule {
   capability: ReasoningCapability;
 }
 
+// ── 厂商能力系类型（自 main/orchestrator/vendors/types.ts 原样迁入）──
+
+export type Transport = "openai" | "anthropic" | "responses";
+export type AuthStyle = "bearer" | "x-api-key";
+export type ThinkingField = "reasoning_content" | "thinking" | "reasoning_details" | null;
+export type CacheStrategy = "prompt_cache_key" | "cache_control" | "auto" | "none";
+export type TestStrategy = "text" | "text+tool";
+
 /**
- * 厂商注册表条目（迁移期形态：先承载推理规则；厂商能力 capability 与
- * shortName 等字段随迁移阶段逐步加入，最终形态见 VendorRegistryEntry 的完整定义）。
- *
- * id 与 capability.id 同值；分开放顶层是为了在 capability 尚未迁入时
- * 一致性测试就能按 id 校验规则归属。
+ * 厂商能力表的一条记录。是 vendor adapter 的"事实来源"，
+ * 避免调度层散落 if (provider === "kimi")。
  */
-export interface VendorReasoningEntry {
+export interface ProviderCapability {
   id: string;
+  displayName: string;
+  transport: Transport;
+  baseUrl: string;
+  authStyle: AuthStyle;
+  /** Anthropic-compatible endpoints sometimes require a different auth header. */
+  anthropicAuthStyle?: AuthStyle;
+  defaultModel: string;
+  supportsTools: boolean;
+  supportsThinking: boolean;
+  thinkingField: ThinkingField;
+  cacheStrategy: CacheStrategy;
+  testStrategy: TestStrategy;
+  /** 是否支持视觉（图片）输入。非多模态模型禁止走 read_image。 */
+  supportsVision: boolean;
+  /** Supported must-call wire policies; Adapter maps required to OpenAI required / Anthropic any. */
+  toolChoiceModes?: ReadonlyArray<"named" | "required" | "auto" | "omit">;
+  /**
+   * 该厂商支持的协议清单（来自 docs/vendors 协议矩阵）。
+   * 仅用于新建档案时预填默认值 + UI 提示文案，**不拦截**用户在下拉框的选择——
+   * 用户填什么协议就走什么协议（自定义端点/中转站自行负责兼容性）。
+   * 不标 = 未核实，UI 按"仅 capability.transport"提示。
+   */
+  supportedTransports?: readonly Transport[];
+  /**
+   * Responses transport：端点是否按 OpenAI 官方语义支持
+   * `include: ["reasoning.encrypted_content"]`（store:false 下多轮回放加密 reasoning）。
+   * capability 标记只是必要条件；运行时还需 baseUrl 为 OpenAI 官方域名（api.openai.com）
+   * 才真正下发 include——中转站/第三方兼容端不发，避免报参数错误。
+   */
+  responsesEncryptedReasoning?: boolean;
+  /**
+   * 视觉模型的 OpenAI 兼容 baseUrl。仅当主聊天走 Anthropic 入口、视觉需走 OpenAI 入口时才需要标
+   * （如 MiniMax 主配 /anthropic，视觉要走 /v1）。不标 = 视觉用主配置 baseUrl。
+   */
+  visionBaseUrl?: string;
+  /** UI 是否允许选择（Claude 等 Anthropic adapter 未就绪前先禁用）。 */
+  disabled?: boolean;
+}
+
+/**
+ * 厂商注册表条目：一厂商一 entry，聚合该厂商的全部运行时语义。
+ * shortName 等 UI 展示字段后续迁入；capability 是必填的关联锚点，
+ * entry.capability.id 即该厂商的静态关联键（presets / 一致性测试都按它对齐）。
+ */
+export interface VendorRegistryEntry {
+  capability: ProviderCapability;
   /** 推理规则：厂商内 first-match-wins，具体型号在前，表尾通配兜底引用共享单例 */
   reasoningRules: readonly ModelReasoningRule[];
 }
 
 /**
  * entry 的唯一书写入口：结构完整性交给接口约束，字面量信息交给 const 泛型。
- * 注意显式类型标注（const x: VendorReasoningEntry = {...}）会把 id 等字面量
- * 擦成 string，导致后续 BuiltinProviderId 推导退化 —— entry 一律走本函数，
+ * 注意显式类型标注（const x: VendorRegistryEntry = {...}）会把 capability.id
+ * 等字面量擦成 string，导致后续 BuiltinProviderId 推导退化 —— entry 一律走本函数，
  * 不裸写对象、不写标注。
  */
-export function defineVendor<const T extends VendorReasoningEntry>(entry: T): T {
+export function defineVendor<const T extends VendorRegistryEntry>(entry: T): T {
   return entry;
 }
