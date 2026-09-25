@@ -18,6 +18,7 @@ import {
 } from "../../shared/preferences";
 import { isProactiveDeliveryTargetSelectable } from "../../shared/proactive-delivery";
 import type { UiTheme } from "../../shared/ui-theme";
+import type { AppUpdateState } from "../../shared/app-update";
 import { DEFAULT_UI_FONT, normalizeUiFont, type UiFont } from "../../shared/ui-font";
 import { normalizeUiIcon, type UiIcon } from "../../shared/ui-icon";
 import {
@@ -71,7 +72,7 @@ import { apiState, type SavedProfileLite } from "./api/state";
 import { apiForm, apiRuntimeForm, presetCards, profileList, profileListCount, profileEditorTitle, deleteProfileBtn, presetWebsiteLink, displayNameInput, baseUrlInput, baseUrlResetBtn, modelInput, modelInputSuggestions, contextWindowInput, apiKeyInput, apiKeyLabel, apiKeyHint, testConnectionBtn, transportSelect, transportHint, endpointPreview, customEndpointControls, customEndpointOverrides, customEndpointSummary, customEndpointGuideBtn, workFlowAdaptBtn, apiNoteText, multimodalToggle, embeddingDimensionsInput, toggleEnableThinking, toggleDisableThinking, toggleDisableMaxToken } from "./api/dom";
 import { visionBaseUrlInput, visionApiKeyInput, visionModelInput, visionFieldsWrap, testVisionBtn, visionTestStatus } from "./vision/dom";
 import { appearanceForm, appearanceSaveStatus, runtimeSyncSelect, runtimeSyncNote, windowCornerRadiusInput, windowCornerRadiusVal, petAlwaysOnTopInput, petVisibleInput, petZoomInput, petZoomVal, chatLineHeightInput, chatLineHeightVal, chatParaSpacingInput, chatParaSpacingVal, launchAtLoginInput, uiFontCurrent, uiFontImportButton, uiFontResetButton, uiIconSelect, screenshotHotkeyInput, openChromeGpu, disableGpuInput, sidebarVisibleInput, tasksVisibleInput, rememberWindowStateInput, toastSoundEnabledInput } from "./appearance/dom";
-import { generalForm, generalSaveStatus, languageSelect, defaultChatModeSelect, segmentedOutputSelect, mobileMessageSegmentationSelect, proactiveChatSelect, proactiveDeliveryRow, proactiveDeliverySelect, chatSocialContextEnabledInput, momentsEnabledInput, cyreneMomentsPostingEnabledInput, cyreneMomentsReactionsEnabledInput, momentsCharacterReactionsEnabledInput, momentsLivelinessSelect, momentsPostingRow, momentsReactionsRow, momentsCharacterRow, momentsLivelinessRow, citaEnabledInput, citaEngineSelect, customStyleSamplingBtn, customStylePromptBtn } from "./general/dom";
+import { generalForm, generalSaveStatus, languageSelect, defaultChatModeSelect, segmentedOutputSelect, mobileMessageSegmentationSelect, proactiveChatSelect, proactiveDeliveryRow, proactiveDeliverySelect, chatSocialContextEnabledInput, momentsEnabledInput, cyreneMomentsPostingEnabledInput, cyreneMomentsReactionsEnabledInput, momentsCharacterReactionsEnabledInput, momentsLivelinessSelect, momentsPostingRow, momentsReactionsRow, momentsCharacterRow, momentsLivelinessRow, citaEnabledInput, citaEngineSelect, customStyleSamplingBtn, customStylePromptBtn, appUpdateBtn, appUpdateStatus } from "./general/dom";
 import { minBtn, closeBtn, preferencesForm, sectionTitle, sectionHint, placeholderPanel, cyrenePanel, disclaimerPanel, pluginsPanel, placeholderIcon, placeholderTitle, placeholderCopy, saveStatus, runtimeSaveStatus, preferencesSaveStatus, cyreneSaveStatus, openStickerManagerBtn, addStickerBtn } from "./shared/shell";
 import { pluginAddBtn, neteaseDetailView, permissionBlocksWrap, permissionNote } from "./plugins/dom";
 import { preferencesState } from "./preferences/state";
@@ -152,6 +153,7 @@ declare global {
     cyreneScheduler?: SchedulerApi;
     user?: UserApi;
     memoryPanel?: MemoryPanelApi;
+    appUpdate?: import("../../shared/app-update").AppUpdateApi;
   }
 }
 
@@ -1845,6 +1847,73 @@ musicReturnBtn?.addEventListener("click", () => {
 	});
 
 
+
+// ── 软件更新 ─────────────────────────────────────────────────
+const appUpdateApi = window.appUpdate;
+if (appUpdateApi) {
+  // 根据更新状态渲染按钮文案/可用性/状态文本，并同步 dataset.phase 供点击分发
+  const renderUpdateState = (state: AppUpdateState) => {
+    appUpdateBtn.dataset.phase = state.phase;
+    switch (state.phase) {
+      case "checking":
+        appUpdateStatus.textContent = "正在检查更新…";
+        appUpdateBtn.textContent = "检查中…";
+        appUpdateBtn.disabled = true;
+        break;
+      case "available":
+        appUpdateStatus.textContent = `发现新版本 ${state.availableVersion ?? ""}`;
+        appUpdateBtn.textContent = "下载更新";
+        appUpdateBtn.disabled = false;
+        break;
+      case "downloading": {
+        const pct = Math.max(0, Math.min(100, Math.round(state.percent ?? 0)));
+        appUpdateStatus.textContent = `正在下载… ${pct}%`;
+        appUpdateBtn.textContent = "下载中…";
+        appUpdateBtn.disabled = true;
+        break;
+      }
+      case "downloaded":
+        appUpdateStatus.textContent = "更新已下载，点击安装并重启";
+        appUpdateBtn.textContent = "安装并重启";
+        appUpdateBtn.disabled = false;
+        break;
+      case "not_available":
+        appUpdateStatus.textContent = "当前已是最新版本";
+        appUpdateBtn.textContent = "检查更新";
+        appUpdateBtn.disabled = false;
+        break;
+      case "error":
+        appUpdateStatus.textContent = state.error ?? "检查更新失败，请稍后再试";
+        appUpdateBtn.textContent = "重试";
+        appUpdateBtn.disabled = false;
+        break;
+      default:
+        appUpdateStatus.textContent = "点击右侧按钮检查新版本";
+        appUpdateBtn.textContent = "检查更新";
+        appUpdateBtn.disabled = false;
+    }
+  };
+
+  // onStateChanged 只在状态变化时广播，不补发当前态；故初始化时用 getState() 回填一次
+  appUpdateApi.onStateChanged(renderUpdateState);
+  void appUpdateApi.getState().then(renderUpdateState);
+
+  // 按钮点击：根据当前阶段分发 检查 / 下载 / 安装
+  appUpdateBtn.addEventListener("click", () => {
+    const phase = appUpdateBtn.dataset.phase ?? "idle";
+    if (phase === "available") {
+      void appUpdateApi.download();
+    } else if (phase === "downloaded") {
+      void appUpdateApi.install();
+    } else {
+      void appUpdateApi.check();
+    }
+  });
+} else {
+  // 无更新 API（不应发生，但兜底）
+  appUpdateBtn.disabled = true;
+  appUpdateStatus.textContent = "更新功能不可用";
+}
 
 // ── 预设卡：选择厂商 = 开始新建档案草稿 ───────────────────────
 presetCards?.addEventListener("click", (e) => {

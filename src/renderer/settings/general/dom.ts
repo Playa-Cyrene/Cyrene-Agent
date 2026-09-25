@@ -24,3 +24,7 @@ export const citaEnabledInput = document.getElementById("cita-enabled") as HTMLI
 export const citaEngineSelect = document.getElementById("cita-engine-select") as HTMLElement;
 export const customStyleSamplingBtn = document.getElementById("custom-style-sampling-btn") as HTMLButtonElement | null;
 export const customStylePromptBtn = document.getElementById("custom-style-prompt-btn") as HTMLButtonElement | null;
+
+// ── 软件更新 ──
+export const appUpdateBtn = document.getElementById("app-update-btn") as HTMLButtonElement;
+export const appUpdateStatus = document.getElementById("app-update-status") as HTMLSpanElement;
