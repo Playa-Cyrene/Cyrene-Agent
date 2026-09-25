@@ -605,6 +605,8 @@
 
 .cy-tool-executions__description {
   display: flex;
+  width: 100%;
+  max-width: 100%;
   min-width: 0;
   align-items: center;
   gap: 7px;
@@ -615,7 +617,9 @@
 }
 
 .cy-tool-executions__detail {
+  flex: 0 1 64ch;
   min-width: 0;
+  max-width: 64ch;
   overflow: hidden;
   padding: 2px 6px;
   border: 1px solid rgb(31 35 48 / 8%);

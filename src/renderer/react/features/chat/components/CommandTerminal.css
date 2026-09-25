@@ -2,10 +2,10 @@
   min-width: 0;
   margin: 7px 0 2px;
   overflow: hidden;
-  border: 1px solid #3f3f46;
+  border: 1px solid var(--rb-border-default, #e5e5ea);
   border-radius: 12px;
-  background: #18181b;
-  color: #f4f4f5;
+  background: var(--rb-surface-elevated, #fff);
+  color: var(--rb-text-primary, #1d1d1f);
   font: 12px/1.6 var(--rb-font-mono, Consolas, monospace);
 }
 
@@ -15,8 +15,8 @@
   align-items: center;
   gap: 10px;
   padding: 5px 12px;
-  border-bottom: 1px solid #3f3f46;
-  color: #a1a1aa;
+  border-bottom: 1px solid var(--rb-border-subtle, #e5e5ea);
+  color: var(--rb-text-secondary, #71717a);
 }
 
 .cy-command-terminal__title {
@@ -42,9 +42,9 @@
   content: "";
 }
 
-.cy-command-terminal__status.is-running::before { background: #fbbf24; }
-.cy-command-terminal__status.is-success::before { background: #4ade80; }
-.cy-command-terminal__status.is-error::before { background: #fb7185; }
+.cy-command-terminal__status.is-running::before { background: var(--rb-warning, #c58a31); }
+.cy-command-terminal__status.is-success::before { background: var(--rb-success, #43a877); }
+.cy-command-terminal__status.is-error::before { background: var(--rb-danger, #d94f61); }
 
 .cy-command-terminal__body {
   max-height: min(320px, 42vh);
@@ -57,12 +57,12 @@
   display: flex;
   gap: 8px;
   align-items: baseline;
-  color: #e4e4e7;
+  color: var(--rb-text-primary, #1d1d1f);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
-.cy-command-terminal__command > span { color: #a3e635; }
+.cy-command-terminal__command > span { color: var(--rb-accent, #ff5b8a); }
 .cy-command-terminal__command code { font: inherit; }
 
 .cy-command-terminal__output {
@@ -75,7 +75,7 @@
 .cy-command-terminal__truncated,
 .cy-command-terminal__empty {
   margin-top: 8px;
-  color: #a1a1aa;
+  color: var(--rb-text-secondary, #71717a);
 }
 
 .cy-command-terminal__cursor {
@@ -83,7 +83,7 @@
   width: 6px;
   height: 13px;
   margin-left: 2px;
-  background: #d4d4d8;
+  background: var(--rb-accent, #ff5b8a);
   vertical-align: -2px;
   animation: cy-command-terminal-cursor 1s steps(1) infinite;
 }

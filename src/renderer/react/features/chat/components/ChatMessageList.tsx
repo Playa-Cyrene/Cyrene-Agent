@@ -667,7 +667,6 @@ function ToolExecutionContent({ tools }: { tools: ToolExecutionRecord[] }) {
       <ThoughtChain
         rootClassName="cy-tool-executions__chain"
         line="dashed"
-        defaultExpandedKeys={tools.filter((tool) => tool.name === "run_shell" && tool.status === "running").map((tool) => tool.id)}
         items={tools.map((tool) => {
           const presentation = describeToolExecution(tool);
           return {
