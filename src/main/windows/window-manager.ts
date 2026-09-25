@@ -4,7 +4,6 @@ import { createPetWindow, PET_WINDOW_BASE_HEIGHT, PET_WINDOW_BASE_WIDTH, type Pe
 import {
   createCallWindow,
   createReactChatWindowShell,
-  createSidebarWindow,
   createStickerManagerWindow,
   loadReactChatWindowPage,
   type ReactChatWindowHandle,
@@ -28,7 +27,6 @@ export interface WindowManager {
   createReactChatWindowShell(): ReactChatWindowHandle;
   /** 打开聊天窗口：必要时创建壳并加载页面，然后显示并分发会话。 */
   openReactChatWindow(sessionId?: string): Promise<BrowserWindow>;
-  createSidebarWindow(): void;
   openSettings(section?: string): Promise<void>;
   openScheduledTasks(): Promise<void>;
   createStickerManagerWindow(): void;
@@ -162,7 +160,6 @@ export function createWindowManager(options: WindowManagerOptions): WindowManage
       return handle.window;
     },
 
-    createSidebarWindow,
     async openSettings(section = "appearance"): Promise<void> {
       const window = await this.openReactChatWindow();
       window.webContents.send(IPC.SETTINGS_SWITCH_SECTION, section);

@@ -6,7 +6,6 @@ const rendererRoot = fileURLToPath(new URL("../", import.meta.url));
 const windowEntries = [
   "index.html",
   "call/index.html",
-  "sidebar/index.html",
   "sticker-manager/index.html",
   "react/index.html",
 ];

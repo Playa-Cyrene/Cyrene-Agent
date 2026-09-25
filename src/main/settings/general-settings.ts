@@ -51,7 +51,6 @@ export interface GeneralSettings extends ChatAppearanceSettings {
   /** 桌宠窗口 Y 坐标，未保存时为 undefined */
   petWindowY?: number;
   disableGpuElectron?: boolean;
-  sidebarVisible: boolean;
   /** 提醒中心音效总开关：关闭后所有 toast 静音，弹窗行为不受影响。 */
   toastSoundEnabled: boolean;
   launchAtLogin: boolean;

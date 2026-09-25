@@ -138,7 +138,6 @@
 
 [data-ui-theme="pearl-white"] .chat__titlebar,
 [data-ui-theme="pearl-white"] .settings-titlebar,
-[data-ui-theme="pearl-white"] .sidebar__titlebar,
 [data-ui-theme="pearl-white"] .tasks__titlebar,
 [data-ui-theme="pearl-white"] .sticker-titlebar {
   background: var(--rb-bg-1);
@@ -153,7 +152,6 @@
 [data-ui-theme="pearl-white"] .settings-nav__sub,
 [data-ui-theme="pearl-white"] .settings-titlebar__hint,
 [data-ui-theme="pearl-white"] .chat__hint,
-[data-ui-theme="pearl-white"] .sidebar__hint,
 [data-ui-theme="pearl-white"] .tasks__hint,
 [data-ui-theme="pearl-white"] .chat__rail-meta,
 [data-ui-theme="pearl-white"] .chat__rail-time,
@@ -161,8 +159,6 @@
 [data-ui-theme="pearl-white"] .settings-nav__brand,
 [data-ui-theme="pearl-white"] .settings-titlebar__title,
 [data-ui-theme="pearl-white"] .chat__name,
-[data-ui-theme="pearl-white"] .sidebar__name,
-[data-ui-theme="pearl-white"] .sidebar__title,
 [data-ui-theme="pearl-white"] .tasks__title,
 [data-ui-theme="pearl-white"] .sticker-title,
 [data-ui-theme="pearl-white"] .profile__name {
@@ -219,7 +215,6 @@
 [data-ui-theme="pearl-white"] .plugin-config .user-field-hint,
 [data-ui-theme="pearl-white"] .user-field-hint,
 [data-ui-theme="pearl-white"] .settings-nav__footer,
-[data-ui-theme="pearl-white"] .sidebar__version,
 [data-ui-theme="pearl-white"] .schedule-footer__version,
 [data-ui-theme="pearl-white"] .model-params-hint,
 [data-ui-theme="pearl-white"] .model-params-section .field small,
@@ -386,8 +381,7 @@
 [data-ui-theme="pearl-white"] .nav-item:hover,
 [data-ui-theme="pearl-white"] .nav-item.is-active,
 [data-ui-theme="pearl-white"] .chat__rail-item:hover,
-[data-ui-theme="pearl-white"] .chat__rail-item.is-active,
-[data-ui-theme="pearl-white"] .sidebar__icon-btn.is-active {
+[data-ui-theme="pearl-white"] .chat__rail-item.is-active {
   color: var(--rb-pink-600);
   background: var(--rb-pink-50);
   border-color: var(--rb-pink-200);
@@ -458,8 +452,6 @@
 [data-ui-theme="pearl-white"] .language-option,
 [data-ui-theme="pearl-white"] .ghost-btn,
 [data-ui-theme="pearl-white"] .win-btn,
-[data-ui-theme="pearl-white"] .sidebar__icon-btn,
-[data-ui-theme="pearl-white"] .sidebar__winbtn,
 [data-ui-theme="pearl-white"] .tasks__winbtn,
 [data-ui-theme="pearl-white"] .chat__icon-btn,
 [data-ui-theme="pearl-white"] .chat__winbtn,
@@ -502,8 +494,6 @@
 [data-ui-theme="pearl-white"] .language-option:hover,
 [data-ui-theme="pearl-white"] .ghost-btn:hover,
 [data-ui-theme="pearl-white"] .win-btn:hover,
-[data-ui-theme="pearl-white"] .sidebar__icon-btn:hover,
-[data-ui-theme="pearl-white"] .sidebar__winbtn:hover,
 [data-ui-theme="pearl-white"] .tasks__winbtn:hover,
 [data-ui-theme="pearl-white"] .chat__icon-btn:hover,
 [data-ui-theme="pearl-white"] .chat__winbtn:hover,

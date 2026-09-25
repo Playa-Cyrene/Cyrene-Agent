@@ -92,9 +92,6 @@ export async function startShell(deps: ShellDependencies): Promise<ShellResult> 
         case "chat":
           await windowManager.openReactChatWindow(request.sessionId);
           break;
-        case "sidebar":
-          windowManager.createSidebarWindow();
-          break;
         case "settings":
           await windowManager.openSettings(request.section);
           break;

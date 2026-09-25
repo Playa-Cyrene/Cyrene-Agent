@@ -17,7 +17,6 @@ import type { SkillMode } from "../skills/types";
 import type { WindowManager } from "../windows/window-manager";
 import {
   reactChatWindow,
-  sidebarWindow,
   stickerManagerWindow,
 } from "../windows/window-state";
 import type { EmbeddingIndexService } from "../services/embedding/embedding-index-service";
@@ -34,10 +33,9 @@ export interface MemoryUserToolIpcDependencies {
 }
 
 function broadcastToAuxWindows(channel: string, payload: unknown): void {
-  for (const win of [reactChatWindow, sidebarWindow]) {
-    if (win && !win.isDestroyed()) {
-      win.webContents.send(channel, payload);
-    }
+  const win = reactChatWindow;
+  if (win && !win.isDestroyed()) {
+    win.webContents.send(channel, payload);
   }
 }
 

@@ -2,11 +2,7 @@ import { app, BrowserWindow, screen } from "electron";
 import * as path from "path";
 import { IPC } from "../../shared/ipc-channels";
 import { isDev } from "../env";
-import {
-  computeLayout,
-  DEFAULT_SIDEBAR_WINDOW_SIZE,
-  DEFAULT_WORKSPACE_WINDOW_SIZE,
-} from "../window-layout";
+import { DEFAULT_WORKSPACE_WINDOW_SIZE } from "../window-layout";
 import { loadGeneralSettings } from "../settings/settings-facade";
 import { stopCall, setCallWindow } from "../call/call-manager";
 import { getWorkspaceInitialBounds } from "./workspace-window-bounds";
@@ -17,10 +13,8 @@ import {
   reactChatWindow,
   setCallWindowLocal,
   setReactChatWindow,
-  setSidebarWindow,
   setStickerManagerWindow,
   showWindowWhenStartupReady,
-  sidebarWindow,
   stickerManagerWindow,
 } from "./window-state";
 
@@ -142,60 +136,6 @@ export function dispatchOrQueueReactSession(sessionId: string): void {
   if (immediate) {
     win.webContents.send(IPC.CHATS_REACT_SWITCH_SESSION, immediate);
   }
-}
-
-/**
- * 创建/复用侧边状态面板窗口。
- */
-export function createSidebarWindow(): void {
-  if (sidebarWindow && !sidebarWindow.isDestroyed()) {
-    sidebarWindow.show();
-    sidebarWindow.focus();
-    return;
-  }
-
-  const layout = computeLayout();
-  const rememberWindowState = loadGeneralSettings().rememberWindowState;
-  const window = new BrowserWindow({
-    ...persistedWindowState("cyrene.sidebar", rememberWindowState),
-    x: layout.sidebar.x,
-    y: layout.sidebar.y,
-    width: DEFAULT_SIDEBAR_WINDOW_SIZE.width,
-    height: DEFAULT_SIDEBAR_WINDOW_SIZE.height,
-    minWidth: 56,
-    minHeight: 540,
-    title: "昔涟 · 状态",
-    icon: getCurrentAppIconPath(),
-    backgroundColor: "#00000000",
-    autoHideMenuBar: true,
-    show: false,
-    frame: false,
-    transparent: true,
-    resizable: true,
-    webPreferences: {
-      preload: path.join(app.getAppPath(), "dist", "preload", "preload", "index.js"),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: false,
-    },
-  });
-  setSidebarWindow(window);
-
-  if (isDev) {
-    window.loadURL("http://localhost:5173/sidebar/");
-  } else {
-    window.loadFile(
-      path.join(app.getAppPath(), "dist", "renderer", "sidebar", "index.html")
-    );
-  }
-
-  window.once("ready-to-show", () => {
-    showWindowWhenStartupReady(window);
-  });
-
-  window.on("closed", () => {
-    setSidebarWindow(null);
-  });
 }
 
 /**

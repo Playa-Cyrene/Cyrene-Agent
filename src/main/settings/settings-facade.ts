@@ -21,7 +21,6 @@ import {
   normalizeProactiveDeliveryTarget,
   normalizeSegmentedOutputMode,
 } from "../../shared/preferences";
-import { normalizeWindowVisibilitySettings } from "../window-visibility-settings";
 import { normalizeCitaSettings } from "../cita/settings";
 import { getGeneralSettingsPath } from "../settings-store";
 import type { GeneralSettings } from "./general-settings";
@@ -51,7 +50,6 @@ const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
   rememberWindowState: true,
   petVisible: true,
   petZoom: 1,
-  sidebarVisible: true,
   toastSoundEnabled: true,
   launchAtLogin: false,
   language: "zh-CN",
@@ -155,7 +153,6 @@ function notifyGeneralSettingsChanged(before: GeneralSettings, after: GeneralSet
 export function normalizeGeneralSettings(
   input: Partial<GeneralSettings> | null | undefined,
 ): GeneralSettings {
-  const windowVisibility = normalizeWindowVisibilitySettings(input);
   const cita = normalizeCitaSettings({
     enabled: input?.citaEnabled,
     semanticEngine: input?.citaSemanticEngine,
@@ -226,7 +223,6 @@ export function normalizeGeneralSettings(
       ? Math.round(input.petWindowY)
       : undefined,
     disableGpuElectron: input?.disableGpuElectron,
-    sidebarVisible: windowVisibility.sidebarVisible,
     toastSoundEnabled: input?.toastSoundEnabled === undefined
       ? DEFAULT_GENERAL_SETTINGS.toastSoundEnabled
       : Boolean(input.toastSoundEnabled),

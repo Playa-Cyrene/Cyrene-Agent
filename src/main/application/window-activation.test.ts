@@ -42,11 +42,11 @@ describe("createWindowActivationBroker", () => {
     broker.request({ kind: "chat" });
     focusLoading.mockClear();
     await broker.markReady();
-    broker.request({ kind: "sidebar" });
+    broker.request({ kind: "music" });
     await new Promise((resolve) => setTimeout(resolve, 0)); // dispatch 走微任务，先 flush
     expect(focusLoading).not.toHaveBeenCalled();
     expect(activate).toHaveBeenCalledTimes(2);
-    expect(activate).toHaveBeenNthCalledWith(2, { kind: "sidebar" });
+    expect(activate).toHaveBeenNthCalledWith(2, { kind: "music" });
   });
 
   it("drains pending requests only once across repeated markReady", async () => {
@@ -65,7 +65,7 @@ describe("createWindowActivationBroker", () => {
     const broker = createWindowActivationBroker();
     broker.request({ kind: "chat" }); // 未 bind：先排队，不崩
     broker.bind({ activate, focusLoading });
-    broker.request({ kind: "sidebar" });
+    broker.request({ kind: "settings" });
     expect(focusLoading).toHaveBeenCalledOnce();
   });
 

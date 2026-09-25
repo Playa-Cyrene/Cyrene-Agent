@@ -204,16 +204,12 @@ const choiceApi = {
 };
 contextBridge.exposeInMainWorld("choice", choiceApi);
 
-const sidebarApi = {
-  minimize: () => ipcRenderer.send(IPC.SIDEBAR_MINIMIZE),
-  close: () => ipcRenderer.send(IPC.SIDEBAR_CLOSE),
-  toggleAlwaysOnTop: () => ipcRenderer.invoke(IPC.SIDEBAR_TOGGLE_ALWAYS_ON_TOP),
-  openTasks: () => ipcRenderer.send(IPC.SIDEBAR_OPEN_TASKS),
-  openSettings: (section?: string) => ipcRenderer.send(IPC.SIDEBAR_OPEN_SETTINGS, section),
-  openCall: () => ipcRenderer.send(IPC.SIDEBAR_OPEN_CALL),
+// 角色信息浮层（聊天窗口内）：目前只有唤起语音通话窗口
+const characterApi = {
+  openCall: () => ipcRenderer.send(IPC.CALL_OPEN),
 };
 
-contextBridge.exposeInMainWorld("sidebar", sidebarApi);
+contextBridge.exposeInMainWorld("character", characterApi);
 
 // 注意力 Toast 中心 API：渲染页纯表现层。
 // 点击/关闭只上报 toast id，跳转目标由主进程查权威状态解析；高度上报服务于高度协议。

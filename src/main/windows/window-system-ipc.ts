@@ -3,7 +3,6 @@ import { IPC } from "../../shared/ipc-channels";
 import { createIpcScope, type IpcScope } from "../application/ipc-scope";
 import { clearUsage, getUsageReport } from "../token-usage-store";
 import {
-  sidebarWindow,
   musicPlayerWindow,
 } from "./window-state";
 import type { WindowManager } from "./window-manager";
@@ -56,31 +55,7 @@ export function registerWindowSystemIpc(deps: WindowSystemIpcDependencies): void
   ipc.handle(IPC.WINDOW_CAPTURE_FRAME, async () => deps.windowManager?.capturePetWindowFrame() ?? null);
   ipc.handle(IPC.WINDOW_GET_CURSOR_POSITION, () => deps.windowManager?.getCursorScreenPosition() ?? { x: 0, y: 0 });
 
-  ipc.on(IPC.SIDEBAR_MINIMIZE, () => {
-    sidebarWindow?.minimize();
-  });
-
-  ipc.on(IPC.SIDEBAR_CLOSE, () => {
-    sidebarWindow?.close();
-  });
-
-  // 状态栏窗口置顶 toggle：返回切换后的新状态（true=已置顶）
-  ipc.handle(IPC.SIDEBAR_TOGGLE_ALWAYS_ON_TOP, () => {
-    if (!sidebarWindow) return false;
-    const next = !sidebarWindow.isAlwaysOnTop();
-    sidebarWindow.setAlwaysOnTop(next, next ? "screen-saver" : "normal");
-    return next;
-  });
-
-  ipc.on(IPC.SIDEBAR_OPEN_TASKS, () => {
-    void deps.windowManager?.openScheduledTasks();
-  });
-
-  ipc.on(IPC.SIDEBAR_OPEN_SETTINGS, (_event, section?: string) => {
-    void deps.windowManager?.openSettings(section);
-  });
-
-  ipc.on(IPC.SIDEBAR_OPEN_CALL, () => {
+  ipc.on(IPC.CALL_OPEN, () => {
     deps.windowManager?.createCallWindow();
   });
 

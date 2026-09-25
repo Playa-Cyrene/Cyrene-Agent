@@ -36,9 +36,7 @@ vi.mock("../settings/settings-facade", () => ({
   loadGeneralSettings: () => ({ rememberWindowState: true }),
 }));
 vi.mock("../window-layout", () => ({
-      computeLayout: () => ({ chat: { x: 0, y: 0 }, sidebar: { x: 0, y: 0 } }),
       DEFAULT_WORKSPACE_WINDOW_SIZE: { width: 1200, height: 800 },
-      DEFAULT_SIDEBAR_WINDOW_SIZE: { width: 320, height: 800 },
 }));
 vi.mock("../call/call-manager", () => ({ stopCall: vi.fn(), setCallWindow: vi.fn() }));
 vi.mock("./window-state", () => ({
@@ -48,14 +46,12 @@ vi.mock("./window-state", () => ({
   reactChatWindow: null,
   setCallWindowLocal: vi.fn(),
   setReactChatWindow: vi.fn(),
-  setSidebarWindow: vi.fn(),
   setStickerManagerWindow: vi.fn(),
   showWindowWhenStartupReady: vi.fn(),
-  sidebarWindow: null,
   stickerManagerWindow: null,
 }));
 
-import { createReactChatWindowShell, createSidebarWindow, persistedWindowState } from "./create-aux-windows";
+import { createReactChatWindowShell, persistedWindowState } from "./create-aux-windows";
 
 function lastBrowserWindowOptions() {
   const options = mocks.browserWindowOptions.at(-1);
@@ -124,16 +120,5 @@ describe("workspace window defaults and persistence", () => {
     createReactChatWindowShell();
     mocks.readyToShow?.();
     expect(mocks.setBounds).not.toHaveBeenCalled();
-  });
-
-  it("persists sidebar bounds using its own stable window identity", () => {
-    createSidebarWindow();
-
-    expect(lastBrowserWindowOptions()).toMatchObject({
-      width: 320,
-      height: 800,
-      name: "cyrene.sidebar",
-      windowStatePersistence: { bounds: true, displayMode: false },
-    });
   });
 });

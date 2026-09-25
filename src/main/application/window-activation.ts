@@ -8,7 +8,6 @@
 
 export type WindowActivationRequest =
   | { kind: "chat"; sessionId?: string }
-  | { kind: "sidebar" }
   | { kind: "settings"; section?: string }
   | { kind: "music" };
 

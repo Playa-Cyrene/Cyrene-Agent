@@ -93,14 +93,6 @@ export const IPC = {
   CODE_GIT_COMMIT: "code-git:commit",
   CODE_GIT_PUSH: "code-git:push",
 
-  // sidebar window (status / schedule / settings entry)
-  SIDEBAR_MINIMIZE: "sidebar:minimize",
-  SIDEBAR_CLOSE: "sidebar:close",
-  SIDEBAR_TOGGLE_ALWAYS_ON_TOP: "sidebar:toggle-always-on-top",
-  SIDEBAR_OPEN_SETTINGS: "sidebar:open-settings",
-  SIDEBAR_OPEN_TASKS: "sidebar:open-tasks",
-  SIDEBAR_OPEN_CALL: "sidebar:open-call",
-
   // Moments（动态 / 朋友圈）
   MOMENTS_LIST: "moments:list",
   MOMENTS_GET_POST: "moments:get-post",
@@ -389,7 +381,7 @@ export const IPC = {
   POP_QUIZ_SETTLED: "pop-quiz:settled",
 
   // call window (voice call)
-  CALL_OPEN: "call:open",                 // sidebar → main：打开通话窗口
+  CALL_OPEN: "call:open",                 // 角色信息浮层 → main：打开通话窗口
   CALL_START: "call:start",               // renderer → main：开始通话（初始化 ASR）
   CALL_AUDIO_FRAME: "call:audio-frame",    // renderer → main：PCM 音频帧
   CALL_ASR_RESULT: "call:asr-result",     // main → renderer：ASR 识别结果

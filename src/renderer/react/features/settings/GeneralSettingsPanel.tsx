@@ -6,7 +6,6 @@ import { SettingsSegmented, SettingsSwitch } from "../../components/ui/SettingsC
 import { useTranslation } from "../../i18n";
 
 interface GeneralValues {
-  sidebarVisible: boolean;
   rememberWindowState: boolean;
   toastSoundEnabled: boolean;
   launchAtLogin: boolean;
@@ -14,7 +13,6 @@ interface GeneralValues {
 }
 
 const defaults: GeneralValues = {
-  sidebarVisible: true,
   rememberWindowState: true,
   toastSoundEnabled: true,
   launchAtLogin: false,
@@ -24,7 +22,6 @@ const defaults: GeneralValues = {
 function readGeneral(value: unknown): GeneralValues {
   const input = value && typeof value === "object" ? value as Record<string, unknown> : {};
   return {
-    sidebarVisible: typeof input.sidebarVisible === "boolean" ? input.sidebarVisible : defaults.sidebarVisible,
     rememberWindowState: typeof input.rememberWindowState === "boolean" ? input.rememberWindowState : defaults.rememberWindowState,
     toastSoundEnabled: typeof input.toastSoundEnabled === "boolean" ? input.toastSoundEnabled : defaults.toastSoundEnabled,
     launchAtLogin: typeof input.launchAtLogin === "boolean" ? input.launchAtLogin : defaults.launchAtLogin,
@@ -100,7 +97,6 @@ export function GeneralSettingsPanel() {
         <section className="cy-settings-section">
           <div className="cy-settings-section__heading"><h2><Settings2 size={18} />{t("settingsPage.general.windows")}</h2><p>{t("settingsPage.general.windowsDescription")}</p></div>
           <div className="cy-settings-card">
-            <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.general.sidebar")}</strong><span>{t("settingsPage.general.sidebarDescription")}</span></div><SettingsSwitch ariaLabel={t("settingsPage.general.sidebar")} checked={values.sidebarVisible} onChange={(checked) => void saveImmediate("sidebarVisible", checked)} /></div>
             <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.general.rememberWindowState")}</strong><span>{t("settingsPage.general.rememberWindowStateDescription")}</span></div><SettingsSwitch ariaLabel={t("settingsPage.general.rememberWindowState")} checked={values.rememberWindowState} onChange={(checked) => void saveImmediate("rememberWindowState", checked)} /></div>
           </div>
         </section>

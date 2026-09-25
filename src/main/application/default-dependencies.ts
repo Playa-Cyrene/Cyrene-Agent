@@ -28,7 +28,6 @@ import {
   markStartupPhaseReady,
   reactChatWindow,
   setGetCurrentAppIconPath,
-  sidebarWindow,
 } from "../windows/window-state";
 import { loadModelSettings, resolveModelSettingsProfile, saveModelSettings } from "../settings/model-settings";
 import { getConversationTranscriptStore } from "../orchestrator/conversation-transcript-store";
@@ -152,10 +151,9 @@ const SPLASH_MIN_MS = 2500;
 const SHUTDOWN_TIMEOUT_MS = 10_000;
 
 function broadcastToAuxWindows(channel: string, payload: unknown): void {
-  for (const win of [reactChatWindow, sidebarWindow]) {
-    if (win && !win.isDestroyed()) {
-      win.webContents.send(channel, payload);
-    }
+  const win = reactChatWindow;
+  if (win && !win.isDestroyed()) {
+    win.webContents.send(channel, payload);
   }
 }
 
