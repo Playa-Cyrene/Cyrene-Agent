@@ -19,6 +19,7 @@ import { createIpcScope, type IpcScope } from "../application/ipc-scope";
 import type { ChatMessage, ChatsSetSessionModelResult, ConversationMode, ConversationWorkspaceBinding } from "../../shared/chat-types";
 import * as chatsStore from "./chats-store";
 import * as sidebarOrganizationStore from "./sidebar-organization-store";
+import { resolveSessionWorkspaceFile } from "./workspace-files-ipc";
 import * as fs from "fs";
 import * as path from "path";
 import { ensureVaultStructure, isEmptyDirectory } from "../learn/obsidian/vault-init";
@@ -444,6 +445,29 @@ export function registerChatsIpc(
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
   });
+
+  // FileChangeCard 右键菜单：用本机默认方式打开 / 在资源管理器中定位工作区内的文件。
+  // 路径解析复用 workspace-files 的安全校验（realpath 防 symlink 越界）；
+  // 已删除文件解析为 NOT_FOUND 属预期，渲染层静默即可。
+  ipc.handle(
+    IPC.CHATS_SHELL_FILE,
+    async (_event, payload: { sessionId?: unknown; relPath?: unknown; action?: unknown }) => {
+      const sessionId = typeof payload?.sessionId === "string" ? payload.sessionId : "";
+      const relPath = typeof payload?.relPath === "string" ? payload.relPath : "";
+      const action = payload?.action === "reveal" ? "reveal" : payload?.action === "open" ? "open" : null;
+      if (!sessionId || !relPath || !action) {
+        return { ok: false as const, error: "invalid-payload" as const };
+      }
+      const resolved = await resolveSessionWorkspaceFile(sessionId, relPath);
+      if (!resolved.ok) return { ok: false as const, error: resolved.code };
+      if (action === "reveal") {
+        shell.showItemInFolder(resolved.absPath);
+        return { ok: true as const };
+      }
+      const error = await shell.openPath(resolved.absPath);
+      return error ? { ok: false as const, error } : { ok: true as const };
+    },
+  );
 
   ipc.handle(
     IPC.CHATS_MIGRATE_LEGACY,

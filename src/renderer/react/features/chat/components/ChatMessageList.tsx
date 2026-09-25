@@ -33,6 +33,7 @@ import { WeatherCard } from "./weather/WeatherCard";
 import { buildAskUserQa, buildFlatRunTimeline, countRoundChangedFiles, describeToolExecution, resolveAgentRoundTitle } from "./agent-rounds";
 import { TaskDelegationRow } from "./TaskDelegationRow";
 import { extractFileChanges, FileChangeCard } from "./FileChangeCard";
+import { FileLinkContext, type FileLinkEnv } from "./FileLinkContext";
 import { ReviewPanel } from "./ReviewPanel";
 import { reportChatPerfRender } from "./chat-perf-probe";
 import { StreamdownMessageContent } from "./StreamdownMessageContent";
@@ -111,12 +112,8 @@ const cyreneAvatarUrl = resolveAsset("avatars/cyrene-avatar.png");
 // mermaid 块靠它在流式期间显示占位而不是渲染半截语法。
 export const MessageStreamingContext = createContext(false);
 
-/** 文件链接环境：工作区根 + 点击回调，由 ChatMessageList 提供，anchor 渲染器消费。 */
-export interface FileLinkEnv {
-  workspaceRoot?: string;
-  openFile?: (relPath: string, line?: number) => void;
-}
-export const FileLinkContext = createContext<FileLinkEnv>({});
+// 文件链接环境 context 定义在独立文件 FileLinkContext.ts：避免与正文渲染器 /
+// 文件卡片互相 import 形成循环依赖（消费方直接 import 该文件）。
 
 /**
  * 最后一轮可修订消息的 ID。footer 动作组件经 context 读取，不进 roles 闭包——
@@ -1357,8 +1354,8 @@ export function ChatMessageList({
   }, [messages, enabledStickers]);
   const channelConversationLabel = resolveChannelConversationLabel(messages);
   const fileLinkEnv = useMemo<FileLinkEnv>(
-    () => ({ workspaceRoot, openFile: onOpenFileLink }),
-    [workspaceRoot, onOpenFileLink],
+    () => ({ sessionId: conversationId, workspaceRoot, openFile: onOpenFileLink }),
+    [conversationId, workspaceRoot, onOpenFileLink],
   );
 
   return (

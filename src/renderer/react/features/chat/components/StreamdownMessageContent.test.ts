@@ -21,7 +21,8 @@ vi.mock("./SvgCardBlock", () => ({
   SvgCardBlock: () => React.createElement("div", { className: "cy-svg-card" }),
 }));
 
-import { FileLinkContext, MessageStreamingContext } from "./ChatMessageList";
+import { MessageStreamingContext } from "./ChatMessageList";
+import { FileLinkContext } from "./FileLinkContext";
 import { StreamdownMessageContent } from "./StreamdownMessageContent";
 
 function render(content: string, streaming: boolean, workspaceRoot?: string): string {

@@ -704,6 +704,12 @@ const chatStoreApi = {
   openFolder: () => ipcRenderer.invoke(IPC.CHATS_OPEN_FOLDER),
   openWorkspace: (workspaceRoot: string) =>
     ipcRenderer.invoke(IPC.CHATS_OPEN_WORKSPACE, workspaceRoot),
+  // 聊天文件卡片右键菜单：用本机默认方式打开 / 在资源管理器中定位工作区内的文件
+  // （主进程校验路径在工作区内；返回 ok=false + error code 时渲染层静默即可）
+  shellFile: (sessionId: string, relPath: string, action: "open" | "reveal") =>
+    ipcRenderer.invoke(IPC.CHATS_SHELL_FILE, { sessionId, relPath, action }) as Promise<
+      { ok: true } | { ok: false; error: string }
+    >,
   migrateLegacy: (messages: unknown[]) =>
     ipcRenderer.invoke(IPC.CHATS_MIGRATE_LEGACY, messages),
   // 聊天窗口加载 / 切换 session 时上报；附带本页面的渲染目标标识与会话模式，

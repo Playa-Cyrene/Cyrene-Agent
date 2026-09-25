@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   userDataDir: "",
   handlers: new Map<string, (...args: any[]) => unknown>(),
   openPath: vi.fn(async () => ""),
+  showItemInFolder: vi.fn(),
 }));
 
 vi.mock("electron", () => ({
@@ -16,6 +17,7 @@ vi.mock("electron", () => ({
   },
   shell: {
     openPath: mocks.openPath,
+    showItemInFolder: mocks.showItemInFolder,
   },
   BrowserWindow: {
     getAllWindows: () => [],
@@ -35,6 +37,7 @@ describe("chats IPC mode filtering", () => {
     vi.resetModules();
     mocks.handlers.clear();
     mocks.openPath.mockClear();
+    mocks.showItemInFolder.mockClear();
     mocks.userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-chats-ipc-"));
   });
 
@@ -468,6 +471,53 @@ describe("chats IPC mode filtering", () => {
     expect(await openWorkspace(event, workspaceRoot)).toEqual({ ok: true });
     expect(mocks.openPath).toHaveBeenCalledOnce();
     expect(mocks.openPath).toHaveBeenCalledWith(fs.realpathSync(workspaceRoot));
+  });
+
+  it("CHATS_SHELL_FILE：打开/定位工作区内文件；未绑定、非法参数、越界、缺失文件各自拒绝", async () => {
+    const { registerChatsIpc } = await import("./chats-ipc");
+    registerChatsIpc();
+
+    const create = mocks.handlers.get(IPC.CHATS_CREATE);
+    const setWorkspace = mocks.handlers.get(IPC.CHATS_SET_WORKSPACE);
+    const shellFile = mocks.handlers.get(IPC.CHATS_SHELL_FILE);
+    if (!create || !setWorkspace || !shellFile) {
+      throw new Error("shell file IPC handlers were not registered");
+    }
+
+    const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-workspace-"));
+    fs.writeFileSync(path.join(workspaceRoot, "a.txt"), "hello");
+    const event = { sender: {} };
+    const session = await create(event, { mode: "work" }) as { id: string };
+    await setWorkspace(event, { sessionId: session.id, workspaceRoot });
+    const absFile = path.join(fs.realpathSync(workspaceRoot), "a.txt");
+
+    // 未绑定工作区的会话 → NO_WORKSPACE，不碰 shell
+    const plain = await create(event, { mode: "chat" }) as { id: string };
+    await expect(shellFile(event, { sessionId: plain.id, relPath: "a.txt", action: "open" }))
+      .resolves.toEqual({ ok: false, error: "NO_WORKSPACE" });
+
+    // 非法 action / 空 relPath → invalid-payload
+    await expect(shellFile(event, { sessionId: session.id, relPath: "a.txt", action: "exec" }))
+      .resolves.toEqual({ ok: false, error: "invalid-payload" });
+    await expect(shellFile(event, { sessionId: session.id, relPath: "", action: "open" }))
+      .resolves.toEqual({ ok: false, error: "invalid-payload" });
+
+    // 工作区内文件：open → shell.openPath(真实绝对路径)
+    expect(await shellFile(event, { sessionId: session.id, relPath: "a.txt", action: "open" })).toEqual({ ok: true });
+    expect(mocks.openPath).toHaveBeenCalledWith(absFile);
+
+    // reveal → shell.showItemInFolder(真实绝对路径)
+    expect(await shellFile(event, { sessionId: session.id, relPath: "a.txt", action: "reveal" })).toEqual({ ok: true });
+    expect(mocks.showItemInFolder).toHaveBeenCalledWith(absFile);
+
+    // ".." 逃逸到工作区外 → OUT_OF_ROOT
+    await expect(shellFile(event, { sessionId: session.id, relPath: "..", action: "open" }))
+      .resolves.toEqual({ ok: false, error: "OUT_OF_ROOT" });
+    expect(mocks.openPath).toHaveBeenCalledTimes(1);
+
+    // 已删除文件 → NOT_FOUND（FileChangeCard 里 kind=deleted 的预期路径）
+    await expect(shellFile(event, { sessionId: session.id, relPath: "missing.txt", action: "open" }))
+      .resolves.toEqual({ ok: false, error: "NOT_FOUND" });
   });
 
   // ── 会话级模型状态（Invariant B/D 的 IPC 层）──────────────────

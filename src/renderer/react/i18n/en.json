@@ -562,7 +562,11 @@
     "kindAdded": "Added",
     "kindModified": "Modified",
     "kindDeleted": "Deleted",
-    "kindRenamed": "Renamed"
+    "kindRenamed": "Renamed",
+    "menuOpen": "Open",
+    "menuReveal": "Reveal in File Explorer",
+    "menuCopyRelPath": "Copy relative path",
+    "menuCopyAbsPath": "Copy absolute path"
   },
   "planToggle": {
     "label": "Plan mode · {{state}}",

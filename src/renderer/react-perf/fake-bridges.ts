@@ -194,6 +194,7 @@ export function installFakeBridges(options: FakeBridgeOptions): FakeBridgeRuntim
     setWorkspace: async () => ({ ok: true }),
     initLearnWorkspace: async () => ({ ok: true }),
     openWorkspace: async () => ({ ok: true }),
+    shellFile: async () => ({ ok: true }),
     setActiveSession: async () => null,
     onChanged: () => () => {},
     onReactSwitchSession: () => () => {},

@@ -10,7 +10,9 @@ interface CopyButtonProps {
   color?: string;
 }
 
-async function copyTextToClipboard(text: string): Promise<boolean> {
+/** 复制文本到剪贴板：优先 navigator.clipboard，权限被拒时回落到隐藏 textarea + execCommand。
+ *  供消息复制按钮与文件卡片右键菜单等共用。 */
+export async function copyTextToClipboard(text: string): Promise<boolean> {
   try {
     if (navigator.clipboard?.writeText) {
       await navigator.clipboard.writeText(text);

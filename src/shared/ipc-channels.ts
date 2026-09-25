@@ -169,6 +169,9 @@ export const IPC = {
   CHATS_SET_SESSION_MODEL: "chats:set-session-model",
   CHATS_OPEN_FOLDER: "chats:open-folder",
   CHATS_OPEN_WORKSPACE: "chats:open-workspace",
+  // renderer → main：用本机默认方式打开 / 在资源管理器中定位会话工作区内的文件
+  // （FileChangeCard 右键菜单；主进程校验拼出的绝对路径必须仍在该会话绑定的工作区内）
+  CHATS_SHELL_FILE: "chats:shell-file",
   CHATS_MIGRATE_LEGACY: "chats:migrate-legacy",
   // 任意会话变动后 main → 所有渲染窗口 broadcast，触发列表/标题刷新
   CHATS_CHANGED: "chats:changed",

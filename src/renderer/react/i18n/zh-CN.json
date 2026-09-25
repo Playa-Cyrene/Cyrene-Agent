@@ -562,7 +562,11 @@
     "kindAdded": "新增",
     "kindModified": "修改",
     "kindDeleted": "删除",
-    "kindRenamed": "重命名"
+    "kindRenamed": "重命名",
+    "menuOpen": "打开",
+    "menuReveal": "在资源管理器中打开",
+    "menuCopyRelPath": "复制相对路径",
+    "menuCopyAbsPath": "复制绝对路径"
   },
   "planToggle": {
     "label": "计划模式 · {{state}}",

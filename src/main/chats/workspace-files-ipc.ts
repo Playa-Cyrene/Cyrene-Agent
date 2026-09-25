@@ -126,6 +126,23 @@ export async function readFile(root: string, relPath: string): Promise<Workspace
   return { ok: true, content: buf.toString("utf8"), size: stat.size };
 }
 
+/** 把会话工作区内的相对路径解析为根内真实绝对路径（供聊天文件卡片右键"打开/定位"复用）。
+ *  统一走 resolveWithinRoot 的安全校验（realpath 防 symlink 越界 + Windows 大小写不敏感前缀比较）。 */
+export async function resolveSessionWorkspaceFile(
+  sessionId: string,
+  relPath: string,
+): Promise<{ ok: true; absPath: string } | { ok: false; code: "NO_WORKSPACE" | "NOT_FOUND" | "OUT_OF_ROOT" }> {
+  const binding = chatsStore.getWorkspaceBinding(sessionId);
+  if (!binding) return { ok: false, code: "NO_WORKSPACE" };
+  try {
+    const resolved = await resolveWithinRoot(binding.workspaceRoot, relPath);
+    return { ok: true, absPath: resolved.targetReal };
+  } catch (err) {
+    const code = (err as { code?: string }).code === "OUT_OF_ROOT" ? "OUT_OF_ROOT" : "NOT_FOUND";
+    return { ok: false, code };
+  }
+}
+
 export function registerWorkspaceFilesIpc(ipcOption?: IpcScope): void {
   const ipc = ipcOption ?? createIpcScope();
 

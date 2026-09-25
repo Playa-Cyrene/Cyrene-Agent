@@ -8,7 +8,8 @@ import {
 } from "streamdown";
 import type { PluggableList } from "unified";
 import React, { isValidElement, useContext, type ReactNode } from "react";
-import { FileLinkContext, MessageStreamingContext } from "./ChatMessageList";
+import { MessageStreamingContext } from "./ChatMessageList";
+import { FileLinkContext } from "./FileLinkContext";
 import { MermaidBlock } from "./MermaidBlock";
 import { SvgCardBlock } from "./SvgCardBlock";
 import { parseFileLinkHref, relativePathInsideWorkspace } from "./file-link";

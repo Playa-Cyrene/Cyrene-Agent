@@ -86,6 +86,13 @@ export interface ChatStoreApi {
   setWorkspace: (sessionId: string, workspaceRoot: string) => Promise<{ ok: boolean; error?: string; isEmpty?: boolean }>;
   initLearnWorkspace: (sessionId: string) => Promise<{ ok: boolean; error?: string; created?: string[]; skipped?: string[] }>;
   openWorkspace: (workspaceRoot: string) => Promise<{ ok: boolean; error?: string }>;
+  // 聊天文件卡片右键菜单：本机默认方式打开 / 在资源管理器中定位工作区内文件
+  // （主进程校验路径在工作区内；失败静默，不弹错误）
+  shellFile: (
+    sessionId: string,
+    relPath: string,
+    action: "open" | "reveal",
+  ) => Promise<{ ok: true } | { ok: false; error: string }>;
   setActiveSession: (sessionId: string | null, mode?: ConversationMode) => Promise<unknown>;
   onChanged: (callback: () => void) => () => void;
   onReactSwitchSession: (callback: (sessionId: string) => void) => () => void;

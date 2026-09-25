@@ -506,6 +506,33 @@ button.cy-file-change-card__row:hover { background: #f7f4f6; }
 
 .cy-file-change-card__row.is-expanded .cy-file-change-card__chevron { transform: rotate(180deg); }
 
+/* 文件行右键菜单（fixed 定位浮层，风格对齐侧栏会话菜单） */
+.cy-file-change-card__menu {
+  z-index: 1050;
+  min-width: 150px;
+  box-sizing: border-box;
+  padding: 4px;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 6px 20px rgb(46 38 41 / 12%);
+}
+
+.cy-file-change-card__menu button {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--rb-text-primary, #292528);
+  font: 500 12px/1.4 var(--rb-font-sans, sans-serif);
+  text-align: left;
+  cursor: pointer;
+}
+
+.cy-file-change-card__menu button:hover { background: #f7f4f6; }
+
 /* ── 计划模式：聊天流小入口 + 右侧面板内容（Plan Mode） ───────────── */
 
 .cy-plan-entry {

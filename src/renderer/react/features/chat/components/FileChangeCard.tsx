@@ -4,9 +4,12 @@
 // 结构：汇总头（N 个文件 + 总增删）→ 文件行（kind 徽标 + 路径 + 增删统计）
 // → 点击展开色块 diff 行（绿=新增 红=删除 灰=上下文 蓝=hunk 头）。
 
-import { useState } from "react";
+import { useCallback, useContext, useEffect, useState, type MouseEvent } from "react";
 import { useTranslation } from "../../../i18n";
 import type { ToolDiffLine, ToolFileChange } from "../../../../../shared/chat-types";
+import { chatStore } from "../pages/chat-page-bridge";
+import { copyTextToClipboard } from "./CopyButton";
+import { FileLinkContext } from "./FileLinkContext";
 import "./RunExperience.css";
 
 // 只存 i18n key（t() 不能出现在模块顶层常量里），展示文案在组件内求值。
@@ -49,8 +52,72 @@ export function extractFileChanges(result: string): ToolFileChange[] | null {
   return changes as ToolFileChange[];
 }
 
+/** 工作区根 + 相对路径 → 展示用绝对路径（Windows 用反斜杠，其他平台正斜杠） */
+function joinDisplayPath(workspaceRoot: string, relPath: string): string {
+  if (navigator.userAgent.includes("Windows")) {
+    return `${workspaceRoot}\\${relPath.replaceAll("/", "\\")}`;
+  }
+  return `${workspaceRoot}/${relPath}`;
+}
+
 export function FileChangeCard({ changes }: { changes: ToolFileChange[] }) {
   const { t } = useTranslation();
+  // 文件卡片挂在消息列表里，经 FileLinkContext 拿到会话与工作区环境
+  const { sessionId, workspaceRoot } = useContext(FileLinkContext);
+  const [menu, setMenu] = useState<{ file: string; x: number; y: number } | null>(null);
+
+  // 菜单打开期间：点菜单外 / Esc / 页面滚动 / 窗口失焦时关闭
+  useEffect(() => {
+    if (!menu) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if ((event.target as HTMLElement).closest(".cy-file-change-card__menu")) return;
+      setMenu(null);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMenu(null);
+    };
+    const close = () => setMenu(null);
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    window.addEventListener("wheel", close, { passive: true });
+    window.addEventListener("blur", close);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("wheel", close);
+      window.removeEventListener("blur", close);
+    };
+  }, [menu]);
+
+  const openRowMenu = useCallback((event: MouseEvent, file: string) => {
+    event.preventDefault();
+    event.stopPropagation();
+    // 贴边收缩，防止菜单被窗口边缘裁掉
+    const x = Math.min(event.clientX, window.innerWidth - 200);
+    const y = Math.min(event.clientY, window.innerHeight - 160);
+    setMenu({ file, x, y });
+  }, []);
+
+  const runMenuAction = useCallback(
+    async (action: "open" | "reveal" | "copyRel" | "copyAbs", file: string) => {
+      setMenu(null);
+      if (action === "open" || action === "reveal") {
+        // 打开/定位由主进程执行并校验路径；失败（含文件已删除）静默，不打断聊天
+        if (!sessionId) return;
+        const result = await chatStore()?.shellFile(sessionId, file, action);
+        if (result && !result.ok) console.warn("[FileChangeCard] shellFile 失败:", result.error);
+        return;
+      }
+      if (action === "copyAbs") {
+        if (!workspaceRoot) return;
+        await copyTextToClipboard(joinDisplayPath(workspaceRoot, file));
+        return;
+      }
+      await copyTextToClipboard(file);
+    },
+    [sessionId, workspaceRoot],
+  );
+
   const totalAdd = changes.reduce((sum, c) => sum + c.insertions, 0);
   const totalDel = changes.reduce((sum, c) => sum + c.deletions, 0);
   return (
@@ -63,13 +130,49 @@ export function FileChangeCard({ changes }: { changes: ToolFileChange[] }) {
         <span className="cy-file-change-card__stat is-remove">−{totalDel}</span>
       </header>
       {changes.map((change) => (
-        <FileChangeRow key={`${change.kind}:${change.file}`} change={change} />
+        <FileChangeRow
+          key={`${change.kind}:${change.file}`}
+          change={change}
+          onContextMenu={(event) => openRowMenu(event, change.file)}
+        />
       ))}
+      {menu && (
+        <div
+          className="cy-file-change-card__menu"
+          style={{ position: "fixed", left: menu.x, top: menu.y }}
+          role="menu"
+        >
+          {sessionId && (
+            <>
+              <button type="button" role="menuitem" onClick={() => void runMenuAction("open", menu.file)}>
+                {t("fileChange.menuOpen")}
+              </button>
+              <button type="button" role="menuitem" onClick={() => void runMenuAction("reveal", menu.file)}>
+                {t("fileChange.menuReveal")}
+              </button>
+            </>
+          )}
+          <button type="button" role="menuitem" onClick={() => void runMenuAction("copyRel", menu.file)}>
+            {t("fileChange.menuCopyRelPath")}
+          </button>
+          {workspaceRoot && (
+            <button type="button" role="menuitem" onClick={() => void runMenuAction("copyAbs", menu.file)}>
+              {t("fileChange.menuCopyAbsPath")}
+            </button>
+          )}
+        </div>
+      )}
     </section>
   );
 }
 
-function FileChangeRow({ change }: { change: ToolFileChange }) {
+function FileChangeRow({
+  change,
+  onContextMenu,
+}: {
+  change: ToolFileChange;
+  onContextMenu: (event: MouseEvent) => void;
+}) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   const hasDiff = Boolean(change.diff && change.diff.length > 0);
@@ -94,7 +197,7 @@ function FileChangeRow({ change }: { change: ToolFileChange }) {
   );
 
   return (
-    <div className="cy-file-change-card__row-wrapper">
+    <div className="cy-file-change-card__row-wrapper" onContextMenu={onContextMenu}>
       {hasDiff ? (
         <button
           type="button"
