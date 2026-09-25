@@ -60,6 +60,12 @@ export class StreamingMarkdownSegmenter {
     return this.scan(true);
   }
 
+  /** 丢弃未提交的切分缓冲（轮次候选降级时用）：后续 append 从零开始，不影响已提交的句子。 */
+  reset(): void {
+    this.buffer = "";
+    this.committed = 0;
+  }
+
   private scan(final: boolean): string[] {
     const segments: string[] = [];
     let segmentStart = this.committed;
@@ -246,6 +252,17 @@ export class EarlyTtsPlaybackQueue {
 
   isCancelled(): boolean {
     return this.cancelled;
+  }
+
+  /**
+   * 轮次候选正文降级为过程消息时调用：
+   * 丢弃已切出但尚未播放的句子与半句缓冲，正在播放的句子不打断，
+   * 队列保持可用，下一轮流式文本可继续 append。
+   */
+  dropPending(): void {
+    if (this.cancelled) return;
+    this.pending.length = 0;
+    this.segmenter.reset();
   }
 
   private enqueue(segments: string[]): void {

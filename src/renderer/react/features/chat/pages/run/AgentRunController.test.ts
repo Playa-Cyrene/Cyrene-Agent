@@ -63,7 +63,7 @@ function createFakeStore() {
 /** 记录型宿主：全部端口为 vi.fn，Todo 状态按函数式更新真实维护。 */
 function createRecordingHost() {
   let todoState: TodoStateBySession = {};
-  const earlyTtsQueue = { append: vi.fn(), cancel: vi.fn() } as unknown as EarlyTtsPlaybackQueue;
+  const earlyTtsQueue = { append: vi.fn(), cancel: vi.fn(), dropPending: vi.fn() } as unknown as EarlyTtsPlaybackQueue;
   const host: AgentRunHost & Record<string, ReturnType<typeof vi.fn>> = {
     patchMessage: vi.fn(),
     setInteraction: vi.fn(),
@@ -546,7 +546,7 @@ describe("AgentRunController", () => {
     expect(host.onRunFinished).toHaveBeenCalledWith({ mode: "chat", sessionId: "session-1", queuePaused: false });
   });
 
-  it("候选正文首组立即显示，后续积压按小组继续显示，且不进检查点或早播语音", async () => {
+  it("候选正文首组立即显示，后续积压按小组继续显示，且流式进早播语音、不进检查点", async () => {
     const { flushFrames } = installManualAnimationFrame();
     const api = createFakeApi({ success: true, runId: "run-1" });
     const store = createFakeStore();
@@ -572,7 +572,10 @@ describe("AgentRunController", () => {
       .filter((patch) => patch.transientText);
     expect(candidatePatches.map((patch) => patch.transientText)).toEqual(["你好，", "你好，世界"]);
     expect(store.upsert.mock.calls.slice(0, -1).every((call) => call[1].content === "")).toBe(true);
-    expect(earlyTtsQueue.append).not.toHaveBeenCalled();
+    // 候选正文流式喂早播队列：每个 delta 到达即 append，不等 run 结束
+    expect(earlyTtsQueue.append).toHaveBeenCalledTimes(2);
+    expect(earlyTtsQueue.append).toHaveBeenNthCalledWith(1, "你好，");
+    expect(earlyTtsQueue.append).toHaveBeenNthCalledWith(2, "世界");
   });
 
   it("跨绘制帧到达的候选正文会按小组平滑追加到界面", async () => {
@@ -698,8 +701,37 @@ describe("AgentRunController", () => {
       responseStarted: true,
       streaming: false,
     }));
-    expect(earlyTtsQueue.append).not.toHaveBeenCalled();
+    // 候选预览流式喂早播；权威全文 delta 到达时已有候选在流，不再重复 append
+    expect(earlyTtsQueue.append).toHaveBeenCalledTimes(1);
+    expect(earlyTtsQueue.append).toHaveBeenCalledWith("预览草稿");
     expect(host.earlyTts.finish).toHaveBeenCalledWith(earlyTtsQueue, "权威最终答案");
+  });
+
+  it("候选正文降级为过程消息时清掉早播队列未播句子，队列继续可用", async () => {
+    const { flushAllFrames } = installManualAnimationFrame();
+    const api = createFakeApi({ success: true, runId: "run-1" });
+    const store = createFakeStore();
+    const { host, earlyTtsQueue } = createRecordingHost();
+    const { promise } = launch(createInput(), { api, store, host, registries: createRegistries() });
+    await flush();
+
+    api.emit(RUN_STARTED_EVENT);
+    api.emit({ type: "CUSTOM", name: "cyrene.round", runId: "run-1", value: { action: "start", roundId: "round-0" } });
+    api.emit({ type: "CUSTOM", name: "cyrene.candidate_text", runId: "run-1", value: { action: "delta", roundId: "round-0", delta: "我先确认结构。" } });
+    // discard 降级：已切未播的句子被丢弃，队列不被 cancel
+    api.emit({ type: "CUSTOM", name: "cyrene.candidate_text", runId: "run-1", value: { action: "discard", roundId: "round-0" } });
+    expect(earlyTtsQueue.dropPending).toHaveBeenCalledTimes(1);
+    expect(earlyTtsQueue.cancel).not.toHaveBeenCalled();
+
+    // 工具轮后的权威过程文本替换候选：同样清未播句子
+    api.emit({ type: "CUSTOM", name: "cyrene.round", runId: "run-1", value: { action: "start", roundId: "round-1" } });
+    api.emit({ type: "CUSTOM", name: "cyrene.candidate_text", runId: "run-1", value: { action: "delta", roundId: "round-1", delta: "继续分析。" } });
+    api.emit({ type: "CUSTOM", name: "cyrene.process_text", runId: "run-1", value: { content: "权威过程文本" } });
+    expect(earlyTtsQueue.dropPending).toHaveBeenCalledTimes(2);
+    expect(earlyTtsQueue.cancel).not.toHaveBeenCalled();
+
+    api.emit({ type: "RUN_FINISHED", runId: "run-1", result: { status: "cancelled" } });
+    await promise;
   });
 
   it("忽略旧轮次候选；discard 仅闭合当前轮，正文保留为过程消息（ask_user 不丢字）", async () => {

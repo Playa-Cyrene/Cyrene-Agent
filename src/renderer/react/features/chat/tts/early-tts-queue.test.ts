@@ -111,6 +111,15 @@ describe("StreamingMarkdownSegmenter", () => {
     expect(two.append("嗯？")).toEqual([]);
     expect(two.finish("嗯？")).toEqual(["嗯？"]);
   });
+
+  it("reset 丢弃未提交缓冲：下一轮 append 从零开始切分", () => {
+    const segmenter = new StreamingMarkdownSegmenter();
+    expect(segmenter.append("第一句完成。")).toEqual(["第一句完成。"]);
+    segmenter.append("半句没有结尾");
+    segmenter.reset();
+    expect(segmenter.append("新一句完成。")).toEqual(["新一句完成。"]);
+    expect(segmenter.finish("新一句完成。")).toEqual([]);
+  });
 });
 
 describe("EarlyTtsPlaybackQueue", () => {
@@ -183,6 +192,33 @@ describe("EarlyTtsPlaybackQueue", () => {
     await queue.finish("好");
     expect(play).toHaveBeenCalledTimes(1);
     expect(play.mock.calls[0][0]).toBe("好");
+  });
+
+  it("dropPending 丢弃已切未播句子与半句缓冲：正在播的不打断，下一轮从零开始", async () => {
+    let finishFirst!: () => void;
+    const first = new Promise<"completed">((resolve) => { finishFirst = () => resolve("completed"); });
+    const play = vi.fn()
+      .mockImplementationOnce(() => first)
+      .mockResolvedValue("completed");
+    const queue = new EarlyTtsPlaybackQueue(play);
+
+    // 第一句切出并开始播放（挂起），第二句已切待播，"还有半句"留在缓冲
+    queue.append("第一句完整了。第二句完整了。还有半句");
+    await Promise.resolve();
+    expect(play).toHaveBeenCalledTimes(1);
+
+    // 轮次降级：第二句（未播）与半句缓冲被丢弃，正在播的第一句不受影响
+    queue.dropPending();
+    finishFirst();
+    await Promise.resolve();
+
+    // 下一轮正文从零切分：不会拼接被丢弃的半句
+    queue.append("新一句完整了。");
+    await queue.finish("新一句完整了。");
+    expect(play).toHaveBeenCalledTimes(2);
+    expect(play).toHaveBeenNthCalledWith(1, "第一句完整了。", 0);
+    expect(play).toHaveBeenNthCalledWith(2, "新一句完整了。", 1);
+    expect(queue.isCancelled()).toBe(false);
   });
 });
 

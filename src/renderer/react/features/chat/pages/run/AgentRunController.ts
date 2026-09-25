@@ -746,6 +746,8 @@ export class AgentRunController {
       this.resetCandidateState();
       return;
     }
+    // 候选正文降级为过程消息：清掉已切未播的句子与半句缓冲（正在播的不打断）
+    this.earlyTtsQueue?.dropPending();
     this.scheduleCandidateClassification(this.candidateText);
   }
 
@@ -863,6 +865,8 @@ export class AgentRunController {
         }
         this.candidateText += value.delta;
         this.appendCandidateDelta(value.delta);
+        // 流式正文直接喂早播队列：边生成边切句合成，超长回复首句无需等 run 结束
+        this.earlyTtsQueue?.append(value.delta);
       } else if (value.action === "discard") {
         // discard 是历史协议名：语义是「该轮正文不再是候选」，内容保留为过程消息
         this.closeRoundCandidateText();
@@ -1029,6 +1033,8 @@ export class AgentRunController {
         // 权威全文替换候选：沿用候选开始时的时间线序号，正文保持在同轮工具之前
         const processSeq = replacesCandidate ? this.candidateSeq : this.nextSeq();
         if (replacesCandidate) {
+          // 候选正文被权威全文降级替换：清掉已切未播的句子与半句缓冲
+          this.earlyTtsQueue?.dropPending();
           this.scheduleCandidateClassification(content, this.candidateRoundId ?? this.activeRoundId, processSeq);
         } else {
           const processId = `process-${this.processMessageSequence++}`;
