@@ -152,6 +152,7 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<AgentLoopRe
     apiKey: options.settings.apiKey,
     explicitTransport: options.settings.explicitTransport,
     reasoning: options.settings.reasoning,
+    manualReasoning: options.settings.manualReasoning,
   };
 
   const buildRequest = (reqMessages: ChatMessage[], stream: boolean): ChatRequest => ({

@@ -98,6 +98,7 @@ export function registerChatUiIpc(deps: ChatUiIpcDependencies): void {
         providerId: cap.id,
         model: settings.model,
         preference: settings.reasoning,
+        manualReasoning: settings.manualReasoning,
         thinkingOverride: resolveVendorRuntimeSettings(settings).thinkingOverride,
         // PRO 档（reasoning.mode="pro"）仅 Responses 协议存在，UI 据此决定是否显示
         transport: resolveTransport({
@@ -119,6 +120,7 @@ export function registerChatUiIpc(deps: ChatUiIpcDependencies): void {
       providerId: cap.id,
       model: settings.model,
       preference: settings.reasoning,
+      manualReasoning: settings.manualReasoning,
       thinkingOverride: resolveVendorRuntimeSettings(settings).thinkingOverride,
       transport: resolveTransport({
         baseUrl: settings.baseUrl,

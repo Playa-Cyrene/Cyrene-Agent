@@ -6,7 +6,7 @@ import type { ModelPreset } from "../shared/types";
 import { CUSTOM_ENDPOINT_PROVIDERS } from "../custom-endpoint-state";
 
 export const MODEL_PRESETS: ModelPreset[] = [
-  // 当前已适配 9 家：MiniMax / DeepSeek / 豆包 / 智谱 GLM / Kimi / Qwen / ChatGPT / Claude / MiMo
+  // 当前已适配 11 家：MiniMax / DeepSeek / 豆包 / 智谱 GLM / Kimi / Qwen / GPT / Claude / MiMo / Grok / Gemini
   // 顺序按使用频率 + 适配优先级；未在此清单内的厂商已硬删，需要时再补回。
   {
     providerName: "MiniMax（稀宇科技）",
@@ -87,7 +87,7 @@ export const MODEL_PRESETS: ModelPreset[] = [
   {
     providerName: "ChatGPT（OpenAI）",
     providerId: "chatgpt",
-    shortName: "ChatGPT",
+    shortName: "GPT",
     baseUrl: "https://api.openai.com/v1",
     // 官方主推 Responses（o 系列完整思考摘要仅此协议有），新建档案默认预填 responses。
     transport: "responses",
@@ -124,6 +124,29 @@ export const MODEL_PRESETS: ModelPreset[] = [
     // 独立的 mimo-v2.5 视觉档）；多模态开关默认全开，预填候选用户自行决定。
     defaultVisionModel: "mimo-v2.6-pro",
     visionModels: ["mimo-v2.6-pro", "mimo-v2.6-flash"],
+  },
+  {
+    providerName: "Grok（xAI）",
+    providerId: "grok",
+    shortName: "Grok",
+    baseUrl: "https://api.x.ai/v1",
+    transport: "openai",
+    // grok-4.7（2026-09-21 发布）为旗舰；grok-build-0.1 为编码专用轻量款（思考行为未核实）
+    mainModels: ["grok-4.7", "grok-4.6", "grok-4.5", "grok-build-0.1"],
+    iconUrl: "../icons/providers/grok.svg",
+    websiteUrl: "https://console.x.ai/",
+  },
+  {
+    providerName: "Gemini（Google）",
+    providerId: "gemini",
+    shortName: "Gemini",
+    // 官方 OpenAI 兼容层（generativelanguage …/v1beta/openai），API Key 走 Bearer
+    baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
+    transport: "openai",
+    // gemini-3.8-flash 为官方文档示例首选；3.1-pro 尚为 preview；2.5-flash 支持关闭思考
+    mainModels: ["gemini-3.8-flash", "gemini-3.1-pro", "gemini-3.5-flash", "gemini-2.5-flash"],
+    iconUrl: "../icons/providers/gemini.svg",
+    websiteUrl: "https://aistudio.google.com/",
   },
   {
     providerName: CUSTOM_ENDPOINT_PROVIDERS.cloud,

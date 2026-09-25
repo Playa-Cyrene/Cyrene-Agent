@@ -487,23 +487,23 @@ describe("ResponsesAdapter — structuredOutput 与推理控制", () => {
     expect(body).not.toHaveProperty("thinking");
   });
 
-  test("MiniMax-M3 + off → thinking.type=disabled 不发 reasoning（落默认 effort:none 即关闭）", () => {
+  test("MiniMax-M3 + off → reasoning.effort=none 明确关闭", () => {
     const minimaxCap: ProviderCapability = { ...capability, id: "minimax" };
     const { body } = makeBody([{ role: "user", content: "hi" }], {
       cap: minimaxCap,
       config: { model: "MiniMax-M3", reasoning: { mode: "off" } },
     });
-    expect(body).not.toHaveProperty("reasoning");
+    expect(body.reasoning).toEqual({ effort: "none" });
     expect(body).not.toHaveProperty("thinking");
   });
 
-  test("MiniMax-M3 + auto → 不发 reasoning（跟随服务端默认）", () => {
+  test("MiniMax-M3 + 旧 auto 偏好 → 发送滑块默认关闭档", () => {
     const minimaxCap: ProviderCapability = { ...capability, id: "minimax" };
     const { body } = makeBody([{ role: "user", content: "hi" }], {
       cap: minimaxCap,
       config: { model: "MiniMax-M3", reasoning: { mode: "auto" } },
     });
-    expect(body).not.toHaveProperty("reasoning");
+    expect(body.reasoning).toEqual({ effort: "none" });
     expect(body).not.toHaveProperty("thinking");
   });
 });

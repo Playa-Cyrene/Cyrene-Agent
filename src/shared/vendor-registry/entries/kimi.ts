@@ -31,7 +31,7 @@ export const KIMI_REGISTRY = defineVendor({
     // ── kimi（月之暗面）──
     // K3：旗舰思考模型（2026-07 发布）。思考始终开启（Preserved Thinking 常开），
     // 不用 K2.x 的 thinking 参数，用顶层 reasoning_effort（low/high/max，默认 max）。
-    // 强制思考 + 服务端默认 max → 与 GLM-5.3 同体质，auto 同样显式映射 high 防思考爆炸。
+    // 强制思考 + 服务端默认 max → 与 GLM-5.3 同体质，默认选择 high 防思考爆炸。
     { providerId: "kimi", modelPattern: /^kimi-k3/i, capability: {
       control: "effort",
       supportedEfforts: ["low", "high", "max"],

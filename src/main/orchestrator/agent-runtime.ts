@@ -357,6 +357,7 @@ export function createAgentRuntime(rawDeps: AgentRuntimeDeps): AgentRuntime {
           // 协议与推理偏好需与聊天路径一致透传，否则定时任务会按默认协议发请求。
           explicitTransport: settings.explicitTransport,
           reasoning: settings.reasoning,
+          manualReasoning: settings.manualReasoning,
           contextWindowTokens: settings.contextWindowTokens,
         },
         messages: [{ role: "system" as const, content: systemContent }, ...messages],

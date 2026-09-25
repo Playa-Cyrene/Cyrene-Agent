@@ -126,3 +126,69 @@ describe("session-model-switch（renderer barrier + operation token）", () => {
     expect(onSessionUpdated).not.toHaveBeenCalled();
   });
 });
+
+// 端到端版（#21）：不再手工放行 Promise，而是模拟真实跨层时序——
+// 主进程 SET 有提交耗时，发送入口靠 barrier 保证读到新模型。
+describe("#21 e2e：切模型后不等待 UI 反馈立即发送", () => {
+  /** 模拟主进程：SET 提交带耗时（真实 IPC + 持久化），提交后会话状态才更新 */
+  function makeSlowSession() {
+    let session = { id: "s1", modelProfileId: "p-a", model: "glm-old" };
+    const ipc = {
+      setModelProfile: async () => null,
+      setSessionModel: async (_id: string, model: string) => {
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        session = { ...session, model };
+        return { ok: true as const, session };
+      },
+    };
+    return { ipc, read: () => session.model };
+  }
+
+  it("发送入口 await barrier → 请求装配边界读到的是新模型", async () => {
+    const { ipc, read } = makeSlowSession();
+    const switcher = createSessionModelSwitcher({ ipc, onSessionUpdated: () => {} });
+    let modelAtSend: string | undefined;
+    // 真实发送路径：sendMessage 第一件事就是 await barrier()（ChatPage 接线契约）
+    const send = async () => {
+      await switcher.barrier();
+      modelAtSend = read();
+    };
+
+    switcher.switchModel("s1", "glm-new"); // 用户切模型，不等任何 UI 反馈
+    await send();                          // 立刻 Enter
+    expect(modelAtSend).toBe("glm-new");
+  });
+
+  it("对照：发送不等 barrier 时读到旧模型（证明屏障不可省）", async () => {
+    const { ipc, read } = makeSlowSession();
+    const switcher = createSessionModelSwitcher({ ipc, onSessionUpdated: () => {} });
+    let modelAtSend: string | undefined;
+
+    switcher.switchModel("s1", "glm-new");
+    modelAtSend = read(); // 不等待：SET 尚未提交
+    expect(modelAtSend).toBe("glm-old");
+
+    await switcher.barrier(); // 收尾，避免悬挂定时器
+  });
+
+  it("切档案后立即发送同样受屏障保护（原子重置的新模型先落定）", async () => {
+    let session = { id: "s1", modelProfileId: "p-a", model: "glm-old" };
+    const ipc = {
+      setModelProfile: async (_id: string, modelProfileId: string) => {
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        session = { ...session, modelProfileId, model: "glm-b1" }; // 原子重置为新档案默认
+        return session;
+      },
+      setSessionModel: async () => ({ ok: false as const, error: "unused" }),
+    };
+    const switcher = createSessionModelSwitcher({ ipc, onSessionUpdated: () => {} });
+    let modelAtSend: string | undefined;
+
+    switcher.switchProfile("s1", "p-b");
+    await (async () => {
+      await switcher.barrier();
+      modelAtSend = session.model;
+    })();
+    expect(modelAtSend).toBe("glm-b1");
+  });
+});

@@ -6,7 +6,7 @@ import {
   TestConnectionResult, ToolCall, ToolExecutionResult, VendorConfig,
 } from "./types";
 import { authHeaderFor } from "./auth";
-import { resolveReasoningCapability } from "../../../shared/reasoning";
+import { applyManualReasoningBody, normalizeManualReasoningConfig, resolveConfiguredReasoningCapability } from "../../../shared/manual-reasoning";
 import { applyReasoningPreference } from "./reasoning";
 import { getTimeoutSettings } from "../../timeout-manager";
 import { resolveAutomaticToolChoicePolicy, resolveToolChoicePolicy } from "./tool-choice-policy";
@@ -82,6 +82,7 @@ export class OpenAICompatAdapter implements ChatVendorAdapter {
           model: cfg.model,
           transport: this.transport,
           reasoning: cfg.reasoning ?? { mode: "auto" },
+          manualReasoning: cfg.manualReasoning,
           requestedToolName: req.toolChoiceIntent.toolName,
           supportedModes: this.capability.toolChoiceModes,
         });
@@ -93,6 +94,7 @@ export class OpenAICompatAdapter implements ChatVendorAdapter {
         model: cfg.model,
         transport: this.transport,
         reasoning: cfg.reasoning ?? { mode: "auto" },
+        manualReasoning: cfg.manualReasoning,
         supportedModes: this.capability.toolChoiceModes,
       }) === "auto") {
         body.tool_choice = "auto";
@@ -115,8 +117,9 @@ export class OpenAICompatAdapter implements ChatVendorAdapter {
       body.response_format = { type: "json_object" };
     }
     // 推理控制：按 (providerId, model) 解析 capability，调用 applyReasoningPreference 转换 body。
-    // cfg.reasoning 缺省视为 auto（不发送任何字段）。
-    const reasoningCap = resolveReasoningCapability(this.capability.id, cfg.model);
+    // cfg.reasoning 缺省视为旧 auto，由能力表解析为可调模型的默认档位。
+    const manualReasoning = normalizeManualReasoningConfig(cfg.manualReasoning);
+    const reasoningCap = resolveConfiguredReasoningCapability(this.capability.id, cfg.model, manualReasoning);
     const finalBody = applyReasoningPreference(
       body,
       cfg.reasoning ?? { mode: "auto" },
@@ -125,8 +128,10 @@ export class OpenAICompatAdapter implements ChatVendorAdapter {
         hasTools: Boolean(req.tools?.length),
         providerId: this.capability.id,
         model: cfg.model,
+        ignoreThinkingOverride: Boolean(manualReasoning),
       },
     );
+    const wireBody = applyManualReasoningBody(finalBody, manualReasoning, cfg.reasoning ?? { mode: "auto" });
     return {
       url: resolveApiEndpoint(cfg.baseUrl, "openai").url,
       method: "POST",
@@ -134,7 +139,7 @@ export class OpenAICompatAdapter implements ChatVendorAdapter {
         "Content-Type": "application/json",
         ...authHeaderFor(this.capability, cfg.apiKey, "openai"),
       },
-      body: JSON.stringify(finalBody),
+      body: JSON.stringify(wireBody),
     };
   }
 

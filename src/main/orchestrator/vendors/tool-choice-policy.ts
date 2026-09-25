@@ -1,4 +1,5 @@
-import { resolveEffectiveReasoning, resolveReasoningCapability, type ReasoningPreference } from "../../../shared/reasoning";
+import { resolveEffectiveReasoning, type ReasoningPreference } from "../../../shared/reasoning";
+import { resolveConfiguredReasoningCapability, type ManualReasoningConfig } from "../../../shared/manual-reasoning";
 import { getVendorRuntimeSettings } from "./runtime-settings";
 import { VENDOR_REGISTRY } from "../../../shared/vendor-registry";
 import type { ToolChoiceQuirk, VendorRegistryEntry } from "../../../shared/vendor-registry/types";
@@ -15,6 +16,7 @@ export interface ToolChoicePolicyInput {
   model: string;
   transport: Transport;
   reasoning: ReasoningPreference;
+  manualReasoning?: ManualReasoningConfig;
   requestedToolName: string;
   supportedModes?: ReadonlyArray<ToolChoicePolicy["kind"]>;
 }
@@ -34,12 +36,11 @@ for (const entry of VENDOR_REGISTRY as readonly VendorRegistryEntry[]) {
 }
 
 function isThinkingEnabled(input: AutomaticToolChoicePolicyInput): boolean {
-  // reasoning=auto 时不排除 thinking -- 服务端可能默认开启
-  // 只有明确 mode="off" 才认为 thinking 关闭
+  // 不可调模型保留 auto，服务端可能默认开启思考；可调模型解析为滑块档位。
   const resolved = resolveEffectiveReasoning(
     input.reasoning,
-    resolveReasoningCapability(input.providerId, input.model),
-    getVendorRuntimeSettings().thinkingOverride,
+    resolveConfiguredReasoningCapability(input.providerId, input.model, input.manualReasoning),
+    input.manualReasoning ? 0 : getVendorRuntimeSettings().thinkingOverride,
   );
   return resolved.mode === "on" || resolved.mode === "auto";
 }

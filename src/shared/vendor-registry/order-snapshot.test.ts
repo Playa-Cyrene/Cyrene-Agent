@@ -550,7 +550,8 @@ const EXPECTED = [
     "capability": {
       "control": "toggle",
       "requestStyle": "anthropic-adaptive",
-      "supportsDisable": true
+      "supportsDisable": true,
+      "defaultMode": "off"
     }
   },
   {
@@ -624,6 +625,151 @@ const EXPECTED = [
       "requestStyle": "none",
       "supportsDisable": false
     }
+  },
+  {
+    "providerId": "grok",
+    "pattern": {
+      "source": "^grok-4\\.20-multi-agent",
+      "flags": "i"
+    },
+    "capability": {
+      "control": "fixed-on",
+      "requestStyle": "none",
+      "supportsDisable": false
+    }
+  },
+  {
+    "providerId": "grok",
+    "pattern": {
+      "source": "^grok-4\\.[67]",
+      "flags": "i"
+    },
+    "capability": {
+      "control": "effort",
+      "supportedEfforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ],
+      "defaultEffort": "high",
+      "requestStyle": "openai-effort",
+      "supportsDisable": false
+    }
+  },
+  {
+    "providerId": "grok",
+    "pattern": {
+      "source": "^grok-4\\.5",
+      "flags": "i"
+    },
+    "capability": {
+      "control": "effort",
+      "supportedEfforts": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "defaultEffort": "high",
+      "requestStyle": "openai-effort",
+      "supportsDisable": false
+    }
+  },
+  {
+    "providerId": "grok",
+    "pattern": {
+      "source": "^grok-4",
+      "flags": "i"
+    },
+    "capability": {
+      "control": "effort",
+      "supportedEfforts": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "defaultEffort": "high",
+      "requestStyle": "openai-effort",
+      "supportsDisable": false
+    }
+  },
+  {
+    "providerId": "grok",
+    "pattern": {
+      "source": ".*",
+      "flags": ""
+    },
+    "capability": {
+      "control": "none",
+      "requestStyle": "none",
+      "supportsDisable": false
+    }
+  },
+  {
+    "providerId": "gemini",
+    "pattern": {
+      "source": "^gemini-3",
+      "flags": "i"
+    },
+    "capability": {
+      "control": "effort",
+      "supportedEfforts": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "defaultEffort": "medium",
+      "requestStyle": "openai-effort",
+      "supportsDisable": false
+    }
+  },
+  {
+    "providerId": "gemini",
+    "pattern": {
+      "source": "^gemini-2\\.5-pro",
+      "flags": "i"
+    },
+    "capability": {
+      "control": "effort",
+      "supportedEfforts": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "defaultEffort": "medium",
+      "requestStyle": "openai-effort",
+      "supportsDisable": false
+    }
+  },
+  {
+    "providerId": "gemini",
+    "pattern": {
+      "source": "^gemini-2\\.5-flash",
+      "flags": "i"
+    },
+    "capability": {
+      "control": "toggle-effort",
+      "supportedEfforts": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "defaultEffort": "medium",
+      "requestStyle": "openai-effort",
+      "supportsDisable": true
+    }
+  },
+  {
+    "providerId": "gemini",
+    "pattern": {
+      "source": ".*",
+      "flags": ""
+    },
+    "capability": {
+      "control": "none",
+      "requestStyle": "none",
+      "supportsDisable": false
+    }
   }
 ];
 
@@ -660,6 +806,8 @@ const EXPECTED_CAPABILITY_ORDER = [
   "chatgpt",
   "claude",
   "mimo",
+  "grok",
+  "gemini",
 ];
 
 describe("能力表聚合 — 顺序快照", () => {

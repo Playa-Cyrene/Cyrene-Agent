@@ -796,6 +796,7 @@ function loadMomentsVendorConfig(): VendorConfig | null {
     apiKey: settings.apiKey,
     explicitTransport: settings.explicitTransport,
     reasoning: settings.reasoning,
+    manualReasoning: settings.manualReasoning,
   };
 }
 

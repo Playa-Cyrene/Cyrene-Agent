@@ -102,6 +102,7 @@ export async function prepareHarnessRun(
     apiKey: options.settings.apiKey,
     explicitTransport: options.settings.explicitTransport,
     reasoning: options.settings.reasoning,
+    manualReasoning: options.settings.manualReasoning,
   };
 
   const tools = [...(options.capabilities?.tools ?? options.tools ?? toolRegistry.getEnabledTools())];

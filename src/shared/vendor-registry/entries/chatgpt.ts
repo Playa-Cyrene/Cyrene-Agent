@@ -24,7 +24,8 @@ export const CHATGPT_REGISTRY = defineVendor({
     // 端点级标记：仅 OpenAI 官方端点支持 encrypted reasoning 回放
     responsesEncryptedReasoning: true,
   },
-  shortName: "ChatGPT",
+  // 状态栏短名，与 presets 的 shortName "GPT" 对齐（一致性测试校验两侧相等）
+  shortName: "GPT",
   reasoningRules: [
     // ── chatgpt（OpenAI）──
     // 按具体型号拆分。

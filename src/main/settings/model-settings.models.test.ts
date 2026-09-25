@@ -144,4 +144,19 @@ describe("resolveSessionModelSettings（④：绑定 + effective model 组合）
     const session = { modelProfileId: "p-a", model: "a2" };
     expect(resolveSessionModelSettings(empty, session)).toBe(empty);
   });
+
+  it("手动推理规则按会话选中的模型读取，不串到同档案的其他模型", () => {
+    const manual = {
+      style: "openai-effort", supportedEfforts: ["low", "high"], defaultEffort: "high", supportsDisable: true,
+    };
+    const configured = buildSettings("p-manual", [{
+      id: "p-manual", provider: "GLM（智谱）", baseUrl: "https://example.test/v1", apiKey: "sk",
+      model: "custom-a", models: ["custom-a", "custom-b"],
+      modelOptions: { "custom-a": { manualReasoning: manual }, "custom-b": { multimodal: false } },
+    }]);
+
+    expect(configured.modelProfiles?.[0].modelOptions?.["custom-a"]?.manualReasoning).toEqual(manual);
+    expect(resolveSessionModelSettings(configured, { modelProfileId: "p-manual", model: "custom-a" }).manualReasoning).toEqual(manual);
+    expect(resolveSessionModelSettings(configured, { modelProfileId: "p-manual", model: "custom-b" }).manualReasoning).toBeUndefined();
+  });
 });

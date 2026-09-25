@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   Alert,
+  AutoComplete,
   Button,
   Collapse,
   Empty,
   Input,
   InputNumber,
+  Modal,
   Radio,
   Select,
   Spin,
@@ -15,6 +17,8 @@ import {
   Anthropic,
   DeepSeek,
   Doubao,
+  Gemini,
+  Grok,
   Minimax,
   Kimi,
   OpenAI,
@@ -27,6 +31,8 @@ import {
   Cpu,
   ExternalLink,
   Eye,
+  Image as ImageIcon,
+  Pencil,
   Plus,
   RefreshCw,
   Save,
@@ -38,7 +44,8 @@ import {
 import type { CSSProperties, ReactNode } from "react";
 import type { ApiTransport } from "../../../../shared/api-endpoint";
 import { resolveApiEndpoint } from "../../../../shared/api-endpoint";
-import type { ReasoningPreference } from "../../../../shared/reasoning";
+import type { ReasoningEffort, ReasoningPreference } from "../../../../shared/reasoning";
+import { normalizeManualReasoningConfig, type ManualReasoningConfig, type ManualReasoningStyle } from "../../../../shared/manual-reasoning";
 import type { TimeoutSettings } from "../../../../shared/timeout-types";
 import { DEFAULT_TIMEOUT_SETTINGS } from "../../../../shared/timeout-types";
 import { CUSTOM_ENDPOINT_PROVIDERS, getCustomEndpointMode, type CustomEndpointMode } from "../../../settings/custom-endpoint-state";
@@ -65,6 +72,7 @@ interface ModelProfile {
   reasoning?: ReasoningPreference;
   contextWindowTokens?: number;
   multimodal?: boolean;
+  modelOptions?: Record<string, { contextWindowTokens?: number; multimodal?: boolean; manualReasoning?: ManualReasoningConfig }>;
   /** 档案内可切换的模型清单；缺省 = 单模型档案 */
   models?: string[];
 }
@@ -93,6 +101,9 @@ const iconByProvider: Record<string, ProviderIconSet> = {
   chatgpt: { mono: OpenAI },
   claude: { mono: Anthropic },
   mimo: { mono: XiaomiMiMo },
+  // Grok 官方即黑白标（无 Color 变体）；Gemini 用四色渐变的 Color 变体
+  grok: { mono: Grok },
+  gemini: { mono: Gemini, color: Gemini.Color },
 };
 
 const runtimeDefaults: RuntimeValues = {
@@ -117,7 +128,9 @@ function providerIcon(provider: string, size = 22): ReactNode {
             : providerKey.includes("qwen") || providerKey.includes("通义") ? "qwen"
               : providerKey.includes("chatgpt") || providerKey.includes("openai") ? "chatgpt"
                 : providerKey.includes("claude") || providerKey.includes("anthropic") ? "claude"
-                  : providerKey.includes("mimo") || providerKey.includes("小米") ? "mimo" : "";
+                  : providerKey.includes("mimo") || providerKey.includes("小米") ? "mimo"
+                    : providerKey.includes("grok") ? "grok"
+                      : providerKey.includes("gemini") ? "gemini" : "";
   const icon = iconByProvider[iconKey];
   const Logo = icon?.color ?? icon?.mono;
   return Logo
@@ -147,6 +160,34 @@ function presetModelsOf(preset: ModelPreset): string[] {
   return [...new Set(candidates)];
 }
 
+interface ModelOptionDraft {
+  multimodal: boolean;
+  contextWindowTokens: string;
+  manualReasoning?: ManualReasoningConfig;
+}
+
+const MANUAL_EFFORTS: ReasoningEffort[] = ["minimal", "low", "medium", "high", "xhigh", "max"];
+
+function formatContextWindow(tokens: number): string {
+  if (tokens >= 1_000_000) {
+    const millions = Math.round(tokens / 10_000) / 100;
+    return `${Number.isInteger(millions) ? millions : millions.toFixed(2).replace(/0+$/, "").replace(/\.$/, "")}M`;
+  }
+  if (tokens >= 1_000) return `${Math.round(tokens / 1_000)}K`;
+  return String(tokens);
+}
+
+function parseContextWindow(value: string): number | undefined {
+  const normalized = value.trim();
+  if (!/^\d+$/.test(normalized)) return undefined;
+  const tokens = Number(normalized);
+  return Number.isSafeInteger(tokens) && tokens >= 4096 ? tokens : undefined;
+}
+
+function defaultModelOption(): ModelOptionDraft {
+  return { multimodal: true, contextWindowTokens: "256000" };
+}
+
 export function ModelSettingsPanel() {
   const { t } = useTranslation();
   const [profiles, setProfiles] = useState<ModelProfile[]>([]);
@@ -158,11 +199,28 @@ export function ModelSettingsPanel() {
   const [model, setModel] = useState(MODEL_PRESETS[0].mainModels[0] ?? "");
   // 档案内可切换的模型清单（编辑态）；model 只作"新对话默认模型"的单选标记
   const [models, setModels] = useState<string[]>(presetModelsOf(MODEL_PRESETS[0]));
+  const [modelOptions, setModelOptions] = useState<Record<string, ModelOptionDraft>>(() =>
+    Object.fromEntries(presetModelsOf(MODEL_PRESETS[0]).map((item) => [item, defaultModelOption()])),
+  );
   const [newModel, setNewModel] = useState("");
+  const [modelOptionModalOpen, setModelOptionModalOpen] = useState(false);
+  const [editingModelId, setEditingModelId] = useState<string>();
+  const [modelOptionModelId, setModelOptionModelId] = useState("");
+  const [modelOptionMultimodal, setModelOptionMultimodal] = useState(true);
+  const [modelOptionContextWindow, setModelOptionContextWindow] = useState("256K");
+  const [manualEnabled, setManualEnabled] = useState(false);
+  const [manualStyle, setManualStyle] = useState<ManualReasoningStyle>("openai-effort");
+  const [manualEfforts, setManualEfforts] = useState<ReasoningEffort[]>(["low", "medium", "high"]);
+  const [manualDefaultEffort, setManualDefaultEffort] = useState<ReasoningEffort>("medium");
+  const [manualSupportsDisable, setManualSupportsDisable] = useState(true);
+  const [manualBodies, setManualBodies] = useState<Record<string, string>>({});
+  const [manualPreviewLevel, setManualPreviewLevel] = useState("medium");
+  const [manualPreview, setManualPreview] = useState<string>();
+  const [manualChecking, setManualChecking] = useState(false);
+  const [manualCheckResult, setManualCheckResult] = useState<string>();
+  const [modelOptionError, setModelOptionError] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [transport, setTransport] = useState<ApiTransport>(MODEL_PRESETS[0].transport);
-  const [contextWindow, setContextWindow] = useState<number | null>(256000);
-  const [multimodal, setMultimodal] = useState(true);
   const [reasoning, setReasoning] = useState<ReasoningPreference>();
   const [vision, setVision] = useState<VisionValues>({ baseUrl: "", apiKey: "", model: "" });
   const [thinkingOverride, setThinkingOverride] = useState<-1 | 0 | 1>(0);
@@ -232,12 +290,19 @@ export function ModelSettingsPanel() {
     setProvider(profile.provider);
     setDisplayName(profile.displayName ?? nextPreset.shortName);
     setBaseUrl(profile.baseUrl || transportUrl(nextPreset, nextTransport));
-    setModels(editableModelsOf(profile));
+    const nextModels = editableModelsOf(profile);
+    setModels(nextModels);
+    setModelOptions(Object.fromEntries(nextModels.map((item) => {
+      const option = profile.modelOptions?.[item];
+      return [item, {
+        multimodal: option?.multimodal ?? profile.multimodal ?? true,
+        contextWindowTokens: String(option?.contextWindowTokens ?? profile.contextWindowTokens ?? 256000),
+        manualReasoning: option?.manualReasoning,
+      }];
+    })));
     setModel(profile.model ?? "");
     setApiKey(profile.apiKey === LOCAL_ENDPOINT_AUTH_FALLBACK ? "" : profile.apiKey ?? "");
     setTransport(nextTransport);
-    setContextWindow(profile.contextWindowTokens ?? 256000);
-    setMultimodal(profile.multimodal ?? true);
     setReasoning(profile.reasoning);
     setNewModel("");
     setStatus(undefined);
@@ -250,11 +315,10 @@ export function ModelSettingsPanel() {
     setDisplayName(nextPreset.shortName);
     setBaseUrl(nextPreset.baseUrl);
     setModels(presetModelsOf(nextPreset));
+    setModelOptions(Object.fromEntries(presetModelsOf(nextPreset).map((item) => [item, defaultModelOption()])));
     setModel(nextPreset.mainModels[0] ?? "");
     setApiKey("");
     setTransport(nextPreset.transport);
-    setContextWindow(256000);
-    setMultimodal(true);
     setReasoning(undefined);
     setNewModel("");
     setStatus(undefined);
@@ -267,6 +331,7 @@ export function ModelSettingsPanel() {
     setDisplayName(nextPreset.shortName);
     setBaseUrl(nextPreset.baseUrl);
     setModels(presetModelsOf(nextPreset));
+    setModelOptions(Object.fromEntries(presetModelsOf(nextPreset).map((item) => [item, defaultModelOption()])));
     setModel(nextPreset.mainModels[0] ?? "");
     setApiKey("");
     setTransport(nextPreset.transport);
@@ -290,18 +355,130 @@ export function ModelSettingsPanel() {
     setStatus(undefined);
   }
 
-  // 添加模型到清单：重复拒绝；清单为空时首项自动成为默认模型
-  function addModel() {
-    const value = newModel.trim();
-    if (!value) return;
-    if (models.some((item) => item === value)) {
-      setStatus({ kind: "error", text: t("settingsPage.modelSettings.modelListDuplicate") });
+  function openModelOptionModal(modelValue = newModel) {
+    setEditingModelId(undefined);
+    setModelOptionModelId(modelValue.trim());
+    setModelOptionMultimodal(true);
+    setModelOptionContextWindow("256000");
+    loadManualOption(undefined);
+    setModelOptionError("");
+    setModelOptionModalOpen(true);
+  }
+
+  function openEditModelOptionModal(modelId: string) {
+    const option = modelOptions[modelId] ?? defaultModelOption();
+    setEditingModelId(modelId);
+    setModelOptionModelId(modelId);
+    setModelOptionMultimodal(option.multimodal);
+    setModelOptionContextWindow(option.contextWindowTokens);
+    loadManualOption(option.manualReasoning);
+    setModelOptionError("");
+    setModelOptionModalOpen(true);
+  }
+
+  function loadManualOption(config: ManualReasoningConfig | undefined) {
+    setManualEnabled(Boolean(config));
+    setManualStyle(config?.style ?? "openai-effort");
+    setManualEfforts(config?.supportedEfforts ?? ["low", "medium", "high"]);
+    setManualDefaultEffort(config?.defaultEffort ?? "medium");
+    setManualSupportsDisable(config?.supportsDisable ?? true);
+    setManualBodies(Object.fromEntries(Object.entries(config?.customBodies ?? {}).map(([level, body]) => [level, JSON.stringify(body, null, 2)])));
+    setManualPreviewLevel(config?.defaultEffort ?? (config?.supportedEfforts.length ? config.supportedEfforts[0] : "on"));
+    setManualPreview(undefined);
+    setManualCheckResult(undefined);
+  }
+
+  function currentManualConfig(): ManualReasoningConfig | undefined {
+    if (!manualEnabled) return undefined;
+    const efforts = manualStyle === "qwen-enable-thinking" ? [] : manualEfforts;
+    const bodies: Record<string, Record<string, unknown>> = {};
+    if (manualStyle === "custom") {
+      for (const level of [...(efforts.length ? efforts : ["on"]), ...(manualSupportsDisable ? ["off"] : [])]) {
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(manualBodies[level] ?? "{}");
+        } catch {
+          throw new Error(t("settingsPage.modelSettings.manualJsonError"));
+        }
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error(t("settingsPage.modelSettings.manualJsonError"));
+        bodies[level] = parsed as Record<string, unknown>;
+      }
+    }
+    const config = normalizeManualReasoningConfig({
+      style: manualStyle,
+      supportedEfforts: efforts,
+      defaultEffort: efforts.includes(manualDefaultEffort) ? manualDefaultEffort : efforts[0],
+      supportsDisable: manualSupportsDisable,
+      ...(manualStyle === "custom" ? { customBodies: bodies } : {}),
+    });
+    if (!config) throw new Error(t("settingsPage.modelSettings.manualInvalid"));
+    return config;
+  }
+
+  function draftReasoningPreference(): ReasoningPreference {
+    return manualPreviewLevel === "off" ? { mode: "off" }
+      : manualPreviewLevel === "on" ? { mode: "on" }
+        : { mode: "on", effort: manualPreviewLevel as ReasoningEffort };
+  }
+
+  async function previewManualRequest(checkConnection = false) {
+    try {
+      if (!window.settings) throw new Error("Settings API unavailable");
+      const config = currentManualConfig();
+      const request = { provider, baseUrl: baseUrl.trim(), model: modelOptionModelId.trim(), apiKey: currentApiKey(), explicitTransport: transport, reasoning: draftReasoningPreference(), manualReasoning: config };
+      if (checkConnection) {
+        setManualChecking(true);
+        const result = await window.settings.testConnection?.(request);
+        setManualCheckResult(result?.ok
+          ? t("settingsPage.modelSettings.manualCheckOk")
+          : t("settingsPage.modelSettings.testFailed", { error: result?.error ?? t("settingsPage.modelSettings.unknownError") }));
+      } else {
+        const body = await window.settings.previewReasoning?.(request);
+        setManualPreview(JSON.stringify(body, null, 2));
+      }
+      setModelOptionError("");
+    } catch (error) {
+      setModelOptionError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setManualChecking(false);
+    }
+  }
+
+  // 新增或修改时都在统一弹窗中配置，列表只负责展示配置结果。
+  function saveModelOption() {
+    const value = modelOptionModelId.trim();
+    if (!value) {
+      setModelOptionError(t("settingsPage.modelSettings.validationModelId"));
       return;
     }
-    setModels([...models, value]);
-    if (!model) setModel(value);
-    setNewModel("");
+    if (!editingModelId && models.some((item) => item === value)) {
+      setModelOptionError(t("settingsPage.modelSettings.modelListDuplicate"));
+      return;
+    }
+    const contextWindowTokens = parseContextWindow(modelOptionContextWindow);
+    if (contextWindowTokens === undefined) {
+      setModelOptionError(t("settingsPage.modelSettings.validationContextWindow"));
+      return;
+    }
+    let manualReasoning: ManualReasoningConfig | undefined;
+    try {
+      manualReasoning = currentManualConfig();
+    } catch (error) {
+      setModelOptionError(error instanceof Error ? error.message : String(error));
+      return;
+    }
+    const nextOption = { multimodal: modelOptionMultimodal, contextWindowTokens: String(contextWindowTokens), manualReasoning };
+    if (editingModelId) {
+      setModelOptions((current) => ({ ...current, [editingModelId]: nextOption }));
+    } else {
+      setModels((current) => [...current, value]);
+      setModelOptions((current) => ({ ...current, [value]: nextOption }));
+      if (!model) setModel(value);
+      setNewModel("");
+    }
     setStatus(undefined);
+    setEditingModelId(undefined);
+    setModelOptionModalOpen(false);
   }
 
   // 删除模型：最后一条禁删（UI 层禁止 + normalize 防御双保险）；删默认时默认顺位首项
@@ -309,6 +486,7 @@ export function ModelSettingsPanel() {
     if (models.length <= 1) return;
     const next = models.filter((item) => item !== value);
     setModels(next);
+    setModelOptions((current) => Object.fromEntries(Object.entries(current).filter(([name]) => next.includes(name))));
     if (model === value) setModel(next[0] ?? "");
   }
 
@@ -317,6 +495,9 @@ export function ModelSettingsPanel() {
   }
 
   function validateProfile(): string | null {
+    if (models.some((item) => parseContextWindow(modelOptions[item]?.contextWindowTokens ?? "") === undefined)) {
+      return t("settingsPage.modelSettings.validationContextWindow");
+    }
     if (customMode) {
       if (!baseUrl.trim()) return t("settingsPage.modelSettings.validationUrl");
       try {
@@ -341,6 +522,12 @@ export function ModelSettingsPanel() {
       return;
     }
     if (!window.settings) return;
+    const savedModelOptions = Object.fromEntries(models.map((item) => [item, {
+      multimodal: modelOptions[item]?.multimodal ?? true,
+      contextWindowTokens: parseContextWindow(modelOptions[item]?.contextWindowTokens ?? "") ?? 256000,
+      manualReasoning: modelOptions[item]?.manualReasoning,
+    }]));
+    const defaultOption = savedModelOptions[model.trim()] ?? Object.values(savedModelOptions)[0] ?? { multimodal: true, contextWindowTokens: 256000 };
     setSaving(true);
     setStatus({ kind: "info", text: t("settingsPage.modelSettings.saving") });
     try {
@@ -356,8 +543,10 @@ export function ModelSettingsPanel() {
         apiKey: currentApiKey(),
         explicitTransport: transport,
         reasoning,
-        contextWindowTokens: Math.max(4096, Number(contextWindow) || 256000),
-        multimodal,
+        // 新字段按模型保存；兼容字段镜像默认模型值，确保旧版读取时保持合理行为。
+        modelOptions: savedModelOptions,
+        contextWindowTokens: defaultOption.contextWindowTokens,
+        multimodal: defaultOption.multimodal,
       });
       if (!activeId && !result.added) {
         setStatus({ kind: "error", text: t("settingsPage.modelSettings.duplicate") });
@@ -405,6 +594,7 @@ export function ModelSettingsPanel() {
         apiKey: currentApiKey(),
         explicitTransport: transport,
         reasoning,
+        manualReasoning: modelOptions[model.trim()]?.manualReasoning,
       });
       setStatus(result.ok
         ? { kind: "success", text: t("settingsPage.modelSettings.testOk", { latency: result.latency ?? 0, sample: result.sample ?? "" }) }
@@ -632,69 +822,86 @@ export function ModelSettingsPanel() {
                 <div className="cy-model-field">
                   <span>{t("settingsPage.modelSettings.transport")}</span>
                   <Radio.Group value={transport} onChange={(event) => changeTransport(event.target.value)} optionType="button" buttonStyle="solid" className="cy-model-transport">
-                    <Radio.Button value="openai">{t("settingsPage.modelSettings.transportOpenAI")}</Radio.Button>
-                    <Radio.Button value="anthropic">{t("settingsPage.modelSettings.transportAnthropic")}</Radio.Button>
-                    <Radio.Button value="responses">Responses</Radio.Button>
+                    <Radio.Button value="openai"><span className="cy-model-transport-option"><OpenAI size={16} aria-hidden="true" /><code>{t("settingsPage.modelSettings.transportOpenAI")}</code></span></Radio.Button>
+                    <Radio.Button value="anthropic"><span className="cy-model-transport-option"><Anthropic size={16} aria-hidden="true" /><code>{t("settingsPage.modelSettings.transportAnthropic")}</code></span></Radio.Button>
+                    <Radio.Button value="responses"><span className="cy-model-transport-option"><OpenAI size={16} aria-hidden="true" /><code>responses</code></span></Radio.Button>
                   </Radio.Group>
                 </div>
                 <div className="cy-model-field">
                   <span>{t("settingsPage.modelSettings.modelList")}</span>
                   <div className="cy-model-list-editor">
-                    {models.map((item) => (
-                      <div className="cy-model-list-item" key={item}>
-                        <label className="cy-model-list-item__radio">
-                          <input
-                            type="radio"
-                            name="cy-model-default-model"
-                            checked={item === model}
-                            onChange={() => setModel(item)}
+                    <Radio.Group
+                      className="cy-model-list-options"
+                      value={model}
+                      onChange={(event) => setModel(event.target.value)}
+                      aria-label={t("settingsPage.modelSettings.modelList")}
+                    >
+                      {models.map((item) => (
+                        <div className={`cy-model-list-item${item === model ? " is-selected" : ""}`} key={item}>
+                          <Radio
+                            className="cy-model-list-item__radio"
+                            value={item}
                             aria-label={t("settingsPage.modelSettings.modelListDefaultAria", { model: item })}
-                          />
-                          <code>{item}</code>
-                        </label>
-                        {item === model && <Tag className="cy-model-default-tag">{t("settingsPage.modelSettings.default")}</Tag>}
-                        <Button
-                          type="text"
-                          size="small"
-                          className="cy-model-list-item__remove"
-                          disabled={models.length <= 1}
-                          aria-label={t("settingsPage.modelSettings.modelListRemoveAria", { model: item })}
-                          title={t("settingsPage.modelSettings.modelListRemoveAria", { model: item })}
-                          onClick={() => removeModel(item)}
-                        >
-                          <X size={14} />
-                        </Button>
-                      </div>
-                    ))}
+                          >
+                            <code>{item}</code>
+                          </Radio>
+                          {item === model && <Tag className="cy-model-default-tag">{t("settingsPage.modelSettings.default")}</Tag>}
+                          {modelOptions[item]?.multimodal && (
+                            <span className="cy-model-list-item__image is-enabled" title={t("settingsPage.modelSettings.multimodal")} aria-label={t("settingsPage.modelSettings.multimodal")}>
+                              <ImageIcon size={14} />
+                            </span>
+                          )}
+                          <span className="cy-model-list-item__context-value">{formatContextWindow(parseContextWindow(modelOptions[item]?.contextWindowTokens ?? "") ?? 256000)}</span>
+                          <Button
+                            type="text"
+                            size="small"
+                            className="cy-model-list-item__edit"
+                            aria-label={t("settingsPage.modelSettings.modelListEditAria", { model: item })}
+                            title={t("settingsPage.modelSettings.modelListEditAria", { model: item })}
+                            onClick={() => openEditModelOptionModal(item)}
+                          >
+                            <Pencil size={14} />
+                          </Button>
+                          <Button
+                            type="text"
+                            size="small"
+                            className="cy-model-list-item__remove"
+                            disabled={models.length <= 1}
+                            aria-label={t("settingsPage.modelSettings.modelListRemoveAria", { model: item })}
+                            title={t("settingsPage.modelSettings.modelListRemoveAria", { model: item })}
+                            onClick={() => removeModel(item)}
+                          >
+                            <X size={14} />
+                          </Button>
+                        </div>
+                      ))}
+                    </Radio.Group>
                     <div className="cy-model-list-add">
-                      <SettingsInput
+                      <AutoComplete
+                        className="cy-model-list-autocomplete"
+                        classNames={{ popup: { root: "cy-model-list-dropdown" } }}
+                        options={preset.mainModels.map((value) => ({ value }))}
                         value={newModel}
-                        onChange={(event) => setNewModel(event.target.value)}
+                        onChange={setNewModel}
+                        onSelect={(value) => setNewModel(value)}
                         onKeyDown={(event) => {
                           if (event.key === "Enter") {
+                            const value = newModel.trim();
+                            const hasSuggestion = preset.mainModels.some((item) => item.toLowerCase().includes(value.toLowerCase()));
+                            if (hasSuggestion) return;
                             event.preventDefault();
-                            addModel();
+                            openModelOptionModal(value);
                           }
                         }}
                         placeholder={t("settingsPage.modelSettings.modelListAddPlaceholder")}
                         aria-label={t("settingsPage.modelSettings.modelListAdd")}
-                        list="cy-model-suggestions"
                       />
-                      <Button type="text" size="small" onClick={addModel} aria-label={t("settingsPage.modelSettings.modelListAdd")} title={t("settingsPage.modelSettings.modelListAdd")}>
+                      <Button type="text" size="small" onClick={() => openModelOptionModal()} aria-label={t("settingsPage.modelSettings.modelListAdd")} title={t("settingsPage.modelSettings.modelListAdd")}>
                         <Plus size={14} />
                       </Button>
                     </div>
-                    <datalist id="cy-model-suggestions">{preset.mainModels.map((item) => <option key={item} value={item} />)}</datalist>
                   </div>
                   <small>{t("settingsPage.modelSettings.modelListHint")}</small>
-                </div>
-                <label className="cy-model-field">
-                  <span>{t("settingsPage.modelSettings.contextWindow")}</span>
-                  <InputNumber min={4096} step={4096} value={contextWindow} onChange={setContextWindow} addonAfter="Tokens" />
-                </label>
-                <div className="cy-model-switch-row">
-                  <div><strong>{t("settingsPage.modelSettings.multimodal")}</strong><small>{t("settingsPage.modelSettings.multimodalDescription")}</small></div>
-                  <SettingsSwitch ariaLabel={t("settingsPage.modelSettings.multimodal")} checked={multimodal} onChange={setMultimodal} />
                 </div>
               </div>
             </div>
@@ -728,6 +935,101 @@ export function ModelSettingsPanel() {
           </div>
         </main>
       </section>
+
+      <Modal
+        rootClassName="cy-settings-theme-modal"
+        title={t(editingModelId ? "settingsPage.modelSettings.modelOptionEditTitle" : "settingsPage.modelSettings.modelOptionTitle")}
+        open={modelOptionModalOpen}
+        onCancel={() => { setModelOptionModalOpen(false); setEditingModelId(undefined); }}
+        onOk={saveModelOption}
+        okText={t(editingModelId ? "settingsPage.modelSettings.modelOptionSave" : "settingsPage.modelSettings.modelListAdd")}
+        cancelText={t("common.cancel")}
+        destroyOnHidden
+        width={640}
+        styles={{ body: { maxHeight: "75vh", overflowY: "auto" } }}
+      >
+        <div className="cy-model-option-form">
+          {modelOptionError && <Alert type="error" showIcon message={modelOptionError} />}
+          <label className="cy-model-field">
+            <span>{t("settingsPage.modelSettings.model")}</span>
+            <Input
+              autoFocus
+              value={modelOptionModelId}
+              disabled={Boolean(editingModelId)}
+              onChange={(event) => { setModelOptionModelId(event.target.value); setModelOptionError(""); }}
+              placeholder={t("settingsPage.modelSettings.modelPlaceholder")}
+            />
+          </label>
+          <div className="cy-model-option-form__switch">
+            <div><strong>{t("settingsPage.modelSettings.multimodal")}</strong><small>{t("settingsPage.modelSettings.multimodalDescription")}</small></div>
+            <SettingsSwitch ariaLabel={t("settingsPage.modelSettings.multimodal")} checked={modelOptionMultimodal} onChange={setModelOptionMultimodal} />
+          </div>
+          <label className="cy-model-field">
+            <span>{t("settingsPage.modelSettings.contextWindow")}</span>
+            <Input
+              value={modelOptionContextWindow}
+              onChange={(event) => { setModelOptionContextWindow(event.target.value); setModelOptionError(""); }}
+              type="number"
+              min={4096}
+              step={1}
+              status={modelOptionContextWindow && parseContextWindow(modelOptionContextWindow) === undefined ? "error" : undefined}
+              placeholder="256000"
+            />
+            <small>{t("settingsPage.modelSettings.contextWindowHint")}</small>
+          </label>
+          <Collapse items={[{
+            key: "reasoning",
+            label: t("settingsPage.modelSettings.manualReasoningTitle"),
+            children: <div className="cy-model-option-form">
+              <div className="cy-model-option-form__switch">
+                <div><strong>{t("settingsPage.modelSettings.manualReasoningEnable")}</strong><small>{t("settingsPage.modelSettings.manualReasoningHint")}</small></div>
+                <SettingsSwitch ariaLabel={t("settingsPage.modelSettings.manualReasoningEnable")} checked={manualEnabled} onChange={setManualEnabled} />
+              </div>
+              {manualEnabled && <>
+                <label className="cy-model-field">
+                  <span>{t("settingsPage.modelSettings.manualStyle")}</span>
+                  <Select aria-label={t("settingsPage.modelSettings.manualStyle")} value={manualStyle} onChange={(value: ManualReasoningStyle) => { setManualStyle(value); setManualPreviewLevel(value === "qwen-enable-thinking" ? "on" : manualDefaultEffort); setManualPreview(undefined); }} options={[
+                    { value: "openai-effort", label: t("settingsPage.modelSettings.manualStyleOpenAI") },
+                    { value: "thinking-type", label: t("settingsPage.modelSettings.manualStyleThinking") },
+                    { value: "anthropic-adaptive", label: t("settingsPage.modelSettings.manualStyleAnthropic") },
+                    { value: "qwen-enable-thinking", label: t("settingsPage.modelSettings.manualStyleQwen") },
+                    { value: "custom", label: t("settingsPage.modelSettings.manualStyleCustom") },
+                  ]} />
+                </label>
+                {manualStyle !== "qwen-enable-thinking" && <label className="cy-model-field">
+                  <span>{t("settingsPage.modelSettings.manualLevels")}</span>
+                  <Select mode="multiple" aria-label={t("settingsPage.modelSettings.manualLevels")} value={manualEfforts} onChange={(levels: ReasoningEffort[]) => { setManualEfforts(levels); if (!levels.includes(manualDefaultEffort)) setManualDefaultEffort(levels[0] ?? "medium"); setManualPreviewLevel(levels[0] ?? "on"); }} options={MANUAL_EFFORTS.map((level) => ({ value: level, label: level }))} />
+                </label>}
+                {manualStyle !== "qwen-enable-thinking" && manualEfforts.length > 0 && <label className="cy-model-field">
+                  <span>{t("settingsPage.modelSettings.manualDefault")}</span>
+                  <Select aria-label={t("settingsPage.modelSettings.manualDefault")} value={manualEfforts.includes(manualDefaultEffort) ? manualDefaultEffort : manualEfforts[0]} onChange={(level: ReasoningEffort) => setManualDefaultEffort(level)} options={manualEfforts.map((level) => ({ value: level, label: level }))} />
+                </label>}
+                <div className="cy-model-option-form__switch">
+                  <strong>{t("settingsPage.modelSettings.manualOff")}</strong>
+                  <SettingsSwitch ariaLabel={t("settingsPage.modelSettings.manualOff")} checked={manualSupportsDisable} onChange={(enabled) => { setManualSupportsDisable(enabled); if (!enabled && manualPreviewLevel === "off") setManualPreviewLevel(manualStyle === "qwen-enable-thinking" || manualEfforts.length === 0 ? "on" : manualEfforts[0]); }} />
+                </div>
+                {manualStyle === "custom" && [...(manualEfforts.length ? manualEfforts : ["on"]), ...(manualSupportsDisable ? ["off"] : [])].map((level) => <label className="cy-model-field" key={level}>
+                  <span>{t("settingsPage.modelSettings.manualBody", { level })}</span>
+                  <Input.TextArea aria-label={t("settingsPage.modelSettings.manualBody", { level })} rows={3} value={manualBodies[level] ?? "{}"} onChange={(event) => setManualBodies((current) => ({ ...current, [level]: event.target.value }))} spellCheck={false} />
+                </label>)}
+                <label className="cy-model-field">
+                  <span>{t("settingsPage.modelSettings.manualPreviewLevel")}</span>
+                  <Select aria-label={t("settingsPage.modelSettings.manualPreviewLevel")} value={manualPreviewLevel} onChange={setManualPreviewLevel} options={[
+                    ...(manualStyle === "qwen-enable-thinking" || manualEfforts.length === 0 ? [{ value: "on", label: "on" }] : manualEfforts.map((level) => ({ value: level, label: level }))),
+                    ...(manualSupportsDisable ? [{ value: "off", label: "off" }] : []),
+                  ]} />
+                </label>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <Button onClick={() => void previewManualRequest()}>{t("settingsPage.modelSettings.manualPreviewButton")}</Button>
+                  <Button loading={manualChecking} onClick={() => void previewManualRequest(true)}>{t("settingsPage.modelSettings.manualCheckButton")}</Button>
+                </div>
+                {manualPreview && <pre style={{ maxHeight: 220, overflow: "auto", padding: 12, border: "1px solid var(--rb-border-color, #d9d9d9)", borderRadius: 8, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{manualPreview}</pre>}
+                {manualCheckResult && <small role="status">{manualCheckResult}</small>}
+              </>}
+            </div>,
+          }]} />
+        </div>
+      </Modal>
 
       <section className="cy-model-runtime-section">
         <Collapse items={[{

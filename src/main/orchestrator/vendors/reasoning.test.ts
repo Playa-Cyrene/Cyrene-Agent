@@ -86,11 +86,11 @@ const toggleEffortAnthropicCap: ReasoningCapability = {
 };
 
 describe("applyReasoningPreference — auto 路径", () => {
-  test("auto + 任何 control → 不增加字段", () => {
+  test("旧 auto + 可调模型 → 显式发送默认档位", () => {
     const body = { model: "x", messages: [] };
     expect(applyReasoningPreference(body, { mode: "auto" }, noneCap, ctx)).toEqual(body);
-    expect(applyReasoningPreference(body, { mode: "auto" }, toggleQwenCap, ctx)).toEqual(body);
-    expect(applyReasoningPreference(body, { mode: "auto" }, toggleAdaptiveCap, ctx)).toEqual(body);
+    expect(applyReasoningPreference(body, { mode: "auto" }, toggleQwenCap, ctx)).toEqual({ ...body, enable_thinking: true });
+    expect(applyReasoningPreference(body, { mode: "auto" }, toggleAdaptiveCap, ctx)).toEqual({ ...body, thinking: { type: "adaptive" } });
   });
 
   test("不修改入参（snapshot）", () => {
@@ -207,7 +207,7 @@ describe("applyReasoningPreference — effort / supportsDisable（用户修订 #
   });
 });
 
-describe("applyReasoningPreference — auto 档映射 / off 折叠", () => {
+describe("applyReasoningPreference — 旧 auto 与不可关闭模型的默认档", () => {
   // GLM-5.3 形状：toggle-effort + thinking-type + 不可关闭 + autoEffort
   const glm53Cap: ReasoningCapability = {
     control: "toggle-effort",
@@ -218,15 +218,15 @@ describe("applyReasoningPreference — auto 档映射 / off 折叠", () => {
     autoEffort: "high",
   };
 
-  test("auto + autoEffort → 映射为 on + autoEffort（不发字段 ≡ 服务端默认 max 的陷阱）", () => {
+  test("旧 auto → 显式发送默认 high，避免服务端默认 max", () => {
     expect(applyReasoningPreference({}, { mode: "auto" }, glm53Cap, ctx))
       .toEqual({ thinking: { type: "enabled" }, reasoning_effort: "high" });
   });
 
-  test("auto + 无 autoEffort → 仍不增加字段（原行为不变）", () => {
+  test("旧 auto + 无 autoEffort → 使用 defaultEffort", () => {
     const body = { model: "x" };
     expect(applyReasoningPreference(body, { mode: "auto" }, toggleEffortAnthropicCap, ctx))
-      .toEqual(body);
+      .toEqual({ ...body, thinking: { type: "adaptive" }, output_config: { effort: "high" } });
   });
 
   test("off + supportsDisable=false（强制思考模型）→ 折叠为 on，绝不发 disabled 字段", () => {
@@ -250,7 +250,7 @@ describe("applyReasoningPreference — auto 档映射 / off 折叠", () => {
     autoEffort: "high",
   };
 
-  test("K3 auto + autoEffort → reasoning_effort=high，且不发 K2.x 的 thinking 参数", () => {
+  test("K3 旧 auto → reasoning_effort=high，且不发 K2.x 的 thinking 参数", () => {
     expect(applyReasoningPreference({}, { mode: "auto" }, kimiK3Cap, ctx))
       .toEqual({ reasoning_effort: "high" });
   });

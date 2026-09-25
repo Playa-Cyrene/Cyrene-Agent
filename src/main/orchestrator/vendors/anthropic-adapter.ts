@@ -10,7 +10,7 @@ import {
   TestConnectionResult, ToolCall, ToolExecutionResult, VendorConfig,
 } from "./types";
 import { authHeaderFor } from "./auth";
-import { resolveReasoningCapability } from "../../../shared/reasoning";
+import { applyManualReasoningBody, normalizeManualReasoningConfig, resolveConfiguredReasoningCapability } from "../../../shared/manual-reasoning";
 import { applyReasoningPreference } from "./reasoning";
 import { getTimeoutSettings } from "../../timeout-manager";
 import { resolveAutomaticToolChoicePolicy, resolveToolChoicePolicy } from "./tool-choice-policy";
@@ -215,6 +215,7 @@ export class AnthropicAdapter implements ChatVendorAdapter {
           model: cfg.model,
           transport: this.transport,
           reasoning: cfg.reasoning ?? { mode: "auto" },
+          manualReasoning: cfg.manualReasoning,
           requestedToolName: req.toolChoiceIntent.toolName,
           supportedModes: this.capability.toolChoiceModes,
         });
@@ -226,6 +227,7 @@ export class AnthropicAdapter implements ChatVendorAdapter {
         model: cfg.model,
         transport: this.transport,
         reasoning: cfg.reasoning ?? { mode: "auto" },
+        manualReasoning: cfg.manualReasoning,
         supportedModes: this.capability.toolChoiceModes,
       }) === "auto") {
         body.tool_choice = { type: "auto" };
@@ -248,7 +250,8 @@ export class AnthropicAdapter implements ChatVendorAdapter {
       };
     }
     // 推理控制：按 (providerId, model) 解析 capability，调用 applyReasoningPreference 转换 body。
-    const reasoningCap = resolveReasoningCapability(this.capability.id, cfg.model);
+    const manualReasoning = normalizeManualReasoningConfig(cfg.manualReasoning);
+    const reasoningCap = resolveConfiguredReasoningCapability(this.capability.id, cfg.model, manualReasoning);
     const finalBody = applyReasoningPreference(
       body,
       cfg.reasoning ?? { mode: "auto" },
@@ -257,8 +260,10 @@ export class AnthropicAdapter implements ChatVendorAdapter {
         hasTools: Boolean(req.tools?.length),
         providerId: this.capability.id,
         model: cfg.model,
+        ignoreThinkingOverride: Boolean(manualReasoning),
       },
     );
+    const wireBody = applyManualReasoningBody(finalBody, manualReasoning, cfg.reasoning ?? { mode: "auto" });
     return {
       url: resolveApiEndpoint(cfg.baseUrl, "anthropic").url,
       method: "POST",
@@ -267,7 +272,7 @@ export class AnthropicAdapter implements ChatVendorAdapter {
         ...authHeaderFor(this.capability, cfg.apiKey, "anthropic"),
         "anthropic-version": ANTHROPIC_VERSION,
       },
-      body: JSON.stringify(finalBody),
+      body: JSON.stringify(wireBody),
     };
   }
 

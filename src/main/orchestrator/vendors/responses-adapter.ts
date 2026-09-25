@@ -19,7 +19,8 @@ import {
 } from "./types";
 import { toResponseInputItems } from "openai/lib/responses/ResponseInputItems";
 import { authHeaderFor } from "./auth";
-import { resolveEffectiveReasoning, resolveReasoningCapability } from "../../../shared/reasoning";
+import { resolveEffectiveReasoning } from "../../../shared/reasoning";
+import { applyManualReasoningBody, normalizeManualReasoningConfig, resolveConfiguredReasoningCapability } from "../../../shared/manual-reasoning";
 import { applyReasoningPreference } from "./reasoning";
 import { getTimeoutSettings } from "../../timeout-manager";
 import { resolveAutomaticToolChoicePolicy, resolveToolChoicePolicy } from "./tool-choice-policy";
@@ -217,6 +218,7 @@ export class ResponsesAdapter implements ChatVendorAdapter {
           model: cfg.model,
           transport: this.transport,
           reasoning: cfg.reasoning ?? { mode: "auto" },
+          manualReasoning: cfg.manualReasoning,
           requestedToolName: req.toolChoiceIntent.toolName,
           supportedModes: this.capability.toolChoiceModes,
         });
@@ -228,6 +230,7 @@ export class ResponsesAdapter implements ChatVendorAdapter {
         model: cfg.model,
         transport: this.transport,
         reasoning: cfg.reasoning ?? { mode: "auto" },
+        manualReasoning: cfg.manualReasoning,
         supportedModes: this.capability.toolChoiceModes,
       }) === "auto") {
         body.tool_choice = "auto";
@@ -237,7 +240,8 @@ export class ResponsesAdapter implements ChatVendorAdapter {
     // 推理控制：复用共享推理层，再把 Chat Completions 语义的 reasoning_effort
     // 翻译成 Responses 的 reasoning:{effort}。thinking / enable_thinking /
     // output_config 等 Chat Completions / Anthropic 专属字段对 Responses 无效，丢弃。
-    const reasoningCap = resolveReasoningCapability(this.capability.id, cfg.model);
+    const manualReasoning = normalizeManualReasoningConfig(cfg.manualReasoning);
+    const reasoningCap = resolveConfiguredReasoningCapability(this.capability.id, cfg.model, manualReasoning);
     const scratch = applyReasoningPreference(
       { ...body },
       cfg.reasoning ?? { mode: "auto" },
@@ -246,6 +250,7 @@ export class ResponsesAdapter implements ChatVendorAdapter {
         hasTools: Boolean(req.tools?.length),
         providerId: this.capability.id,
         model: cfg.model,
+        ignoreThinkingOverride: Boolean(manualReasoning),
       },
     );
     const effort = scratch.reasoning_effort;
@@ -254,6 +259,7 @@ export class ResponsesAdapter implements ChatVendorAdapter {
     // 语义映射：effort 非 none 值 = 开启推理（不调深度）。
     const scratchThinking = scratch.thinking as { type?: unknown } | undefined;
     const thinkingOn = scratchThinking?.type === "adaptive" || scratchThinking?.type === "enabled";
+    const thinkingOff = scratchThinking?.type === "disabled";
     delete scratch.reasoning_effort;
     delete scratch.thinking;
     delete scratch.enable_thinking;
@@ -263,15 +269,17 @@ export class ResponsesAdapter implements ChatVendorAdapter {
     const proMode = resolveEffectiveReasoning(
       cfg.reasoning ?? { mode: "auto" },
       reasoningCap,
-      getVendorRuntimeSettings().thinkingOverride,
+      manualReasoning ? 0 : getVendorRuntimeSettings().thinkingOverride,
     ).proMode === true;
     // thinking on 且无显式 effort（M3 无 effort 档）→ effort:"minimal" 开启推理；
-    // thinking off / auto → 不发字段，落 Responses 默认（MiniMax-M3 默认 effort:"none" 即关闭）。
+    // thinking off 映射为 effort:"none"；不可调模型继续使用接口默认值。
     const resolvedEffort = typeof effort === "string"
       ? effort
       : thinkingOn
         ? "minimal"
-        : undefined;
+        : thinkingOff
+          ? "none"
+          : undefined;
     if (resolvedEffort !== undefined || proMode) {
       scratch.reasoning = {
         ...(resolvedEffort !== undefined ? { effort: resolvedEffort } : {}),
@@ -298,6 +306,7 @@ export class ResponsesAdapter implements ChatVendorAdapter {
     }
 
     if (req.extraBody) Object.assign(body, req.extraBody);
+    const wireBody = applyManualReasoningBody(body, manualReasoning, cfg.reasoning ?? { mode: "auto" });
 
     return {
       url: resolveApiEndpoint(cfg.baseUrl, "responses").url,
@@ -306,7 +315,7 @@ export class ResponsesAdapter implements ChatVendorAdapter {
         "Content-Type": "application/json",
         ...authHeaderFor(this.capability, cfg.apiKey, "responses"),
       },
-      body: JSON.stringify(body),
+      body: JSON.stringify(wireBody),
     };
   }
 

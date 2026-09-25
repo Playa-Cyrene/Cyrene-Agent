@@ -7,8 +7,8 @@
 // - fixed-on：始终开启，控件 disabled，单项 disabled
 // - dynamic：跟随动态路由，控件 disabled，单项 disabled
 // - none：未配置推理控制，控件 disabled，单项 disabled
-// - toggle（无 supportedEfforts）：跟随模型 / [关闭] / 开启
-// - effort / toggle-effort（带 supportedEfforts）：跟随模型 / [关闭] / supportedEfforts.map
+// - toggle（无 supportedEfforts）：[关闭] / 开启
+// - effort / toggle-effort（带 supportedEfforts）：[关闭] / supportedEfforts.map
 //
 // 注意：effective 必须用 resolveEffectiveReasoning(saved, capability) 计算，
 // 不能直接 saved ?? auto。原因：fixed-on 模型即使 saved=off，effective.mode 仍为 on；
@@ -16,10 +16,10 @@
 
 import {
   resolveEffectiveReasoning,
-  resolveReasoningCapability,
   type ReasoningEffort,
   type ReasoningPreference,
 } from "../../shared/reasoning";
+import { resolveConfiguredReasoningCapability, type ManualReasoningConfig } from "../../shared/manual-reasoning";
 
 export interface ReasoningDropdownItem {
   label: string;
@@ -55,38 +55,11 @@ export function computeReasoningDropdown(
   saved: ReasoningPreference | undefined,
   thinkingOverride?: -1 | 0 | 1,
   transport?: "openai" | "anthropic" | "responses",
+  manualReasoning?: ManualReasoningConfig,
 ): ReasoningDropdownView {
-  const cap = resolveReasoningCapability(providerId, model);
+  const cap = resolveConfiguredReasoningCapability(providerId, model, manualReasoning);
   // 用户修正 #2：必须用 resolveEffectiveReasoning，不能 saved ?? auto
-  const effective = resolveEffectiveReasoning(saved, cap, thinkingOverride);
-
-  if (thinkingOverride === 1) {
-    const items: ReasoningDropdownItem[] = [
-      { label: "跟随模型", preference: { mode: "auto" } },
-    ];
-    items.push({ label: "关闭", preference: { mode: "off" } });
-    items.push({ label: "开启", preference: { mode: "on" } });
-    return {
-      disabled: false,
-      statusText: statusTextFor(effective),
-      activePreference: effective,
-      items,
-    };
-  } else if (thinkingOverride === -1) {
-    return {
-      disabled: true,
-      statusText: "跟随模型",
-      activePreference: effective,
-      items: [
-        {
-          label: "跟随模型",
-          preference: { mode: "auto" },
-          disabled: true,
-          hint: "当前模型未配置推理控制",
-        },
-      ],
-    };
-  }
+  const effective = resolveEffectiveReasoning(saved, cap, manualReasoning ? 0 : thinkingOverride);
 
   // ── fixed-on：始终开启，控件整体禁用，单项 disabled ──
   if (cap.control === "fixed-on") {
@@ -105,15 +78,31 @@ export function computeReasoningDropdown(
     };
   }
 
+  if (thinkingOverride === -1 && !manualReasoning) {
+    return {
+      disabled: true,
+      statusText: "不可调",
+      activePreference: effective,
+      items: [
+        {
+          label: "不可调",
+          preference: { mode: "auto" },
+          disabled: true,
+          hint: "当前模型未配置推理控制",
+        },
+      ],
+    };
+  }
+
   // ── dynamic：跟随动态路由，控件整体禁用 ──
   if (cap.control === "dynamic") {
     return {
       disabled: true,
-      statusText: "跟随动态路由",
+      statusText: "动态路由",
       activePreference: effective,
       items: [
         {
-          label: "跟随动态路由",
+          label: "动态路由",
           preference: { mode: "auto" },
           disabled: true,
           hint: "由火山动态路由决定",
@@ -126,11 +115,11 @@ export function computeReasoningDropdown(
   if (cap.control === "none") {
     return {
       disabled: true,
-      statusText: "跟随模型",
+      statusText: "不可调",
       activePreference: effective,
       items: [
         {
-          label: "跟随模型",
+          label: "不可调",
           preference: { mode: "auto" },
           disabled: true,
           hint: "当前模型未配置推理控制",
@@ -139,11 +128,9 @@ export function computeReasoningDropdown(
     };
   }
 
-  // ── toggle（无 supportedEfforts）：跟随 / [关闭] / 开启 ──
+  // ── toggle（无 supportedEfforts）：[关闭] / 开启 ──
   if (cap.control === "toggle") {
-    const items: ReasoningDropdownItem[] = [
-      { label: "跟随模型", preference: { mode: "auto" } },
-    ];
+    const items: ReasoningDropdownItem[] = [];
     if (cap.supportsDisable) {
       items.push({ label: "关闭", preference: { mode: "off" } });
     }
@@ -158,14 +145,15 @@ export function computeReasoningDropdown(
 
   // ── effort / toggle-effort（带 supportedEfforts）──
   const efforts = cap.supportedEfforts ?? [];
-  const items: ReasoningDropdownItem[] = [
-    { label: "跟随模型", preference: { mode: "auto" } },
-  ];
+  const items: ReasoningDropdownItem[] = [];
   if (cap.supportsDisable) {
     items.push({ label: "关闭", preference: { mode: "off" } });
   }
   for (const e of efforts) {
     items.push({ label: EFFORT_LABEL[e], preference: { mode: "on", effort: e } });
+  }
+  if (efforts.length === 0) {
+    items.push({ label: "开启", preference: { mode: "on" } });
   }
   // PRO 档（gpt-5.6 系列）：reasoning.mode="pro"，仅 Responses 协议存在该字段
   if (cap.supportsProMode && transport === "responses") {
@@ -184,7 +172,7 @@ export function computeReasoningDropdown(
 }
 
 function statusTextFor(effective: ReasoningPreference): string {
-  if (effective.mode === "auto") return "跟随模型";
+  if (effective.mode === "auto") return "不可调";
   if (effective.mode === "off") return "关闭";
   if (effective.proMode) return "PRO";
   if (effective.effort) return EFFORT_LABEL[effective.effort];

@@ -10,6 +10,8 @@
 //   Invariant B：session.model 从属于 session.modelProfileId；绑定失效时一并失效。
 //   Invariant C：runtime 与 UI 只认 effective；raw session.model 仅存储不清清理。
 
+import type { ManualReasoningConfig } from "./manual-reasoning";
+
 /** 会话侧解析输入的最小结构（ChatSession 结构兼容）。 */
 export interface SessionModelBindingInput {
   modelProfileId?: string;
@@ -22,6 +24,10 @@ export interface SessionModelProfileView {
   model: string;
   /** 档案内可切换的模型清单；缺省 = 单模型档案（行为与旧档案一致）。 */
   models?: string[];
+  /** 模型专属能力；旧档案没有此字段时沿用档案级兼容值。 */
+  modelOptions?: Record<string, { multimodal?: boolean; contextWindowTokens?: number; manualReasoning?: ManualReasoningConfig }>;
+  contextWindowTokens?: number;
+  multimodal?: boolean;
 }
 
 /** 配置侧解析输入的最小结构（ModelSettings 结构兼容）。 */

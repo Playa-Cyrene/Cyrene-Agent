@@ -74,12 +74,13 @@ export function resolveReasoningCapability(
  * 把用户 preference 解析为 effective preference。
  *
  * 决策顺序（用户第三轮修订 #3）：
- * 1. control = none / dynamic → 强制 auto
- * 2. control = fixed-on → 永远返 { mode: "on" }，不读 pref.mode、不读 pref.effort
+ * 1. control = fixed-on → 永远返 { mode: "on" }，不读 pref.mode、不读 pref.effort
+ * 2. control = none / dynamic，或手动禁用 → 强制 auto
  * 3. control ∈ {toggle, effort, toggle-effort}：
- *    - mode !== "on" → 直接返 { mode }，不保留 effort
- *    - mode === "on"：effort 不在 supportedEfforts → 退回 defaultEffort；
- *      effort 缺省时填 defaultEffort；defaultEffort 也不在列 → 丢弃 effort
+ *    - 旧 auto / 缺省偏好 → 显式 on，使用模型支持的默认档位
+ *    - off → 支持关闭时保持 off；否则回退到模型默认档位
+ *    - on：effort 不在 supportedEfforts → 退回默认档位；
+ *      effort 缺省时填默认档位，规则未声明默认值时取首个支持档位
  *
  * 注意：saved 永远不动（用户修订 #5），effective 仅用于运行时请求与 UI 当前显示。
  */
@@ -90,38 +91,42 @@ export function resolveEffectiveReasoning(
 ): ReasoningPreference {
   const pref = preference ?? { mode: "auto" };
 
-  // 1. 不支持 / 动态路由 → 强制 auto
-  if (thinkingOverride === -1 || (thinkingOverride !== 1 && (capability.control === "none" || capability.control === "dynamic"))) {
-    return { mode: "auto" };
-  }
-
-  // 2. fixed-on：effective 永远 on
+  // 1. fixed-on：模型强制思考，effective 永远 on
   if (capability.control === "fixed-on") {
     return { mode: "on" };
   }
 
-  // 3. toggle / effort / toggle-effort
-  const { mode } = pref;
+  // 2. 不支持 / 动态路由 / 手动禁用 → 强制 auto
+  if (thinkingOverride === -1 || capability.control === "none" || capability.control === "dynamic") {
+    return { mode: "auto" };
+  }
 
-  // mode !== "on" → 不保留 effort（第三轮修订 #3）
+  // 3. 可调模型的旧 auto 偏好按滑块默认档位执行，显示与请求保持一致。
+  const requestedMode = pref.mode === "auto" ? capability.defaultMode ?? "on" : pref.mode;
+  const mode = requestedMode === "off" && !capability.supportsDisable ? "on" : requestedMode;
+
+  // off 不保留 effort
   if (mode !== "on") {
     return { mode };
   }
 
-  let { effort } = pref;
+  const supportedEfforts = capability.supportedEfforts;
+  const defaultEffort = [capability.defaultEffort, capability.autoEffort, supportedEfforts?.[0]]
+    .find((candidate) => candidate && (!supportedEfforts || supportedEfforts.includes(candidate)));
+  let effort = pref.mode === "on" ? pref.effort : undefined;
 
-  // effort 不在 supportedEfforts → 退回 defaultEffort
-  if (effort !== undefined && capability.supportedEfforts && !capability.supportedEfforts.includes(effort)) {
-    effort = capability.defaultEffort;
+  // effort 不在 supportedEfforts → 退回默认档位
+  if (effort !== undefined && supportedEfforts && !supportedEfforts.includes(effort)) {
+    effort = defaultEffort;
   }
 
-  // effort 缺省时填 defaultEffort
-  if (effort === undefined && capability.defaultEffort) {
-    effort = capability.defaultEffort;
+  // effort 缺省时填默认档位
+  if (effort === undefined) {
+    effort = defaultEffort;
   }
 
   // proMode 仅在 capability 声明支持且显式为 true 时保留
-  const proMode = capability.supportsProMode === true && pref.proMode === true;
+  const proMode = pref.mode === "on" && capability.supportsProMode === true && pref.proMode === true;
 
   return { mode, ...(effort !== undefined ? { effort } : {}), ...(proMode ? { proMode: true } : {}) };
 }

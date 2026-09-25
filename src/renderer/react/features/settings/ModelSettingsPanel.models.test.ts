@@ -17,6 +17,8 @@ vi.mock("@lobehub/icons", () => {
     Anthropic: colored(),
     DeepSeek: colored(),
     Doubao: colored(),
+    Gemini: colored(),
+    Grok: colored(),
     Minimax: colored(),
     Kimi: colored(),
     OpenAI: colored(),
@@ -134,6 +136,23 @@ afterEach(async () => {
 });
 
 describe("模型清单编辑组件", () => {
+  it("保留未收录模型的手动推理规则并随档案保存", async () => {
+    const manualReasoning = {
+      style: "openai-effort",
+      supportedEfforts: ["low", "medium", "high"],
+      defaultEffort: "medium",
+      supportsDisable: true,
+    };
+    const settings = installSettings([{
+      ...LEGACY_PROFILE,
+      modelOptions: { "old-model": { contextWindowTokens: 128000, multimodal: true, manualReasoning } },
+    }], "p-legacy");
+    await renderPanel();
+
+    const payload = await saveAndGetPayload(settings);
+    expect(payload.modelOptions).toMatchObject({ "old-model": { manualReasoning } });
+  });
+
   it("多模型档案：清单完整渲染，默认模型行带标记且单选选中", async () => {
     installSettings([MULTI_PROFILE], "p-multi");
     const host = await renderPanel();

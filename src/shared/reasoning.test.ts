@@ -442,9 +442,9 @@ describe("resolveEffectiveReasoning", () => {
     expect(result.effort).toBeUndefined();
   });
 
-  test("toggle-effort + supportsDisable=false + { mode: 'off' } → { mode: 'off' }（第三轮修订：mode !== on 直接返回，supportsDisable 由 applyReasoningPreference 拦截）", () => {
+  test("toggle-effort + supportsDisable=false + { mode: 'off' } → 默认档位", () => {
     expect(resolveEffectiveReasoning({ mode: "off" }, toggleEffortNoDisableCap))
-      .toEqual({ mode: "off" });
+      .toEqual({ mode: "on", effort: "high" });
   });
 
   test("toggle-effort + { mode: 'on', effort: 'max' } + supportedEfforts=[high] → { mode: 'on', effort: 'high' }", () => {
@@ -472,9 +472,9 @@ describe("resolveEffectiveReasoning", () => {
       .toEqual({ mode: "on", effort: "high" });
   });
 
-  test("toggle + { mode: 'auto', effort: 'high' } → { mode: 'auto' }（mode !== on 不保留 effort）", () => {
+  test("toggle + 旧 auto 偏好 → 开启且清除旧 effort", () => {
     expect(resolveEffectiveReasoning({ mode: "auto", effort: "high" }, toggleCap))
-      .toEqual({ mode: "auto" });
+      .toEqual({ mode: "on" });
   });
 
   test("toggle + { mode: 'off', effort: 'high' } → { mode: 'off' }（mode !== on 不保留 effort）", () => {
@@ -482,9 +482,9 @@ describe("resolveEffectiveReasoning", () => {
       .toEqual({ mode: "off" });
   });
 
-  test("preference 缺省 → 按 { mode: 'auto' } 处理", () => {
+  test("preference 缺省 → 可调模型默认开启", () => {
     expect(resolveEffectiveReasoning(undefined, toggleCap))
-      .toEqual({ mode: "auto" });
+      .toEqual({ mode: "on" });
   });
 
   test("saved 与 effective 不同步：saved 仍保留原 effort", () => {
@@ -528,9 +528,9 @@ describe("resolveEffectiveReasoning", () => {
       .toEqual({ mode: "on", effort: "high" });
   });
 
-  test("mode !== on → proMode 丢弃", () => {
+  test("旧 auto 与 off 偏好均丢弃 proMode", () => {
     expect(resolveEffectiveReasoning({ mode: "auto", proMode: true }, proCap))
-      .toEqual({ mode: "auto" });
+      .toEqual({ mode: "on", effort: "medium" });
     expect(resolveEffectiveReasoning({ mode: "off", proMode: true }, proCap))
       .toEqual({ mode: "off" });
   });
@@ -542,7 +542,7 @@ describe("MODEL_REASONING_RULES — 数据完整性", () => {
   test("所有 providerId 与 capabilities.ts 的 id 一致", () => {
     const known = new Set([
       "chatgpt", "claude", "deepseek", "glm", "kimi",
-      "qwen", "minimax", "mimo", "doubao",
+      "qwen", "minimax", "mimo", "doubao", "grok", "gemini",
     ]);
     const providerIds = new Set(MODEL_REASONING_RULES.map(r => r.providerId));
     for (const id of providerIds) {

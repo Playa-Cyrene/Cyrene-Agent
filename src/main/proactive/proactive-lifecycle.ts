@@ -260,6 +260,7 @@ export function createProactiveLifecycle(options: ProactiveLifecycleOptions): Pr
             apiKey: settings.apiKey,
             explicitTransport: settings.explicitTransport,
             reasoning: settings.reasoning,
+            manualReasoning: settings.manualReasoning,
           },
           messages,
           timeoutMs: 45_000,

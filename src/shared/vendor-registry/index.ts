@@ -2,11 +2,11 @@
 //
 // 双顺序契约（两个顺序都是可观察行为，各自快照钉死，不能合并成一个表）：
 //   - REASONING_VENDOR_ORDER 保持旧 shared/reasoning.ts 全局规则表的厂商排列
-//     （chatgpt → claude → deepseek → glm → qwen → kimi → minimax → mimo → doubao）。
+//     （chatgpt → claude → … → doubao → grok → gemini，后两家为新增追加）。
 //     原因：resolver 第二轮"模型名跨家族推断"按全局顺序 first-match，
 //     重排会改变托管端点场景的兜底命中结果。
 //   - VENDOR_REGISTRY 保持旧 capabilities.ts 能力表的厂商排列
-//     （minimax → deepseek → doubao → glm → kimi → qwen → chatgpt → claude → mimo）。
+//     （minimax → … → mimo → grok → gemini，后两家为新增追加）。
 //     原因：PROVIDER_CAPABILITIES 由本表 map 派生，导出数组顺序是可观察行为。
 // 新增厂商必须在本文件两张顺序表各登记一次；一致性测试的完整排列不变量
 // 会拦截漏登记，快照测试会拦截重排旧序。
@@ -21,10 +21,12 @@ import { KIMI_REGISTRY } from "./entries/kimi";
 import { MINIMAX_REGISTRY } from "./entries/minimax";
 import { MIMO_REGISTRY } from "./entries/mimo";
 import { DOUBAO_REGISTRY } from "./entries/doubao";
+import { GROK_REGISTRY } from "./entries/grok";
+import { GEMINI_REGISTRY } from "./entries/gemini";
 
-// 厂商注册表：按旧 capabilities.ts 能力表顺序排列（minimax 开头）。
+// 厂商注册表：按旧 capabilities.ts 能力表顺序排列（minimax 开头），新厂商追加尾部。
 // satisfies 只做结构检查、不改窄推断类型——typeof VENDOR_REGISTRY[number]
-// 保持 9 个 entry 字面量类型的联合，BuiltinProviderId 才能推导出真正的 id 联合。
+// 保持 11 个 entry 字面量类型的联合，BuiltinProviderId 才能推导出真正的 id 联合。
 export const VENDOR_REGISTRY = [
   MINIMAX_REGISTRY,
   DEEPSEEK_REGISTRY,
@@ -35,6 +37,8 @@ export const VENDOR_REGISTRY = [
   CHATGPT_REGISTRY,
   CLAUDE_REGISTRY,
   MIMO_REGISTRY,
+  GROK_REGISTRY,
+  GEMINI_REGISTRY,
 ] satisfies readonly VendorRegistryEntry[];
 
 // 内置厂商 id 联合类型：从注册表推导，不手写枚举——新增厂商自动进入，
@@ -57,6 +61,8 @@ export const REASONING_VENDOR_ORDER: readonly VendorRegistryEntry[] = [
   MINIMAX_REGISTRY,
   MIMO_REGISTRY,
   DOUBAO_REGISTRY,
+  GROK_REGISTRY,
+  GEMINI_REGISTRY,
 ];
 
 export const MODEL_REASONING_RULES: readonly ModelReasoningRule[] =

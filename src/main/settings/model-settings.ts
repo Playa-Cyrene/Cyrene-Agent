@@ -3,6 +3,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { DEFAULT_CONTEXT_WINDOW_TOKENS } from "../orchestrator/model-config";
 import { foldReasoning, normalizeReasoningPreference, type ReasoningPreference } from "../../shared/reasoning";
+import { normalizeManualReasoningConfig, type ManualReasoningConfig } from "../../shared/manual-reasoning";
 import type { StickerSize } from "../../shared/sticker-types";
 import { getSettingsPath } from "../settings-store";
 import { migrateLegacyMinimaxDefaults } from "../orchestrator/vendors/minimax-defaults";
@@ -40,6 +41,12 @@ export interface ProviderProfile {
   model: string;
   /** 档案内可切换的模型清单。缺省 = 单模型档案，行为与现状一致。 */
   models?: string[];
+  /** 每个模型单独的能力配置；旧档案仍可通过下方档案级字段兼容回退。 */
+  modelOptions?: Record<string, {
+    multimodal?: boolean;
+    contextWindowTokens?: number;
+    manualReasoning?: ManualReasoningConfig;
+  }>;
   apiKey: string;
   displayName?: string;
   /**
@@ -133,6 +140,8 @@ export interface ModelSettings {
    * 保存的是用户 preference（不覆盖）；effective config 由 capability 决定。
    */
   reasoning?: ReasoningPreference;
+  /** 当前实际模型的手动推理规则；由档案展开，仅用于运行时。 */
+  manualReasoning?: ManualReasoningConfig;
   // 按厂商缓存：currentProvider 之外的厂商配置也保留在这里，切回来时回填。
   // 真值（source of truth）是 perProvider；顶层 baseUrl/model/apiKey 是当前厂商那一份的展开镜像，
   // 仅为兼容现有 main 进程里大量直接读 settings.baseUrl 等代码而保留。
@@ -250,10 +259,30 @@ function normalizeProviderProfile(
     if (!models.includes(effectiveModel)) effectiveModel = models[0];
     if (models.length <= 1) models = undefined;
   }
+  const selectableModels = models ?? (effectiveModel ? [effectiveModel] : []);
+  const rawModelOptions = (input as { modelOptions?: unknown })?.modelOptions;
+  const modelOptions: NonNullable<ProviderProfile["modelOptions"]> = {};
+  if (rawModelOptions && typeof rawModelOptions === "object" && !Array.isArray(rawModelOptions)) {
+    for (const name of selectableModels) {
+      const rawOption = (rawModelOptions as Record<string, unknown>)[name];
+      if (!rawOption || typeof rawOption !== "object" || Array.isArray(rawOption)) continue;
+      const option = rawOption as { multimodal?: unknown; contextWindowTokens?: unknown; manualReasoning?: unknown };
+      const manualReasoning = normalizeManualReasoningConfig(option.manualReasoning);
+      const normalized = {
+        ...(typeof option.multimodal === "boolean" ? { multimodal: option.multimodal } : {}),
+        ...(typeof option.contextWindowTokens === "number" && Number.isFinite(option.contextWindowTokens) && option.contextWindowTokens >= 4096
+          ? { contextWindowTokens: Math.round(option.contextWindowTokens) }
+          : {}),
+        ...(manualReasoning ? { manualReasoning } : {}),
+      };
+      if (Object.keys(normalized).length > 0) modelOptions[name] = normalized;
+    }
+  }
   return {
     baseUrl: typeof input?.baseUrl === "string" ? input.baseUrl.trim() : "",
     model: effectiveModel,
     ...(models ? { models } : {}),
+    ...(Object.keys(modelOptions).length > 0 ? { modelOptions } : {}),
     apiKey: typeof input?.apiKey === "string" ? input.apiKey.trim() : "",
     displayName: typeof input?.displayName === "string" && input?.displayName.trim() ? input.displayName.trim() : undefined,
     explicitTransport,
@@ -434,6 +463,7 @@ export function resolveModelSettingsProfile(settings: ModelSettings, id?: string
     ? profiles.find((item) => item.id === id)
     : resolveDefaultModelProfile(profiles, settings.defaultModelProfileId);
   if (!profile) return settings;
+  const modelOption = profile.modelOptions?.[profile.model];
   return {
     ...settings,
     provider: profile.provider,
@@ -443,9 +473,10 @@ export function resolveModelSettingsProfile(settings: ModelSettings, id?: string
     apiKey: profile.apiKey,
     explicitTransport: profile.explicitTransport,
     reasoning: profile.reasoning,
+    manualReasoning: modelOption?.manualReasoning,
     // 档案级字段覆盖镜像；未定义时回退全局值（老档案 = 现行为）
-    contextWindowTokens: profile.contextWindowTokens ?? settings.contextWindowTokens,
-    multimodal: profile.multimodal ?? settings.multimodal,
+    contextWindowTokens: modelOption?.contextWindowTokens ?? profile.contextWindowTokens ?? settings.contextWindowTokens,
+    multimodal: modelOption?.multimodal ?? profile.multimodal ?? settings.multimodal,
   };
 }
 
@@ -466,7 +497,14 @@ export function resolveSessionModelSettings(
   const expanded = resolveModelSettingsProfile(settings, binding.resolvedProfileId);
   const model = resolveEffectiveSessionModel(session, binding);
   if (!model || model === expanded.model) return expanded;
-  return { ...expanded, model };
+  const modelOption = binding.profile.modelOptions?.[model];
+  return {
+    ...expanded,
+    model,
+    contextWindowTokens: modelOption?.contextWindowTokens ?? binding.profile.contextWindowTokens ?? settings.contextWindowTokens,
+    multimodal: modelOption?.multimodal ?? binding.profile.multimodal ?? settings.multimodal,
+    manualReasoning: modelOption?.manualReasoning,
+  };
 }
 
 export function saveModelProfile(input: Omit<SavedModelProfile, "id"> & { id?: string }): { settings: ModelSettings; added: boolean } {

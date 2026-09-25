@@ -17,6 +17,7 @@ import type { EmbeddingIndexService } from "../services/embedding/embedding-inde
 import { initReranker, getRerankerInstallStatus } from "../rag/reranker";
 import { switchEmbeddingModel } from "../rag";
 import { testVendorConnection } from "../orchestrator/vendors/test-connection";
+import { getAdapterForConfig } from "../orchestrator/vendors";
 import type { VendorConfig } from "../orchestrator/vendors";
 import { normalizeModelSettings, getPublicModelConfig, listSavedModelProfiles, saveModelProfile, setDefaultModelProfile, saveModelSettings } from "./model-settings";
 import type { ModelSettings } from "./model-settings";
@@ -248,6 +249,15 @@ export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
   });
 
   ipc.handle(IPC.SETTINGS_TEST_CONNECTION, async (_event, cfg: VendorConfig) => testVendorConnection(cfg));
+  ipc.handle(IPC.SETTINGS_PREVIEW_REASONING, (_event, cfg: VendorConfig) => {
+    const request = getAdapterForConfig(cfg).buildRequest({
+      model: cfg.model,
+      messages: [{ role: "user", content: "Hello" }],
+      stream: false,
+    }, cfg);
+    // 仅返回请求正文，不将认证头或 API 密钥暴露给设置页。
+    return JSON.parse(request.body) as Record<string, unknown>;
+  });
 
   /**
    * 测试视觉模型连通性。

@@ -202,6 +202,7 @@ export function createPluginAgentRunner(deps: PluginAgentRunnerDeps): NonNullabl
         apiKey: built.options.settings.apiKey,
         explicitTransport: built.options.settings.explicitTransport,
         reasoning: built.options.settings.reasoning,
+        manualReasoning: built.options.settings.manualReasoning,
       },
       config: {
         maxRounds,

@@ -32,7 +32,7 @@ export interface LlmClient {
   ): Promise<string>;
 
   chatNonStream(
-    settings: ModelSettings,
+    settings: LlmRequestSettings,
     messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
     temperature: number | undefined,
     timeoutMs: number,
@@ -53,7 +53,13 @@ export interface LlmClient {
   }>;
 }
 
-function buildVendorConfig(settings: ModelSettings): VendorConfig {
+/** 模型请求所需的已解析配置子集；供非聊天业务复用同一套厂商请求实现。 */
+export type LlmRequestSettings = Pick<
+  ModelSettings,
+  "provider" | "baseUrl" | "model" | "apiKey" | "explicitTransport" | "reasoning" | "manualReasoning"
+>;
+
+function buildVendorConfig(settings: LlmRequestSettings): VendorConfig {
   return {
     provider: settings.provider,
     baseUrl: settings.baseUrl,
@@ -61,6 +67,7 @@ function buildVendorConfig(settings: ModelSettings): VendorConfig {
     apiKey: settings.apiKey,
     explicitTransport: settings.explicitTransport,
     reasoning: settings.reasoning,
+    manualReasoning: settings.manualReasoning,
   };
 }
 
@@ -191,7 +198,7 @@ export function createLlmClient(): LlmClient {
   }
 
   async function chatNonStream(
-    settings: ModelSettings,
+    settings: LlmRequestSettings,
     messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
     temperature: number | undefined,
     timeoutMs: number,
@@ -217,6 +224,7 @@ export function createLlmClient(): LlmClient {
       apiKey: settings.apiKey,
       explicitTransport: settings.explicitTransport,
       reasoning: reasoningOverride ?? settings.reasoning,
+      manualReasoning: settings.manualReasoning,
     };
     const adapter = getAdapterForConfig(cfg);
     const chatRequest = {

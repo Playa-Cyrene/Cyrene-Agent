@@ -3,6 +3,7 @@
 // 协议事实来源：docs/vendors/tool-calling-matrix.md
 
 import type { ReasoningPreference } from "../../../shared/reasoning";
+import type { ManualReasoningConfig } from "../../../shared/manual-reasoning";
 import type { PromptLayerMetadata } from "../prompt-layers";
 import type { ProviderCapability, Transport } from "../../../shared/vendor-registry/types";
 
@@ -33,6 +34,8 @@ export interface VendorConfig {
    * commit 2 落地后由 ModelSettings 顶层镜像字段填充；commit 1 期间为可选。
    */
   reasoning?: ReasoningPreference;
+  /** 当前模型在档案中显式配置的推理规则。 */
+  manualReasoning?: ManualReasoningConfig;
 }
 
 export type OpenAIContentBlock =

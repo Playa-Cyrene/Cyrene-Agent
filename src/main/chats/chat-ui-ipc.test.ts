@@ -203,6 +203,27 @@ describe("chat reasoning IPC", () => {
     });
   });
 
+  it("#10 同档案内切模型：GET 按会话模型返回，档案 saved 偏好原样（effective 不回写 saved）", async () => {
+    // 档案 saved reasoning = { on, high }；会话切到清单内小模型后：
+    // 模型按会话取，推理偏好仍继承档案 saved，且 GET 不得触发任何写盘
+    mocks.sessions.set("session-mini", {
+      id: "session-mini",
+      modelProfileId: "openai-profile",
+      model: "gpt-5.6-mini",
+    });
+    await register();
+    const handler = mocks.handlers.get(IPC.CHAT_GET_REASONING_STATE);
+    if (!handler) throw new Error("reasoning state handler was not registered");
+
+    expect(handler({}, { sessionId: "session-mini" })).toMatchObject({
+      model: "gpt-5.6-mini",
+      preference: { mode: "on", effort: "high" },
+      modelProfileId: "openai-profile",
+    });
+    expect(mocks.saveModelProfile).not.toHaveBeenCalled();
+    expect(mocks.saveModelSettings).not.toHaveBeenCalled();
+  });
+
   it("会话绑定失效 → 回退默认档案默认模型，raw 会话模型不串档（#19）", async () => {
     // raw model = gpt-5.6-mini（恰好在回退档案清单里也不认——绑定失效时一并失效）
     mocks.sessions.set("session-stale", {

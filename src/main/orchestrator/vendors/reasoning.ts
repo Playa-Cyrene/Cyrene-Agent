@@ -6,13 +6,13 @@
 //   const finalBody = applyReasoningPreference(body, cfg.reasoning ?? {mode:"auto"}, cap, ctx);
 //
 // 决策树：resolveEffectiveReasoning 先按能力表归一 preference，本文件再按
-// control × requestStyle 分支注入 wire 字段（见下方 1/2/2.5/3/4 各分支）。
+// control × requestStyle 分支注入 wire 字段。
 // 关键不变量：
 //   - 不修改入参 body，返回新对象
-//   - auto 不增加任何字段（capability.autoEffort 显式映射除外，见下方 auto 档映射）
+//   - 可调模型的旧 auto 会解析为默认档并显式发送；不可调模型不增加字段
 //   - 不支持的 effort 已在 resolveEffectiveReasoning 退回 defaultEffort
 //     （applyReasoningPreference 信任传入的 preference）
-//   - supportsDisable=false 时 off 不发 reasoning_effort:"none"（修订 #1）
+//   - supportsDisable=false 时，旧 off 偏好在共享解析层回退到默认档
 //   - fixed-on 走 resolveEffectiveReasoning 后 effective.mode 永远 on，
 //     故 applyReasoningPreference 不再判 fixed-on/off → 直接按 on 处理
 //   - 互斥字段防御：每个 requestStyle 只用自己专属字段，路径互不交叉
@@ -29,6 +29,8 @@ export interface ApplyReasoningContext {
   hasTools: boolean;
   providerId: string;
   model: string;
+  /** 单模型手动规则优先于自定义端点的旧全局覆盖。 */
+  ignoreThinkingOverride?: boolean;
 }
 
 export function applyReasoningPreference(
@@ -37,10 +39,10 @@ export function applyReasoningPreference(
   capability: ReasoningCapability,
   context: ApplyReasoningContext,
 ): Record<string, unknown> {
-  let effective = resolveEffectiveReasoning(
+  const effective = resolveEffectiveReasoning(
     preference,
     capability,
-    getVendorRuntimeSettings().thinkingOverride,
+    context.ignoreThinkingOverride ? 0 : getVendorRuntimeSettings().thinkingOverride,
   );
   const result: Record<string, unknown> = { ...body };
 
@@ -83,27 +85,12 @@ export function applyReasoningPreference(
     return result;
   }
 
-  // 2. auto 档显式映射：capability.autoEffort 存在时，
-  //    auto 不再省略字段交给服务端默认 —— GLM-5.3 服务端默认 effort=max，
-  //    auto ≡ max，多步任务思考会吃穿输出预算。映射为 on + autoEffort 走下方 on 路径。
-  if (effective.mode === "auto" && capability.autoEffort) {
-    effective = { mode: "on", effort: capability.autoEffort };
-  }
-
-  // 2.5 off 折叠：模型不支持关闭（supportsDisable=false，
-  //     如 GLM-5.3 强制思考）时，off 折叠为 on —— 否则 thinking-type 路径会发
-  //     { type: "disabled" }，强制思考模型服务端直接报错；effort 路径虽不发字段，
-  //     但会落服务端默认档（同样可能是 max）。effort 由 on 分支兜底 defaultEffort。
-  if (effective.mode === "off" && !capability.supportsDisable) {
-    effective = { mode: "on" };
-  }
-
-  // 3. auto：不增加任何字段
+  // 3. 不可调模型保留 auto，不增加任何字段。
   if (effective.mode === "auto") {
     return result;
   }
 
-  // 4. off：按 control + requestStyle 注入关闭字段（supportsDisable=false 已在 2.5 折叠为 on）
+  // 4. off：按 control + requestStyle 注入关闭字段
   if (effective.mode === "off") {
     switch (capability.control) {
       case "toggle":

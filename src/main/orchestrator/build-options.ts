@@ -223,6 +223,7 @@ export interface ModelSettingsLite {
   explicitTransport?: "openai" | "anthropic" | "responses" | "auto";
   /** 顶层 reasoning 镜像（来自 perProvider[currentProvider].reasoning）。adapter 直接读。 */
   reasoning?: import("../../shared/reasoning").ReasoningPreference;
+  manualReasoning?: import("../../shared/manual-reasoning").ManualReasoningConfig;
   runtimeSync?: string;
   stickerEnabled?: boolean;
   stickerSimilarityThreshold?: number;
@@ -972,6 +973,7 @@ export async function buildAgentRunOptions(
         apiKey: settings.apiKey,
         explicitTransport: settings.explicitTransport,
         reasoning: settings.reasoning,
+        manualReasoning: settings.manualReasoning,
         contextWindowTokens: settings.contextWindowTokens ?? 256000,
       },
       maxParallelToolCalls: typeof generalSettings.maxParallelToolCalls === "number"

@@ -44,6 +44,8 @@ export interface ReasoningCapability {
    * supportsDisable=false 时 UI 不显示"关闭"按钮，请求也不发 reasoning_effort:"none"。
    */
   supportsDisable: boolean;
+  /** 没有已保存档位时，滑块采用的产品默认开关状态。 */
+  defaultMode?: "off" | "on";
   /**
    * 仅 thinking-type 适用：是否在 on + hasTools 时附加 thinking.keep="all"。
    * Kimi K2.6 = true；K2.5 = false。
@@ -55,12 +57,7 @@ export interface ReasoningCapability {
    * openai 路径静默忽略 proMode。
    */
   supportsProMode?: boolean;
-  /**
-   * auto 档显式映射的 effort。不设置时 auto = 不发字段（交给服务端默认）。
-   * 用于服务端默认档不可控/过重的模型：GLM-5.3 服务端默认 effort=max，
-   * auto 不发字段 ≡ max，多步任务思考会吃穿输出预算。
-   * 设置后 auto 在 wire 层按 { mode: "on", effort: autoEffort } 发送。
-   */
+  /** 旧能力表的默认档位兜底；优先使用 defaultEffort。 */
   autoEffort?: ReasoningEffort;
 }
 

@@ -170,6 +170,7 @@ export async function callSummarizeModel(
     apiKey: settings.apiKey,
     explicitTransport: settings.explicitTransport,
     reasoning: settings.reasoning,
+    manualReasoning: settings.manualReasoning,
   };
 
   const effectiveRequest = adapter.applyCacheHints?.(request, vendorConfig) ?? request;

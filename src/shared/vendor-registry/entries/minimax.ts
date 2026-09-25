@@ -38,6 +38,7 @@ export const MINIMAX_REGISTRY = defineVendor({
       control: "toggle",
       requestStyle: "anthropic-adaptive",
       supportsDisable: true,
+      defaultMode: "off",
     } },
     { providerId: "minimax", modelPattern: /^MiniMax-M2\./i, capability: {
       control: "fixed-on",
