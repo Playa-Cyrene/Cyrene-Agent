@@ -20,17 +20,17 @@
   box-sizing: border-box;
   padding: 9px 16px;
   font-size: 13px;
-  color: var(--cy-text, #1d1d1f);
-  background: var(--cy-bg-page, #f8f7f6);
-  border: 1px solid var(--cy-border, #f2f2f2);
+  color: var(--rb-text-primary, var(--cy-text, #1d1d1f));
+  background: var(--rb-surface-elevated, var(--cy-bg-page, #f8f7f6));
+  border: 1px solid var(--rb-border-default, var(--cy-border, #f2f2f2));
   border-radius: 10px;
   outline: none;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
 .skill-panel__search:focus {
-  border-color: var(--cy-pill-border, #ff9fbd);
-  box-shadow: 0 0 0 3px rgba(255, 91, 138, 0.1);
+  border-color: var(--rb-accent, var(--cy-pill-border, #ff9fbd));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--rb-accent, #ff5b8a) 15%, transparent);
 }
 
 .skill-panel__icon-btn {

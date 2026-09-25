@@ -190,3 +190,10 @@
   overflow-y: auto;
   padding: 10px 16px 24px;
 }
+
+/* 文件预览正文：自带字号/行高，与聊天消息的排版互不影响 */
+.cy-file-preview__markdown .cy-message-markdown {
+  font-weight: 400;
+  font-size: 14px;
+  line-height: 1.75;
+}

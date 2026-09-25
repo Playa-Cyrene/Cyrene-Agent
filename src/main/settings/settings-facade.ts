@@ -5,6 +5,7 @@ import {
   normalizeWindowCornerRadius,
 } from "../../shared/window-corner-radius";
 import { DEFAULT_UI_FONT, normalizeUiFont } from "../../shared/ui-font";
+import { DEFAULT_MESSAGE_TYPOGRAPHY, normalizeMessageTypography } from "../../shared/message-typography";
 import {
   DEFAULT_CUSTOM_STYLE,
   normalizeCustomStyleConfig,
@@ -12,7 +13,6 @@ import {
 } from "../../shared/style-sampling";
 import { normalizeUiTheme } from "../../shared/ui-theme";
 import { normalizeUiIcon } from "../../shared/ui-icon";
-import { normalizeChatAppearance } from "../../shared/chat-appearance";
 import {
   normalizeChatSocialContextEnabled,
   normalizeDefaultChatMode,
@@ -58,6 +58,7 @@ const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
   uiThemeRadius: false,
   uiFont: DEFAULT_UI_FONT,
   uiIcon: "cyrene-sun",
+  messageTypography: DEFAULT_MESSAGE_TYPOGRAPHY,
   defaultChatMode: "chat",
   currentStyleId: "default",
   customStyle: DEFAULT_CUSTOM_STYLE,
@@ -121,11 +122,11 @@ const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
   asrVadThreshold: 0.01,
   asrShowTranscript: false,
   screenshotHotkey: "Alt+Shift+S",
-  chatLineHeight: 1.75,
   toolModeOverrides: {},
   chatToolsEnabled: false,
   skillModeOverrides: {},
   lspServerOverrides: [],
+  recentProjects: [],
 };
 
 function normalizeMosslandTtsModel(value: unknown): string {
@@ -227,12 +228,14 @@ export function normalizeGeneralSettings(
       ? DEFAULT_GENERAL_SETTINGS.toastSoundEnabled
       : Boolean(input.toastSoundEnabled),
     launchAtLogin: Boolean(input?.launchAtLogin),
-    language: "zh-CN",
+    // 界面语言只认已翻译完成的中/英，非法值（含旧配置的 ja/ko）一律回落中文
+    language: input?.language === "en" ? "en" : "zh-CN",
     uiTheme: normalizeUiTheme(input?.uiTheme),
     windowCornerRadius: normalizeWindowCornerRadius(input?.windowCornerRadius),
     uiThemeRadius: input?.uiThemeRadius ?? true,
     uiFont: normalizeUiFont(input?.uiFont),
     uiIcon: normalizeUiIcon(input?.uiIcon),
+    messageTypography: normalizeMessageTypography(input?.messageTypography),
     defaultChatMode: normalizeDefaultChatMode(input?.defaultChatMode),
     currentStyleId: normalizeStyleId(input?.currentStyleId),
     customStyle: normalizeCustomStyleConfig(input?.customStyle),
@@ -332,12 +335,37 @@ export function normalizeGeneralSettings(
     ttsMosslandModel: normalizeMosslandTtsModel(input?.ttsMosslandModel),
     ttsMosslandTestText: typeof input?.ttsMosslandTestText === "string" ? input.ttsMosslandTestText : DEFAULT_GENERAL_SETTINGS.ttsMosslandTestText,
     ttsMosslandFormat: input?.ttsMosslandFormat === "wav" ? "wav" : "mp3",
-    ...normalizeChatAppearance(input),
     toolModeOverrides: normalizeToolModeOverrides(input?.toolModeOverrides),
     chatToolsEnabled: Boolean(input?.chatToolsEnabled),
     skillModeOverrides: normalizeSkillModeOverrides(input?.skillModeOverrides),
     lspServerOverrides: normalizeLspServerOverrides(input?.lspServerOverrides),
+    recentProjects: normalizeRecentProjects(input?.recentProjects),
   };
+}
+
+/** 最近项目列表的保留上限。 */
+export const MAX_RECENT_PROJECTS = 10;
+
+/** 规范化最近项目列表：只保留非空字符串、去重，并截断到上限。 */
+function normalizeRecentProjects(input: unknown): string[] {
+  if (!Array.isArray(input)) return [];
+  const unique: string[] = [];
+  for (const item of input) {
+    if (typeof item === "string" && item && !unique.includes(item)) {
+      unique.push(item);
+    }
+  }
+  return unique.slice(0, MAX_RECENT_PROJECTS);
+}
+
+/** 记录最近绑定的项目文件夹：新路径置顶、去重、截断到上限后落盘。
+ *  顺序无变化时跳过写盘，避免重复绑定同一项目产生无意义 IO。 */
+export function recordRecentProject(workspaceRoot: string): void {
+  const before = loadGeneralSettings().recentProjects;
+  const next = [workspaceRoot, ...before.filter((p) => p !== workspaceRoot)]
+    .slice(0, MAX_RECENT_PROJECTS);
+  if (next.length === before.length && next.every((p, i) => p === before[i])) return;
+  saveGeneralSettings({ recentProjects: next });
 }
 
 /** 规范化工具-模式覆盖层：仅保留合法的 { toolId: { mode: boolean } } 结构。

@@ -5,7 +5,6 @@
 
 import type { ApiTransport } from "../../../shared/api-endpoint";
 import type { ReasoningPreference } from "../../../shared/reasoning";
-import type { ChatAppearanceSettings } from "../../../shared/chat-appearance";
 import type { UiTheme } from "../../../shared/ui-theme";
 import type { UiFont } from "../../../shared/ui-font";
 import type { UiIcon } from "../../../shared/ui-icon";
@@ -113,7 +112,7 @@ export interface ModelPreset {
   hiddenInPresetList?: boolean;
 }
 
-export interface GeneralSettings extends ChatAppearanceSettings {
+export interface GeneralSettings {
   maxParallelToolCalls: number;
   citaEnabled: boolean;
   citaSemanticEngine: "remote" | "local";
@@ -146,8 +145,6 @@ export interface GeneralSettings extends ChatAppearanceSettings {
   mobileMessageSegmentation: MobileMessageSegmentationMode;
   proactiveChatMode: ProactiveChatMode;
   proactiveDeliveryTarget: ProactiveDeliveryTarget;
-  /** 聊天段落间距（em）。目前仅设置窗口 UI 使用，主进程归一化尚未持久化该字段。 */
-  chatParaSpacing?: number;
   screenshotHotkey?: string;
 }
 
@@ -246,8 +243,10 @@ export interface SettingsApi {
   close: () => void;
   getConfig: () => Promise<ModelSettings>;
   saveConfig: (config: Partial<ModelSettings>) => Promise<ModelSettings>;
-  listModelProfiles?: () => Promise<{ profiles: Array<{ id: string; provider: string; displayName?: string; baseUrl: string; model: string; apiKey: string; explicitTransport?: ApiTransport; reasoning?: ReasoningPreference; contextWindowTokens?: number; multimodal?: boolean; models?: string[] }>; defaultModelProfileId?: string }>;
-  saveModelProfile?: (profile: { id?: string; provider: string; displayName?: string; baseUrl: string; model: string; apiKey: string; explicitTransport?: ApiTransport; reasoning?: ReasoningPreference; contextWindowTokens?: number; multimodal?: boolean; models?: string[] }) => Promise<{ added: boolean; profiles: unknown[]; defaultModelProfileId?: string }>;
+  listModelProfiles?: () => Promise<{ profiles: Array<{ id: string; provider: string; displayName?: string; baseUrl: string; model: string; apiKey: string; explicitTransport?: ApiTransport; reasoning?: ReasoningPreference; contextWindowTokens?: number; multimodal?: boolean;
+    modelOptions?: Record<string, { contextWindowTokens?: number; multimodal?: boolean }>; models?: string[] }>; defaultModelProfileId?: string }>;
+  saveModelProfile?: (profile: { id?: string; provider: string; displayName?: string; baseUrl: string; model: string; apiKey: string; explicitTransport?: ApiTransport; reasoning?: ReasoningPreference; contextWindowTokens?: number; multimodal?: boolean;
+    modelOptions?: Record<string, { contextWindowTokens?: number; multimodal?: boolean }>; models?: string[] }) => Promise<{ added: boolean; profiles: unknown[]; defaultModelProfileId?: string }>;
   deleteModelProfile?: (id: string) => Promise<unknown>;
   setDefaultModelProfile?: (id: string) => Promise<unknown>;
   getGeneral: () => Promise<GeneralSettings>;
@@ -315,7 +314,8 @@ export interface SettingsApi {
   onPlanStateChanged?: (
     callback: (payload: { conversationId: string; state: string }) => void,
   ) => (() => void) | void;
-  testConnection?: (config: { provider: string; baseUrl: string; model: string; apiKey: string; explicitTransport?: ApiTransport; reasoning?: ReasoningPreference }) => Promise<{ ok: boolean; latency: number; sample?: string; error?: string }>;
+  testConnection?: (config: { provider: string; baseUrl: string; model: string; apiKey: string; explicitTransport?: ApiTransport; reasoning?: ReasoningPreference; manualReasoning?: import("../../../shared/manual-reasoning").ManualReasoningConfig }) => Promise<{ ok: boolean; latency: number; sample?: string; error?: string }>;
+  previewReasoning?: (config: { provider: string; baseUrl: string; model: string; apiKey: string; explicitTransport?: ApiTransport; reasoning?: ReasoningPreference; manualReasoning?: import("../../../shared/manual-reasoning").ManualReasoningConfig }) => Promise<Record<string, unknown>>;
   testVision?: (config: { baseUrl: string; apiKey: string; model: string }) => Promise<{ ok: boolean; latency: number; sample?: string; error?: string }>;
   // main → settings：要求切到指定标签（窗口已打开时由 main 发这个事件）
   onSwitchSection?: (callback: (section: string) => void) => (() => void) | void;

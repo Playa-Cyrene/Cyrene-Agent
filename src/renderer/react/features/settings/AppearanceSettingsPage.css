@@ -843,11 +843,15 @@
 .cy-model-list-item .cy-model-default-tag { margin: 0; flex-shrink: 0; }
 .cy-model-list-item__remove { flex-shrink: 0; color: var(--rb-text-secondary); }
 .cy-model-list-item__remove:not(:disabled):hover { color: var(--rb-danger); }
-.cy-model-list-item__image.ant-btn { display: inline-grid; width: 28px; min-width: 28px; height: 28px; padding: 0; place-items: center; flex-shrink: 0; color: var(--rb-text-tertiary); border-radius: 6px; }
-.cy-model-list-item__image.ant-btn:hover { color: var(--rb-text-primary) !important; background: var(--rb-surface-hover) !important; }
-.cy-model-list-item__image.ant-btn.is-enabled { color: var(--rb-accent); background: color-mix(in srgb, var(--rb-accent) 9%, var(--rb-surface-elevated)); }
-.cy-model-list-item__context.ant-input-affix-wrapper { flex: 0 0 94px; width: 94px; min-width: 0; height: 28px; padding-inline: 7px; border-radius: 6px; font: var(--rb-text-micro); }
-.cy-model-list-item__context .ant-input { min-width: 0; padding: 0; font: var(--rb-text-micro); }
+.cy-model-list-item__image { display: inline-grid; width: 26px; height: 26px; flex: none; place-items: center; border-radius: 6px; color: var(--rb-accent); background: color-mix(in srgb, var(--rb-accent) 9%, var(--rb-surface-elevated)); }
+.cy-model-list-item__context-value { flex: none; padding: 3px 7px; border-radius: 6px; color: var(--rb-text-secondary); background: var(--rb-surface-hover); font: var(--rb-text-micro); }
+.cy-model-list-item__edit.ant-btn { display: inline-grid; width: 28px; min-width: 28px; height: 28px; padding: 0; place-items: center; flex: none; color: var(--rb-text-secondary); border-radius: 6px; }
+.cy-model-list-item__edit.ant-btn:hover { color: var(--rb-accent) !important; background: color-mix(in srgb, var(--rb-accent) 9%, var(--rb-surface-elevated)) !important; }
+.cy-model-option-form { display: flex; flex-direction: column; gap: 16px; padding-top: 4px; }
+.cy-model-option-form__switch { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px; border: 1px solid var(--rb-border-subtle); border-radius: 8px; background: var(--rb-surface-hover); }
+.cy-model-option-form__switch > div { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.cy-model-option-form__switch strong { color: var(--rb-text-primary); font: var(--rb-text-small-em); }
+.cy-model-option-form__switch small { color: var(--rb-text-secondary); font: var(--rb-text-micro); line-height: 1.45; }
 .cy-model-list-add { display: flex; align-items: center; gap: 4px; padding: 2px 4px; }
 .cy-model-list-add .cy-model-list-autocomplete { flex: 1; min-width: 0; }
 .cy-model-list-add .cy-model-list-autocomplete .ant-select-selector { height: 32px !important; padding: 0 10px !important; border-color: var(--rb-border-default) !important; border-radius: 7px !important; color: var(--rb-text-primary) !important; background: var(--rb-surface-elevated) !important; box-shadow: none !important; }
@@ -868,7 +872,10 @@
 .cy-model-endpoint-preview { overflow-wrap: anywhere; }
 .cy-model-endpoint-preview code { color: var(--rb-text-secondary); font-size: 11px; }
 .cy-model-transport { display: flex; flex-wrap: wrap; }
-.cy-model-transport .ant-radio-button-wrapper { flex: 1; min-width: max-content; text-align: center; }
+.cy-model-transport .ant-radio-button-wrapper { display: inline-flex; flex: 1 1 0; align-items: center; justify-content: center; box-sizing: border-box; min-width: max-content; padding-inline: 8px; text-align: center; }
+.cy-model-transport-option { display: flex; width: 100%; align-items: center; justify-content: center; gap: 7px; line-height: 1; }
+.cy-model-transport-option svg { display: block; flex: none; color: currentColor; }
+.cy-model-transport-option code { display: block; color: inherit; font: var(--rb-text-micro); line-height: 1.2; }
 
 .cy-model-switch-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 48px; padding: 4px 0; }
 .cy-model-switch-row > div { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
@@ -1014,4 +1021,18 @@
   .cy-settings-row .cy-settings-button-group {
     flex-wrap: wrap;
   }
+}
+
+/* 昔涟消息字体预览：与聊天 AI 回复气泡消费同一组 CSS 变量，拖动滑块即时可见效果 */
+.cy-message-typography-preview {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 10px 14px;
+  border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+  border-radius: 10px;
+  font-weight: var(--cy-msg-weight, 400);
+  font-size: var(--cy-msg-size, 15px);
+  line-height: var(--cy-msg-line-height, 1.85);
+  letter-spacing: var(--cy-msg-spacing, 0.8px);
 }

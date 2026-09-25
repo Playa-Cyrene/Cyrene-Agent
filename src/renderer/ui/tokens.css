@@ -154,10 +154,6 @@
   --rb-weather-panel-border: rgba(255, 255, 255, 0.06);
   --rb-weather-tag-bg:      linear-gradient(135deg, rgba(255,143,191,0.22), rgba(157,140,255,0.22));
 
-  /* Chat typography (adjustable via settings sliders) */
-  --rb-chat-line-height:   1.75;
-  --rb-chat-para-spacing:  0.5em;
-
   /* Weather illustration (CSS pure-graphic weather icons) */
   --rb-weather-sun-core-1:  #ffe08a;
   --rb-weather-sun-core-2:  #ffb14d;

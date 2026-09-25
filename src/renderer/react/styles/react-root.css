@@ -58,15 +58,39 @@ html, body {
   overflow: hidden;
   user-select: none;
   app-region: drag;
+  -webkit-app-region: drag;
 }
 
-.cy-page button,
-.cy-page a,
-.cy-page input,
-.cy-page select,
-.cy-page textarea,
+/* 聊天页把标题栏作为独立的固定区域，消息滚动内容不再处于可拖动区域的祖先链上。 */
+.cy-page--chat {
+  padding-top: 50px;
+  app-region: initial;
+  -webkit-app-region: initial;
+}
+
+.cy-page-titlebar {
+  position: absolute;
+  inset: 0 0 auto;
+  height: 48px;
+  z-index: 50;
+  app-region: drag;
+  -webkit-app-region: drag;
+}
+
+/* 只给边界固定的一级容器标记 no-drag。不要对 .cy-page 下的全部控件逐个标记：
+   对话滚动时，消息里的按钮/链接矩形可能越过视口并错误挖掉顶部拖动区。 */
+.cy-page-sidebar,
 .cy-workspace {
   app-region: no-drag;
+  -webkit-app-region: no-drag;
+}
+
+/* 清除固定容器子节点继承的区域。必须用 initial：当前 Chromium 把显式 none
+   解析成 no-drag，只有初始值才不提交区域；滚动消息另在 ChatMessageList.css 隔离。 */
+.cy-page-sidebar > *,
+.cy-workspace > * {
+  app-region: initial;
+  -webkit-app-region: initial;
 }
 
 .cy-file-drop-overlay {
@@ -99,26 +123,34 @@ html, body {
   position: absolute;
   top: 10px;
   left: 8px;
+  z-index: 51;
   display: flex;
   align-items: center;
   gap: 6px;
+  app-region: no-drag;
+  -webkit-app-region: no-drag;
 }
 
 .cy-page-top-center {
   position: absolute;
   top: 7px;
   left: 50%;
-  transform: translateX(-50%);
+  z-index: 51;
   display: flex;
   align-items: center;
   gap: 12px;
-  /* 同 cy-page：位置跳变交给侧栏动画掩盖，避免 left 的 layout 动画 */
+  transform: translateX(-50%);
+  app-region: no-drag;
+  -webkit-app-region: no-drag;
 }
 
 .cy-page-windows {
   position: absolute;
   top: 10px;
   right: 20px;
+  z-index: 51;
+  app-region: no-drag;
+  -webkit-app-region: no-drag;
 }
 
 /* 用户头像与设置按钮已移入 .cy-page-sidebar-bottom */
@@ -176,6 +208,8 @@ html, body {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  app-region: no-drag;
+  -webkit-app-region: no-drag;
 }
 
 /* "打开"按钮与面板开关之间的竖分割线 */
@@ -261,11 +295,6 @@ html, body {
   flex-shrink: 0;
 }
 
-/* 收起状态：组件向左移 */
-.cy-page.is-collapsed .cy-page-top-center {
-  left: calc(50% - 85px);
-}
-
 .cy-workspace {
   width: 100%;
   height: 100%;
@@ -278,6 +307,45 @@ html, body {
   min-height: 0;
   flex-direction: column;
   overflow: hidden;
+}
+
+/* 工作区标题栏固定在会话滚动区上方；空白处可拖动，模式切换保留独立点击区。 */
+.cy-workspace-titlebar {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex: 0 0 48px;
+  align-items: center;
+  justify-content: flex-start;
+  box-sizing: border-box;
+  height: 48px;
+  gap: 8px;
+  padding: 0 24px;
+  border-bottom: 1px solid var(--cy-border);
+  background: var(--cy-bg-workspace);
+  app-region: drag;
+  -webkit-app-region: drag;
+}
+
+.cy-workspace-titlebar__icon {
+  flex: 0 0 auto;
+  color: var(--cy-accent);
+}
+
+.cy-workspace-titlebar__title {
+  max-width: calc(100% - 140px);
+  overflow: hidden;
+  color: var(--cy-text);
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* 侧栏收起时，给左上角控件留出空间。 */
+.cy-page.is-collapsed .cy-page-top-center {
+  left: calc(50% - 85px);
 }
 
 .cy-workspace::before {

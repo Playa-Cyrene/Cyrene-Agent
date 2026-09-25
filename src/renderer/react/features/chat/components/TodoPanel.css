@@ -1,6 +1,8 @@
 .cy-todo {
   position: fixed;
   z-index: 1000;
+  app-region: no-drag;
+  -webkit-app-region: no-drag;
   width: 240px;
   background: #ffffff;
   border-radius: 16px;

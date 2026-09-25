@@ -1,9 +1,7 @@
 import { app, nativeImage, type Tray } from "electron";
 import { IPC } from "../../shared/ipc-channels";
-import { broadcastToAllWindows } from "../windows/broadcast";
 import type { WindowManager } from "../windows/window-manager";
 import { setGetCurrentAppIconPath } from "../windows/window-state";
-import { normalizeChatAppearance } from "../../shared/chat-appearance";
 import { updateLocaleContext } from "../locale-context";
 import { validateSearchApiKey } from "../orchestrator/search-backend-filter";
 import { addMcpServer, listMcpServers, removeMcpServer } from "../orchestrator/mcp-manager";
@@ -147,11 +145,6 @@ export function handleGeneralSettingsChanged(
   }
   if (JSON.stringify(before.uiFont) !== JSON.stringify(after.uiFont)) {
     deps.windowManager?.broadcast(IPC.UI_FONT_CHANGED, after.uiFont);
-  }
-  const prevAppearance = normalizeChatAppearance(before);
-  const nextAppearance = normalizeChatAppearance(after);
-  if (prevAppearance.chatLineHeight !== nextAppearance.chatLineHeight) {
-    broadcastToAllWindows(IPC.CHAT_TYPOGRAPHY_CHANGED, nextAppearance);
   }
   if (before.uiIcon !== after.uiIcon) {
     applyUiIcon(after.uiIcon, deps);

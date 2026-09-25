@@ -44,6 +44,7 @@ export function SettingsSelect<T extends string>({
   id,
   disabled = false,
   className,
+  contentClassName,
   placeholder,
 }: {
   value: T;
@@ -53,6 +54,7 @@ export function SettingsSelect<T extends string>({
   id?: string;
   disabled?: boolean;
   className?: string;
+  contentClassName?: string;
   placeholder?: string;
 }) {
   return (
@@ -62,7 +64,7 @@ export function SettingsSelect<T extends string>({
         <Select.Icon className="cy-control-select__icon"><ChevronDown size={15} aria-hidden="true" /></Select.Icon>
       </Select.Trigger>
       <Select.Portal>
-        <Select.Content className="cy-control-select__content" position="item-aligned">
+        <Select.Content className={`cy-control-select__content ${contentClassName ?? ""}`.trim()} position="item-aligned">
           <Select.Viewport className="cy-control-select__viewport">
             {options.map((option) => (
               <Select.Item

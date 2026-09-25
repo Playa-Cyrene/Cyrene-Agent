@@ -1,7 +1,7 @@
-import type { ChatAppearanceSettings } from "../../shared/chat-appearance";
 import type { UiTheme } from "../../shared/ui-theme";
 import type { UiFont } from "../../shared/ui-font";
 import type { UiIcon } from "../../shared/ui-icon";
+import type { MessageTypography } from "../../shared/message-typography";
 import type {
   DefaultChatMode,
   MobileMessageSegmentationMode,
@@ -16,9 +16,9 @@ import type { LspServerOverride } from "../lsp/types";
 
 /**
  * 通用设置（GeneralSettings）：与模型配置无关的 UI、TTS、工具开关、快捷键等。
- * 与 ChatAppearanceSettings 组合，统一保存到 general-settings.json。
+ * 统一保存到 general-settings.json。
  */
-export interface GeneralSettings extends ChatAppearanceSettings {
+export interface GeneralSettings {
   /** 功能插件开关表：pluginId -> enabled */
   plugins: Record<string, boolean>;
   /** Harness 同时执行已明确安全工具的上限；1 表示完全串行。 */
@@ -54,13 +54,16 @@ export interface GeneralSettings extends ChatAppearanceSettings {
   /** 提醒中心音效总开关：关闭后所有 toast 静音，弹窗行为不受影响。 */
   toastSoundEnabled: boolean;
   launchAtLogin: boolean;
-  language: "zh-CN";
+  /** 界面语言：目前支持中文与英文，其余语言待翻译补齐后开放。 */
+  language: "zh-CN" | "en";
   uiTheme: UiTheme;
   windowCornerRadius: number;
   /** @deprecated 旧版透明窗口开关，仅保留用于配置兼容。 */
   uiThemeRadius: boolean;
   uiFont: UiFont;
   uiIcon: UiIcon;
+  /** 昔涟回复正文的排版（字号/行距/字距/字重），只作用于 AI 回复气泡。 */
+  messageTypography: MessageTypography;
   /** 聊天窗口打开时默认选中的模式。 */
   defaultChatMode: DefaultChatMode;
   /** 聊天窗口当前风格，启动时恢复；本轮请求仍以 renderer 显式 styleId 为准。 */
@@ -179,4 +182,6 @@ export interface GeneralSettings extends ChatAppearanceSettings {
   skillModeOverrides: SkillModeOverrides;
   /** Code 模式使用的用户自管语言服务命令覆盖。 */
   lspServerOverrides: LspServerOverride[];
+  /** 最近绑定的项目文件夹（绝对路径），按最近使用时间倒序，最多保留 10 个。 */
+  recentProjects: string[];
 }

@@ -114,6 +114,7 @@ export const IPC = {
   SETTINGS_MODEL_PROFILE_DELETE: "settings:model-profiles:delete",
   SETTINGS_MODEL_PROFILE_SET_DEFAULT: "settings:model-profiles:set-default",
   SETTINGS_TEST_CONNECTION: "settings:test-connection",
+  SETTINGS_PREVIEW_REASONING: "settings:preview-reasoning",
   SETTINGS_TEST_VISION: "settings:test-vision",
   SETTINGS_GET_GENERAL: "settings:get-general",
   SETTINGS_SAVE_GENERAL: "settings:save-general",
@@ -127,7 +128,6 @@ export const IPC = {
   UI_WINDOW_CORNER_RADIUS_CHANGED: "ui-window-corner-radius:changed",
   UI_FONT_GET: "ui-font:get",
   UI_FONT_CHANGED: "ui-font:changed",
-  CHAT_TYPOGRAPHY_CHANGED: "chat-typography:changed",
   SETTINGS_PICK_UI_FONT: "settings:pick-ui-font",
   SETTINGS_IMPORT_UI_FONT: "settings:import-ui-font",
   SETTINGS_RESET_UI_FONT: "settings:reset-ui-font",
@@ -203,6 +203,8 @@ export const IPC = {
   CHATS_CLEAR_WORKSPACE: "chats:clear-workspace",
   // renderer → main：打开文件夹选择器
   CHATS_PICK_WORKSPACE_FOLDER: "chats:pick-workspace-folder",
+  // renderer → main：获取最近绑定的项目文件夹列表（已过滤失效目录）
+  CHATS_RECENT_PROJECTS: "chats:recent-projects",
   // renderer → main：为 Learn 模式初始化工作区结构（只创建缺失文件）
   CHATS_INIT_LEARN_WORKSPACE: "chats:init-learn-workspace",
   // main → 所有窗口：工作区绑定变更广播

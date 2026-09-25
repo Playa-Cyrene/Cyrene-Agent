@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Alert, Button, Spin } from "antd";
 import { ArrowLeft, AudioLines, BarChart3, Boxes, Brain, FileText, Headphones, Heart, Monitor, Palette, Power, Puzzle, Settings2, Smartphone, Sparkles, Type, Wrench } from "lucide-react";
 import { MCP } from "@lobehub/icons";
@@ -6,8 +6,15 @@ import packageJson from "../../../../../package.json";
 import { normalizeUiFont, type UiFont } from "../../../../shared/ui-font";
 import { normalizeUiIcon, UI_ICON_PRESETS, type UiIcon } from "../../../../shared/ui-icon";
 import { normalizeWindowCornerRadius } from "../../../../shared/window-corner-radius";
+import {
+  DEFAULT_MESSAGE_TYPOGRAPHY,
+  MESSAGE_TYPOGRAPHY_RANGES,
+  normalizeMessageTypography,
+  type MessageTypography,
+} from "../../../../shared/message-typography";
 import { useTranslation } from "../../i18n";
 import { applyWindowCornerRadius } from "../../../ui/window-corner-radius";
+import { applyMessageTypography } from "../../../ui/message-typography";
 import { WindowControls } from "../../components/ui/WindowControls";
 import { SettingsSlider, SettingsSwitch } from "../../components/ui/SettingsControls";
 import "../../components/ui/NewTaskButton.css";
@@ -34,8 +41,7 @@ interface AppearanceValues {
   windowCornerRadius: number;
   uiFont: UiFont;
   uiIcon: UiIcon;
-  chatLineHeight: number;
-  chatParaSpacing: number;
+  messageTypography: MessageTypography;
   petAlwaysOnTop: boolean;
   petVisible: boolean;
   petZoom: number;
@@ -45,8 +51,7 @@ const defaults: AppearanceValues = {
   windowCornerRadius: 24,
   uiFont: { kind: "source-han" },
   uiIcon: "cyrene-sun",
-  chatLineHeight: 1.75,
-  chatParaSpacing: 0.5,
+  messageTypography: DEFAULT_MESSAGE_TYPOGRAPHY,
   petAlwaysOnTop: false,
   petVisible: true,
   petZoom: 1,
@@ -66,8 +71,7 @@ function readAppearance(value: unknown): AppearanceValues {
     windowCornerRadius: normalizeWindowCornerRadius(input.windowCornerRadius),
     uiFont: normalizeUiFont(input.uiFont),
     uiIcon: normalizeUiIcon(input.uiIcon),
-    chatLineHeight: finiteNumber(input.chatLineHeight, defaults.chatLineHeight),
-    chatParaSpacing: finiteNumber(input.chatParaSpacing, defaults.chatParaSpacing),
+    messageTypography: normalizeMessageTypography(input.messageTypography),
     petAlwaysOnTop: typeof input.petAlwaysOnTop === "boolean" ? input.petAlwaysOnTop : defaults.petAlwaysOnTop,
     petVisible: typeof input.petVisible === "boolean" ? input.petVisible : defaults.petVisible,
     petZoom: finiteNumber(input.petZoom, defaults.petZoom),
@@ -114,6 +118,8 @@ export function AppearanceSettingsPage({ section, onSelectSection, onBackToWorks
   const [loadError, setLoadError] = useState(false);
   const [status, setStatus] = useState("");
   const [fontBusy, setFontBusy] = useState(false);
+  // 昔涟消息字体：ref 记住最新值，松手保存时不依赖可能过期的渲染闭包
+  const typographyRef = useRef<MessageTypography>(DEFAULT_MESSAGE_TYPOGRAPHY);
 
   useEffect(() => {
     let disposed = false;
@@ -129,9 +135,8 @@ export function AppearanceSettingsPage({ section, onSelectSection, onBackToWorks
         if (disposed) return;
         const next = readAppearance(config);
         setValues(next);
+        typographyRef.current = next.messageTypography;
         applyWindowCornerRadius(next.windowCornerRadius);
-        document.documentElement.style.setProperty("--rb-chat-line-height", String(next.chatLineHeight));
-        document.documentElement.style.setProperty("--rb-chat-para-spacing", `${next.chatParaSpacing}em`);
         setLoading(false);
       })
       .catch(() => {
@@ -155,15 +160,33 @@ export function AppearanceSettingsPage({ section, onSelectSection, onBackToWorks
     }
   }
 
-  function updateNumber<K extends "windowCornerRadius" | "chatLineHeight" | "chatParaSpacing" | "petZoom">(
+  function updateNumber<K extends "windowCornerRadius" | "petZoom">(
     key: K,
     value: number,
   ) {
     setValues((current) => ({ ...current, [key]: value }));
     if (key === "windowCornerRadius") applyWindowCornerRadius(value);
-    if (key === "chatLineHeight") document.documentElement.style.setProperty("--rb-chat-line-height", String(value));
-    if (key === "chatParaSpacing") document.documentElement.style.setProperty("--rb-chat-para-spacing", `${value}em`);
     setStatus(t("settingsPage.applyOnRelease"));
+  }
+
+  // 昔涟消息字体：拖动时实时写入 CSS 变量预览，松手由 saveTypography 落盘
+  function updateTypography(key: keyof MessageTypography, value: number) {
+    const next = { ...typographyRef.current, [key]: value };
+    typographyRef.current = next;
+    setValues((current) => ({ ...current, messageTypography: next }));
+    applyMessageTypography(next);
+    setStatus(t("settingsPage.applyOnRelease"));
+  }
+
+  function saveTypography() {
+    void savePatch({ messageTypography: typographyRef.current });
+  }
+
+  function resetTypography() {
+    typographyRef.current = DEFAULT_MESSAGE_TYPOGRAPHY;
+    setValues((current) => ({ ...current, messageTypography: DEFAULT_MESSAGE_TYPOGRAPHY }));
+    applyMessageTypography(DEFAULT_MESSAGE_TYPOGRAPHY);
+    void savePatch({ messageTypography: DEFAULT_MESSAGE_TYPOGRAPHY }, t("settingsPage.messageTypographyReset"));
   }
 
   async function changeFont() {
@@ -283,18 +306,41 @@ export function AppearanceSettingsPage({ section, onSelectSection, onBackToWorks
                     </div>
                   </div>
                   <div className="cy-settings-row">
-                    <div className="cy-settings-row__copy"><strong>{t("settingsPage.chatLineHeight")}</strong><span>{t("settingsPage.chatLineHeightDescription")}</span></div>
-                    <div className="cy-settings-row__control cy-settings-slider">
-                      <SettingsSlider min={1.2} max={2} step={0.05} value={values.chatLineHeight} ariaLabel={t("settingsPage.chatLineHeight")} onChange={(value) => updateNumber("chatLineHeight", value)} onChangeComplete={(value) => void savePatch({ chatLineHeight: value })} />
-                      <span>{values.chatLineHeight.toFixed(2)}</span>
+                    <div className="cy-settings-row__copy"><strong>{t("settingsPage.messageTypography")}</strong><span>{t("settingsPage.messageTypographyDescription")}</span></div>
+                    <div className="cy-settings-row__control cy-settings-button-group">
+                      <Button onClick={resetTypography}>{t("settingsPage.messageTypographyResetButton")}</Button>
                     </div>
                   </div>
                   <div className="cy-settings-row">
-                    <div className="cy-settings-row__copy"><strong>{t("settingsPage.chatParagraphSpacing")}</strong><span>{t("settingsPage.chatParagraphSpacingDescription")}</span></div>
+                    <div className="cy-settings-row__copy"><strong>{t("settingsPage.messageFontSize")}</strong><span>{t("settingsPage.messageFontSizeDescription")}</span></div>
                     <div className="cy-settings-row__control cy-settings-slider">
-                      <SettingsSlider min={0.2} max={1.2} step={0.05} value={values.chatParaSpacing} ariaLabel={t("settingsPage.chatParagraphSpacing")} onChange={(value) => updateNumber("chatParaSpacing", value)} onChangeComplete={(value) => void savePatch({ chatParaSpacing: value })} />
-                      <span>{values.chatParaSpacing.toFixed(2)}em</span>
+                      <SettingsSlider min={MESSAGE_TYPOGRAPHY_RANGES.fontSize.min} max={MESSAGE_TYPOGRAPHY_RANGES.fontSize.max} step={0.5} value={values.messageTypography.fontSize} ariaLabel={t("settingsPage.messageFontSize")} onChange={(value) => updateTypography("fontSize", value)} onChangeComplete={() => saveTypography()} />
+                      <span>{values.messageTypography.fontSize}px</span>
                     </div>
+                  </div>
+                  <div className="cy-settings-row">
+                    <div className="cy-settings-row__copy"><strong>{t("settingsPage.messageLineHeight")}</strong><span>{t("settingsPage.messageLineHeightDescription")}</span></div>
+                    <div className="cy-settings-row__control cy-settings-slider">
+                      <SettingsSlider min={MESSAGE_TYPOGRAPHY_RANGES.lineHeight.min} max={MESSAGE_TYPOGRAPHY_RANGES.lineHeight.max} step={0.05} value={values.messageTypography.lineHeight} ariaLabel={t("settingsPage.messageLineHeight")} onChange={(value) => updateTypography("lineHeight", value)} onChangeComplete={() => saveTypography()} />
+                      <span>{values.messageTypography.lineHeight}</span>
+                    </div>
+                  </div>
+                  <div className="cy-settings-row">
+                    <div className="cy-settings-row__copy"><strong>{t("settingsPage.messageLetterSpacing")}</strong><span>{t("settingsPage.messageLetterSpacingDescription")}</span></div>
+                    <div className="cy-settings-row__control cy-settings-slider">
+                      <SettingsSlider min={MESSAGE_TYPOGRAPHY_RANGES.letterSpacing.min} max={MESSAGE_TYPOGRAPHY_RANGES.letterSpacing.max} step={0.1} value={values.messageTypography.letterSpacing} ariaLabel={t("settingsPage.messageLetterSpacing")} onChange={(value) => updateTypography("letterSpacing", value)} onChangeComplete={() => saveTypography()} />
+                      <span>{values.messageTypography.letterSpacing}px</span>
+                    </div>
+                  </div>
+                  <div className="cy-settings-row">
+                    <div className="cy-settings-row__copy"><strong>{t("settingsPage.messageFontWeight")}</strong><span>{t("settingsPage.messageFontWeightDescription")}</span></div>
+                    <div className="cy-settings-row__control cy-settings-slider">
+                      <SettingsSlider min={MESSAGE_TYPOGRAPHY_RANGES.fontWeight.min} max={MESSAGE_TYPOGRAPHY_RANGES.fontWeight.max} step={50} value={values.messageTypography.fontWeight} ariaLabel={t("settingsPage.messageFontWeight")} onChange={(value) => updateTypography("fontWeight", value)} onChangeComplete={() => saveTypography()} />
+                      <span>{values.messageTypography.fontWeight}</span>
+                    </div>
+                  </div>
+                  <div className="cy-settings-row">
+                    <p className="cy-message-typography-preview">{t("settingsPage.messageTypographyPreviewText")}</p>
                   </div>
                   <div className="cy-settings-row">
                     <div className="cy-settings-row__copy"><strong>{t("settingsPage.desktopIcon")}</strong><span>{t("settingsPage.desktopIconDescription")}</span></div>

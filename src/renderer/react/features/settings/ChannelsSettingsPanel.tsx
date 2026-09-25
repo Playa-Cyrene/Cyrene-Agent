@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Button, Input, Modal, Spin, Tag } from "antd";
 import { Activity, ChevronDown, Link2, MessageSquareText, MessagesSquare, Smartphone, Trash2 } from "lucide-react";
+import { Lark } from "@lobehub/ui/icons";
 import { siQq, siWechat } from "simple-icons";
 import type { SettingsApi } from "../../../settings/shared/types";
 import { BrandIcon } from "../../components/ui/BrandIcon";
@@ -29,7 +30,7 @@ const channelIds: ChannelId[] = ["wechat", "feishu", "qq", "qqbot"];
 function ChannelProviderIcon({ id, label }: { id: ChannelId; label: string }) {
   const brand = id === "wechat" ? siWechat : id === "qq" || id === "qqbot" ? siQq : null;
   return <span className="cy-channels-provider__icon">
-    {brand ? <BrandIcon icon={brand} size={21} label={label} /> : <span role="img" aria-label={label}><MessagesSquare size={21} aria-hidden="true" /></span>}
+    {brand ? <BrandIcon icon={brand} size={21} label={label} /> : id === "feishu" ? <Lark.Color size={21} aria-label={label} role="img" /> : <span role="img" aria-label={label}><MessagesSquare size={21} aria-hidden="true" /></span>}
   </span>;
 }
 

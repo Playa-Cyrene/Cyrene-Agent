@@ -14,9 +14,9 @@
   gap: 16px;
   margin: 14px 16px 0;
   padding: 12px 16px;
-  border: 1px solid var(--cy-border, #f2f2f2);
+  border: 1px solid var(--rb-border-default, var(--cy-border, #f2f2f2));
   border-radius: 12px;
-  background: var(--cy-bg-page, #f8f7f6);
+  background: var(--rb-surface-elevated, var(--cy-bg-page, #f8f7f6));
 }
 
 .tool-panel__master-text {
@@ -51,17 +51,17 @@
   box-sizing: border-box;
   padding: 9px 16px;
   font-size: 13px;
-  color: var(--cy-text, #1d1d1f);
-  background: var(--cy-bg-page, #f8f7f6);
-  border: 1px solid var(--cy-border, #f2f2f2);
+  color: var(--rb-text-primary, var(--cy-text, #1d1d1f));
+  background: var(--rb-surface-elevated, var(--cy-bg-page, #f8f7f6));
+  border: 1px solid var(--rb-border-default, var(--cy-border, #f2f2f2));
   border-radius: 10px;
   outline: none;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
 .tool-panel__search:focus {
-  border-color: var(--cy-pill-border, #ff9fbd);
-  box-shadow: 0 0 0 3px rgba(255, 91, 138, 0.1);
+  border-color: var(--rb-accent, var(--cy-pill-border, #ff9fbd));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--rb-accent, #ff5b8a) 15%, transparent);
 }
 
 /* 模式标签（Work / Code / Learn / Chat）+ 右侧当前模式提示 */

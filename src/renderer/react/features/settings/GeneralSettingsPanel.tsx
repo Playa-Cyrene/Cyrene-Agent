@@ -3,13 +3,14 @@ import { Alert, Button, Spin } from "antd";
 import { Info, Monitor, Settings2 } from "lucide-react";
 import packageJson from "../../../../../package.json";
 import { SettingsSegmented, SettingsSwitch } from "../../components/ui/SettingsControls";
-import { useTranslation } from "../../i18n";
+import { setUiLocale, useTranslation } from "../../i18n";
 
 interface GeneralValues {
   rememberWindowState: boolean;
   toastSoundEnabled: boolean;
   launchAtLogin: boolean;
   disableGpuElectron: boolean;
+  language: "zh-CN" | "en";
 }
 
 const defaults: GeneralValues = {
@@ -17,6 +18,7 @@ const defaults: GeneralValues = {
   toastSoundEnabled: true,
   launchAtLogin: false,
   disableGpuElectron: false,
+  language: "zh-CN",
 };
 
 function readGeneral(value: unknown): GeneralValues {
@@ -26,6 +28,7 @@ function readGeneral(value: unknown): GeneralValues {
     toastSoundEnabled: typeof input.toastSoundEnabled === "boolean" ? input.toastSoundEnabled : defaults.toastSoundEnabled,
     launchAtLogin: typeof input.launchAtLogin === "boolean" ? input.launchAtLogin : defaults.launchAtLogin,
     disableGpuElectron: typeof input.disableGpuElectron === "boolean" ? input.disableGpuElectron : defaults.disableGpuElectron,
+    language: input.language === "en" ? "en" : "zh-CN",
   };
 }
 
@@ -78,13 +81,31 @@ export function GeneralSettingsPanel() {
       await window.settings.saveGeneral({
         toastSoundEnabled: values.toastSoundEnabled,
         launchAtLogin: values.launchAtLogin,
-        language: "zh-CN",
+        language: values.language,
       });
       setStatus(t("settingsPage.saved"));
     } catch {
       setStatus(t("settingsPage.saveFailed"));
     } finally {
       setSaving(false);
+    }
+  }
+
+  /** 切换界面语言：先即时生效再落盘，落盘失败时回滚，避免界面与配置不一致。 */
+  async function changeLanguage(next: "zh-CN" | "en") {
+    const previous = values.language;
+    if (next === previous) return;
+    setValues((current) => ({ ...current, language: next }));
+    setUiLocale(next);
+    setStatus(t("settingsPage.preferences.saving"));
+    try {
+      if (!window.settings) throw new Error("Settings API unavailable");
+      await window.settings.saveGeneral({ language: next });
+      setStatus(t("settingsPage.applied"));
+    } catch {
+      setValues((current) => ({ ...current, language: previous }));
+      setUiLocale(previous);
+      setStatus(t("settingsPage.saveFailed"));
     }
   }
 
@@ -106,7 +127,7 @@ export function GeneralSettingsPanel() {
           <div className="cy-settings-card">
           <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.general.toastSound")}</strong><span>{t("settingsPage.general.toastSoundDescription")}</span></div><SettingsSwitch ariaLabel={t("settingsPage.general.toastSound")} checked={values.toastSoundEnabled} onChange={(checked) => { setValues((current) => ({ ...current, toastSoundEnabled: checked })); setStatus(t("settingsPage.preferences.unsaved")); }} /></div>
             <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.general.launchAtLogin")}</strong><span>{t("settingsPage.general.launchAtLoginDescription")}</span></div><SettingsSwitch ariaLabel={t("settingsPage.general.launchAtLogin")} checked={values.launchAtLogin} onChange={(checked) => { setValues((current) => ({ ...current, launchAtLogin: checked })); setStatus(t("settingsPage.preferences.unsaved")); }} /></div>
-            <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.general.language")}</strong><span>{t("settingsPage.general.languageDescription")}</span></div><SettingsSegmented value="zh-CN" options={[{ label: t("settingsPage.general.chinese"), value: "zh-CN" }, { label: "English", value: "en", disabled: true }, { label: t("settingsPage.general.japanese"), value: "ja", disabled: true }, { label: t("settingsPage.general.korean"), value: "ko", disabled: true }]} /></div>
+            <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.general.language")}</strong><span>{t("settingsPage.general.languageDescription")}</span></div><SettingsSegmented value={values.language} onChange={(next) => void changeLanguage(next as "zh-CN" | "en")} options={[{ label: t("settingsPage.general.chinese"), value: "zh-CN" }, { label: "English", value: "en" }, { label: t("settingsPage.general.japanese"), value: "ja", disabled: true }, { label: t("settingsPage.general.korean"), value: "ko", disabled: true }]} /></div>
             <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.general.disableGpu")}</strong><span>{t("settingsPage.general.disableGpuDescription")}</span><span className="cy-settings-general__notice">{t("settingsPage.general.restartNotice")}</span></div><div className="cy-settings-row__control cy-settings-button-group"><SettingsSwitch ariaLabel={t("settingsPage.general.disableGpu")} checked={values.disableGpuElectron} onChange={(checked) => void saveImmediate("disableGpuElectron", checked)} /><Button onClick={() => window.settings?.openChromeGpu()}>{t("settingsPage.general.gpuInternals")}</Button></div></div>
           </div>
         </section>

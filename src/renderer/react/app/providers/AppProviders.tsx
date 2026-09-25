@@ -1,7 +1,6 @@
 import type { ReactNode } from "react";
 import { ConfigProvider, theme } from "antd";
 import { FeedbackProvider } from "../../components/feedback/FeedbackProvider";
-import { useChatAppearance } from "../../hooks/useChatAppearance";
 
 interface AppProvidersProps {
   children: ReactNode;
@@ -20,8 +19,6 @@ const ANTD_THEME = {
 };
 
 export function AppProviders({ children }: AppProvidersProps) {
-  // 主题状态初始化后再挂反馈层，保证 Token 就绪
-  useChatAppearance();
   return (
     <ConfigProvider theme={ANTD_THEME}>
       <FeedbackProvider>{children}</FeedbackProvider>

@@ -257,14 +257,6 @@
             "importButton": "导入字体",
             "resetButton": "恢复默认"
           },
-          "chatLineHeight": {
-            "title": "行间距",
-            "desc": "调整消息气泡内文字的行高（1.2 ~ 2.0）。"
-          },
-          "chatParaSpacing": {
-            "title": "段间距",
-            "desc": "调整消息气泡内段落之间的间距（0.2 ~ 1.2em）。"
-          },
           "uiIcon": {
             "title": "桌面图标",
             "desc": "切换系统托盘与应用窗口图标。"

@@ -22,16 +22,23 @@ describe("chat toolbar typography", () => {
     shell.append(toolbar);
     document.body.append(shell);
 
+    // 排版重构后字号由场景规则声明：AI 回复正文走 --cy-msg-* 变量，
+    // 未设置变量时回落默认 15px / 400，这里包一层 assistant-body 验证默认档
+    const assistantBody = document.createElement("div");
+    assistantBody.className = "cy-message__assistant-body";
     const markdown = document.createElement("div");
     markdown.className = "cy-message-markdown";
-    document.body.append(markdown);
+    assistantBody.append(markdown);
+    document.body.append(assistantBody);
 
     const toolbarStyle = getComputedStyle(toolbar);
     const markdownStyle = getComputedStyle(markdown);
     expect(toolbarStyle.fontSize).toBe("13px");
     expect(toolbarStyle.fontWeight).toBe("500");
     expect(toolbarStyle.color).toBe("rgb(13, 13, 13)");
-    expect(markdownStyle.fontSize).toBe("14px");
-    expect(markdownStyle.fontWeight).toBe("400");
+    // jsdom 不解析 CSS 变量，getComputedStyle 返回原始声明；
+    // 断言变量写法本身即验证「默认 15px 且可被设置页覆盖」的机制
+    expect(markdownStyle.fontSize).toBe("var(--cy-msg-size, 15px)");
+    expect(markdownStyle.fontWeight).toBe("var(--cy-msg-weight, 400)");
   });
 });

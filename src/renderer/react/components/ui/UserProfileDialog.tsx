@@ -244,6 +244,7 @@ export function UserProfileDialog({ open, onOpenChange, avatarUrl }: UserProfile
                   options={TIMEZONE_OPTIONS.map(({ value, label }) => ({ value, label }))}
                   onChange={(value) => updateProfile("timezone", normalizeTimezoneOptionValue(value))}
                   ariaLabel={t("ui.profile.timezone")}
+                  contentClassName="cy-user-profile__timezone-options"
                 />
               </label>
             </div>

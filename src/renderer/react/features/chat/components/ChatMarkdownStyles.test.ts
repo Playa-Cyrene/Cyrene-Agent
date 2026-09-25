@@ -70,8 +70,12 @@ describe("chat Markdown style integration", () => {
     style.textContent = stylesheet;
     document.head.append(style);
 
+    const body = document.createElement("div");
+    body.className = "cy-message__assistant-body";
     const markdown = document.createElement("div");
     markdown.className = "cy-message-markdown";
+    // jsdom 不解析 CSS 变量（正文字号实际由 --cy-msg-size 控制），用内联字号模拟变量生效后的基准
+    markdown.style.fontSize = "14px";
     const fileLink = document.createElement("button");
     fileLink.className = "cy-file-link";
     const formula = document.createElement("p");
@@ -91,7 +95,8 @@ describe("chat Markdown style integration", () => {
     taskItem.append(checkbox);
     list.append(listItem, taskItem);
     markdown.append(fileLink, formula, list);
-    document.body.append(markdown);
+    body.append(markdown);
+    document.body.append(body);
 
     expect(getComputedStyle(fileLink).borderTopWidth).toBe("0px");
     expect(getComputedStyle(fileLink).backgroundColor).toBe("rgba(0, 0, 0, 0)");

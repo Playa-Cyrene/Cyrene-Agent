@@ -100,16 +100,18 @@ export const ChatPageNavigation = React.memo(function ChatPageNavigation({
 
   return (
     <>
-      <div className="cy-page-toggle">
-        <SidebarToggle onToggle={onToggleCollapsed} />
-        <CharacterInfoPopover />
-      </div>
-      <div className="cy-page-top-center">
-        {!hasOpenPanel && <ModeSwitch value={mode} onChange={onModeChange} />}
-      </div>
-      <div className="cy-page-windows">
-        <WindowControls onMinimize={onMinimize} onMaximize={onMaximize} onClose={onCloseWindow} />
-      </div>
+      <header className="cy-page-titlebar">
+        <div className="cy-page-toggle">
+          <SidebarToggle onToggle={onToggleCollapsed} />
+          <CharacterInfoPopover />
+        </div>
+        <div className="cy-page-top-center">
+          {!hasOpenPanel && <ModeSwitch value={mode} onChange={onModeChange} />}
+        </div>
+        <div className="cy-page-windows">
+          <WindowControls onMinimize={onMinimize} onMaximize={onMaximize} onClose={onCloseWindow} />
+        </div>
+      </header>
       <div className="cy-page-sidebar">
         <div className="cy-page-newtask">
           <NewTaskButton onClick={onNewTask} />

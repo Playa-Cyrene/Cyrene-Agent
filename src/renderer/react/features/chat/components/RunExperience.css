@@ -574,6 +574,7 @@ button.cy-file-change-card__row:hover { background: #f7f4f6; }
 .cy-plan-content__body .cy-message-markdown,
 .cy-plan-content__body .cy-message-markdown p,
 .cy-plan-content__body .cy-message-markdown li {
+  font-weight: 400;
   font-size: 12px;
   line-height: 1.65;
 }

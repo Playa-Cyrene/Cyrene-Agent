@@ -3,6 +3,8 @@
   align-items: center;
   height: 38px;
   padding: 3px;
+  app-region: no-drag;
+  -webkit-app-region: no-drag;
   background: #f1f1f3;
   border-radius: 12px;
   border: 1px solid rgba(31, 35, 48, 0.07);

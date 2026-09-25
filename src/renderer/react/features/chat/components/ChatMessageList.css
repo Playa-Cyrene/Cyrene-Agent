@@ -11,6 +11,20 @@
   min-height: 100%;
 }
 
+/* 消息内容永远不参与原生窗口拖动区域计算，包括嵌套卡片、按钮与伪元素。
+   no-drag 的滚动矩形可能越过裁剪边界，扣掉上方标题栏；显式 none 在当前
+   Chromium 中也会变成 no-drag。initial 才恢复不提交区域的初始值。
+   important 保证消息内组件自己的区域声明也无法重新污染窗口标题栏。 */
+.cy-message-list,
+.cy-message-list *,
+.cy-message-list::before,
+.cy-message-list::after,
+.cy-message-list *::before,
+.cy-message-list *::after {
+  app-region: initial !important;
+  -webkit-app-region: initial !important;
+}
+
 .cy-message-list__channel-context {
   position: sticky;
   z-index: 2;
@@ -477,6 +491,13 @@
   font-size: 12px;
 }
 
+/* 运行时间线过程正文：显式声明排版，不再依赖消息正文的基础字号 */
+.cy-run-activity__process .cy-message-markdown {
+  font-weight: 400;
+  font-size: 14px;
+  line-height: 1.68;
+}
+
 .cy-run-activity__process-label {
   margin-bottom: 4px;
   color: var(--cy-text-muted);
@@ -695,7 +716,9 @@
 
 .cy-message-reasoning .cy-message-markdown {
   color: var(--cy-text-muted);
+  font-weight: 400;
   font-size: 13px;
+  line-height: 1.68;
 }
 
 .cy-message--assistant:has(.cy-message__sticker:only-child) .ant-bubble-content {
@@ -747,19 +770,29 @@
   color: var(--cy-text-muted);
 }
 
+/* 基础规则只保留跨场景共享的布局与全局字体；字号/行高/字重由各使用场景自己声明，
+   调整聊天消息排版时不再波及文件预览、运行时间线、交互面板等复用 MarkdownContent 的区域。 */
 .cy-message-markdown {
   min-width: 0;
   color: inherit;
-  font-weight: 400;
-  font-size: 14px;
-  line-height: var(--cy-chat-line-height, 1.75);
   font-family: var(--rb-font-sans, sans-serif);
   user-select: text;
 }
 
-/* 正式回答采用较紧凑的阅读节奏，避免 Markdown 默认标题压过正文。 */
-.cy-message--assistant .cy-message-markdown {
-  line-height: 1.68;
+/* 聊天消息正文（气泡内）的排版：用户消息与会话行高一致，
+   正式回答采用较紧凑的阅读节奏，避免 Markdown 默认标题压过正文。 */
+.cy-message__user-body .cy-message-markdown {
+  font-weight: 400;
+  font-size: 14px;
+  line-height: 1.75;
+}
+
+/* 排版数值由设置页"昔涟消息字体"控制：写入根节点 CSS 变量，未设置时回落这里的默认值 */
+.cy-message__assistant-body .cy-message-markdown {
+  font-weight: var(--cy-msg-weight, 400);
+  font-size: var(--cy-msg-size, 15px);
+  line-height: var(--cy-msg-line-height, 1.85);
+  letter-spacing: var(--cy-msg-spacing, 0.8px);
 }
 
 .cy-message--assistant .cy-message-markdown h1 {

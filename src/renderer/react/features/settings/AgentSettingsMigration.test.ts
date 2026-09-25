@@ -11,6 +11,12 @@ import { AppearanceSettingsPage } from "./AppearanceSettingsPage";
 vi.mock("./ModelSettingsPanel", () => ({ ModelSettingsPanel: () => null }));
 vi.mock("./McpSettingsPanel", () => ({ McpSettingsPanel: () => null }));
 vi.mock("@lobehub/icons", () => ({ MCP: () => null }));
+// ChannelsSettingsPanel 的飞书品牌图标来自 @lobehub/ui/icons，
+// 其入口会连带加载浏览器端图标资产（同 @lobehub/icons）；
+// 桩组件保留 aria-label，图标标注类断言才能找到飞书条目
+vi.mock("@lobehub/ui/icons", () => ({
+  Lark: { Color: (props: { "aria-label"?: string }) => createElement("span", { role: "img", "aria-label": props["aria-label"] }) },
+}));
 
 Object.assign(globalThis, {
   IS_REACT_ACT_ENVIRONMENT: true,
