@@ -52,7 +52,7 @@ describe("resolveIsoDates", () => {
 describe("computeSummary", () => {
   it("汇总 token、峰值与请求覆盖", () => {
     const days = makeDays(7, [0, 1, 2], 1000);
-    const summary = computeSummary(days);
+    const summary = computeSummary(days, new Date(2026, 8, 23));
     expect(summary.totalTokens).toBe(3 * 1250);
     expect(summary.peakDayTokens).toBe(1250);
     expect(summary.requests).toBe(15);

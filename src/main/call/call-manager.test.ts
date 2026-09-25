@@ -25,6 +25,7 @@ vi.mock("../tts/tts-dispatcher", () => ({
 
 vi.mock("../orchestrator/vendors", () => ({
   buildVendorUrl: () => "https://example.invalid/chat",
+  resolveTransport: () => "openai",
   getAdapterForConfig: () => ({
     transport: "openai",
     buildRequest: () => ({ headers: {}, body: "{}" }),

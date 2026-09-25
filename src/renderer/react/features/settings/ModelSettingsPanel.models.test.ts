@@ -101,7 +101,7 @@ function radioOf(row: HTMLElement): HTMLInputElement | undefined {
   return row.querySelector<HTMLInputElement>("input[type='radio']");
 }
 
-/** 在添加行输入模型名并点击加号（受控输入需走原型 setter 才触发 React 状态更新） */
+/** 在添加行输入模型名并完成配置弹窗（受控输入需走原型 setter 才触发 React 状态更新） */
 async function addModel(host: ParentNode, value: string) {
   const input = host.querySelector<HTMLInputElement>(".cy-model-list-add input");
   if (!input) throw new Error("add-row input not found");
@@ -114,6 +114,12 @@ async function addModel(host: ParentNode, value: string) {
     .find((button) => button.getAttribute("aria-label")?.includes("添加"));
   if (!addButton) throw new Error("add button not found");
   await act(async () => { addButton.click(); });
+  const dialog = document.querySelector<HTMLElement>("[role='dialog']");
+  if (!dialog) throw new Error("model option dialog not found");
+  const confirmButton = Array.from(dialog.querySelectorAll<HTMLButtonElement>("button"))
+    .find((button) => button.textContent?.replace(/\s/g, "") === "添加模型");
+  if (!confirmButton) throw new Error("model option confirm button not found");
+  await act(async () => { confirmButton.click(); });
 }
 
 /** 点击"保存档案"并返回 saveModelProfile 收到的载荷 */
@@ -159,8 +165,8 @@ describe("模型清单编辑组件", () => {
 
     const rows = listItems(host);
     expect(rows.map(rowText)).toEqual(["glm-x", "glm-flash", "glm-mini"]);
-    expect(radioOf(rows[0])?.checked).toBe(true);
-    expect(radioOf(rows[1])?.checked).toBe(false);
+    expect(rows[0].classList.contains("is-selected")).toBe(true);
+    expect(rows[1].classList.contains("is-selected")).toBe(false);
     expect(rows[0].textContent).toContain("默认");
     expect(rows[1].textContent).not.toContain("默认");
   });
@@ -171,7 +177,7 @@ describe("模型清单编辑组件", () => {
 
     const rows = listItems(host);
     expect(rows.map(rowText)).toEqual(["old-model"]);
-    expect(radioOf(rows[0])?.checked).toBe(true);
+    expect(rows[0].classList.contains("is-selected")).toBe(true);
 
     // 单元素清单照常传给主进程；主进程 normalize 剥除后旧档案零变化（阶段①已锁）
     const payload = await saveAndGetPayload(settings);
@@ -204,7 +210,7 @@ describe("模型清单编辑组件", () => {
     // 重复添加被拒（清单不变）
     await addModel(host, "glm-new");
     expect(listItems(host)).toHaveLength(4);
-    expect(host.textContent).toContain("该模型已在清单中");
+    expect(document.body.textContent).toContain("该模型已在清单中");
 
     // 删除默认模型 glm-x → 默认顺位剩余首项 glm-flash
     const firstRow = listItems(host)[0];
@@ -214,7 +220,7 @@ describe("模型清单编辑组件", () => {
 
     const rows = listItems(host);
     expect(rows.map(rowText)).toEqual(["glm-flash", "glm-mini", "glm-new"]);
-    expect(radioOf(rows[0])?.checked).toBe(true);
+    expect(rows[0].classList.contains("is-selected")).toBe(true);
 
     const payload = await saveAndGetPayload(settings);
     expect(payload.model).toBe("glm-flash");
@@ -242,7 +248,7 @@ describe("模型清单编辑组件", () => {
     const expected = [...new Set(preset.mainModels[0] ? [preset.mainModels[0], ...preset.mainModels] : preset.mainModels)];
     const rows = listItems(host);
     expect(rows.map(rowText)).toEqual(expected);
-    expect(radioOf(rows[0])?.checked).toBe(true);
+    expect(rows[0].classList.contains("is-selected")).toBe(true);
 
     // 新建档案保存时清单随载荷提交
     const payload = await saveAndGetPayload(settings);

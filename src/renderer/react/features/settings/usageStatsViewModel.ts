@@ -208,7 +208,7 @@ function isActiveDay(day: UsageDay): boolean {
  * 汇总指标。days 必须是按天升序、以今天（或最近可得日期）结尾的连续切片；
  * 连续天数按"当天有用量或请求"判定，今天没用量时允许从昨天起算（GitHub 语义）。
  */
-export function computeSummary(days: UsageDay[]): UsageSummary {
+export function computeSummary(days: UsageDay[], today = new Date()): UsageSummary {
   let totalTokens = 0;
   let peakDayTokens = 0;
   let peakDayIso: string | null = null;
@@ -218,7 +218,7 @@ export function computeSummary(days: UsageDay[]): UsageSummary {
   let cacheMiss = 0;
   let cacheUsageRequests = 0;
 
-  const isoDates = resolveIsoDates(days);
+  const isoDates = resolveIsoDates(days, today);
   days.forEach((day, index) => {
     const tokens = dayTotalTokens(day);
     totalTokens += tokens;
