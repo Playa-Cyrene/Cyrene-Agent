@@ -127,6 +127,7 @@ const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
   skillModeOverrides: {},
   lspServerOverrides: [],
   recentProjects: [],
+  disclaimerAcceptedVersion: "",
 };
 
 function normalizeMosslandTtsModel(value: unknown): string {
@@ -340,6 +341,9 @@ export function normalizeGeneralSettings(
     skillModeOverrides: normalizeSkillModeOverrides(input?.skillModeOverrides),
     lspServerOverrides: normalizeLspServerOverrides(input?.lspServerOverrides),
     recentProjects: normalizeRecentProjects(input?.recentProjects),
+    disclaimerAcceptedVersion: typeof input?.disclaimerAcceptedVersion === "string"
+      ? input.disclaimerAcceptedVersion.trim().slice(0, 64)
+      : "",
   };
 }
 

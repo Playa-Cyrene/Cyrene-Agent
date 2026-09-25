@@ -16,6 +16,7 @@ import { useTranslation } from "../../i18n";
 import { applyWindowCornerRadius } from "../../../ui/window-corner-radius";
 import { applyMessageTypography } from "../../../ui/message-typography";
 import { WindowControls } from "../../components/ui/WindowControls";
+import { Card } from "../../components/ui/Card";
 import { SettingsSlider, SettingsSwitch } from "../../components/ui/SettingsControls";
 import "../../components/ui/NewTaskButton.css";
 import { PreferencesSettingsPanel } from "./PreferencesSettingsPanel";
@@ -290,7 +291,7 @@ export function AppearanceSettingsPage({ section, onSelectSection, onBackToWorks
                   <h2><Type size={18} />{t("settingsPage.interface")}</h2>
                   <p>{t("settingsPage.interfaceDescription")}</p>
                 </div>
-                <div className="cy-settings-card">
+                <Card>
                   <div className="cy-settings-row">
                     <div className="cy-settings-row__copy"><strong>{t("settingsPage.windowRadius")}</strong><span>{t("settingsPage.windowRadiusDescription")}</span></div>
                     <div className="cy-settings-row__control cy-settings-slider">
@@ -352,7 +353,7 @@ export function AppearanceSettingsPage({ section, onSelectSection, onBackToWorks
                       ))}
                     </div>
                   </div>
-                </div>
+                </Card>
               </section>
 
               <section className="cy-settings-section">
@@ -360,7 +361,7 @@ export function AppearanceSettingsPage({ section, onSelectSection, onBackToWorks
                   <h2><Monitor size={18} />{t("settingsPage.pet")}</h2>
                   <p>{t("settingsPage.petDescription")}</p>
                 </div>
-                <div className="cy-settings-card">
+                <Card>
                   <div className="cy-settings-row">
                     <div className="cy-settings-row__copy"><strong>{t("settingsPage.petAlwaysOnTop")}</strong><span>{t("settingsPage.petAlwaysOnTopDescription")}</span></div>
                     <SettingsSwitch ariaLabel={t("settingsPage.petAlwaysOnTop")} checked={values.petAlwaysOnTop} onChange={(checked) => updatePetBoolean("petAlwaysOnTop", checked)} />
@@ -376,7 +377,7 @@ export function AppearanceSettingsPage({ section, onSelectSection, onBackToWorks
                       <span>{Math.round(values.petZoom * 100)}%</span>
                     </div>
                   </div>
-                </div>
+                </Card>
               </section>
 
                 <div className="cy-settings-status" role="status" aria-live="polite">{status || t("settingsPage.autoApply")}</div>

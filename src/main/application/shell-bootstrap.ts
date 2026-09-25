@@ -88,6 +88,10 @@ export async function startShell(deps: ShellDependencies): Promise<ShellResult> 
       }
     },
     activate: async (request) => {
+      if (windowManager.hasCurrentDisclaimerConsent?.() === false) {
+        windowManager.showOnboardingWindow?.();
+        return;
+      }
       switch (request.kind) {
         case "chat":
           await windowManager.openReactChatWindow(request.sessionId);

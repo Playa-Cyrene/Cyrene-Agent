@@ -10,6 +10,20 @@
     "loading": "Loading…",
     "empty": "Nothing here"
   },
+  "onboarding": {
+    "quit": "Quit Cyrene",
+    "posterAlt": "Cyrene welcome poster",
+    "posterUnavailable": "The welcome poster could not be loaded",
+    "welcomeTitle": "Welcome to Cyrene",
+    "tagline": "Chat, create, and explore new ideas with Cyrene by your side.",
+    "disclaimerNotice": "Please read and accept the disclaimer carefully to avoid unnecessary trouble.",
+    "viewDisclaimer": "View disclaimer",
+    "back": "Back to welcome",
+    "decline": "Decline and quit",
+    "accept": "Accept and continue",
+    "saving": "Saving…",
+    "saveFailed": "Could not save your consent. Please try again."
+  },
   "composer": {
     "placeholderChat": "I'm ready to chat with you ♪",
     "greetingMorningEarly": "Morning, {{name}}, a new day is beginning ♪",
@@ -951,7 +965,13 @@
       },
       "section10": {
         "title": "10. Effect of These Terms",
-        "p1": "Installing or using this software means you have read, understood, and agreed to all the terms of this disclaimer."
+        "p1": "Before using this software, users must read and explicitly accept all terms of this disclaimer on the first-run screen."
+      },
+      "section11": {
+        "title": "11. Cyrene Character Rights and Voice Cloning Tool",
+        "p1Before": "This software does not distribute official voice assets for Cyrene from Honkai: Star Rail. It only provides a TTS voice-cloning tool. ",
+        "p1Emphasis": "Users must clone voices only from audio they are legally authorized to use",
+        "p1After": ". Users bear all copyright and legal responsibility for content generated with this tool; the software author is not responsible. Rights to the Cyrene character belong to miHoYo, while rights in the corresponding voice performances belong to the voice actors in each country."
       }
     },
     "modelSettings": {

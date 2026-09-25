@@ -10,6 +10,20 @@
     "loading": "加载中…",
     "empty": "暂无内容"
   },
+  "onboarding": {
+    "quit": "退出 Cyrene",
+    "posterAlt": "Cyrene 欢迎海报",
+    "posterUnavailable": "欢迎海报暂时无法加载",
+    "welcomeTitle": "欢迎使用 Cyrene",
+    "tagline": "让昔涟陪你聊天、创作，一起探索更多灵感。",
+    "disclaimerNotice": "为了避免不必要的麻烦，请详细阅读并同意免责声明。",
+    "viewDisclaimer": "查看免责声明",
+    "back": "返回欢迎页",
+    "decline": "拒绝并退出",
+    "accept": "接受并继续",
+    "saving": "正在保存…",
+    "saveFailed": "保存同意状态失败，请重试。"
+  },
   "composer": {
     "placeholderChat": "昔涟期待和你一起聊天♪",
     "greetingMorningEarly": "早上好呀，{{name}}，新的一天开始啦♪",
@@ -951,7 +965,13 @@
       },
       "section10": {
         "title": "10. 协议效力",
-        "p1": "安装或使用本软件即视为您已阅读、理解并同意本免责声明的全部条款。"
+        "p1": "使用本软件前，使用者必须阅读并通过首次启动页面明确接受本免责声明的全部条款。"
+      },
+      "section11": {
+        "title": "11. 昔涟角色版权与语音克隆工具",
+        "p1Before": "本软件不分发《崩坏：星穹铁道》昔涟的官方语音素材。软件仅提供 TTS 语音克隆工具，",
+        "p1Emphasis": "使用者必须使用已获得合法授权的音频进行克隆",
+        "p1After": "。利用本工具生成内容带来的全部版权、法律责任，均由使用者自行承担，和本软件作者无关。昔涟角色版权归属米哈游，对应配音声音权益归各国配音演员所有。"
       }
     },
     "modelSettings": {

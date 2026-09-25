@@ -120,6 +120,43 @@ export function loadReactChatWindowPage(window: BrowserWindow, sessionId?: strin
   return window.loadFile(indexPath, search ? { search } : undefined);
 }
 
+/** 加载独立欢迎窗口，共用 React 构建产物但运行在单独的 BrowserWindow 中。 */
+export function loadOnboardingWindowPage(window: BrowserWindow): Promise<void> {
+  const indexPath = path.join(app.getAppPath(), "dist", "renderer", "react", "index.html");
+  if (isDev) return window.loadURL("http://localhost:5173/react/?onboarding=1");
+  return window.loadFile(indexPath, { search: "?onboarding=1" });
+}
+
+/** 独立欢迎弹窗：非透明、无原生标题栏，内容由 onboarding React 路由绘制。 */
+export function createOnboardingBrowserWindow(): BrowserWindow {
+  const workArea = screen.getPrimaryDisplay().workArea;
+  const width = Math.min(880, workArea.width);
+  const height = Math.min(820, workArea.height);
+  const window = new BrowserWindow({
+    width,
+    height,
+    minWidth: Math.min(680, workArea.width),
+    minHeight: Math.min(600, workArea.height),
+    center: true,
+    title: "欢迎使用 Cyrene",
+    icon: getCurrentAppIconPath(),
+    backgroundColor: "#fff8fb",
+    autoHideMenuBar: true,
+    show: false,
+    frame: false,
+    transparent: false,
+    resizable: true,
+    webPreferences: {
+      preload: path.join(app.getAppPath(), "dist", "preload", "preload", "index.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
+  });
+  window.setMenuBarVisibility(false);
+  return window;
+}
+
 /**
  * 显示聊天窗口（不加载页面）；带 sessionId 时走会话分发。
  */

@@ -8,6 +8,7 @@ import { FolderOpen, Plus, UtensilsCrossed } from "lucide-react";
 import { useTranslation } from "../../i18n";
 import { SettingsInput, SettingsSegmented, SettingsSelect, SettingsSwitch } from "../../components/ui/SettingsControls";
 import type { McpServerConfigView } from "../../../settings/shared/types";
+import { Card } from "../../components/ui/Card";
 
 type McpTransport = "stdio" | "http" | "sse";
 const MCP_TRANSPORTS: McpTransport[] = ["stdio", "http", "sse"];
@@ -472,7 +473,7 @@ export function McpSettingsPanel() {
           <h2><MCP size={18} />{t("settingsPage.mcp.serversTitle")}</h2>
           <p>{t("settingsPage.mcp.serversDescription")}</p>
         </div>
-        <div className="cy-settings-card">
+        <Card>
           {(configs ?? []).length === 0 && (
             <div className="cy-settings-row"><div className="cy-settings-row__copy"><span>{t("settingsPage.mcp.empty")}</span></div></div>
           )}
@@ -509,14 +510,14 @@ export function McpSettingsPanel() {
           <div className="cy-settings-row cy-settings-tools__actions">
             <Button type="primary" icon={<Plus size={14} />} onClick={() => openAddModal()}>{t("settingsPage.mcp.addServer")}</Button>
           </div>
-        </div>
+        </Card>
       </section>
       <section className="cy-settings-section">
         <div className="cy-settings-section__heading">
           <h2><FolderOpen size={18} />{t("settingsPage.mcp.builtinTitle")}</h2>
           <p>{t("settingsPage.mcp.builtinDescription")}</p>
         </div>
-        <div className="cy-settings-card">
+        <Card>
           <div className="cy-settings-row">
             <div className="cy-settings-row__copy">
               <strong>{t("settingsPage.mcp.fsLabel")}</strong>
@@ -531,14 +532,14 @@ export function McpSettingsPanel() {
               />
             </div>
           </div>
-        </div>
+        </Card>
       </section>
       <section className="cy-settings-section">
         <div className="cy-settings-section__heading">
           <h2><UtensilsCrossed size={18} />{t("settingsPage.mcp.recommendedTitle")}</h2>
           <p>{t("settingsPage.mcp.recommendedDescription")}</p>
         </div>
-        <div className="cy-settings-card">
+        <Card>
           <div className="cy-settings-row">
             <div className="cy-settings-row__copy">
               <strong>{t("settingsPage.mcp.mcdName")}</strong>
@@ -559,7 +560,7 @@ export function McpSettingsPanel() {
               </Button>
             </div>
           </div>
-        </div>
+        </Card>
       </section>
     </>}
     <AddMcpServerModal

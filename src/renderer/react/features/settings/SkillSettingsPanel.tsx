@@ -1,4 +1,5 @@
 // 技能设置面板：从聊天窗口的 SkillModePanel 迁移而来。
+import { Card } from "../../components/ui/Card";
 // 功能不变（Work/Code/Learn 模式可见性开关 + 来源过滤 + 搜索），
 // 外层改为设置页标准样式（h1 + intro + 卡片容器）。
 
@@ -276,7 +277,7 @@ export function SkillSettingsPanel() {
       <h1>{t("settingsPage.skill.title")}</h1>
       <p className="cy-settings-intro">{t("skillPanel.subtitle", { mode: TABS.find((item) => item.key === tab)?.label })}</p>
 
-      <div className="cy-settings-card cy-skill-settings">
+      <Card className="cy-skill-settings">
         <div className="skill-panel__toolbar">
           <input
             className="skill-panel__search"
@@ -366,7 +367,7 @@ export function SkillSettingsPanel() {
             {visibleSkills.length === 0 && <div className="skill-panel__empty">{t("skillPanel.noMatch")}</div>}
           </div>
         )}
-      </div>
+      </Card>
     </>
   );
 }

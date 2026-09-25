@@ -53,6 +53,7 @@ import { MODEL_PRESETS } from "../../../settings/api/presets";
 import type { ModelPreset } from "../../../settings/shared/types";
 import { useTranslation } from "../../i18n";
 import { SettingsInput, SettingsPasswordInput, SettingsSwitch } from "../../components/ui/SettingsControls";
+import { Card } from "../../components/ui/Card";
 
 type ProviderIcon = (props: { size?: number | string; style?: CSSProperties }) => ReactNode;
 
@@ -749,7 +750,8 @@ export function ModelSettingsPanel() {
           </div>
           <div className="cy-model-list__items">
             {profiles.map((item) => (
-              <button
+              <Card
+                as="button"
                 className={`cy-model-profile ${activeId === item.id ? "is-active" : ""}`}
                 key={item.id}
                 type="button"
@@ -762,13 +764,13 @@ export function ModelSettingsPanel() {
                   <small>{findPreset(item.provider).shortName} · {item.model}</small>
                 </span>
                 {item.id === defaultProfileId && <Tag className="cy-model-default-tag">{t("settingsPage.modelSettings.default")}</Tag>}
-              </button>
+              </Card>
             ))}
             {profiles.length === 0 && <Empty className="cy-model-empty" image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("settingsPage.modelSettings.noProfiles")} />}
-            <button className={`cy-model-profile cy-model-profile--draft ${!activeId ? "is-active" : ""}`} type="button" onClick={() => startNewDraft()}>
+            <Card as="button" className={`cy-model-profile cy-model-profile--draft ${!activeId ? "is-active" : ""}`} type="button" onClick={() => startNewDraft()}>
               <span className="cy-model-profile__icon"><Plus size={18} /></span>
               <span className="cy-model-profile__copy"><strong>{t("settingsPage.modelSettings.newProfile")}</strong><small>{t("settingsPage.modelSettings.newProfileHint")}</small></span>
-            </button>
+            </Card>
           </div>
           <p className="cy-model-list__footnote">{t("settingsPage.modelSettings.localStorageNote")}</p>
         </aside>
@@ -783,7 +785,7 @@ export function ModelSettingsPanel() {
             {activeId === defaultProfileId ? <Tag className="cy-model-default-tag">{t("settingsPage.modelSettings.default")}</Tag> : activeId ? <Button type="text" onClick={() => void setAsDefault()}>{t("settingsPage.modelSettings.setDefault")}</Button> : null}
           </div>
 
-          <div className="cy-settings-card cy-model-card">
+          <Card className="cy-model-card">
             <div className="cy-model-card__section">
               <div className="cy-model-section-heading"><h3><Cpu size={17} />{t("settingsPage.modelSettings.providerSection")}</h3><p>{t("settingsPage.modelSettings.providerDescription")}</p></div>
               <div className="cy-model-fields cy-model-fields--two">
@@ -925,7 +927,7 @@ export function ModelSettingsPanel() {
                 </div>,
               }]} />
             </div>
-          </div>
+          </Card>
 
           {status && <Alert className="cy-model-status" type={status.kind === "info" ? "info" : status.kind} showIcon message={status.text} />}
           <div className="cy-model-editor__actions">

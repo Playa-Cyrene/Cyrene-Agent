@@ -8,6 +8,7 @@ import { BrandIcon } from "../../components/ui/BrandIcon";
 import { SettingsInput, SettingsPasswordInput, SettingsSelect, SettingsSwitch } from "../../components/ui/SettingsControls";
 import { useTranslation } from "../../i18n";
 import "./ChannelsSettingsPanel.css";
+import { Card } from "../../components/ui/Card";
 
 type ChannelId = "wechat" | "feishu" | "qq" | "qqbot";
 type ChannelConfig = Record<string, unknown>;
@@ -247,7 +248,7 @@ export function ChannelsSettingsPanel() {
     {loading ? <div className="cy-settings-loading"><Spin /></div> : <>
       <section className="cy-settings-section">
         <div className="cy-settings-section__heading"><h2><Link2 size={18} />{t("settingsPage.channels.contextTitle")}</h2><p>{t("settingsPage.channels.contextDescription")}</p></div>
-        <div className="cy-settings-card cy-channels-context">
+        <Card className="cy-channels-context">
           <div className="cy-channels-context__form">
             <label><span>{t("settingsPage.channels.externalChat")}</span><SettingsSelect ariaLabel={t("settingsPage.channels.externalChat")} placeholder={t("settingsPage.channels.noRecentChats")} value={sourceSession} disabled={!context.externalChats.length} onChange={setSourceSession} options={context.externalChats.length ? context.externalChats.map((chat) => ({ value: chat.sessionId, label: `${channelName(t, chat.channel)} · ${chat.chatType === "group" ? t("settingsPage.channels.groupChat") : t("settingsPage.channels.privateChat")} · ${chat.senderName || chat.chatId}` })) : [{ value: "__no_external_chats__", label: t("settingsPage.channels.noRecentChats"), disabled: true }]} /> </label>
             <label><span>{t("settingsPage.channels.desktopConversation")}</span><SettingsSelect ariaLabel={t("settingsPage.channels.desktopConversation")} placeholder={t("settingsPage.channels.noConversations")} value={targetConversation} disabled={!context.conversations.length} onChange={setTargetConversation} options={context.conversations.length ? context.conversations.map((item) => ({ value: item.id, label: `${item.title || t("settingsPage.channels.untitledConversation")} · ${item.mode}` })) : [{ value: "__no_conversations__", label: t("settingsPage.channels.noConversations"), disabled: true }]} /></label>
@@ -258,7 +259,7 @@ export function ChannelsSettingsPanel() {
             const conversation = context.conversations.find((item) => item.id === binding.conversationId);
             return <div className="cy-channels-binding" key={binding.sessionId}><span>{channelName(t, chat?.channel ?? "")} · {chat?.senderName || chat?.chatId || binding.sessionId} → {conversation?.title || binding.conversationId}</span><Button type="text" size="small" loading={busy === `unbind:${binding.sessionId}`} icon={<Trash2 size={14} />} aria-label={t("settingsPage.channels.unbind")} onClick={() => void unbindContext(binding.sessionId)} /></div>;
           })}</div>
-        </div>
+        </Card>
       </section>
 
       <section className="cy-settings-section">
@@ -272,25 +273,25 @@ export function ChannelsSettingsPanel() {
 
       <section className="cy-settings-section">
         <div className="cy-settings-section__heading"><h2><Activity size={18} />{t("settingsPage.channels.globalTitle")}</h2><p>{t("settingsPage.channels.globalDescription")}</p></div>
-        <div className="cy-settings-card">
+        <Card>
           <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.channels.rateUser")}</strong><span>{t("settingsPage.channels.rateUserHint")}</span></div><SettingsInput className="cy-channels-number" type="number" min={1} max={1000} value={String(values.rateLimitPerUser ?? 10)} onChange={(event) => updateGlobal("rateLimitPerUser", Number(event.target.value))} /></div>
           <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.channels.rateChannel")}</strong><span>{t("settingsPage.channels.rateChannelHint")}</span></div><SettingsInput className="cy-channels-number" type="number" min={1} max={10000} value={String(values.rateLimitPerChannel ?? 100)} onChange={(event) => updateGlobal("rateLimitPerChannel", Number(event.target.value))} /></div>
           <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.channels.sendTts")}</strong></div><SettingsSwitch ariaLabel={t("settingsPage.channels.sendTts")} checked={Boolean(values.ttsEnabled)} onChange={(checked) => updateGlobal("ttsEnabled", checked)} /></div>
           <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.channels.sendSticker")}</strong></div><SettingsSwitch ariaLabel={t("settingsPage.channels.sendSticker")} checked={Boolean(values.stickerEnabled)} onChange={(checked) => updateGlobal("stickerEnabled", checked)} /></div>
           <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.channels.mirrorDesktop")}</strong></div><SettingsSwitch ariaLabel={t("settingsPage.channels.mirrorDesktop")} checked={Boolean(values.mirrorToDesktop)} onChange={(checked) => updateGlobal("mirrorToDesktop", checked)} /></div>
           <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.channels.toolPermission")}</strong><span>{t("settingsPage.channels.toolPermissionHint")}</span></div><div className="cy-settings-row__control cy-channels-global-select"><SettingsSelect ariaLabel={t("settingsPage.channels.toolPermission")} value={String(values.toolSandbox ?? "all")} onChange={(value) => updateGlobal("toolSandbox", value)} options={[{ value: "off", label: t("settingsPage.channels.toolsOff") }, { value: "all", label: t("settingsPage.channels.toolsAll") }]} /></div></div>
-        </div>
+        </Card>
       </section>
 
       <section className="cy-settings-section">
         <div className="cy-settings-section__heading cy-channels-logs-heading"><div><h2><MessageSquareText size={18} />{t("settingsPage.channels.logsTitle")}</h2><p>{t("settingsPage.channels.logsDescription")}</p></div><Button type="text" aria-expanded={logsExpanded} aria-controls="cy-channels-logs-panel" onClick={() => setLogsExpanded((expanded) => !expanded)}>{logsExpanded ? t("settingsPage.channels.collapse") : t("settingsPage.channels.expand")}<ChevronDown className={logsExpanded ? "is-expanded" : ""} size={16} aria-hidden="true" /></Button></div>
-        {logsExpanded && <div className="cy-settings-card cy-channels-logs-card" id="cy-channels-logs-panel">
+        {logsExpanded && <Card className="cy-channels-logs-card" id="cy-channels-logs-panel">
           <div className="cy-channels-logs__toolbar"><span>{t("settingsPage.channels.logsCount", { count: logs.length })}</span><div><Button size="small" onClick={() => void refreshLogs()}>{t("settingsPage.channels.refresh")}</Button><Button size="small" danger onClick={clearLogs}>{t("settingsPage.channels.clear")}</Button></div></div>
           <div className="cy-channels-logs" role="list">{logs.length === 0 ? <div className="cy-channels-empty">{t("settingsPage.channels.noMessages")}</div> : logs.map((entry, index) => <article className={`cy-channels-log cy-channels-log--${entry.dir}`} role="listitem" key={`${entry.at}-${entry.channel}-${entry.chatId}-${index}`}>
             <div className="cy-channels-log__meta"><Tag className="cy-channels-log__channel">{channelName(t, entry.channel)}</Tag><span>{entry.dir === "incoming" ? t("settingsPage.channels.received") : t("settingsPage.channels.replied")}</span><span>{entry.senderName || entry.senderId}</span><time>{new Date(entry.at).toLocaleTimeString()}</time></div>
             <div className="cy-channels-log__text">{entry.text.length > 280 ? `${entry.text.slice(0, 280)}…` : entry.text}{entry.hasAttachments && <small>{t("settingsPage.channels.hasAttachment")}</small>}</div>
           </article>)}</div>
-        </div>}
+        </Card>}
       </section>
     </>}
     {channelRows.map(({ id }) => renderChannelDialog(id))}

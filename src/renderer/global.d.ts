@@ -142,6 +142,9 @@ interface SettingsWindowApi {
 
 declare global {
   interface Window {
+    cyrene?: {
+      quit: () => void;
+    };
     system?: SystemApi;
     review?: ReviewApi;
     workspaceFiles?: WorkspaceFilesApi;

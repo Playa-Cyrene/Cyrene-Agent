@@ -8,6 +8,7 @@ import { BrandIcon } from "../../components/ui/BrandIcon";
 import { SettingsInput, SettingsPasswordInput, SettingsSelect, SettingsSegmented, SettingsSlider, SettingsSwitch } from "../../components/ui/SettingsControls";
 import { useTranslation } from "../../i18n";
 import "./TtsSettingsPanel.css";
+import { Card } from "../../components/ui/Card";
 
 type TtsEngine = "off" | "minimax" | "mimo" | "mossland" | "gptsovits" | "custom-cloud";
 type Provider = Exclude<TtsEngine, "off">;
@@ -393,13 +394,13 @@ export function TtsSettingsPanel() {
     {loading ? <div className="cy-asr-loading" role="status" aria-label={t("settingsPage.tts.loading")}><AudioLines size={18} aria-hidden="true" /></div> : <>
       <section className="cy-settings-section">
         <div className="cy-settings-section__heading"><h2><Volume2 size={18} />{t("settingsPage.tts.playbackTitle")}</h2><p>{t("settingsPage.tts.playbackDescription")}</p></div>
-        <div className="cy-settings-card">
+        <Card>
           <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tts.autoReadTitle")}</strong><span>{t("settingsPage.tts.autoReadDescription")}</span></div><SettingsSwitch checked={values.ttsAutoRead} ariaLabel={t("settingsPage.tts.autoReadTitle")} onChange={(checked) => updateImmediate("ttsAutoRead", checked)} /></div>
           <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tts.splitEnabledTitle")}</strong><span>{t("settingsPage.tts.splitEnabledDescription")}</span></div><SettingsSwitch checked={values.ttsEarlyReadSplitEnabled} ariaLabel={t("settingsPage.tts.splitEnabledTitle")} onChange={(checked) => updateImmediate("ttsEarlyReadSplitEnabled", checked)} /></div>
           <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tts.splitModeTitle")}</strong><span>{t("settingsPage.tts.splitModeDescription")}</span></div><SettingsSegmented disabled={!values.ttsEarlyReadSplitEnabled} value={values.ttsEarlyReadSplitMode} options={[{ label: t("settingsPage.tts.splitModeSentence"), value: "sentence" }, { label: t("settingsPage.tts.splitModeParagraph"), value: "paragraph" }]} onChange={(value) => updateImmediate("ttsEarlyReadSplitMode", value as SplitMode)} /></div>
           <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tts.speedTitle")}</strong><span>{t("settingsPage.tts.speedDescription")}</span></div><div className="cy-settings-row__control cy-settings-slider"><SettingsSlider min={0.5} max={2} step={0.1} value={values.ttsSpeed} ariaLabel={t("settingsPage.tts.speedTitle")} onChange={(value) => setValues((current) => ({ ...current, ttsSpeed: value }))} onChangeComplete={(value) => void persist({ ttsSpeed: value })} /><span>{values.ttsSpeed.toFixed(1)}x</span></div></div>
           <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tts.volumeTitle")}</strong><span>{t("settingsPage.tts.volumeDescription")}</span></div><div className="cy-settings-row__control cy-settings-slider"><SettingsSlider min={0} max={1} step={0.1} value={values.ttsVolume} ariaLabel={t("settingsPage.tts.volumeTitle")} onChange={(value) => setValues((current) => ({ ...current, ttsVolume: value }))} onChangeComplete={(value) => void persist({ ttsVolume: value })} /><span>{Math.round(values.ttsVolume * 100)}%</span></div></div>
-        </div>
+        </Card>
       </section>
 
       <section className="cy-settings-section">
@@ -421,15 +422,15 @@ export function TtsSettingsPanel() {
 
       {values.ttsEngine === "minimax" && <section className="cy-settings-section">
         <div className="cy-settings-section__heading"><h2><BrandIcon icon={siMinimax} size={18} label="MiniMax" />{t("settingsPage.tts.minimaxConfig")}</h2><p>{t("settingsPage.tts.minimaxHint")}</p></div>
-        <div className="cy-settings-card cy-tts-fields">
+        <Card className="cy-tts-fields">
           <label><span>{t("settingsPage.tts.apiKey")}</span><SettingsPasswordInput showLabel={t("settingsPage.tts.showSecret")} hideLabel={t("settingsPage.tts.hideSecret")} value={values.ttsMinimaxKey} onChange={(event) => updateProvider("minimax", "ttsMinimaxKey", event.target.value)} autoComplete="off" /></label>
           <label><span>{t("settingsPage.tts.voiceId")}</span><SettingsInput value={values.ttsMinimaxVoiceId} onChange={(event) => updateProvider("minimax", "ttsMinimaxVoiceId", event.target.value)} /></label>
           <label><span>{t("settingsPage.tts.model")}</span><SettingsSelect ariaLabel={t("settingsPage.tts.model")} value={values.ttsMinimaxModel} options={[{ value: "speech-2.8-turbo", label: t("settingsPage.tts.modelTurbo") }, { value: "speech-2.8-hd", label: t("settingsPage.tts.modelHd") }]} onChange={(value) => updateImmediate("ttsMinimaxModel", value)} /></label>
           <div className="cy-tts-field-switch"><div><strong>{t("settingsPage.tts.streamingTitle")}</strong><span>{t("settingsPage.tts.streamingDescription")}</span></div><SettingsSwitch ariaLabel={t("settingsPage.tts.streamingTitle")} checked={values.ttsStreaming} onChange={(checked) => updateImmediate("ttsStreaming", checked)} /></div>
           <div className="cy-tts-field-switch"><div><strong>{t("settingsPage.tts.vocalEnhanceTitle")}</strong><span>{t("settingsPage.tts.vocalEnhanceDescription")}</span></div><SettingsSwitch ariaLabel={t("settingsPage.tts.vocalEnhanceTitle")} checked={values.ttsMinimaxVocalEnhance} onChange={(checked) => updateImmediate("ttsMinimaxVocalEnhance", checked)} /></div>
           <div className="cy-tts-form-actions">{saveButton("minimax")}{testButton("minimax")}</div>
-        </div>
-        <div className="cy-settings-card cy-tts-subcard">
+        </Card>
+        <Card className="cy-tts-subcard">
           <div className="cy-settings-section__heading"><h3><WandSparkles size={17} />{t("settingsPage.tts.cloneTitle")}</h3><p>{t("settingsPage.tts.cloneHint")}</p><div className="cy-tts-doc-links"><Button type="link" onClick={() => void openProviderLink(providerDocs.minimax)}>{t("settingsPage.tts.providerDocs")}</Button><Button type="link" onClick={() => void openProviderLink(providerDocs.minimaxErrors)}>{t("settingsPage.tts.errorCodes")}</Button></div></div>
           <Alert type="warning" showIcon message={t("settingsPage.tts.cloneWarning")} />
           <div className="cy-tts-fields"><label><span>{t("settingsPage.tts.cloneFile")}</span><div className="cy-tts-file-control"><SettingsInput readOnly value={cloneState.file} placeholder={t("settingsPage.tts.noFile")} /><Button icon={<FileAudio size={15} />} onClick={() => void pickAudio("minimax", "ttsGptsovitsRefAudioPath", "minimax")}>{t("settingsPage.tts.chooseFile")}</Button></div></label>
@@ -439,54 +440,54 @@ export function TtsSettingsPanel() {
             <label><span>{t("settingsPage.tts.cloneVoiceId")}</span><SettingsInput value={cloneState.voiceId} onChange={(event) => setCloneState((current) => ({ ...current, voiceId: event.target.value }))} /></label>
             <div className="cy-tts-form-actions"><span role="status">{cloneState.status}</span><Button type="primary" loading={busy === "clone-minimax"} onClick={() => void startMiniMaxClone()}>{t("settingsPage.tts.cloneStart")}</Button></div>
           </div>
-        </div>
+        </Card>
       </section>}
 
       {values.ttsEngine === "gptsovits" && <section className="cy-settings-section">
         <div className="cy-settings-section__heading"><h2><Laptop size={18} />{t("settingsPage.tts.gptConfig")}</h2><p>{t("settingsPage.tts.gptHint")}</p></div>
-        <div className="cy-settings-card cy-tts-fields">
+        <Card className="cy-tts-fields">
           <label><span>{t("settingsPage.tts.gptUrl")}</span><SettingsInput value={values.ttsGptsovitsBaseUrl} onChange={(event) => updateProvider("gptsovits", "ttsGptsovitsBaseUrl", event.target.value)} /></label>
           <label><span>{t("settingsPage.tts.gptReferenceAudio")}</span><div className="cy-tts-file-control"><SettingsInput readOnly value={values.ttsGptsovitsRefAudioPath} placeholder={t("settingsPage.tts.noFile")} /><Button icon={<FileAudio size={15} />} onClick={() => void pickAudio("gptsovits", "ttsGptsovitsRefAudioPath")}>{t("settingsPage.tts.chooseFile")}</Button></div></label>
           <label><span>{t("settingsPage.tts.gptPromptText")}</span><TextArea rows={2} value={values.ttsGptsovitsPromptText} onChange={(event) => updateProvider("gptsovits", "ttsGptsovitsPromptText", event.target.value)} /></label>
           <label><span>{t("settingsPage.tts.format")}</span><SettingsSelect ariaLabel={t("settingsPage.tts.format")} value={values.ttsGptsovitsFormat} options={[{ value: "wav", label: t("settingsPage.tts.wavRecommended") }, { value: "mp3", label: "mp3" }]} onChange={(value) => updateImmediate("ttsGptsovitsFormat", value)} /></label>
           <label><span>{t("settingsPage.tts.timeoutMs")}</span><SettingsInput type="number" min={10000} max={3600000} value={values.ttsGptsovitsTimeoutMs} onChange={(event) => updateProvider("gptsovits", "ttsGptsovitsTimeoutMs", Number(event.target.value))} /></label>
           <div className="cy-tts-form-actions">{saveButton("gptsovits")}{testButton("gptsovits")}</div>
-        </div>
+        </Card>
       </section>}
 
       {values.ttsEngine === "custom-cloud" && <section className="cy-settings-section">
         <div className="cy-settings-section__heading"><h2><Cloud size={18} />{t("settingsPage.tts.customCloudConfig")}</h2><p>{t("settingsPage.tts.customCloudHint")}</p></div>
-        <div className="cy-settings-card cy-tts-fields">
+        <Card className="cy-tts-fields">
           <label><span>{t("settingsPage.tts.endpointUrl")}</span><SettingsInput value={values.ttsCustomCloudEndpointUrl} onChange={(event) => updateProvider("custom-cloud", "ttsCustomCloudEndpointUrl", event.target.value)} /></label>
           <label><span>{t("settingsPage.tts.apiKey")}</span><SettingsPasswordInput showLabel={t("settingsPage.tts.showSecret")} hideLabel={t("settingsPage.tts.hideSecret")} value={values.ttsCustomCloudApiKey} onChange={(event) => updateProvider("custom-cloud", "ttsCustomCloudApiKey", event.target.value)} autoComplete="off" /></label>
           <label><span>{t("settingsPage.tts.voiceIdOptional")}</span><SettingsInput value={values.ttsCustomCloudVoiceId} onChange={(event) => updateProvider("custom-cloud", "ttsCustomCloudVoiceId", event.target.value)} /></label>
           <label><span>{t("settingsPage.tts.format")}</span><SettingsSelect ariaLabel={t("settingsPage.tts.format")} value={values.ttsCustomCloudFormat} options={[{ value: "mp3", label: "mp3" }, { value: "wav", label: "wav" }]} onChange={(value) => updateImmediate("ttsCustomCloudFormat", value)} /></label>
           <label><span>{t("settingsPage.tts.timeoutMs")}</span><SettingsInput type="number" min={1} value={values.ttsCustomCloudTimeoutMs} onChange={(event) => updateProvider("custom-cloud", "ttsCustomCloudTimeoutMs", Number(event.target.value))} /></label>
           <div className="cy-tts-form-actions">{saveButton("custom-cloud")}{testButton("custom-cloud")}</div>
-        </div>
+        </Card>
       </section>}
 
       {values.ttsEngine === "mimo" && <section className="cy-settings-section">
         <div className="cy-settings-section__heading"><h2><BrandIcon icon={siXiaomi} size={18} label="Xiaomi" />{t("settingsPage.tts.mimoConfig")}</h2><p>{t("settingsPage.tts.mimoHint")}</p><div className="cy-tts-doc-links"><Button type="link" onClick={() => void openProviderLink(providerDocs.mimo)}>{t("settingsPage.tts.providerDocs")}</Button><Button type="link" onClick={() => void openProviderLink(providerDocs.mimoErrors)}>{t("settingsPage.tts.errorCodes")}</Button></div></div>
-        <div className="cy-settings-card cy-tts-fields">
+        <Card className="cy-tts-fields">
           <label><span>{t("settingsPage.tts.apiKey")}</span><SettingsPasswordInput showLabel={t("settingsPage.tts.showSecret")} hideLabel={t("settingsPage.tts.hideSecret")} value={values.ttsMimoKey} onChange={(event) => updateProvider("mimo", "ttsMimoKey", event.target.value)} autoComplete="off" /></label>
           <label><span>{t("settingsPage.tts.mimoReferenceAudio")}</span><div className="cy-tts-file-control"><SettingsInput readOnly value={values.ttsMimoVoiceAudioPath} placeholder={t("settingsPage.tts.noFile")} /><Button icon={<FileAudio size={15} />} onClick={() => void pickAudio("mimo", "ttsMimoVoiceAudioPath")}>{t("settingsPage.tts.chooseFile")}</Button></div></label>
           <label className="cy-tts-field-wide"><span>{t("settingsPage.tts.stylePrompt")}</span><TextArea rows={3} value={values.ttsMimoStylePrompt} onChange={(event) => updateProvider("mimo", "ttsMimoStylePrompt", event.target.value)} /></label>
           <div className="cy-tts-form-actions">{saveButton("mimo")}{testButton("mimo")}</div>
-        </div>
+        </Card>
       </section>}
 
       {values.ttsEngine === "mossland" && <section className="cy-settings-section">
         <div className="cy-settings-section__heading"><h2><Mic2 size={18} />{t("settingsPage.tts.mosslandConfig")}</h2><p>{t("settingsPage.tts.mosslandHint")}</p><div className="cy-tts-doc-links"><Button type="link" onClick={() => void openProviderLink(providerDocs.mossland)}>{t("settingsPage.tts.providerDocs")}</Button><Button type="link" onClick={() => void openProviderLink(providerDocs.mosslandErrors)}>{t("settingsPage.tts.errorCodes")}</Button></div></div>
-        <div className="cy-settings-card cy-tts-fields">
+        <Card className="cy-tts-fields">
           <label><span>{t("settingsPage.tts.apiKey")}</span><SettingsPasswordInput showLabel={t("settingsPage.tts.showSecret")} hideLabel={t("settingsPage.tts.hideSecret")} value={values.ttsMosslandKey} onChange={(event) => updateProvider("mossland", "ttsMosslandKey", event.target.value)} autoComplete="off" /></label>
           <label><span>{t("settingsPage.tts.model")}</span><SettingsSelect ariaLabel={t("settingsPage.tts.model")} value={values.ttsMosslandModel} options={[{ value: DEFAULT_MOSSLAND_TTS_MODEL, label: t("settingsPage.tts.mosslandFlash") }, { value: "moss-tts-1.0-pro", label: t("settingsPage.tts.mosslandPro") }, ...(values.ttsMosslandModel !== DEFAULT_MOSSLAND_TTS_MODEL && values.ttsMosslandModel !== "moss-tts-1.0-pro" ? [{ value: values.ttsMosslandModel, label: t("settingsPage.tts.savedModel", { model: values.ttsMosslandModel }) }] : [])]} onChange={(value) => updateProvider("mossland", "ttsMosslandModel", value)} /></label>
           <label><span>{t("settingsPage.tts.voiceId")}</span><SettingsInput value={values.ttsMosslandVoiceId} onChange={(event) => updateProvider("mossland", "ttsMosslandVoiceId", event.target.value)} /></label>
           <label><span>{t("settingsPage.tts.testText")}</span><SettingsInput value={values.ttsMosslandTestText} onChange={(event) => updateProvider("mossland", "ttsMosslandTestText", event.target.value)} /></label>
           <label><span>{t("settingsPage.tts.format")}</span><SettingsSelect ariaLabel={t("settingsPage.tts.format")} value={values.ttsMosslandFormat} options={[{ value: "mp3", label: "mp3" }, { value: "wav", label: "wav" }]} onChange={(value) => updateProvider("mossland", "ttsMosslandFormat", value)} /></label>
           <div className="cy-tts-form-actions">{saveButton("mossland")}{testButton("mossland")}</div>
-        </div>
-        <div className="cy-settings-card cy-tts-subcard">
+        </Card>
+        <Card className="cy-tts-subcard">
           <div className="cy-settings-section__heading"><h3><WandSparkles size={17} />{t("settingsPage.tts.mosslandCloneTitle")}</h3><p>{t("settingsPage.tts.mosslandCloneHint")}</p></div>
           <Alert type="info" showIcon message={t("settingsPage.tts.mosslandCloneWarning")} />
           <div className="cy-tts-fields"><label><span>{t("settingsPage.tts.referenceAudio")}</span><div className="cy-tts-file-control"><SettingsInput readOnly value={mossClone.file} placeholder={t("settingsPage.tts.noFile")} /><Button onClick={() => void pickAudio("mossland", "ttsGptsovitsRefAudioPath", "mossland")}>{t("settingsPage.tts.chooseFile")}</Button></div></label>
@@ -494,12 +495,12 @@ export function TtsSettingsPanel() {
             <label><span>{t("settingsPage.tts.voiceDescription")}</span><SettingsInput value={mossClone.description} onChange={(event) => setMossClone((current) => ({ ...current, description: event.target.value }))} /></label>
             <div className="cy-tts-form-actions"><span role="status">{mossClone.status}</span><Button type="primary" loading={busy === "clone-mossland"} onClick={() => void startMosslandClone()}>{t("settingsPage.tts.cloneUpload")}</Button></div>
           </div>
-        </div>
-        <div className="cy-settings-card cy-tts-subcard">
+        </Card>
+        <Card className="cy-tts-subcard">
           <div className="cy-settings-section__heading"><h3><ListMusic size={17} />{t("settingsPage.tts.myVoices")}</h3><p>{t("settingsPage.tts.myVoicesHint")}</p></div>
           <div className="cy-tts-form-actions"><span role="status">{mossListStatus}</span><Button loading={busy === "list-mossland"} onClick={() => void loadMosslandVoices()}>{t("settingsPage.tts.loadVoices")}</Button></div>
           {!!mossVoices.length && <ul className="cy-tts-voice-list">{mossVoices.map((voice) => <li key={voice.id}><code>{voice.id}</code><span>{voice.name}</span><Button size="small" onClick={() => updateProvider("mossland", "ttsMosslandVoiceId", voice.id)}>{t("settingsPage.tts.useVoice")}</Button></li>)}</ul>}
-        </div>
+        </Card>
       </section>}
 
       <Alert className="cy-tts-hint" type="info" showIcon message={t("settingsPage.tts.engineHint")} />

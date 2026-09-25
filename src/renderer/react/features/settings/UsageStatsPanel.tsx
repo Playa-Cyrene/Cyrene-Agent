@@ -1,4 +1,5 @@
 // 用量统计面板：汇总条 + Token 活动热力图 + 用量趋势 + 模型占比。
+import { Card } from "../../components/ui/Card";
 // 热力图为纯 DOM 自绘（参考 GitHub 贡献图），趋势图与甜甜圈复用 chart.js；
 // 数据来自 window.tokenUsage.get(days)（主进程 token-usage.json）。
 
@@ -201,7 +202,7 @@ export function UsageStatsPanel() {
             <div className="cy-settings-section__heading">
               <h2>{t("settingsPage.usage.heatmapTitle")}</h2>
             </div>
-            <div className="cy-settings-card cy-usage-heatmap">
+            <Card className="cy-usage-heatmap">
               <div className="cy-usage-heatmap__toolbar">
                 <SettingsSegmented
                   className="cy-usage-heatmap__mode-selector"
@@ -257,14 +258,14 @@ export function UsageStatsPanel() {
                   ))}
                 </div>
               </div>
-            </div>
+            </Card>
           </section>
 
           <section className="cy-settings-section">
             <div className="cy-settings-section__heading">
               <h2>{t("settingsPage.usage.trendsTitle")}</h2>
             </div>
-            <div className="cy-settings-card cy-usage-card">
+            <Card className="cy-usage-card">
               <div className="cy-usage-card__toolbar">
                 <SettingsSegmented
                   size="small"
@@ -274,16 +275,16 @@ export function UsageStatsPanel() {
                 />
               </div>
               <TrendChart days={rangeDays} t={t} />
-            </div>
+            </Card>
           </section>
 
           <section className="cy-settings-section">
             <div className="cy-settings-section__heading">
               <h2>{t("settingsPage.usage.modelsTitle")}</h2>
             </div>
-            <div className="cy-settings-card cy-usage-card">
+            <Card className="cy-usage-card">
               <ModelDonut models={report?.models ?? []} locale={locale} t={t} />
-            </div>
+            </Card>
           </section>
         </>
       )}

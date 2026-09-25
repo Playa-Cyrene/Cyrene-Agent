@@ -11,6 +11,7 @@ import { loadModelSettings, getPublicModelConfig } from "./model-settings";
 import type { GeneralSettings } from "./general-settings";
 import type { UiIcon } from "../../shared/ui-icon";
 import { syncLaunchAtLogin } from "./launch-at-login";
+import { CURRENT_DISCLAIMER_VERSION } from "../../shared/disclaimer";
 
 export interface GeneralSettingsLifecycleDependencies {
   get windowManager(): WindowManager | null;
@@ -32,9 +33,25 @@ export function applyGeneralSettings(
   if (!before || before.petAlwaysOnTop !== settings.petAlwaysOnTop) {
     deps.windowManager?.setPetWindowAlwaysOnTop(settings.petAlwaysOnTop);
   }
-  if (!before || before.petVisible !== settings.petVisible) {
+  const disclaimerAccepted = settings.disclaimerAcceptedVersion === undefined
+    || settings.disclaimerAcceptedVersion === CURRENT_DISCLAIMER_VERSION;
+  const disclaimerAcceptanceChanged = before?.disclaimerAcceptedVersion !== settings.disclaimerAcceptedVersion;
+  if (!disclaimerAccepted) {
+    deps.windowManager?.hidePetWindow();
+  } else if (!before || before.petVisible !== settings.petVisible || disclaimerAcceptanceChanged) {
     if (settings.petVisible) deps.windowManager?.showPetWindow();
     else deps.windowManager?.hidePetWindow();
+  }
+  const wasDisclaimerAccepted = !before
+    || before.disclaimerAcceptedVersion === undefined
+    || before.disclaimerAcceptedVersion === CURRENT_DISCLAIMER_VERSION;
+  if (!wasDisclaimerAccepted && disclaimerAccepted) {
+    setTimeout(() => {
+      deps.windowManager?.closeOnboardingWindow?.();
+      void deps.windowManager?.openReactChatWindow().catch((error) => {
+        console.error("[Cyrene] failed to open workspace after disclaimer acceptance:", error);
+      });
+    }, 0);
   }
   if (!before || before.launchAtLogin !== settings.launchAtLogin) {
     syncLaunchAtLogin(settings.launchAtLogin, app);

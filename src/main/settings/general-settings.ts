@@ -184,4 +184,6 @@ export interface GeneralSettings {
   lspServerOverrides: LspServerOverride[];
   /** 最近绑定的项目文件夹（绝对路径），按最近使用时间倒序，最多保留 10 个。 */
   recentProjects: string[];
+  /** 用户明确接受的免责声明版本；空字符串表示尚未接受当前条款。 */
+  disclaimerAcceptedVersion?: string;
 }

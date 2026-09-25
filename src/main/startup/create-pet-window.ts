@@ -15,6 +15,7 @@ export interface PetWindowSettingsSlice {
   petWindowY?: number;
   /** 桌宠缩放因子；离屏判定需按缩放后的实际窗口尺寸计算。 */
   petZoom?: number;
+  disclaimerAcceptedVersion?: string;
 }
 
 export interface CreatePetWindowContext {

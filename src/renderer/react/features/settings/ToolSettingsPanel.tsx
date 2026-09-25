@@ -6,6 +6,7 @@ import { BrandIcon } from "../../components/ui/BrandIcon";
 import { SettingsInput, SettingsPasswordInput, SettingsSelect, SettingsSwitch } from "../../components/ui/SettingsControls";
 import { useTranslation } from "../../i18n";
 import { MusicSettingsModal } from "./MusicSettingsModal";
+import { Card } from "../../components/ui/Card";
 
 type SearchEngine = "off" | "bocha" | "tavily" | "minimax" | "anySearch";
 type PermissionLevel = "project-read-only" | "read-only" | "scoped" | "per-action" | "full";
@@ -224,25 +225,25 @@ export function ToolSettingsPanel({ musicSettingsNavigation = 0 }: { musicSettin
     {loading ? <div className="cy-settings-loading"><Spin /></div> : <>
       <section className="cy-settings-section">
         <div className="cy-settings-section__heading"><h2><CloudSun size={18} />{t("settingsPage.tools.information")}</h2><p>{t("settingsPage.tools.informationDescription")}</p></div>
-        <div className="cy-settings-card">
+        <Card>
           <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.weather")}</strong><span>{t("settingsPage.tools.weatherDescription")}</span></div><SettingsSwitch ariaLabel={t("settingsPage.tools.weather")} checked={values.weatherEnabled} disabled={saving} onChange={(checked) => void setBoolean("weatherEnabled", checked)} /></div>
           <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.weatherSource")}</strong></div><SettingsSelect className="cy-settings-tools__select" ariaLabel={t("settingsPage.tools.weatherSource")} value={values.weatherSource} disabled={saving} options={[{ value: "open-meteo", label: t("settingsPage.tools.openMeteo") }, { value: "amap", label: t("settingsPage.tools.amapWeather") }]} onChange={(weatherSource) => void savePatch({ weatherSource })} /></div>
           <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.travel")}</strong><span>{t("settingsPage.tools.travelDescription")}</span></div><SettingsSwitch ariaLabel={t("settingsPage.tools.travel")} checked={values.travelEnabled} disabled={saving} onChange={(checked) => void setBoolean("travelEnabled", checked)} /></div>
           {(values.weatherSource === "amap" || values.travelEnabled) && <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.amapKey")}</strong><span>{t("settingsPage.tools.amapKeyDescription")}</span></div><div className="cy-settings-row__control cy-settings-tools__field"><SettingsPasswordInput showLabel={t("settingsPage.asr.showSecret")} hideLabel={t("settingsPage.asr.hideSecret")} value={values.amapKey} onChange={(event) => setValues((current) => ({ ...current, amapKey: event.target.value }))} /><Button disabled={saving} onClick={() => void savePatch({ amapKey: values.amapKey })}>{t("settingsPage.tools.save")}</Button></div></div>}
-        </div>
+        </Card>
       </section>
 
       <section className="cy-settings-section">
         <div className="cy-settings-section__heading"><h2><Search size={18} />{t("settingsPage.tools.search")}</h2><p>{t("settingsPage.tools.searchDescription")}</p></div>
-        <div className="cy-settings-card">
+        <Card>
           <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.searchEnabled")}</strong></div><SettingsSwitch ariaLabel={t("settingsPage.tools.searchEnabled")} checked={values.searchEngine !== "off"} disabled={saving} onChange={(checked) => void setSearchEnabled(checked)} /></div>
           {values.searchEngine !== "off" && <><div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.searchSource")}</strong></div><SettingsSelect className="cy-settings-tools__select" ariaLabel={t("settingsPage.tools.searchSource")} value={values.searchEngine} disabled={saving} options={(["bocha", "tavily", "minimax", "anySearch"] as const).map((value) => ({ value, label: t(`settingsPage.tools.search${value}`) }))} onChange={(value) => void setSearchEngine(value)} /></div><div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.searchKey", { provider: t(`settingsPage.tools.search${activeSearch}`) })}</strong></div><div className="cy-settings-row__control cy-settings-tools__field"><SettingsPasswordInput showLabel={t("settingsPage.asr.showSecret")} hideLabel={t("settingsPage.asr.hideSecret")} value={String(values[searchKey])} onChange={(event) => setValues((current) => ({ ...current, [searchKey]: event.target.value }))} /><Button disabled={saving} onClick={() => void savePatch({ [searchKey]: values[searchKey] })}>{t("settingsPage.tools.save")}</Button></div></div></>}
-        </div>
+        </Card>
       </section>
 
       <section className="cy-settings-section">
         <div className="cy-settings-section__heading"><h2><Mail size={18} />{t("settingsPage.tools.email")}</h2><p>{t("settingsPage.tools.emailDescription")}</p></div>
-        <div className="cy-settings-card">
+        <Card>
           <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.emailEnabled")}</strong></div><SettingsSwitch ariaLabel={t("settingsPage.tools.emailEnabled")} checked={values.emailEnabled} disabled={saving} onChange={(checked) => void setBoolean("emailEnabled", checked)} /></div>
           {values.emailEnabled && <>
             <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.smtpHost")}</strong></div><SettingsInput className="cy-settings-tools__select" value={values.emailSmtpHost} onChange={(event) => setValues((current) => ({ ...current, emailSmtpHost: event.target.value }))} /></div>
@@ -253,20 +254,20 @@ export function ToolSettingsPanel({ musicSettingsNavigation = 0 }: { musicSettin
             <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.fromName")}</strong></div><SettingsInput className="cy-settings-tools__select" value={values.emailFromName} onChange={(event) => setValues((current) => ({ ...current, emailFromName: event.target.value }))} /></div>
             <div className="cy-settings-row cy-settings-tools__actions"><Button type="primary" disabled={saving} onClick={() => void savePatch({ emailSmtpHost: values.emailSmtpHost, emailSmtpPort: values.emailSmtpPort, emailSmtpSecure: values.emailSmtpSecure, emailSmtpUser: values.emailSmtpUser, emailSmtpPass: values.emailSmtpPass, emailFromName: values.emailFromName })}>{t("settingsPage.tools.saveEmail")}</Button></div>
           </>}
-        </div>
+        </Card>
       </section>
 
       <section className="cy-settings-section">
         <div className="cy-settings-section__heading"><h2><Files size={18} />{t("settingsPage.tools.files")}</h2><p>{t("settingsPage.tools.filesDescription")}</p></div>
-        <div className="cy-settings-card"><div className="cy-settings-row cy-settings-tools__permission"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.permission")}</strong><span>{t(`settingsPage.tools.permissionDescription.${permission}`)}</span></div><div className="cy-settings-tools__levels" role="group" aria-label={t("settingsPage.tools.permission")}>{(["project-read-only", "read-only", "per-action", "full"] as const).map((level) => <Button key={level} className={permissionDisplay === level ? "is-active" : ""} aria-pressed={permissionDisplay === level} disabled={saving} onClick={() => void setPermissionLevel(level)}>{t(`settingsPage.tools.permissionLevel.${level}`)}</Button>)}</div></div></div>
+        <Card><div className="cy-settings-row cy-settings-tools__permission"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.permission")}</strong><span>{t(`settingsPage.tools.permissionDescription.${permission}`)}</span></div><div className="cy-settings-tools__levels" role="group" aria-label={t("settingsPage.tools.permission")}>{(["project-read-only", "read-only", "per-action", "full"] as const).map((level) => <Button key={level} className={permissionDisplay === level ? "is-active" : ""} aria-pressed={permissionDisplay === level} disabled={saving} onClick={() => void setPermissionLevel(level)}>{t(`settingsPage.tools.permissionLevel.${level}`)}</Button>)}</div></div></Card>
       </section>
 
       <section className="cy-settings-section">
         <div className="cy-settings-section__heading"><h2><Music2 size={18} />{t("settingsPage.tools.music")}</h2><p>{t("settingsPage.tools.musicDescription")}</p></div>
-        <div className="cy-settings-card">
+        <Card>
           <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong className="cy-settings-tools__brand-label"><BrandIcon icon={siNeteasecloudmusic} size={17} />{t("settingsPage.tools.netease")}</strong><span>{t("settingsPage.tools.neteaseDescription")}</span></div><Button onClick={() => setMusicSettingsOpen(true)}>{t("settingsPage.tools.openMusicSettings")}</Button></div>
           <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.localMusic")}</strong><span>{musicStatus || (musicCount === null ? t("settingsPage.tools.musicUnknown") : t("settingsPage.tools.musicCount", { count: musicCount }))}</span></div><div className="cy-settings-row__control cy-settings-button-group"><Button onClick={() => void importMusic("folder")}>{t("settingsPage.tools.importFolder")}</Button><Button onClick={() => void importMusic("files")}>{t("settingsPage.tools.importFiles")}</Button><Button onClick={() => void musicApi()?.openPlayer()}>{t("settingsPage.tools.openPlayer")}</Button></div></div>
-        </div>
+        </Card>
       </section>
       <ExtensionToolPanels />
       <div className="cy-settings-status" role="status" aria-live="polite">{status}</div>

@@ -1,4 +1,5 @@
 // 工具开关设置面板：从聊天窗口的 ToolModePanel 迁移而来。
+import { Card } from "../../components/ui/Card";
 // 职责：各模式（Work/Code/Learn/Chat）下的工具可见性开关 + Chat 工具增强总开关；
 // 与「工具配置」页（参数/密钥/权限配置）职责互补，这边只管开关。
 
@@ -256,7 +257,7 @@ export function ToolToggleSettingsPanel() {
       <h1>{t("settingsPage.toolToggle.title")}</h1>
       <p className="cy-settings-intro">{t("settingsPage.toolToggle.description")}</p>
 
-      <div className="cy-settings-card cy-tool-toggle">
+      <Card className="cy-tool-toggle">
         {/* Chat 工具增强总开关：打开后才会出现 Chat 标签页 */}
         <div className="tool-panel__master">
           <div className="tool-panel__master-text">
@@ -331,7 +332,7 @@ export function ToolToggleSettingsPanel() {
             {visibleTools.length === 0 && <div className="tool-panel__empty">{t("toolPanel.noMatch")}</div>}
           </div>
         )}
-      </div>
+      </Card>
     </>
   );
 }

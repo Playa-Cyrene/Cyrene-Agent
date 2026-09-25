@@ -4,6 +4,7 @@ import { siAlibabacloud } from "simple-icons";
 import { BrandIcon } from "../../components/ui/BrandIcon";
 import { SettingsInput, SettingsPasswordInput, SettingsSelect, SettingsSlider, SettingsSwitch } from "../../components/ui/SettingsControls";
 import { useTranslation } from "../../i18n";
+import { Card } from "../../components/ui/Card";
 
 type AsrEngine = "off" | "aliyun" | "mossland" | "local";
 type AsrLanguage = "zh" | "en";
@@ -131,7 +132,7 @@ export function AsrSettingsPanel() {
     {loading ? <div className="cy-asr-loading" role="status" aria-label={t("settingsPage.asr.loading")}><LoaderCircle size={18} aria-hidden="true" /></div> : <>
       <section className="cy-settings-section">
         <div className="cy-settings-section__heading"><h2><AudioLines size={18} />{t("settingsPage.asr.engineTitle")}</h2><p>{t("settingsPage.asr.engineDescription")}</p></div>
-        <div className="cy-settings-card">
+        <Card>
           <div className="cy-settings-row">
             <div className="cy-settings-row__copy"><strong>{t("settingsPage.asr.engineLabel")}</strong><span>{t("settingsPage.asr.engineHint")}</span></div>
             <div className="cy-asr-select"><SettingsSelect ariaLabel={t("settingsPage.asr.engineLabel")} value={values.asrEngine} options={[
@@ -141,31 +142,31 @@ export function AsrSettingsPanel() {
               { value: "local", label: t("settingsPage.asr.engineLocal") },
             ]} onChange={(value) => update("asrEngine", value)} /></div>
           </div>
-        </div>
+        </Card>
       </section>
 
       {values.asrEngine === "aliyun" && <section className="cy-settings-section">
         <div className="cy-settings-section__heading"><h2><BrandIcon icon={siAlibabacloud} size={18} label="Alibaba Cloud" />{t("settingsPage.asr.aliyunTitle")}</h2><p>{t("settingsPage.asr.aliyunHint")}</p></div>
-        <div className="cy-settings-card cy-asr-fields">
+        <Card className="cy-asr-fields">
           <label><span>{t("settingsPage.asr.appKey")}</span><SettingsInput value={values.asrAliyunAppKey} onChange={(event) => update("asrAliyunAppKey", event.target.value)} onBlur={() => flushSecret("asrAliyunAppKey")} autoComplete="off" /></label>
           <label><span>{t("settingsPage.asr.accessKeyId")}</span><SettingsInput value={values.asrAliyunAccessKeyId} onChange={(event) => update("asrAliyunAccessKeyId", event.target.value)} onBlur={() => flushSecret("asrAliyunAccessKeyId")} autoComplete="off" /></label>
           <label><span>{t("settingsPage.asr.accessKeySecret")}</span><SettingsPasswordInput showLabel={t("settingsPage.asr.showSecret")} hideLabel={t("settingsPage.asr.hideSecret")} value={values.asrAliyunAccessKeySecret} onChange={(event) => update("asrAliyunAccessKeySecret", event.target.value)} onBlur={() => flushSecret("asrAliyunAccessKeySecret")} autoComplete="off" /></label>
           <label><span>{t("settingsPage.asr.language")}</span><SettingsSelect ariaLabel={t("settingsPage.asr.language")} value={values.asrLanguage} options={[{ value: "zh", label: t("settingsPage.asr.chinese") }, { value: "en", label: t("settingsPage.asr.english") }]} onChange={(value) => update("asrLanguage", value)} /></label>
-        </div>
+        </Card>
       </section>}
 
       {values.asrEngine === "mossland" && <section className="cy-settings-section">
         <div className="cy-settings-section__heading"><h2><Mic2 size={18} />{t("settingsPage.asr.mosslandTitle")}</h2><p>{t("settingsPage.asr.mosslandHint")}</p></div>
-        <div className="cy-settings-card cy-asr-fields"><label><span>{t("settingsPage.asr.mosslandKey")}</span><SettingsPasswordInput showLabel={t("settingsPage.asr.showSecret")} hideLabel={t("settingsPage.asr.hideSecret")} value={values.ttsMosslandKey} onChange={(event) => update("ttsMosslandKey", event.target.value)} onBlur={() => flushSecret("ttsMosslandKey")} autoComplete="off" /></label></div>
+        <Card className="cy-asr-fields"><label><span>{t("settingsPage.asr.mosslandKey")}</span><SettingsPasswordInput showLabel={t("settingsPage.asr.showSecret")} hideLabel={t("settingsPage.asr.hideSecret")} value={values.ttsMosslandKey} onChange={(event) => update("ttsMosslandKey", event.target.value)} onBlur={() => flushSecret("ttsMosslandKey")} autoComplete="off" /></label></Card>
       </section>}
 
       <section className="cy-settings-section">
         <div className="cy-settings-section__heading"><h2><Headphones size={18} />{t("settingsPage.asr.callTitle")}</h2><p>{t("settingsPage.asr.callDescription")}</p></div>
-        <div className="cy-settings-card">
+        <Card>
           <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.asr.vadSilence")}</strong><span>{t("settingsPage.asr.vadSilenceHint")}</span></div><div className="cy-asr-number-control"><SettingsInput className="cy-asr-number-input" type="number" min={300} max={10000} step={100} value={silenceDraft} aria-label={t("settingsPage.asr.vadSilence")} onChange={(event) => { const raw = event.target.value; const parsed = Number(raw); setSilenceDraft(raw); if (raw !== "" && Number.isFinite(parsed) && parsed >= 300 && parsed <= 10000 && parsed !== values.asrVadSilenceMs) update("asrVadSilenceMs", parsed); }} onBlur={() => { const parsed = Number(silenceDraft); const normalized = Math.min(10000, Math.max(300, Number.isFinite(parsed) && parsed > 0 ? parsed : 1000)); setSilenceDraft(String(normalized)); if (normalized !== values.asrVadSilenceMs) update("asrVadSilenceMs", normalized); }} /><span>ms</span></div></div>
           <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.asr.vadThreshold")}</strong><span>{t("settingsPage.asr.vadThresholdHint")}</span></div><div className="cy-settings-row__control cy-settings-slider"><SettingsSlider min={0.001} max={0.5} step={0.001} value={values.asrVadThreshold} ariaLabel={t("settingsPage.asr.vadThreshold")} onChange={(value) => update("asrVadThreshold", value)} /><span>{values.asrVadThreshold.toFixed(3)}</span></div></div>
           <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.asr.showTranscript")}</strong><span>{t("settingsPage.asr.showTranscriptHint")}</span></div><SettingsSwitch checked={values.asrShowTranscript} ariaLabel={t("settingsPage.asr.showTranscript")} onChange={(value) => update("asrShowTranscript", value)} /></div>
-        </div>
+        </Card>
       </section>
     </>}
   </div>;

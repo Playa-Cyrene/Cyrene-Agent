@@ -50,14 +50,8 @@
   padding: 14px 0 24px;
 }
 
-.cy-settings-plugin-panel .plugin-card-ui {
-  border: 1px solid color-mix(in srgb, var(--rb-text-primary) 9%, transparent);
-  border-radius: 14px;
-  background: color-mix(in srgb, var(--rb-surface-hover) 35%, var(--rb-surface-elevated));
-}
-
 .cy-settings-plugin-panel .plugin-card-ui:hover {
-  background: color-mix(in srgb, var(--rb-surface-hover) 70%, var(--rb-surface-elevated));
+  background: var(--rb-surface-elevated);
 }
 
 .cy-settings-plugin-panel .plugin-panel__search {

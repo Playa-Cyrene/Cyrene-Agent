@@ -32,6 +32,7 @@ import type { SchedulerSubsystem } from "../scheduler/bootstrap";
 import type { GeneralSettings } from "../settings/general-settings";
 import type { WindowManager } from "../windows/window-manager";
 import type { PluginManager } from "../../plugins/manager";
+import { CURRENT_DISCLAIMER_VERSION } from "../../shared/disclaimer";
 
 export interface CoreServices {
   runtimeState: RuntimeStateService;
@@ -180,7 +181,12 @@ export async function startCore(deps: CoreDependencies): Promise<CoreResult> {
   // 启动期一次性完整应用通用设置（登录项同步等）；此时桌宠未创建，show/hide 为 no-op
   deps.applyGeneralSettings(generalSettings, services);
   // showOnReady=petVisible：页面就绪才显示，避免空窗口闪现；创建本身在核心 IPC 注册之后
-  shell.windowManager.createPetWindow(generalSettings.petVisible);
+  const disclaimerAccepted = generalSettings.disclaimerAcceptedVersion === undefined
+    || generalSettings.disclaimerAcceptedVersion === CURRENT_DISCLAIMER_VERSION;
+  const onboardingWindow = disclaimerAccepted
+    ? null
+    : await shell.windowManager.createOnboardingWindow?.() ?? null;
+  shell.windowManager.createPetWindow(generalSettings.petVisible && disclaimerAccepted);
   shell.windowManager.onPetWindowReady((win) => {
     shell.live2dWindowLifecycle.attach(win);
   });
@@ -224,10 +230,12 @@ export async function startCore(deps: CoreDependencies): Promise<CoreResult> {
 
   readiness.transition("core-ready");
 
-  // 等待最短展示剩余时长 → 关 Loading → 显示聊天 → 放行 pending 辅助窗口
+  // 等待最短展示时长 → 关闭 Loading → 显示欢迎窗或聊天主窗 → 放行启动期间的激活请求
   await deps.revealStartupWindows({
     splashWindow: shell.splashWindow,
     chatWindow: shell.chat.window,
+    onboardingWindow,
+    showOnboardingWindow: !disclaimerAccepted,
     loadingShownAt: shell.loadingShownAt,
     minimumDurationMs: deps.minimumSplashMs,
   });

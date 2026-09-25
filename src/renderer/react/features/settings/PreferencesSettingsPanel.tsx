@@ -20,6 +20,7 @@ import {
 import { isProactiveDeliveryTargetSelectable } from "../../../../shared/proactive-delivery";
 import { useTranslation } from "../../i18n";
 import { SettingsInput, SettingsSegmented, SettingsSlider, SettingsSwitch } from "../../components/ui/SettingsControls";
+import { Card } from "../../components/ui/Card";
 
 type Liveliness = "quiet" | "natural" | "lively";
 
@@ -210,7 +211,7 @@ export function PreferencesSettingsPanel() {
         <>
           <section className="cy-settings-section">
             <div className="cy-settings-section__heading"><h2><SlidersHorizontal size={18} />{t("settingsPage.preferences.messaging")}</h2><p>{t("settingsPage.preferences.messagingDescription")}</p></div>
-            <div className="cy-settings-card">
+            <Card>
               <div className="cy-settings-row">
                 <div className="cy-settings-row__copy"><strong>{t("settingsPage.preferences.mobileSegmentation")}</strong><span>{t("settingsPage.preferences.mobileSegmentationDescription")}</span></div>
                 <SettingsSegmented value={values.mobileMessageSegmentation} options={[{ label: t("settingsPage.preferences.off"), value: "off" }, { label: t("settingsPage.preferences.on"), value: "on" }]} onChange={(value) => update("mobileMessageSegmentation", value as MobileMessageSegmentationMode)} />
@@ -238,12 +239,12 @@ export function PreferencesSettingsPanel() {
                   onChange={(value) => update("proactiveDeliveryTarget", value as ProactiveDeliveryTarget)}
                 />
               </div>}
-            </div>
+            </Card>
           </section>
 
           <section className="cy-settings-section">
             <div className="cy-settings-section__heading"><h2>{t("settingsPage.preferences.moments")}</h2><p>{t("settingsPage.preferences.momentsDescription")}</p></div>
-            <div className="cy-settings-card">
+            <Card>
               <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.preferences.momentsEnabled")}</strong><span>{t("settingsPage.preferences.momentsEnabledDescription")}</span></div><SettingsSwitch ariaLabel={t("settingsPage.preferences.momentsEnabled")} checked={values.momentsEnabled} onChange={(checked) => update("momentsEnabled", checked)} /></div>
               {values.momentsEnabled && <>
                 <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.preferences.momentsPosting")}</strong><span>{t("settingsPage.preferences.momentsPostingDescription")}</span></div><SettingsSwitch ariaLabel={t("settingsPage.preferences.momentsPosting")} checked={values.cyreneMomentsPostingEnabled} onChange={(checked) => update("cyreneMomentsPostingEnabled", checked)} /></div>
@@ -251,15 +252,15 @@ export function PreferencesSettingsPanel() {
                 <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.preferences.characterReactions")}</strong><span>{t("settingsPage.preferences.characterReactionsDescription")}</span></div><SettingsSwitch ariaLabel={t("settingsPage.preferences.characterReactions")} checked={values.momentsCharacterReactionsEnabled} onChange={(checked) => update("momentsCharacterReactionsEnabled", checked)} /></div>
                 <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.preferences.liveliness")}</strong><span>{t("settingsPage.preferences.livelinessDescription")}</span></div><SettingsSegmented value={values.momentsLiveliness} options={[{ label: t("settingsPage.preferences.quiet"), value: "quiet" }, { label: t("settingsPage.preferences.natural"), value: "natural" }, { label: t("settingsPage.preferences.lively"), value: "lively" }]} onChange={(value) => update("momentsLiveliness", value as Liveliness)} /></div>
               </>}
-            </div>
+            </Card>
           </section>
 
           <section className="cy-settings-section">
             <div className="cy-settings-section__heading"><h2>{t("settingsPage.preferences.context")}</h2><p>{t("settingsPage.preferences.contextDescription")}</p></div>
-            <div className="cy-settings-card">
+            <Card>
               <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.preferences.chatSocialContext")}</strong><span>{t("settingsPage.preferences.chatSocialContextDescription")}</span></div><SettingsSwitch ariaLabel={t("settingsPage.preferences.chatSocialContext")} checked={values.chatSocialContextEnabled} onChange={(checked) => update("chatSocialContextEnabled", checked)} /></div>
               <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.preferences.cita")}</strong><span>{t("settingsPage.preferences.citaDescription")}</span></div><SettingsSwitch ariaLabel={t("settingsPage.preferences.cita")} checked={values.citaEnabled} onChange={(checked) => update("citaEnabled", checked)} /></div>
-            </div>
+            </Card>
           </section>
 
           <div className="cy-settings-preferences-actions">
