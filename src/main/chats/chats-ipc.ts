@@ -498,9 +498,21 @@ export function registerChatsIpc(
       if (!payload?.sessionId || !payload?.workspaceRoot) {
         return { ok: false, error: "missing sessionId or workspaceRoot" };
       }
-      const existing = chatsStore.getSession(payload.sessionId);
-      if (!existing) return { ok: false, error: "session not found" };
+      // v1/v2 双兼容读取：会话一旦被组合读取（CHATS_GET）迁移成 v2 落盘，
+      // 只认 v1 的 getSession 会把它误判成 "session not found"
+      const existing = chatsStore.getSessionRecord(payload.sessionId);
+      if (!existing) {
+        console.warn(
+          "[Workspace] 绑定失败：会话不存在 sessionId=" + String(payload.sessionId).slice(0, 8) + "...",
+          "workspaceRoot=" + payload.workspaceRoot,
+        );
+        return { ok: false, error: "session not found" };
+      }
       if (existing.mode !== "work" && existing.mode !== "code" && existing.mode !== "learn") {
+        console.warn(
+          "[Workspace] 绑定失败：模式不支持 workspace sessionId=" + String(payload.sessionId).slice(0, 8) + "...",
+          "mode=" + String(existing.mode),
+        );
         return { ok: false, error: `${existing.mode ?? "unknown"} mode does not support workspace binding` };
       }
       // 路径验证：目录存在 + realpath 解析
@@ -545,7 +557,8 @@ export function registerChatsIpc(
       if (!sessionId) return { ok: false, error: "missing sessionId" };
       const binding = chatsStore.getWorkspaceBinding(sessionId);
       if (!binding) return { ok: false, error: "no workspace binding" };
-      const session = chatsStore.getSession(sessionId);
+      // 同 CHATS_SET_WORKSPACE：用 v1/v2 双兼容读取，v2 会话不得误判
+      const session = chatsStore.getSessionRecord(sessionId);
       if (!session || session.mode !== "learn") {
         return { ok: false, error: "session is not in learn mode" };
       }
@@ -614,6 +627,20 @@ export function registerChatsIpc(
       // 列表为空说明是升级后的首次使用，用存量会话绑过的工作区回填
       : backfillRecentProjects();
     return listed.filter((dir) => fs.existsSync(dir));
+  });
+
+  // 验证工作区目录当前是否可用：最近项目下拉快照可能过期（选中前目录被移走），
+  // 旧会话继承的工作区也不经过 recentProjects 过滤，选择入口落地前用这里把好关
+  ipc.handle(IPC.CHATS_VALIDATE_WORKSPACE, (_event, workspaceRoot: string) => {
+    if (!workspaceRoot || typeof workspaceRoot !== "string") {
+      return { ok: false, error: "missing workspaceRoot" };
+    }
+    try {
+      const resolved = validateAndNormalizeWorkspace(workspaceRoot);
+      return { ok: true, path: resolved };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
   });
 
   // ── Review 快照：获取指定 Run 的不可变文件变更审查数据 ──

@@ -83,6 +83,8 @@ export interface ChatStoreApi {
   ) => Promise<{ ok: true; session: ChatSession } | { ok: false; error: string }>;
   pickWorkspaceFolder: () => Promise<{ ok: boolean; path?: string; displayName?: string; error?: string }>;
   listRecentProjects: () => Promise<string[]>;
+  // 验证工作区目录当前是否可用（存在且为目录）：失效路径不得显示为已选上
+  validateWorkspacePath: (workspaceRoot: string) => Promise<{ ok: boolean; path?: string; error?: string }>;
   setWorkspace: (sessionId: string, workspaceRoot: string) => Promise<{ ok: boolean; error?: string; isEmpty?: boolean }>;
   initLearnWorkspace: (sessionId: string) => Promise<{ ok: boolean; error?: string; created?: string[]; skipped?: string[] }>;
   openWorkspace: (workspaceRoot: string) => Promise<{ ok: boolean; error?: string }>;

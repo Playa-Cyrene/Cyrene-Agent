@@ -1117,6 +1117,20 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
     const store = chatStore();
     if (!store) return;
 
+    // 选中即验证：最近项目下拉是打开时的快照，目录可能在选中前已被移走；
+    // 失效路径不得显示为已选上，直接提示重选（发送时的 setWorkspace 会再兜底验证一次）
+    const validated = await store.validateWorkspacePath(workspace.path);
+    if (!validated?.ok) {
+      await feedback.alert({
+        tone: "error",
+        title: t("chatPage.setWorkspaceFailedTitle"),
+        message: t("chatPage.setWorkspaceFailed", {
+          error: validated?.error ?? t("chatPage.unknownError"),
+        }),
+      });
+      return;
+    }
+
     setWorkspaceNames((current) => ({ ...current, [targetMode]: workspace.displayName }));
 
     const activeId = activeSessionIdsRef.current[targetMode];
@@ -1297,22 +1311,44 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
           targetMode,
           pendingWorkspace.displayName ?? t("chatPage.defaultWorkspaceName"),
         ));
-      }
-      if (workspaceResult?.ok && targetMode === "learn" && workspaceResult.isEmpty) {
-        const confirmed = await feedback.confirm({
-          title: t("chatPage.learnStructureConfirmTitle"),
-          message: t("chatPage.emptyDirLearnStructureConfirm"),
-          confirmText: t("common.confirm"),
-        });
-        if (confirmed) {
-          await initVaultStructure(sessionId, { confirm: false });
+        if (targetMode === "learn" && workspaceResult.isEmpty) {
+          const confirmed = await feedback.confirm({
+            title: t("chatPage.learnStructureConfirmTitle"),
+            message: t("chatPage.emptyDirLearnStructureConfirm"),
+            confirmText: t("common.confirm"),
+          });
+          if (confirmed) {
+            await initVaultStructure(sessionId, { confirm: false });
+          }
         }
+        setPendingWorkspaceByMode((current) => {
+          const next = { ...current };
+          delete next[targetMode];
+          return next;
+        });
+      } else {
+        // 绑定失败（典型：最近项目/继承的目录已被移动或删除）：必须停下提示重选。
+        // 静默继续会被主进程派发守卫拒绝，用户只看到"未绑定工作区"却不知道原因。
+        await feedback.alert({
+          tone: "error",
+          title: t("chatPage.setWorkspaceFailedTitle"),
+          message: t("chatPage.setWorkspaceFailed", {
+            error: workspaceResult?.error ?? t("chatPage.unknownError"),
+          }),
+        });
+        // 撤掉"已选上"的显示并清掉失效暂存，让欢迎页重新出现工作区选择入口
+        setWorkspaceNames((current) => {
+          const next = { ...current };
+          delete next[targetMode];
+          return next;
+        });
+        setPendingWorkspaceByMode((current) => {
+          const next = { ...current };
+          delete next[targetMode];
+          return next;
+        });
+        return;
       }
-      setPendingWorkspaceByMode((current) => {
-        const next = { ...current };
-        delete next[targetMode];
-        return next;
-      });
     }
 
     // 统一走主进程权威队列：只有入队确认成功后才清草稿和附件（失败保留并提示）。

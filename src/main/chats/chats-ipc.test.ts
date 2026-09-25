@@ -473,6 +473,89 @@ describe("chats IPC mode filtering", () => {
     expect(mocks.openPath).toHaveBeenCalledWith(fs.realpathSync(workspaceRoot));
   });
 
+  it("CHATS_SET_WORKSPACE：最近项目记录的目录已不存在时绑定被拒绝且不落库", async () => {
+    const { registerChatsIpc } = await import("./chats-ipc");
+    registerChatsIpc();
+
+    const create = mocks.handlers.get(IPC.CHATS_CREATE);
+    const setWorkspace = mocks.handlers.get(IPC.CHATS_SET_WORKSPACE);
+    const getWorkspace = mocks.handlers.get(IPC.CHATS_GET_WORKSPACE);
+    if (!create || !setWorkspace || !getWorkspace) {
+      throw new Error("workspace IPC handlers were not registered");
+    }
+
+    const event = { sender: {} };
+    const session = await create(event, { mode: "code" }) as { id: string };
+    // 场景：最近项目下拉选了历史路径，但该目录已被移动/删除/外接盘断开
+    const goneRoot = path.join(
+      os.tmpdir(),
+      `cyrene-gone-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    );
+
+    // 绑定必须失败并带出可读错误，而不是静默丢掉
+    const result = await setWorkspace(event, { sessionId: session.id, workspaceRoot: goneRoot });
+    expect(result).toEqual({ ok: false, error: expect.stringContaining("目录不存在") });
+    // 绑定未写入：后续派发会被 AGUI_RUN 的"需先绑定工作区"守卫拒绝
+    expect(await getWorkspace(event, session.id)).toBeNull();
+  });
+
+  it("CHATS_SET_WORKSPACE：组合读取迁移成 v2 的会话仍可绑定（session not found 回归）", async () => {
+    const { registerChatsIpc } = await import("./chats-ipc");
+    registerChatsIpc();
+
+    const create = mocks.handlers.get(IPC.CHATS_CREATE);
+    const getSession = mocks.handlers.get(IPC.CHATS_GET);
+    const setWorkspace = mocks.handlers.get(IPC.CHATS_SET_WORKSPACE);
+    const getWorkspace = mocks.handlers.get(IPC.CHATS_GET_WORKSPACE);
+    if (!create || !getSession || !setWorkspace || !getWorkspace) {
+      throw new Error("workspace IPC handlers were not registered");
+    }
+
+    const event = { sender: {} };
+    const workspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-ws-v2-"));
+    const session = await create(event, { mode: "code" }) as { id: string };
+
+    // 复现真实时序：ensureSession → selectSession 先用 store.get（组合读取）把
+    // 刚创建的 v1 会话迁移成 v2 落盘，随后 sendMessage 的 setWorkspace 才到达。
+    // 只认 v1 的 getSession 会把该会话误判成 "session not found"，绑定静默失败，
+    // 消息照发后被派发守卫拒绝——即"选了工作区却提示未绑定"的原始 bug
+    expect(await getSession(event, session.id)).not.toBeNull();
+    const { getSessionRecord } = await import("./chats-store");
+    expect(getSessionRecord(session.id)?.schemaVersion).toBe(2);
+
+    // v2 会话绑定必须成功且落库
+    const result = await setWorkspace(event, { sessionId: session.id, workspaceRoot });
+    expect(result).toEqual(expect.objectContaining({ ok: true }));
+    expect(await getWorkspace(event, session.id)).toEqual(
+      expect.objectContaining({ workspaceRoot: fs.realpathSync(workspaceRoot) }),
+    );
+  });
+
+  it("CHATS_VALIDATE_WORKSPACE：目录存在返回规范化路径，失效目录带出可读错误", async () => {
+    const { registerChatsIpc } = await import("./chats-ipc");
+    registerChatsIpc();
+
+    const validate = mocks.handlers.get(IPC.CHATS_VALIDATE_WORKSPACE);
+    if (!validate) throw new Error("workspace validation IPC handler was not registered");
+
+    const event = { sender: {} };
+    // 可用目录：通过并返回真实绝对路径（realpath 解析）
+    const goodRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-valid-ws-"));
+    const good = await validate(event, goodRoot);
+    expect(good).toEqual({ ok: true, path: fs.realpathSync(goodRoot) });
+
+    // 失效目录（最近项目快照过期/外接盘断开）：明确失败而不是放行
+    const goneRoot = path.join(
+      os.tmpdir(),
+      `cyrene-gone-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    );
+    const gone = await validate(event, goneRoot);
+    expect(gone).toEqual({ ok: false, error: expect.stringContaining("目录不存在") });
+
+    // 非法入参直接拒绝
+    expect(await validate(event, "")).toEqual({ ok: false, error: "missing workspaceRoot" });
+  });
+
   it("CHATS_SHELL_FILE：打开/定位工作区内文件；未绑定、非法参数、越界、缺失文件各自拒绝", async () => {
     const { registerChatsIpc } = await import("./chats-ipc");
     registerChatsIpc();

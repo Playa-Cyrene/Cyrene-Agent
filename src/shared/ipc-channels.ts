@@ -208,6 +208,8 @@ export const IPC = {
   CHATS_PICK_WORKSPACE_FOLDER: "chats:pick-workspace-folder",
   // renderer → main：获取最近绑定的项目文件夹列表（已过滤失效目录）
   CHATS_RECENT_PROJECTS: "chats:recent-projects",
+  // renderer → main：验证工作区目录当前是否可用（存在且为目录）
+  CHATS_VALIDATE_WORKSPACE: "chats:validate-workspace",
   // renderer → main：为 Learn 模式初始化工作区结构（只创建缺失文件）
   CHATS_INIT_LEARN_WORKSPACE: "chats:init-learn-workspace",
   // main → 所有窗口：工作区绑定变更广播

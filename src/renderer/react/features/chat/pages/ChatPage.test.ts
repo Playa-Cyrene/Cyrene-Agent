@@ -45,3 +45,41 @@ describe("ChatPage 对话级模型切换接线", () => {
     expect(chatPageSource).toMatch(/onSelectModelProfile=\{\(modelProfileId\) => \{[\s\S]{0,400}?modelSwitcher\.switchProfile\(/);
   });
 });
+
+describe("ChatPage 首条消息暂存工作区绑定", () => {
+  // 复现"新开对话 → 最近项目选了历史工作区 → 发消息却报未绑定工作区"：
+  // 欢迎页暂存路径不验证目录存在，sendMessage 里 setWorkspace 失败（如目录已被
+  // 移动/删除）时若静默跳过，消息仍会入队，随后被主进程派发守卫拒绝。
+  const start = chatPageSource.indexOf("async function sendMessage(content: string)");
+  const end = chatPageSource.indexOf("async function submitTextToSession", start);
+  const sendMessageSource = chatPageSource.slice(start, end);
+
+  it("sendMessage 中暂存工作区绑定必须存在失败分支", () => {
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    expect(sendMessageSource).toContain("setWorkspace(");
+  });
+
+  it("绑定失败必须提示用户并中止发送，不得静默入队后由派发守卫拒绝", () => {
+    // 失败分支：可见反馈（错误弹窗）+ 不继续入队（块级 return；按缩进区分回调内的 return next）
+    expect(sendMessageSource).toMatch(
+      /workspaceResult[\s\S]{0,1200}?\} else \{[\s\S]{0,600}?feedback\.alert\([\s\S]{0,800}?\n        return;/,
+    );
+  });
+
+  it("欢迎页从最近项目选定工作区时必须验证目录可用，失效路径不得显示为已选上", () => {
+    // selectRecentProject → applyWorkspaceSelection（最近项目与系统选择框共用落地
+    // 路径）：选中即走主进程 validateWorkspacePath 验证；目录已消失时提示重选，
+    // 而不是让 UI 显示"已选上"、等发消息才被派发守卫拒绝
+    const selectionStart = chatPageSource.indexOf("async function applyWorkspaceSelection");
+    const selectionEnd = chatPageSource.indexOf("async function createNewTask", selectionStart);
+    const selectionSource = chatPageSource.slice(selectionStart, selectionEnd);
+    expect(selectionStart).toBeGreaterThan(-1);
+    expect(selectionEnd).toBeGreaterThan(selectionStart);
+    expect(selectionSource).toMatch(/validateWorkspacePath\(/);
+    // 验证失败必须阻断落地（不设置 workspaceNames、不暂存）
+    expect(selectionSource).toMatch(
+      /if \(!validated\?\.ok\) \{[\s\S]{0,400}?return;/,
+    );
+  });
+});

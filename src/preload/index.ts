@@ -742,6 +742,8 @@ const chatStoreApi = {
     ipcRenderer.invoke(IPC.CHATS_PICK_WORKSPACE_FOLDER),
   listRecentProjects: () =>
     ipcRenderer.invoke(IPC.CHATS_RECENT_PROJECTS),
+  validateWorkspacePath: (workspaceRoot: string) =>
+    ipcRenderer.invoke(IPC.CHATS_VALIDATE_WORKSPACE, workspaceRoot),
   initLearnWorkspace: (sessionId: string) =>
     ipcRenderer.invoke(IPC.CHATS_INIT_LEARN_WORKSPACE, sessionId),
   onWorkspaceChanged: (callback: (payload: { sessionId: string; binding: unknown }) => void) => {
