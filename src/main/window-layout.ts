@@ -2,6 +2,9 @@ import { screen } from "electron";
 
 export interface PanelLayout { x: number; y: number; }
 
+export const DEFAULT_WORKSPACE_WINDOW_SIZE = { width: 1200, height: 800 } as const;
+export const DEFAULT_SIDEBAR_WINDOW_SIZE = { width: 320, height: 800 } as const;
+
 /**
  * 将窗口位置 clamp 到 workArea 内，保证至少 minVisibleW × minVisibleH 可见。
  * 允许窗口部分超出屏幕（可正可负），但可见区域不少于指定阈值。
@@ -93,8 +96,8 @@ export function computeLayout(): {
 
   const { workArea } = display;
   const panels = [
-    { width: 1280, height: 760 }, // chat
-    { width: 320, height: 760 },  // sidebar
+    DEFAULT_WORKSPACE_WINDOW_SIZE,
+    DEFAULT_SIDEBAR_WINDOW_SIZE,
   ];
   const [chatPos, sidebarPos] = computePanelLayout(workArea, panels, 8);
   return { chat: chatPos, sidebar: sidebarPos };

@@ -2,8 +2,14 @@ import { app, BrowserWindow, screen } from "electron";
 import * as path from "path";
 import { IPC } from "../../shared/ipc-channels";
 import { isDev } from "../env";
-import { computeLayout } from "../window-layout";
+import {
+  computeLayout,
+  DEFAULT_SIDEBAR_WINDOW_SIZE,
+  DEFAULT_WORKSPACE_WINDOW_SIZE,
+} from "../window-layout";
+import { loadGeneralSettings } from "../settings/settings-facade";
 import { stopCall, setCallWindow } from "../call/call-manager";
+import { getWorkspaceInitialBounds } from "./workspace-window-bounds";
 import {
   callWindow,
   getCurrentAppIconPath,
@@ -31,9 +37,10 @@ export interface ReactChatWindowHandle {
 export function persistedWindowState(
   name: string,
   enabled: boolean,
+  persistDisplayMode = false,
 ): { name?: string; windowStatePersistence?: Electron.WindowStatePersistence } {
   return enabled
-    ? { name, windowStatePersistence: { bounds: true, displayMode: false } }
+    ? { name, windowStatePersistence: { bounds: true, displayMode: persistDisplayMode } }
     : {};
 }
 
@@ -51,14 +58,14 @@ export function createReactChatWindowShell(): BrowserWindow {
   // 新建窗口：dispatcher 重置；pending 仅服务于"未 ready 期间又收到请求"
   reactChatSession.reset();
 
-  const layout = computeLayout();
+  const workArea = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
+  const bounds = getWorkspaceInitialBounds(workArea);
+  const rememberWindowState = loadGeneralSettings().rememberWindowState;
   const window = new BrowserWindow({
-    x: layout.chat.x,
-    y: layout.chat.y,
-    width: 1280,
-    height: 760,
-    minWidth: 960,
-    minHeight: 540,
+    ...persistedWindowState("cyrene.workspace", rememberWindowState, true),
+    ...bounds,
+    minWidth: Math.min(960, workArea.width),
+    minHeight: Math.min(540, workArea.height),
     title: "Cyrene · 聊天",
     icon: getCurrentAppIconPath(),
     backgroundColor: "#00000000",
@@ -75,6 +82,19 @@ export function createReactChatWindowShell(): BrowserWindow {
     },
   });
   setReactChatWindow(window);
+
+  if (rememberWindowState) {
+    window.once("ready-to-show", () => {
+      if (window.isMaximized()) return;
+      const restored = window.getBounds();
+      if (
+        restored.width === DEFAULT_WORKSPACE_WINDOW_SIZE.width &&
+        restored.height === DEFAULT_WORKSPACE_WINDOW_SIZE.height
+      ) {
+        window.setBounds(bounds);
+      }
+    });
+  }
 
   window.webContents.on("did-start-loading", () => {
     reactChatSession.markLoading();
@@ -135,11 +155,13 @@ export function createSidebarWindow(): void {
   }
 
   const layout = computeLayout();
+  const rememberWindowState = loadGeneralSettings().rememberWindowState;
   const window = new BrowserWindow({
+    ...persistedWindowState("cyrene.sidebar", rememberWindowState),
     x: layout.sidebar.x,
     y: layout.sidebar.y,
-    width: 320,
-    height: 760,
+    width: DEFAULT_SIDEBAR_WINDOW_SIZE.width,
+    height: DEFAULT_SIDEBAR_WINDOW_SIZE.height,
     minWidth: 56,
     minHeight: 540,
     title: "昔涟 · 状态",
