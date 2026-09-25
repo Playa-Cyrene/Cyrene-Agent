@@ -236,6 +236,33 @@
     "companion": "陪伴中",
     "remind": "提醒"
   },
+  "character": {
+    "name": "昔涟",
+    "online": "在线",
+    "offline": "离线",
+    "call": "语音通话",
+    "syncDisabled": "请到设置里开启",
+    "openInfo": "查看{{name}}信息",
+    "status": {
+      "companion": "陪伴中",
+      "thinking": "思考中",
+      "working": "工作中",
+      "listening": "聆听中",
+      "reminding": "提醒中",
+      "offline": "离线"
+    },
+    "feeling": {
+      "calm": "平静",
+      "happy": "开心",
+      "gentle": "温柔",
+      "excited": "激动",
+      "clingy": "撒娇",
+      "worried": "担心",
+      "sad": "难过",
+      "moved": "感动",
+      "shy": "害羞"
+    }
+  },
   "rightInspector": {
     "panelAria": "右侧检查面板",
     "toggle": "展开/收起右侧面板"
@@ -1015,11 +1042,9 @@
       "title": "常规",
       "description": "管理辅助窗口、系统行为与基础应用选项。",
       "windows": "辅助窗口",
-      "windowsDescription": "控制侧栏显示，并记住工作区和侧栏窗口的位置与大小。",
-      "sidebar": "状态栏窗口",
-      "sidebarDescription": "不小心关闭后，可以从这里重新打开。",
+      "windowsDescription": "记住工作区、音乐等窗口的位置与大小，重启后恢复。",
       "rememberWindowState": "记住窗口位置",
-      "rememberWindowStateDescription": "记住工作区、侧栏和音乐窗口的位置与大小，重启后恢复。",
+      "rememberWindowStateDescription": "记住工作区和音乐窗口的位置与大小，重启后恢复。",
       "system": "系统行为",
       "systemDescription": "配置提醒、启动方式和图形渲染选项。",
       "toastSound": "提醒音效",

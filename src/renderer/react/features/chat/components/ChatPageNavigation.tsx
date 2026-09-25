@@ -11,6 +11,7 @@ import { SettingsButton } from "../../../components/ui/SettingsButton";
 import { SidebarToggle } from "../../../components/ui/SidebarToggle";
 import { UserAvatar } from "../../../components/ui/UserAvatar";
 import { WindowControls } from "../../../components/ui/WindowControls";
+import { CharacterInfoPopover } from "../../character/CharacterInfoPopover";
 import { AppUpdateEntry } from "./AppUpdateEntry";
 import { ConversationSidebar } from "./ConversationSidebar";
 import { SidebarSearchDialog } from "./SidebarSearchDialog";
@@ -101,6 +102,7 @@ export const ChatPageNavigation = React.memo(function ChatPageNavigation({
     <>
       <div className="cy-page-toggle">
         <SidebarToggle onToggle={onToggleCollapsed} />
+        <CharacterInfoPopover />
       </div>
       <div className="cy-page-top-center">
         {!hasOpenPanel && <ModeSwitch value={mode} onChange={onModeChange} />}

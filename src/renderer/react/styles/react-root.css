@@ -99,6 +99,9 @@ html, body {
   position: absolute;
   top: 10px;
   left: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .cy-page-top-center {

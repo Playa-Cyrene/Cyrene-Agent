@@ -1,40 +1,81 @@
-.cy-status-pill {
+/* 昔涟头像触发器：头像 + 右下角在线点。展开态由 Popover 注入 data-state。 */
+.cy-character-pill {
+  position: relative;
   display: inline-flex;
   align-items: center;
-  width: fit-content;
-  height: 34px;
-  padding: 0 10px;
-  background: var(--cy-pill-bg);
-  border: 1px solid var(--cy-pill-border);
-  border-radius: 999px;
-  gap: 6px;
-  cursor: default;
-}
-
-.cy-status-avatar {
-  width: 24px;
-  height: 24px;
-  object-fit: contain;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
   flex-shrink: 0;
-  margin-top: 2px;
+  padding: 0;
+  border: 1px solid var(--cy-pill-border);
+  border-radius: 50%;
+  background: var(--cy-pill-bg);
+  cursor: pointer;
+  transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease;
 }
 
-.cy-status-name {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--cy-text);
-  line-height: 1;
+.cy-character-pill:hover,
+.cy-character-pill[data-state="open"] {
+  transform: translateY(-1px);
+  border-color: var(--cy-accent);
+  box-shadow: 0 3px 10px rgba(255, 91, 138, 0.24);
 }
 
-.cy-status-divider {
-  font-size: 14px;
-  color: var(--cy-text-muted);
-  line-height: 1;
+.cy-character-pill:focus-visible {
+  outline: 2px solid var(--cy-accent);
+  outline-offset: 2px;
 }
 
-.cy-status-text {
-  font-size: 12px;
-  font-weight: 400;
-  color: var(--cy-pill-status);
-  line-height: 1;
+.cy-character-pill__avatar {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  object-fit: cover;
+  pointer-events: none;
+}
+
+/* 在线点：离线时灰化且不呼吸；光环走伪元素的 transform/opacity，
+   避免动画 box-shadow（不可合成，每帧都要主线程重绘） */
+.cy-character-pill__presence {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--cy-text-muted);
+  box-shadow: 0 0 0 2px var(--cy-pill-bg);
+}
+
+.cy-character-pill.is-online .cy-character-pill__presence {
+  background: var(--cy-accent);
+}
+
+.cy-character-pill.is-online .cy-character-pill__presence::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: rgba(255, 91, 138, 0.42);
+  animation: cy-character-pill-presence 2.6s ease-in-out infinite;
+}
+
+@keyframes cy-character-pill-presence {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.42;
+  }
+  50% {
+    transform: scale(2);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cy-character-pill,
+  .cy-character-pill.is-online .cy-character-pill__presence {
+    transition: none;
+    animation: none;
+  }
 }

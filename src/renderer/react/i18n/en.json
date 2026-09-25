@@ -236,6 +236,33 @@
     "companion": "Here with you",
     "remind": "Reminder"
   },
+  "character": {
+    "name": "Cyrene",
+    "online": "Online",
+    "offline": "Offline",
+    "call": "Voice call",
+    "syncDisabled": "Enable it in Settings",
+    "openInfo": "View {{name}} profile",
+    "status": {
+      "companion": "Here with you",
+      "thinking": "Thinking",
+      "working": "Working",
+      "listening": "Listening",
+      "reminding": "Reminder",
+      "offline": "Offline"
+    },
+    "feeling": {
+      "calm": "Calm",
+      "happy": "Happy",
+      "gentle": "Gentle",
+      "excited": "Excited",
+      "clingy": "Clingy",
+      "worried": "Worried",
+      "sad": "Sad",
+      "moved": "Moved",
+      "shy": "Shy"
+    }
+  },
   "rightInspector": {
     "panelAria": "Inspector panel",
     "toggle": "Toggle right panel"
@@ -940,11 +967,9 @@
       "title": "General",
       "description": "Manage auxiliary windows, system behavior, and basic app options.",
       "windows": "Auxiliary windows",
-      "windowsDescription": "Control the sidebar and remember workspace and sidebar window bounds.",
-      "sidebar": "Status window",
-      "sidebarDescription": "Reopen the status window here if it was closed accidentally.",
+      "windowsDescription": "Remember workspace and music window bounds, restored after restart.",
       "rememberWindowState": "Remember window positions",
-      "rememberWindowStateDescription": "Restore workspace, sidebar, and music window size and position after restart.",
+      "rememberWindowStateDescription": "Restore workspace and music window size and position after restart.",
       "system": "System behavior",
       "systemDescription": "Configure notifications, startup, and graphics rendering.",
       "toastSound": "Notification sound",
