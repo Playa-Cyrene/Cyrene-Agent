@@ -458,13 +458,25 @@ export function registerChatsIpc(
       if (!sessionId || !relPath || !action) {
         return { ok: false as const, error: "invalid-payload" as const };
       }
-      const resolved = await resolveSessionWorkspaceFile(sessionId, relPath);
-      if (!resolved.ok) return { ok: false as const, error: resolved.code };
+      // 绝对路径（正文文件链接可能指向工作区外，如桌面的 cmd 脚本）：
+      // 只做 realpath 存在性归一，不做工作区边界限制；相对路径走会话工作区校验
+      let absPath: string;
+      if (path.isAbsolute(relPath)) {
+        try {
+          absPath = await fs.promises.realpath(relPath);
+        } catch {
+          return { ok: false as const, error: "NOT_FOUND" as const };
+        }
+      } else {
+        const resolved = await resolveSessionWorkspaceFile(sessionId, relPath);
+        if (!resolved.ok) return { ok: false as const, error: resolved.code };
+        absPath = resolved.absPath;
+      }
       if (action === "reveal") {
-        shell.showItemInFolder(resolved.absPath);
+        shell.showItemInFolder(absPath);
         return { ok: true as const };
       }
-      const error = await shell.openPath(resolved.absPath);
+      const error = await shell.openPath(absPath);
       return error ? { ok: false as const, error } : { ok: true as const };
     },
   );

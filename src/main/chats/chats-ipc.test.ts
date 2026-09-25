@@ -520,6 +520,39 @@ describe("chats IPC mode filtering", () => {
       .resolves.toEqual({ ok: false, error: "NOT_FOUND" });
   });
 
+  it("CHATS_SHELL_FILE：绝对路径模式（正文文件链接）支持工作区外文件，不存在则拒绝", async () => {
+    const { registerChatsIpc } = await import("./chats-ipc");
+    registerChatsIpc();
+
+    const create = mocks.handlers.get(IPC.CHATS_CREATE);
+    const shellFile = mocks.handlers.get(IPC.CHATS_SHELL_FILE);
+    if (!create || !shellFile) {
+      throw new Error("shell file IPC handlers were not registered");
+    }
+
+    // 工作区外的真实文件（临时目录模拟"桌面文件"场景）
+    const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-outside-"));
+    const outsideFile = path.join(outsideDir, "nop-60s.cmd");
+    fs.writeFileSync(outsideFile, "echo hi");
+
+    const event = { sender: {} };
+    const session = await create(event, { mode: "work" }) as { id: string };
+
+    // 工作区外的绝对路径也能 open/reveal（realpath 归一后交给 shell）
+    expect(await shellFile(event, { sessionId: session.id, relPath: outsideFile, action: "open" })).toEqual({ ok: true });
+    expect(mocks.openPath).toHaveBeenCalledWith(fs.realpathSync(outsideFile));
+    expect(await shellFile(event, { sessionId: session.id, relPath: outsideFile, action: "reveal" })).toEqual({ ok: true });
+    expect(mocks.showItemInFolder).toHaveBeenCalledWith(fs.realpathSync(outsideFile));
+
+    // 正斜杠形式的绝对路径（file:/// 链接解析出的形态）同样支持
+    expect(await shellFile(event, { sessionId: session.id, relPath: outsideFile.replaceAll("\\", "/"), action: "open" }))
+      .toEqual({ ok: true });
+
+    // 不存在的绝对路径 → NOT_FOUND
+    await expect(shellFile(event, { sessionId: session.id, relPath: path.join(outsideDir, "missing.cmd"), action: "open" }))
+      .resolves.toEqual({ ok: false, error: "NOT_FOUND" });
+  });
+
   // ── 会话级模型状态（Invariant B/D 的 IPC 层）──────────────────
   // 预置带 A/B 两个档案的 model-settings.json，让真实 loadModelSettings 读到。
   function writeModelSettings(profiles: unknown[], defaultId: string) {
