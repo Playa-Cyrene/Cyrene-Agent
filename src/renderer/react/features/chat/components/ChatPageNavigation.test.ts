@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("../../../components/ui/SidebarToggle", () => ({
-  SidebarToggle: ({ collapsed }: { collapsed: boolean }) => createElement("span", null, `sidebar-toggle:${collapsed}`),
+  SidebarToggle: () => createElement("span", null, "sidebar-toggle"),
 }));
 vi.mock("../../../components/ui/ModeSwitch", () => ({
   ModeSwitch: () => createElement("span", null, "mode-switch"),
@@ -34,7 +34,6 @@ import { ChatPageNavigation } from "./ChatPageNavigation";
 describe("ChatPageNavigation", () => {
   it("hides the mode switch while a panel is open", () => {
     const html = renderToStaticMarkup(createElement(ChatPageNavigation, {
-      collapsed: false,
       activePanel: "moments",
       mode: "chat",
       sessions: [],
@@ -64,7 +63,6 @@ describe("ChatPageNavigation", () => {
 
   it("does not expose model management in the chat sidebar", () => {
     const html = renderToStaticMarkup(createElement(ChatPageNavigation, {
-      collapsed: false,
       activePanel: null,
       mode: "chat",
       sessions: [],

@@ -19,7 +19,6 @@ import { reportChatPerfRender } from "./chat-perf-probe";
 export type ChatPagePanel = "moments" | "scheduledTasks";
 
 export interface ChatPageNavigationProps {
-  collapsed: boolean;
   activePanel: ChatPagePanel | null;
   mode: ConversationMode;
   sessions: ChatSessionMeta[];
@@ -45,7 +44,6 @@ export interface ChatPageNavigationProps {
 // 阶段 1A：memo 隔离——ChatPage 流式重渲染时，只要 props 引用稳定（sessions/回调由父级保证），
 // 导航子树（含内嵌的 ConversationSidebar）整体跳过执行，流式期间执行次数应为 0（探针验收）。
 export const ChatPageNavigation = React.memo(function ChatPageNavigation({
-  collapsed,
   activePanel,
   mode,
   sessions,
@@ -102,7 +100,7 @@ export const ChatPageNavigation = React.memo(function ChatPageNavigation({
   return (
     <>
       <div className="cy-page-toggle">
-        <SidebarToggle collapsed={collapsed} onToggle={onToggleCollapsed} />
+        <SidebarToggle onToggle={onToggleCollapsed} />
       </div>
       <div className="cy-page-top-center">
         {!hasOpenPanel && <ModeSwitch value={mode} onChange={onModeChange} />}

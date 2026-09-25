@@ -1,12 +1,12 @@
 .cy-sidebar-toggle {
-  width: 32px;
-  height: 32px;
+  width: 36px;
+  height: 36px;
   display: flex;
   align-items: center;
   justify-content: center;
   border: none;
   background: transparent;
-  border-radius: 6px;
+  border-radius: 8px;
   color: var(--cy-text-muted);
   cursor: pointer;
   transition: background 0.15s, color 0.15s;
@@ -45,6 +45,7 @@
   opacity: 1;
 }
 
-.cy-sidebar-toggle.is-collapsed.is-hovered .cy-sidebar-chevron {
+/* 收起方向由页面根节点的 class 决定（见 .cy-page.is-collapsed），组件自身无状态 */
+.cy-page.is-collapsed .cy-sidebar-toggle.is-hovered .cy-sidebar-chevron {
   transform: scaleX(-1);
 }

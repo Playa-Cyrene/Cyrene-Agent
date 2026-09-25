@@ -150,7 +150,9 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
   // 统一反馈入口：错误轻提示 / 需阅读的错误弹窗 / 危险确认
   const feedback = useFeedback();
   const preferredAddress = useUserCallPreference();
-  const [collapsed, setCollapsed] = useState(false);
+  // 侧栏收起不进 React 状态：直接翻转根节点 class，避免整棵页面树为一次点击重渲染
+  // （ZCode 同思路：布局类状态走 DOM，React 只负责内容）
+  const pageRef = useRef<HTMLDivElement>(null);
   const [activePanel, setActivePanel] = useState<ChatPagePanel | null>(null);
   useEffect(() => {
     if (scheduledTasksNavigation > 0) setActivePanel("scheduledTasks");
@@ -1544,7 +1546,9 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
     },
   };
 
-  const navToggleCollapsed = useCallback(() => setCollapsed((value) => !value), []);
+  const navToggleCollapsed = useCallback(() => {
+    pageRef.current?.classList.toggle("is-collapsed");
+  }, []);
   const navModeChange = useCallback((nextMode: string) => {
     if (isConversationMode(nextMode)) setMode(nextMode);
   }, []);
@@ -1586,9 +1590,8 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
   }, [onOpenSettings]);
 
   return (
-    <div className={`cy-page ${collapsed ? "is-collapsed" : ""}`}>
+    <div ref={pageRef} className="cy-page">
       <ChatPageNavigation
-        collapsed={collapsed}
         activePanel={activePanel}
         mode={mode}
         sessions={sessions}

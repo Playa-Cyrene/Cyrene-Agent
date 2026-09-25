@@ -41,16 +41,18 @@ html, body {
   height: 100%;
 }
 
+/* 侧栏让位改由 padding-left 承担：收起/展开时一次性瞬变（一次重排），
+   不做 padding 过渡——layout 属性动画每帧强制整窗 reflow，大会话下连点会卡 */
 .cy-page {
   height: 100vh;
   width: 100vw;
   background: var(--cy-bg-page);
   box-sizing: border-box;
-  padding: 50px 10px 10px 10px;
+  padding: 50px 10px 10px 262px;
   position: relative;
   display: flex;
   gap: 10px;
-  transition: padding 0.25s ease;
+  /* 不给 padding 加过渡：layout 属性动画每帧强制整窗 reflow，连点侧栏开关时主线程饱和、鼠标事件排队 */
   border: 1px solid var(--cy-border);
   border-radius: var(--cy-window-radius, 24px);
   overflow: hidden;
@@ -107,7 +109,7 @@ html, body {
   display: flex;
   align-items: center;
   gap: 12px;
-  transition: left 0.25s ease;
+  /* 同 cy-page：位置跳变交给侧栏动画掩盖，避免 left 的 layout 动画 */
 }
 
 .cy-page-windows {
@@ -118,28 +120,39 @@ html, body {
 
 /* 用户头像与设置按钮已移入 .cy-page-sidebar-bottom */
 
-/* 侧边栏父容器：宽度固定、内部纵向 flex，主区占剩余空间，随窗口缩放 */
+/* 侧边栏基础（聊天/设置页共用）：宽度与纵向 flex */
 .cy-page-sidebar {
   display: flex;
   flex-direction: column;
   width: 252px;
-  flex-shrink: 0;
   min-height: 0;
+}
+
+/* 聊天页专属：抽屉式侧栏——让位靠 .cy-page 的 padding-left 瞬变（一次重排），
+   本体只做 transform 滑动（合成器动画，全程零重排），滑出窗外由 .cy-page 的 overflow 裁掉 */
+.cy-page .cy-page-sidebar {
+  position: absolute;
+  left: 10px;
+  top: 50px;
+  bottom: 10px;
   background: transparent;
   border-radius: 0;
-  transition: width 0.25s ease, opacity 0.2s ease;
+  transition: transform 0.25s ease, opacity 0.2s ease;
 }
 
 @media (max-width: 900px) {
   .cy-page-sidebar {
     width: 172px;
   }
+
+  .cy-page {
+    padding-left: 182px;
+  }
 }
 
 .cy-page.is-collapsed .cy-page-sidebar {
-  width: 0;
+  transform: translateX(-100%);
   opacity: 0;
-  overflow: hidden;
   pointer-events: none;
 }
 
@@ -283,6 +296,11 @@ html, body {
 
 @media (prefers-reduced-motion: reduce) {
   .cy-workspace::before {
+    transition: none;
+  }
+
+  /* 减少动画偏好下侧栏不做滑动，直接瞬切 */
+  .cy-page .cy-page-sidebar {
     transition: none;
   }
 }

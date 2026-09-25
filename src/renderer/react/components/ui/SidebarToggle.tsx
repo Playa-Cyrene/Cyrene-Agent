@@ -2,30 +2,26 @@ import { useState } from "react";
 import { useTranslation } from "../../i18n";
 
 interface SidebarToggleProps {
-  collapsed?: boolean;
   onToggle?: () => void;
 }
 
-export function SidebarToggle({ collapsed: controlledCollapsed, onToggle }: SidebarToggleProps) {
+/**
+ * 侧栏收起开关。收起与否不进组件状态，由根节点 .cy-page.is-collapsed
+ * 通过 CSS 控制图标方向（布局态走 DOM，点击不触发 React 渲染）。
+ */
+export function SidebarToggle({ onToggle }: SidebarToggleProps) {
   const { t } = useTranslation();
-  const [internalCollapsed, setInternalCollapsed] = useState(false);
   const [hovered, setHovered] = useState(false);
-  const collapsed = controlledCollapsed ?? internalCollapsed;
-
-  const handleClick = () => {
-    setInternalCollapsed((v) => !v);
-    onToggle?.();
-  };
 
   return (
     <button
-      className={`cy-sidebar-toggle ${collapsed ? "is-collapsed" : ""} ${hovered ? "is-hovered" : ""}`}
-      onClick={handleClick}
+      className={`cy-sidebar-toggle ${hovered ? "is-hovered" : ""}`}
+      onClick={onToggle}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       aria-label={t("ui.toggleSidebar")}
     >
-      <svg width="20" height="20" viewBox="0 0 48 48" fill="none">
+      <svg width="23" height="23" viewBox="0 0 48 48" fill="none">
         {/* 框 - 不变 */}
         <rect x="6" y="6" width="36" height="36" rx="3" stroke="currentColor" strokeWidth="3.5" strokeLinejoin="round" />
 
