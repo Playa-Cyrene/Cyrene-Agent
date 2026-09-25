@@ -856,6 +856,8 @@
 
 .cy-file-link__icon {
   flex-shrink: 0;
+  width: 12px;
+  height: 12px;
   opacity: 0.65;
 }
 
@@ -865,6 +867,63 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   max-width: 260px;
+}
+
+/* 网站链接：淡底色 pill（favicon + 文本 + 域名），比文件链接突出半档但不打断正文 */
+.cy-web-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0 1px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--rb-accent) 9%, transparent);
+  color: var(--rb-accent);
+  font-family: inherit;
+  font-size: 0.94em;
+  font-weight: 600;
+  line-height: 1.45;
+  vertical-align: baseline;
+  text-decoration: none;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.cy-web-link:hover {
+  background: color-mix(in srgb, var(--rb-accent) 16%, transparent);
+  color: color-mix(in srgb, var(--rb-accent) 82%, #8f3657);
+}
+
+.cy-web-link__favicon {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+}
+
+.cy-web-link__icon {
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+  opacity: 0.65;
+}
+
+.cy-web-link__text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 240px;
+}
+
+.cy-web-link__domain {
+  flex-shrink: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 160px;
+  color: color-mix(in srgb, currentColor 52%, transparent);
+  font-weight: 400;
+  font-size: 0.86em;
 }
 
 .cy-file-link.is-plain {

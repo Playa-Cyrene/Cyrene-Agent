@@ -17,6 +17,12 @@ vi.mock("@ant-design/x", async () => {
 });
 vi.mock("../../../../../shared/renderer-base", () => ({ resolveAsset: (path: string) => path }));
 vi.mock("./StreamdownMessageContent.css", () => ({}));
+// svg 资产 import 在 node 测试环境不可加载，mock 掉图标资产表
+vi.mock("./file-icon-assets", () => ({
+  FILE_ICON_URLS: { default: "default-url" },
+  FILE_NAME_MAP: {},
+  FILE_EXT_MAP: {},
+}));
 vi.mock("./MermaidBlock", () => ({ MermaidBlock: () => React.createElement("div", null, "diagram") }));
 vi.mock("./SvgCardBlock", () => ({ SvgCardBlock: () => React.createElement("div", null, "svg") }));
 

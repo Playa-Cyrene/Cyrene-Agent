@@ -7,9 +7,14 @@ import {
   type ControlsConfig,
 } from "streamdown";
 import type { PluggableList } from "unified";
-import React, { isValidElement, useContext, type ReactNode } from "react";
+import React, { isValidElement, useCallback, useContext, useState, type ReactNode } from "react";
+import { useTranslation } from "../../../i18n";
 import { MessageStreamingContext } from "./ChatMessageList";
+import { chatStore } from "../pages/chat-page-bridge";
+import { copyTextToClipboard } from "./CopyButton";
+import { FileContextMenu, clampMenuPosition, type FileContextMenuItem } from "./FileContextMenu";
 import { FileLinkContext } from "./FileLinkContext";
+import { FileIcon } from "./file-icon";
 import { MermaidBlock } from "./MermaidBlock";
 import { SvgCardBlock } from "./SvgCardBlock";
 import { parseFileLinkHref, relativePathInsideWorkspace } from "./file-link";
@@ -57,34 +62,118 @@ function StreamdownPre({ children }: { children?: ReactNode }) {
   );
 }
 
+/** 网站链接（http/https）行内卡片：favicon + 文本 + 域名，favicon 失败降级地球图标 */
+function WebLinkAnchor({ href, children }: { href: string; children?: ReactNode }) {
+  const [iconFailed, setIconFailed] = useState(false);
+  let domain = "";
+  try {
+    domain = new URL(href).hostname.replace(/^www\./, "");
+  } catch {
+    domain = "";
+  }
+  return (
+    <a className="cy-web-link" href={href} target="_blank" rel="noreferrer" title={href}>
+      {iconFailed || !domain ? (
+        <svg className="cy-web-link__icon" viewBox="0 0 16 16" aria-hidden="true">
+          <circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" strokeWidth="1.2" />
+          <path d="M1.8 8h12.4M8 1.8c2.6 2.6 2.6 7.8 0 12.4M8 1.8c-2.6 2.6-2.6 7.8 0 12.4" fill="none" stroke="currentColor" strokeWidth="1.2" />
+        </svg>
+      ) : (
+        <img
+          className="cy-web-link__favicon"
+          src={`https://${domain}/favicon.ico`}
+          alt=""
+          loading="lazy"
+          onError={() => setIconFailed(true)}
+        />
+      )}
+      <span className="cy-web-link__text">{children}</span>
+      {domain && <span className="cy-web-link__domain">{domain}</span>}
+    </a>
+  );
+}
+
+/** 链接里的正斜杠绝对路径 → 复制用显示格式（Windows 反斜杠，其他平台原样） */
+function toDisplayAbsPath(absPath: string): string {
+  return navigator.userAgent.includes("Windows") ? absPath.replaceAll("/", "\\") : absPath;
+}
+
 function StreamdownAnchor({ href, children }: { href?: string; children?: ReactNode }) {
-  const { workspaceRoot, openFile } = useContext(FileLinkContext);
+  const { t } = useTranslation();
+  const { sessionId, workspaceRoot, openFile } = useContext(FileLinkContext);
+  const [menu, setMenu] = useState<{ absPath: string; relPath: string | null; x: number; y: number } | null>(null);
   const fileHref = href ? decodeStreamdownFileHref(href) : null;
   const target = fileHref ? parseFileLinkHref(fileHref) : null;
+
+  const openLinkMenu = useCallback((event: React.MouseEvent, absPath: string) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const relPath = workspaceRoot ? relativePathInsideWorkspace(absPath, workspaceRoot) : null;
+    const { x, y } = clampMenuPosition(event.clientX, event.clientY);
+    setMenu({ absPath, relPath, x, y });
+  }, [workspaceRoot]);
+
+  // 打开/定位直接传绝对路径（主进程 realpath 校验，支持工作区外的桌面文件等场景）
+  const runMenuAction = useCallback(
+    async (action: "open" | "reveal" | "copyRel" | "copyAbs", target: { absPath: string; relPath: string | null }) => {
+      setMenu(null);
+      if (action === "open" || action === "reveal") {
+        if (!sessionId) return;
+        const result = await chatStore()?.shellFile(sessionId, target.absPath, action);
+        if (result && !result.ok) console.warn("[StreamdownAnchor] shellFile 失败:", result.error);
+        return;
+      }
+      if (action === "copyRel") {
+        if (target.relPath) await copyTextToClipboard(target.relPath);
+        return;
+      }
+      await copyTextToClipboard(toDisplayAbsPath(target.absPath));
+    },
+    [sessionId],
+  );
+
   if (target) {
     const relPath = workspaceRoot ? relativePathInsideWorkspace(target.absPath, workspaceRoot) : null;
+    const menuItems: FileContextMenuItem[] = menu ? [
+      ...(sessionId ? [
+        { key: "open", label: t("fileChange.menuOpen"), run: () => runMenuAction("open", menu) },
+        { key: "reveal", label: t("fileChange.menuReveal"), run: () => runMenuAction("reveal", menu) },
+      ] : []),
+      ...(menu.relPath ? [
+        { key: "copyRel", label: t("fileChange.menuCopyRelPath"), run: () => runMenuAction("copyRel", menu) },
+      ] : []),
+      { key: "copyAbs", label: t("fileChange.menuCopyAbsPath"), run: () => runMenuAction("copyAbs", menu) },
+    ] : [];
     if (relPath && openFile) {
       return (
-        <button
-          type="button"
-          className="cy-file-link"
-          title={target.absPath}
-          onClick={() => openFile(relPath, target.lineStart)}
-        >
-          <svg className="cy-file-link__icon" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
-            <path
-              d="M4 1.5h5L12.5 5v9a.5.5 0 0 1-.5.5H4a.5.5 0 0 1-.5-.5V2a.5.5 0 0 1 .5-.5Z"
-              fill="none"
-              stroke="currentColor"
-              strokeLinejoin="round"
-            />
-            <path d="M9 1.5V5h3.5" fill="none" stroke="currentColor" strokeLinejoin="round" />
-          </svg>
-          <span className="cy-file-link__text">{children}</span>
-        </button>
+        <>
+          <button
+            type="button"
+            className="cy-file-link"
+            title={target.absPath}
+            onClick={() => openFile(relPath, target.lineStart)}
+            onContextMenu={(event) => openLinkMenu(event, target.absPath)}
+          >
+            <FileIcon fileName={target.absPath} className="cy-file-link__icon" />
+            <span className="cy-file-link__text">{children}</span>
+          </button>
+          {menu && <FileContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={() => setMenu(null)} />}
+        </>
       );
     }
-    return <span className="cy-file-link is-plain">{children}</span>;
+    return (
+      <>
+        <span className="cy-file-link is-plain" onContextMenu={(event) => openLinkMenu(event, target.absPath)}>
+          <FileIcon fileName={target.absPath} className="cy-file-link__icon" />
+          {children}
+        </span>
+        {menu && <FileContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={() => setMenu(null)} />}
+      </>
+    );
+  }
+  // 网站链接渲染成行内卡片；其他协议（mailto:、obsidian:// 等）保持普通链接
+  if (href && /^https?:\/\//i.test(href)) {
+    return <WebLinkAnchor href={href}>{children}</WebLinkAnchor>;
   }
   return <a href={href} target="_blank" rel="noreferrer">{children}</a>;
 }

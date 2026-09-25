@@ -18,6 +18,13 @@ describe("Streamdown workspace file-link placeholder", () => {
     expect(encodeStreamdownFileHref("https://example.com/a")).toBe("https://example.com/a");
   });
 
+  it("normalizes double-slash file URLs (file://E:/x) to the standard triple slash", () => {
+    // 模型偶尔写成两个斜杠；归一成三斜杠再编码，解码回来即标准格式
+    const encoded = encodeStreamdownFileHref("file://E:/ws/src/a.ts#L12");
+    expect(encoded).toMatch(/^https:\/\/cyrene\.invalid\/__file-link__\//);
+    expect(decodeStreamdownFileHref(encoded)).toBe("file:///E:/ws/src/a.ts#L12");
+  });
+
   it("rejects malformed and foreign placeholders", () => {
     expect(decodeStreamdownFileHref("https://cyrene.invalid/__file-link__/not-base64!")).toBeNull();
     expect(decodeStreamdownFileHref("https://attacker.invalid/__file-link__/ZmlsZTovLy9FL3g")).toBeNull();

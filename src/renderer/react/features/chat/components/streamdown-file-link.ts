@@ -30,7 +30,12 @@ function fromBase64Url(value: string): string | null {
 }
 
 export function encodeStreamdownFileHref(href: string): string {
-  return href.startsWith("file:///") ? `${PLACEHOLDER_PREFIX}${toBase64Url(href)}` : href;
+  // 容错归一：模型偶尔写成两个斜杠（file://E:/x），统一成标准三斜杠再编码，
+  // 否则该链接会因不在 file:/// 白名单内被 sanitizer 剥掉 href
+  const normalized = /^file:\/\/[A-Za-z]:/.test(href)
+    ? `file:///${href.slice("file://".length)}`
+    : href;
+  return normalized.startsWith("file:///") ? `${PLACEHOLDER_PREFIX}${toBase64Url(normalized)}` : href;
 }
 
 export function decodeStreamdownFileHref(href: string): string | null {
