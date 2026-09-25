@@ -115,6 +115,24 @@ rustup default stable-x86_64-pc-windows-msvc
 >
 > 如果直接安装 Releases 中的打包版本，无需另外安装 Rust 和 Visual Studio Build Tools。
 
+### macOS（实验性支持）
+
+Cyrene 主要面向 Windows 开发。核心的 Electron/TypeScript 部分（Live2D 界面、对话、记忆系统）无需修改代码即可在 macOS 上构建运行，但尚未达到与 Windows 完全对等的功能覆盖（包括 Agent 的 Shell 执行能力）。执行 `npm install` 后：
+
+```bash
+npm run dev             # 开发模式运行
+npm run package:mac:dir # 在 release/mac-arm64（Intel 芯片为 mac/）下生成未签名的 Cyrene.app
+```
+
+与 Windows 相比，目前已知的功能差异：
+
+- **Agent Shell 执行（`run_shell`）** — 暂不支持 macOS：默认 Shell 解析为 `cmd.exe`，`bash` 选项也只会查找 Windows 上的 `bash.exe`（Git Bash），不会使用 macOS 的 `/bin/bash`。需要执行 Shell 命令的 Agent 任务会返回 `BASH_UNAVAILABLE` 并失败；POSIX Shell 解析尚未实现。
+- **截图工具** — `native/cyrene-screenshot` 完全基于 DXGI/GDI/Direct2D/Win32 剪贴板 API 实现，在 macOS 上不会启动，功能会优雅降级为禁用。
+- **音乐播放（mpv）** — 当前的 `MpvController` 播放后端在 macOS/Linux 上会查找系统已安装的 `mpv`（例如通过 Homebrew：`brew install mpv`）；`npm run prepare:mpv` 目前只会下载并打包 Windows 版 `mpv.exe`，macOS 上没有预置二进制文件。未安装系统 `mpv` 时，音乐工具会返回 `client_unavailable`。
+- **飞书 / 微信 iLink / 全局快捷键（`nut-js`）** — 尚未在 macOS 上测试。
+
+打包产物未经签名（没有 Apple Developer ID 证书），首次启动会被 Gatekeeper 拦截，右键点击「打开」即可绕过。
+
 ### 1. 克隆项目
 
 ```bash

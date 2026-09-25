@@ -26,6 +26,7 @@
     "seed:usage": "node scripts/seed-usage-stats.mjs",
     "build:music-component": "node scripts/packaging/build-music-component.mjs",
     "package:win:dir": "npm run build && npm run build:screenshot-helper && npm run prepare:mingit && npm run prepare:mpv && electron-builder --win --dir",
+    "package:mac:dir": "npm run build && electron-builder --mac --dir --config electron-builder.mac.yml",
     "dev": "npm run build:main && npm run build:preload && npm run build:cli && concurrently \"vite\" \"cross-env VITE_DEV=1 electron .\"",
     "start": "electron .",
     "test": "vitest run",

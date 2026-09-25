@@ -1,0 +1,37 @@
+appId: com.cyrene.live2d
+productName: Cyrene
+directories:
+  output: release
+asar: true
+asarUnpack:
+  - "**/node_modules/@ast-grep/**"
+  - "**/node_modules/@playwright/**"
+  - "**/node_modules/playwright/**"
+  - "**/node_modules/playwright-core/**"
+electronDist: node_modules/electron/dist
+files:
+  - dist/**/*
+  - "!dist/components/**/*"
+  - package.json
+  - assets/**/*
+  - vendor/**/*
+  - "!vendor/cloud-music-mcp/**/*"
+  - "!vendor/cyrene-skills/**/*"
+  - "!vendor/srt-win/**/*"
+  - "!models/**/*"
+extraFiles:
+  # macOS extraFiles destinations are relative to Contents/; the runtime resolver
+  # looks beside the executable under Contents/MacOS (see external-content-paths.ts).
+  - from: prompts
+    to: MacOS/prompts
+  - from: skills
+    to: MacOS/defaults/skills
+extraResources:
+  - from: resources/components
+    to: components
+  - from: vendor/cyrene-skills
+    to: cyrene-skills
+mac:
+  category: public.app-category.productivity
+  target:
+    - dir

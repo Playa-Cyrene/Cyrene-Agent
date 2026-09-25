@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { load } from "js-yaml";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
@@ -59,6 +60,35 @@ describe("resolveExternalContentPaths", () => {
     expect(result.builtinSkillDirectory).toBe(path.join(installRoot, "defaults", "skills"));
     expect(result.installSkillDirectory).toBe(path.join(installRoot, "skills"));
     expect(result.userSkillDirectories).toEqual([path.join(userData, "skills")]);
+  });
+});
+
+describe("macOS packaging config", () => {
+  it("ships prompts/skills where the packaged resolver looks for them", () => {
+    // electron-builder resolves macOS `extraFiles` destinations relative to
+    // Contents/ (not the app install root), unlike Windows. installRoot on
+    // macOS is path.dirname(exe) = Contents/MacOS, so `to:` must be spelled
+    // relative to Contents/ to land beside the executable.
+    const config = load(
+      fs.readFileSync(new URL("../../electron-builder.mac.yml", import.meta.url), "utf8"),
+    ) as { extraFiles: Array<{ from: string; to: string }> };
+
+    const packagedDestination = (source: string): string => {
+      const entry = config.extraFiles.find((file) => file.from === source);
+      if (!entry) throw new Error(`Missing macOS extraFiles entry for "${source}"`);
+      return path.join("Contents", entry.to);
+    };
+
+    const contents = "Contents";
+    const result = resolveExternalContentPaths({
+      isPackaged: true,
+      appPath: path.join(contents, "Resources", "app.asar"),
+      executablePath: path.join(contents, "MacOS", "Cyrene"),
+      userDataPath: "user-data",
+    });
+
+    expect(packagedDestination("prompts")).toBe(result.promptDirectories[1]);
+    expect(packagedDestination("skills")).toBe(result.builtinSkillDirectory);
   });
 });
 
