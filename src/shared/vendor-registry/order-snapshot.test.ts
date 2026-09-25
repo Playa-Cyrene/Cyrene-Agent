@@ -255,6 +255,7 @@ const EXPECTED = [
     "capability": {
       "control": "toggle-effort",
       "supportedEfforts": [
+        "low",
         "high",
         "max"
       ],

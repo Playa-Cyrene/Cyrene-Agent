@@ -33,13 +33,13 @@ export const DEEPSEEK_REGISTRY = defineVendor({
     // ── deepseek ──
     // V4.1 Flash（2026-09-10 发布，模型名 deepseek-flash，原生多模态）与 V4 旧名
     // （v4-pro / v4-flash / v4-flash-vision-exp，官方均已路由到 V4.1 Flash）统一规则：
-    // thinking 默认开启可关闭；effort 官方仅 high/max 两档，low/medium 会被服务端
-    // 映射为 high、xhigh 映射为 max（官方思考模式文档），故不再提供 low 档。
+    // thinking 默认开启可关闭；effort 官方原生 low/high/max 三档（官方思考模式文档），
+    // 其余档位由服务端映射：minimal→low、medium/xhigh→high、ultra→max。
     // 默认选中 high：服务端缺省会给带工具的 agent 请求自动上 max，
     // 与 GLM-5.3 同款的思考爆炸陷阱（2026-08-27 多轮循环场景）。
     { providerId: "deepseek", modelPattern: /^deepseek-(?:v4|flash)/i, capability: {
       control: "toggle-effort",
-      supportedEfforts: ["high", "max"],
+      supportedEfforts: ["low", "high", "max"],
       defaultEffort: "high",
       requestStyle: "thinking-type",
       supportsDisable: true,
