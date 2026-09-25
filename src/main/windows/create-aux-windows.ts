@@ -5,6 +5,7 @@ import { isDev } from "../env";
 import { DEFAULT_WORKSPACE_WINDOW_SIZE } from "../window-layout";
 import { loadGeneralSettings } from "../settings/settings-facade";
 import { stopCall, setCallWindow } from "../call/call-manager";
+import { attachContextMenu } from "./context-menu";
 import { getWorkspaceInitialBounds } from "./workspace-window-bounds";
 import {
   callWindow,
@@ -76,6 +77,7 @@ export function createReactChatWindowShell(): BrowserWindow {
     },
   });
   setReactChatWindow(window);
+  attachContextMenu(window);
 
   if (rememberWindowState) {
     window.once("ready-to-show", () => {
@@ -177,6 +179,7 @@ export async function createStickerManagerWindow(): Promise<{ ok: boolean; error
     },
   });
   setStickerManagerWindow(window);
+  attachContextMenu(window);
 
   window.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL) => {
     console.error("[stickers] did-fail-load", { errorCode, errorDescription, validatedURL });
@@ -250,6 +253,7 @@ export function createCallWindow(): void {
     },
   });
   setCallWindowLocal(window);
+  attachContextMenu(window);
 
   if (isDev) {
     window.loadURL("http://localhost:5173/call-react/");

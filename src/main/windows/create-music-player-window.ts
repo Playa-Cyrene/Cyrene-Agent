@@ -3,6 +3,7 @@ import * as path from "path";
 import { isDev } from "../env";
 import { loadGeneralSettings } from "../settings/settings-facade";
 import { persistedWindowState } from "./create-aux-windows";
+import { attachContextMenu } from "./context-menu";
 import { getCurrentAppIconPath, setMusicPlayerWindow, musicPlayerWindow } from "./window-state";
 
 /**
@@ -48,6 +49,7 @@ export function createMusicPlayerWindow(): void {
     },
   });
   setMusicPlayerWindow(window);
+  attachContextMenu(window);
 
   if (isDev) {
     void window

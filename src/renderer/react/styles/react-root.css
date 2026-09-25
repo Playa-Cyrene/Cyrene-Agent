@@ -32,7 +32,6 @@ html, body {
   border: 1px solid var(--rb-border-default);
   border-radius: var(--cy-window-radius, 24px);
   overflow: hidden;
-  user-select: none;
   app-region: drag;
   -webkit-app-region: drag;
 }
