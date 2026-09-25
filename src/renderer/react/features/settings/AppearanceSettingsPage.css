@@ -28,6 +28,13 @@
   overflow: hidden;
 }
 
+/* 设置页侧栏不走聊天页的抽屉定位（复用 .cy-page .cy-page-sidebar 会变绝对定位，
+   脱离 flex 流后被内容面板盖住，返回按钮也会一起丢失），保持文档流内 */
+.cy-settings-page .cy-page-sidebar {
+  position: static;
+  transition: none;
+}
+
 .cy-settings-sidebar__nav {
   flex: 1;
   min-height: 0;
@@ -825,16 +832,31 @@
 
 /* 档案编辑区的模型清单：每行 = 单选默认标记 + 模型 ID + 移除按钮；底部为添加行 */
 .cy-model-list-editor { display: flex; flex-direction: column; gap: 2px; padding: 4px; border: 1px solid var(--rb-border-default); border-radius: 8px; background: var(--rb-surface-elevated); }
-.cy-model-list-item { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 6px; }
+.cy-model-list-options { display: flex; flex-direction: column; gap: 2px; width: 100%; }
+.cy-model-list-item { display: flex; align-items: center; gap: 8px; min-height: 34px; padding: 3px 8px; border-radius: 6px; transition: background-color 140ms ease; }
 .cy-model-list-item:hover { background: var(--rb-surface-hover); }
-.cy-model-list-item__radio { display: inline-flex; align-items: center; gap: 8px; flex: 1; min-width: 0; cursor: pointer; }
-.cy-model-list-item__radio input[type="radio"] { accent-color: var(--rb-accent); flex-shrink: 0; }
+.cy-model-list-item.is-selected { background: color-mix(in srgb, var(--rb-accent) 7%, var(--rb-surface-elevated)); }
+.cy-model-list-item__radio.ant-radio-wrapper { display: flex; align-items: center; flex: 1; min-width: 0; margin-inline-end: 0; cursor: pointer; }
+.cy-model-list-item__radio .ant-radio { flex-shrink: 0; }
+.cy-model-list-item__radio > span:last-child { min-width: 0; }
 .cy-model-list-item__radio code { color: var(--rb-text-primary); font: var(--rb-text-small); overflow-wrap: anywhere; }
 .cy-model-list-item .cy-model-default-tag { margin: 0; flex-shrink: 0; }
 .cy-model-list-item__remove { flex-shrink: 0; color: var(--rb-text-secondary); }
 .cy-model-list-item__remove:not(:disabled):hover { color: var(--rb-danger); }
+.cy-model-list-item__image.ant-btn { display: inline-grid; width: 28px; min-width: 28px; height: 28px; padding: 0; place-items: center; flex-shrink: 0; color: var(--rb-text-tertiary); border-radius: 6px; }
+.cy-model-list-item__image.ant-btn:hover { color: var(--rb-text-primary) !important; background: var(--rb-surface-hover) !important; }
+.cy-model-list-item__image.ant-btn.is-enabled { color: var(--rb-accent); background: color-mix(in srgb, var(--rb-accent) 9%, var(--rb-surface-elevated)); }
+.cy-model-list-item__context.ant-input-affix-wrapper { flex: 0 0 94px; width: 94px; min-width: 0; height: 28px; padding-inline: 7px; border-radius: 6px; font: var(--rb-text-micro); }
+.cy-model-list-item__context .ant-input { min-width: 0; padding: 0; font: var(--rb-text-micro); }
 .cy-model-list-add { display: flex; align-items: center; gap: 4px; padding: 2px 4px; }
-.cy-model-list-add .cy-control-input { flex: 1; min-width: 0; }
+.cy-model-list-add .cy-model-list-autocomplete { flex: 1; min-width: 0; }
+.cy-model-list-add .cy-model-list-autocomplete .ant-select-selector { height: 32px !important; padding: 0 10px !important; border-color: var(--rb-border-default) !important; border-radius: 7px !important; color: var(--rb-text-primary) !important; background: var(--rb-surface-elevated) !important; box-shadow: none !important; }
+.cy-model-list-add .cy-model-list-autocomplete:hover .ant-select-selector { border-color: color-mix(in srgb, var(--rb-accent) 40%, var(--rb-border-default)) !important; }
+.cy-model-list-add .cy-model-list-autocomplete.ant-select-focused .ant-select-selector { border-color: var(--rb-accent) !important; box-shadow: 0 0 0 3px color-mix(in srgb, var(--rb-accent) 16%, transparent) !important; }
+.cy-model-list-add .cy-model-list-autocomplete .ant-select-selection-search-input { height: 30px !important; color: var(--rb-text-primary); font: var(--rb-text-small); }
+.cy-model-list-add .cy-model-list-autocomplete .ant-select-selection-placeholder { color: var(--rb-text-secondary); }
+.cy-model-list-dropdown .ant-select-item-option-active:not(.ant-select-item-option-disabled) { background: color-mix(in srgb, var(--rb-accent) 8%, var(--rb-surface-elevated)) !important; }
+.cy-model-list-dropdown .ant-select-item-option-selected:not(.ant-select-item-option-disabled) { color: var(--rb-accent) !important; background: color-mix(in srgb, var(--rb-accent) 14%, var(--rb-surface-elevated)) !important; }
 
 .cy-model-provider-option { display: inline-flex; align-items: center; gap: 8px; }
 .cy-model-provider-option svg { max-width: 23px; max-height: 23px; }
