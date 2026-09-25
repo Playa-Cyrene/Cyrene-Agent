@@ -4,11 +4,13 @@
 // 结构：汇总头（N 个文件 + 总增删）→ 文件行（kind 徽标 + 路径 + 增删统计）
 // → 点击展开色块 diff 行（绿=新增 红=删除 灰=上下文 蓝=hunk 头）。
 
-import { useCallback, useContext, useEffect, useState, type MouseEvent } from "react";
+import { useCallback, useContext, useState, type MouseEvent } from "react";
 import { useTranslation } from "../../../i18n";
 import type { ToolDiffLine, ToolFileChange } from "../../../../../shared/chat-types";
 import { chatStore } from "../pages/chat-page-bridge";
 import { copyTextToClipboard } from "./CopyButton";
+import { FileContextMenu, clampMenuPosition, type FileContextMenuItem } from "./FileContextMenu";
+import { FileIcon } from "./file-icon";
 import { FileLinkContext } from "./FileLinkContext";
 import "./RunExperience.css";
 
@@ -66,35 +68,10 @@ export function FileChangeCard({ changes }: { changes: ToolFileChange[] }) {
   const { sessionId, workspaceRoot } = useContext(FileLinkContext);
   const [menu, setMenu] = useState<{ file: string; x: number; y: number } | null>(null);
 
-  // 菜单打开期间：点菜单外 / Esc / 页面滚动 / 窗口失焦时关闭
-  useEffect(() => {
-    if (!menu) return;
-    const onPointerDown = (event: PointerEvent) => {
-      if ((event.target as HTMLElement).closest(".cy-file-change-card__menu")) return;
-      setMenu(null);
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setMenu(null);
-    };
-    const close = () => setMenu(null);
-    document.addEventListener("pointerdown", onPointerDown);
-    document.addEventListener("keydown", onKeyDown);
-    window.addEventListener("wheel", close, { passive: true });
-    window.addEventListener("blur", close);
-    return () => {
-      document.removeEventListener("pointerdown", onPointerDown);
-      document.removeEventListener("keydown", onKeyDown);
-      window.removeEventListener("wheel", close);
-      window.removeEventListener("blur", close);
-    };
-  }, [menu]);
-
   const openRowMenu = useCallback((event: MouseEvent, file: string) => {
     event.preventDefault();
     event.stopPropagation();
-    // 贴边收缩，防止菜单被窗口边缘裁掉
-    const x = Math.min(event.clientX, window.innerWidth - 200);
-    const y = Math.min(event.clientY, window.innerHeight - 160);
+    const { x, y } = clampMenuPosition(event.clientX, event.clientY);
     setMenu({ file, x, y });
   }, []);
 
@@ -137,30 +114,21 @@ export function FileChangeCard({ changes }: { changes: ToolFileChange[] }) {
         />
       ))}
       {menu && (
-        <div
-          className="cy-file-change-card__menu"
-          style={{ position: "fixed", left: menu.x, top: menu.y }}
-          role="menu"
-        >
-          {sessionId && (
-            <>
-              <button type="button" role="menuitem" onClick={() => void runMenuAction("open", menu.file)}>
-                {t("fileChange.menuOpen")}
-              </button>
-              <button type="button" role="menuitem" onClick={() => void runMenuAction("reveal", menu.file)}>
-                {t("fileChange.menuReveal")}
-              </button>
-            </>
-          )}
-          <button type="button" role="menuitem" onClick={() => void runMenuAction("copyRel", menu.file)}>
-            {t("fileChange.menuCopyRelPath")}
-          </button>
-          {workspaceRoot && (
-            <button type="button" role="menuitem" onClick={() => void runMenuAction("copyAbs", menu.file)}>
-              {t("fileChange.menuCopyAbsPath")}
-            </button>
-          )}
-        </div>
+        <FileContextMenu
+          x={menu.x}
+          y={menu.y}
+          onClose={() => setMenu(null)}
+          items={[
+            ...(sessionId ? [
+              { key: "open", label: t("fileChange.menuOpen"), run: () => runMenuAction("open", menu.file) },
+              { key: "reveal", label: t("fileChange.menuReveal"), run: () => runMenuAction("reveal", menu.file) },
+            ] : []),
+            { key: "copyRel", label: t("fileChange.menuCopyRelPath"), run: () => runMenuAction("copyRel", menu.file) },
+            ...(workspaceRoot ? [
+              { key: "copyAbs", label: t("fileChange.menuCopyAbsPath"), run: () => runMenuAction("copyAbs", menu.file) },
+            ] : []),
+          ]}
+        />
       )}
     </section>
   );
@@ -182,6 +150,7 @@ function FileChangeRow({
 
   const rowBody = (
     <>
+      <FileIcon fileName={change.file} className="cy-file-change-card__fileicon" />
       <span className={`cy-file-change-card__kind ${KIND_CLASS[change.kind]}`}>
         {t(KIND_LABEL_KEYS[change.kind])}
       </span>

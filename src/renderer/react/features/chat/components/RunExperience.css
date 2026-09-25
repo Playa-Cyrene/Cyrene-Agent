@@ -452,6 +452,12 @@ button.cy-file-change-card__row:hover { background: #f7f4f6; }
   border-top: 1px solid #f0ebee;
 }
 
+.cy-file-change-card__fileicon {
+  flex: 0 0 14px;
+  width: 14px;
+  height: 14px;
+}
+
 .cy-file-change-card__kind {
   flex: 0 0 auto;
   padding: 2px 6px;

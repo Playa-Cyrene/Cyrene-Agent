@@ -1,6 +1,13 @@
 import * as React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+// svg 资产 import 在 node 测试环境不可加载，mock 掉只测卡片逻辑
+vi.mock("./file-icon-assets", () => ({
+  FILE_ICON_URLS: { default: "default-url" },
+  FILE_NAME_MAP: {},
+  FILE_EXT_MAP: {},
+}));
 
 import { extractFileChanges, FileChangeCard } from "./FileChangeCard";
 
