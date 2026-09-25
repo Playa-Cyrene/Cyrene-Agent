@@ -572,7 +572,9 @@ describe("chats IPC mode filtering", () => {
     const event = { sender: {} };
     const session = await create(event, { mode: "work" }) as { id: string };
     await setWorkspace(event, { sessionId: session.id, workspaceRoot });
-    const absFile = path.join(fs.realpathSync(workspaceRoot), "a.txt");
+    // realpathSync.native 与主进程 fs.promises.realpath 同为 native 实现：
+    // 会把 Windows 8.3 短路径（CI runner 的 RUNNER~1）展开成长路径，断言两边才一致
+    const absFile = path.join(fs.realpathSync.native(workspaceRoot), "a.txt");
 
     // 未绑定工作区的会话 → NO_WORKSPACE，不碰 shell
     const plain = await create(event, { mode: "chat" }) as { id: string };
@@ -623,9 +625,9 @@ describe("chats IPC mode filtering", () => {
 
     // 工作区外的绝对路径也能 open/reveal（realpath 归一后交给 shell）
     expect(await shellFile(event, { sessionId: session.id, relPath: outsideFile, action: "open" })).toEqual({ ok: true });
-    expect(mocks.openPath).toHaveBeenCalledWith(fs.realpathSync(outsideFile));
+    expect(mocks.openPath).toHaveBeenCalledWith(fs.realpathSync.native(outsideFile));
     expect(await shellFile(event, { sessionId: session.id, relPath: outsideFile, action: "reveal" })).toEqual({ ok: true });
-    expect(mocks.showItemInFolder).toHaveBeenCalledWith(fs.realpathSync(outsideFile));
+    expect(mocks.showItemInFolder).toHaveBeenCalledWith(fs.realpathSync.native(outsideFile));
 
     // 正斜杠形式的绝对路径（file:/// 链接解析出的形态）同样支持
     expect(await shellFile(event, { sessionId: session.id, relPath: outsideFile.replaceAll("\\", "/"), action: "open" }))
