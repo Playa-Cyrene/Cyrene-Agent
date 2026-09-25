@@ -181,6 +181,34 @@ afterEach(() => {
 });
 
 describe("AgentRunController", () => {
+  it("keeps shell output with its own tool across the final result and checkpoint", async () => {
+    const api = createFakeApi({ success: true, runId: "run-1" });
+    const store = createFakeStore();
+    const { host } = createRecordingHost();
+    const { promise } = launch(createInput(), { api, store, host, registries: createRegistries() });
+    await flush();
+
+    api.emit(RUN_STARTED_EVENT);
+    api.emit({ type: "TOOL_CALL_START", runId: "run-1", toolCallId: "shell-a", toolCallName: "run_shell" });
+    api.emit({ type: "TOOL_CALL_START", runId: "run-1", toolCallId: "other-b", toolCallName: "read_file" });
+    api.emit({ type: "CUSTOM", name: "cyrene.tool_output", runId: "run-1", value: {
+      toolCallId: "shell-a", action: "append", text: "第一行\n",
+    } });
+    api.emit({ type: "CUSTOM", name: "cyrene.tool_output", runId: "run-1", value: {
+      toolCallId: "other-b", action: "append", text: "不应显示",
+    } });
+    api.emit({ type: "TOOL_CALL_RESULT", runId: "run-1", toolCallId: "shell-a", content: "结果预览", status: "success" });
+    api.emit({ type: "CUSTOM", name: "cyrene.tool_output", runId: "run-1", value: {
+      toolCallId: "shell-a", action: "append", text: "迟到输出",
+    } });
+    api.emit({ type: "RUN_FINISHED", runId: "run-1", result: { status: "cancelled" } });
+    await promise;
+
+    const final = store.upsert.mock.calls.at(-1)?.[1] as { toolExecutions?: Array<{ id: string; terminalOutput?: string }> };
+    expect(final.toolExecutions?.find((tool) => tool.id === "shell-a")?.terminalOutput).toBe("第一行\n");
+    expect(final.toolExecutions?.find((tool) => tool.id === "other-b")?.terminalOutput).toBeUndefined();
+  });
+
   it("awaits the presentation checkpoint before reporting run persistence", async () => {
     const api = createFakeApi({ success: true, runId: "run-1" });
     const store = createFakeStore();

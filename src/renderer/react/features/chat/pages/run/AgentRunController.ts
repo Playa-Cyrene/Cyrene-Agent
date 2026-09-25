@@ -29,6 +29,7 @@ import { t } from "../../../../i18n";
 import type { AguiApi, AguiEvent, CandidateTextEventValue, ChatStoreApi } from "../chat-page-bridge";
 import { normalizeWeatherData, parseSessionRunActiveError, stageForStep } from "../chat-page-normalizers";
 import { RunEventGate } from "../run-event-gate";
+import { applyVisibleOutput, normalizeShellOutputEvent } from "./command-output";
 import {
   SMOOTH_REVEAL_TICK_MS,
   SmoothTextRevealQueue,
@@ -977,6 +978,17 @@ export class AgentRunController {
       void this.checkpointRun("running", true);
     } else if (event.type === "TOOL_CALL_END" && event.toolCallId) {
       this.updateRunTool(event.toolCallId, {});
+    } else if (event.type === "CUSTOM" && event.name === "cyrene.tool_output") {
+      const output = normalizeShellOutputEvent(event.value);
+      const tool = output && this.toolExecutions.find((item) => item.id === output.toolCallId);
+      if (output && tool?.name === "run_shell" && tool.status === "running") {
+        const visible = applyVisibleOutput(tool.terminalOutput ?? "", output, tool.terminalOutputTruncated);
+        this.updateRunTool(tool.id, {
+          terminalOutput: visible.text,
+          terminalOutputTruncated: visible.truncated,
+        });
+        void this.checkpointRun("running");
+      }
     } else if (event.type === "TEXT_MESSAGE_START") {
       this.deps.host.patchMessage(this.input.sessionId, this.input.assistantId, {
         loading: false,

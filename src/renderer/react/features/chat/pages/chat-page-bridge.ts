@@ -82,6 +82,7 @@ export interface ChatStoreApi {
     model: string,
   ) => Promise<{ ok: true; session: ChatSession } | { ok: false; error: string }>;
   pickWorkspaceFolder: () => Promise<{ ok: boolean; path?: string; displayName?: string; error?: string }>;
+  listRecentProjects: () => Promise<string[]>;
   setWorkspace: (sessionId: string, workspaceRoot: string) => Promise<{ ok: boolean; error?: string; isEmpty?: boolean }>;
   initLearnWorkspace: (sessionId: string) => Promise<{ ok: boolean; error?: string; created?: string[]; skipped?: string[] }>;
   openWorkspace: (workspaceRoot: string) => Promise<{ ok: boolean; error?: string }>;

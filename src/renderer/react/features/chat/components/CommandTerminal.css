@@ -1,0 +1,93 @@
+.cy-command-terminal {
+  min-width: 0;
+  margin: 7px 0 2px;
+  overflow: hidden;
+  border: 1px solid #3f3f46;
+  border-radius: 12px;
+  background: #18181b;
+  color: #f4f4f5;
+  font: 12px/1.6 var(--rb-font-mono, Consolas, monospace);
+}
+
+.cy-command-terminal__header {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 12px;
+  border-bottom: 1px solid #3f3f46;
+  color: #a1a1aa;
+}
+
+.cy-command-terminal__title {
+  display: inline-flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+}
+
+.cy-command-terminal__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.cy-command-terminal__status::before {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #71717a;
+  content: "";
+}
+
+.cy-command-terminal__status.is-running::before { background: #fbbf24; }
+.cy-command-terminal__status.is-success::before { background: #4ade80; }
+.cy-command-terminal__status.is-error::before { background: #fb7185; }
+
+.cy-command-terminal__body {
+  max-height: min(320px, 42vh);
+  overflow: auto;
+  padding: 12px 14px;
+  overscroll-behavior: contain;
+}
+
+.cy-command-terminal__command {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  color: #e4e4e7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.cy-command-terminal__command > span { color: #a3e635; }
+.cy-command-terminal__command code { font: inherit; }
+
+.cy-command-terminal__output {
+  margin: 9px 0 0;
+  font: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.cy-command-terminal__truncated,
+.cy-command-terminal__empty {
+  margin-top: 8px;
+  color: #a1a1aa;
+}
+
+.cy-command-terminal__cursor {
+  display: inline-block;
+  width: 6px;
+  height: 13px;
+  margin-left: 2px;
+  background: #d4d4d8;
+  vertical-align: -2px;
+  animation: cy-command-terminal-cursor 1s steps(1) infinite;
+}
+
+@keyframes cy-command-terminal-cursor {
+  50% { opacity: 0; }
+}

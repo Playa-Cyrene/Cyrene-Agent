@@ -112,6 +112,21 @@ export function sendHarnessEventAsAgui(
       } as BaseEvent);
       break;
     }
+    case "tool_output": {
+      send({
+        type: EventType.CUSTOM,
+        name: "cyrene.tool_output",
+        value: {
+          toolCallId: event.toolCallId,
+          action: event.action,
+          text: event.text,
+          ...(event.truncated ? { truncated: true } : {}),
+        },
+        threadId,
+        runId,
+      } as BaseEvent);
+      break;
+    }
     case "todo_update": {
       send({
         type: EventType.CUSTOM,

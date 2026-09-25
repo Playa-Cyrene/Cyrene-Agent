@@ -22,6 +22,7 @@ import { RunStageIndicator } from "./RunStageIndicator";
 import { TaskPlanCard } from "./TaskPlanCard";
 import type { AgentRunStage, TaskPlanPresentation } from "./run-presentation";
 import { CopyButton } from "./CopyButton";
+import { CommandTerminal } from "./CommandTerminal";
 import { TtsButton } from "./TtsButton";
 import { stopTtsPlayback } from "./tts-playback";
 import { LastTurnActionButton } from "./LastTurnActionButton";
@@ -669,6 +670,7 @@ function ToolExecutionContent({ tools }: { tools: ToolExecutionRecord[] }) {
       <ThoughtChain
         rootClassName="cy-tool-executions__chain"
         line="dashed"
+        defaultExpandedKeys={tools.filter((tool) => tool.name === "run_shell" && tool.status === "running").map((tool) => tool.id)}
         items={tools.map((tool) => {
           const presentation = describeToolExecution(tool);
           return {
@@ -682,10 +684,12 @@ function ToolExecutionContent({ tools }: { tools: ToolExecutionRecord[] }) {
             ),
             status: tool.status === "running" ? "loading" : tool.status === "error" ? "error" : "success",
             blink: tool.status === "running",
-            collapsible: Boolean(tool.result || tool.changes),
-            content: (tool.result || tool.changes)
-              ? <ToolResultContent tool={tool} result={tool.result} changes={tool.changes} />
-              : undefined,
+            collapsible: tool.name === "run_shell" || Boolean(tool.result || tool.changes),
+            content: tool.name === "run_shell"
+              ? <CommandTerminal tool={tool} />
+              : (tool.result || tool.changes)
+                ? <ToolResultContent tool={tool} result={tool.result} changes={tool.changes} />
+                : undefined,
           };
         })}
       />

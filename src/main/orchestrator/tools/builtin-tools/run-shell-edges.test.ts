@@ -79,6 +79,36 @@ describe.runIf(process.platform === "win32")("run_shell 边界分支", () => {
     expect(parsed.stdout).toBe("中");
   });
 
+  it("运行中发布输出，完成时用最终解码结果校正预览", async () => {
+    const updates: Array<{ action: string; text: string; truncated?: boolean }> = [];
+    let finished = false;
+    const pending = run(
+      { command: 'node -e "process.stdout.write(\'start\');setTimeout(()=>process.stdout.write(\'中\'),600)"' },
+      { permissionMode: "allow_all", onShellOutput: (update: { action: string; text: string }) => updates.push(update) },
+    ).finally(() => { finished = true; });
+    await vi.waitFor(() => {
+      expect(updates).toContainEqual(expect.objectContaining({ action: "append", text: "start" }));
+    }, { timeout: 2_000 });
+    expect(finished).toBe(false);
+    const result = await pending;
+    expect(result.stdout).toBe("start中");
+    expect(updates.at(-1)).toMatchObject({ action: "replace", text: "start中" });
+  });
+
+  it("校正 GBK 命令输出且观察回调异常不影响命令结果", async () => {
+    const updates: Array<{ action: string; text: string }> = [];
+    const result = await run(
+      { command: 'node -e "process.stdout.write(Buffer.from([0xd6,0xd0]))"' },
+      { permissionMode: "allow_all", onShellOutput: (update: { action: string; text: string }) => {
+        updates.push(update);
+        if (update.action === "append") throw new Error("observer failed");
+      } },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe("中");
+    expect(updates.at(-1)).toMatchObject({ action: "replace", text: "中" });
+  });
+
   it("stderr 超过 2MB 捕获上限：标记 captureTruncated 且停止累积", async () => {
     const parsed = await run(
       { command: 'node -e "process.stderr.write(Buffer.alloc(3*1024*1024, 97))"' },

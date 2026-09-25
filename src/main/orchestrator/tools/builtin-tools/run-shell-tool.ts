@@ -10,6 +10,8 @@
 
 import { spawn } from "child_process";
 import type { ToolDefinition } from "../registry/tool-registry";
+import type { ShellOutputUpdate } from "../registry/tool-context";
+import { SHELL_VISIBLE_OUTPUT_LIMIT } from "../../../../shared/shell-output";
 import { wrapWithSandbox, type SandboxWrapOutcome } from "../../sandbox/sandbox-exec";
 import { getCurrentLevel } from "../../../permission";
 import { classifyShellEffect, isCatastrophicCommand, type ShellEffect } from "../../shell-execution-policy";
@@ -49,6 +51,7 @@ const SHELL_KILL_GRACE_MS = 2_000;
 // 不会过早截断；超限的 chunk 丢弃并标记 captureTruncated=true（数据真实丢失，
 // 与 dispatcher 侧"数据完整、仅视图裁剪"的 truncatedForModel 是两个不同事实）。
 const SHELL_CAPTURE_LIMIT_PER_STREAM = 2 * 1024 * 1024;
+const SHELL_OUTPUT_FLUSH_MS = 100;
 
 // ── Shell 输出解码 ─────────────────────────────────────
 // 中文 Windows 的 cmd.exe 按系统 OEM 码页（GBK/CP936）输出（dir/echo/del 等内建命令），
@@ -78,6 +81,40 @@ function decodeShellOutput(chunks: Buffer[]): string {
     }
     return buf.toString("utf8");
   }
+}
+
+type CapturedShellChunk = { stream: "stdout" | "stderr"; bytes: Buffer };
+
+/** 最终预览按每条流分别判定编码，再按数据抵达顺序重建。 */
+function decodeOrderedShellOutput(
+  ordered: CapturedShellChunk[],
+  stdoutChunks: Buffer[],
+  stderrChunks: Buffer[],
+): string {
+  const encoding = (chunks: Buffer[]): string => {
+    try {
+      utf8StrictDecoder.decode(Buffer.concat(chunks));
+      return "utf-8";
+    } catch {
+      return gbkDecoder ? "gbk" : "utf-8";
+    }
+  };
+  const decoders = {
+    stdout: new TextDecoder(encoding(stdoutChunks)),
+    stderr: new TextDecoder(encoding(stderrChunks)),
+  };
+  let result = "";
+  for (const entry of ordered) {
+    result += decoders[entry.stream].decode(entry.bytes, { stream: true });
+  }
+  return result + decoders.stdout.decode() + decoders.stderr.decode();
+}
+
+function visibleOutputTail(value: string): string {
+  if (value.length <= SHELL_VISIBLE_OUTPUT_LIMIT) return value;
+  const tail = value.slice(-SHELL_VISIBLE_OUTPUT_LIMIT);
+  // 不从 UTF-16 代理对的后半字符开始截取。
+  return /^[\uDC00-\uDFFF]/u.test(tail) ? tail.slice(1) : tail;
 }
 
 // ── 超时策略 ─────────────────────────────────────────────
@@ -242,6 +279,7 @@ function executePlan(
   resolvedShell: ResolvedShellExecutable,
   signal?: AbortSignal,
   timeoutPolicy: ShellTimeoutPolicy = DEFAULT_TIMEOUT_POLICY,
+  onOutput?: (update: ShellOutputUpdate) => void,
 ): Promise<ShellResult> {
   return new Promise((resolve) => {
     (async () => {
@@ -269,9 +307,40 @@ function executePlan(
       // Buffer 原样累积（每流 2MB 上限），进程结束时按 UTF-8→GBK 顺序解码（见 decodeShellOutput）
       const stdoutChunks: Buffer[] = [];
       const stderrChunks: Buffer[] = [];
+      const orderedChunks: CapturedShellChunk[] = [];
       let stdoutBytes = 0;
       let stderrBytes = 0;
       let captureTruncated = false;
+      const liveDecoders = {
+        stdout: new TextDecoder("utf-8"),
+        stderr: new TextDecoder("utf-8"),
+      };
+      let pendingOutput = "";
+      let liveOutputTruncated = false;
+      let outputTimer: NodeJS.Timeout | undefined;
+      const publishOutput = (update: ShellOutputUpdate) => {
+        try { onOutput?.(update); } catch { /* 界面观察者不得中断进程 */ }
+      };
+      const flushOutput = () => {
+        outputTimer = undefined;
+        if (!pendingOutput) return;
+        publishOutput({
+          action: "append",
+          text: pendingOutput,
+          ...(liveOutputTruncated ? { truncated: true } : {}),
+        });
+        pendingOutput = "";
+        liveOutputTruncated = false;
+      };
+      const queueOutput = (stream: "stdout" | "stderr", bytes: Buffer) => {
+        if (!onOutput || bytes.length === 0) return;
+        pendingOutput += liveDecoders[stream].decode(bytes, { stream: true });
+        if (pendingOutput.length > SHELL_VISIBLE_OUTPUT_LIMIT) {
+          pendingOutput = visibleOutputTail(pendingOutput);
+          liveOutputTruncated = true;
+        }
+        if (!outputTimer) outputTimer = setTimeout(flushOutput, SHELL_OUTPUT_FLUSH_MS);
+      };
 
       // ── 双计时器 + 强制收尸 ──────────────────────────────
       // settled 保证只 resolve 一次；close/error/强制收尸任何一方先到都安全。
@@ -288,6 +357,15 @@ function executePlan(
         if (settled) return;
         settled = true;
         clearTimers();
+        clearTimeout(outputTimer);
+        if (onOutput) {
+          const corrected = decodeOrderedShellOutput(orderedChunks, stdoutChunks, stderrChunks);
+          publishOutput({
+            action: "replace",
+            text: visibleOutputTail(corrected),
+            ...(captureTruncated || corrected.length > SHELL_VISIBLE_OUTPUT_LIMIT ? { truncated: true } : {}),
+          });
+        }
         if (signal) signal.removeEventListener("abort", onAbort);
         resolve(result);
       };
@@ -353,24 +431,34 @@ function executePlan(
       }
 
       child.stdout?.on("data", (chunk: Buffer) => {
+        if (settled) return;
         resetIdle();
-        if (stdoutBytes >= SHELL_CAPTURE_LIMIT_PER_STREAM) {
+        const remaining = SHELL_CAPTURE_LIMIT_PER_STREAM - stdoutBytes;
+        if (remaining <= 0) {
           captureTruncated = true;
           return;
         }
-        stdoutChunks.push(chunk);
-        stdoutBytes += chunk.length;
-        if (stdoutBytes > SHELL_CAPTURE_LIMIT_PER_STREAM) captureTruncated = true;
+        const accepted = chunk.subarray(0, remaining);
+        stdoutChunks.push(accepted);
+        orderedChunks.push({ stream: "stdout", bytes: accepted });
+        stdoutBytes += accepted.length;
+        if (accepted.length < chunk.length) captureTruncated = true;
+        queueOutput("stdout", accepted);
       });
       child.stderr?.on("data", (chunk: Buffer) => {
+        if (settled) return;
         resetIdle();
-        if (stderrBytes >= SHELL_CAPTURE_LIMIT_PER_STREAM) {
+        const remaining = SHELL_CAPTURE_LIMIT_PER_STREAM - stderrBytes;
+        if (remaining <= 0) {
           captureTruncated = true;
           return;
         }
-        stderrChunks.push(chunk);
-        stderrBytes += chunk.length;
-        if (stderrBytes > SHELL_CAPTURE_LIMIT_PER_STREAM) captureTruncated = true;
+        const accepted = chunk.subarray(0, remaining);
+        stderrChunks.push(accepted);
+        orderedChunks.push({ stream: "stderr", bytes: accepted });
+        stderrBytes += accepted.length;
+        if (accepted.length < chunk.length) captureTruncated = true;
+        queueOutput("stderr", accepted);
       });
       child.on("error", (err) => {
         finish(buildResult(-1, err.message));
@@ -479,7 +567,7 @@ async function executeRunShell(args: Record<string, unknown>, context?: import("
   // full 档位：直接 spawn，不走沙箱（用户已选择完全信任）
   if (level === "full") {
     logger.info(LogTag.BuiltinTools, `[run_shell] full level → direct ${requestedShell} (no sandbox)`);
-    const result = await executePlan({ kind: "direct", command, cwd, requestedShell }, resolvedShell, context?.signal, timeoutPolicy);
+    const result = await executePlan({ kind: "direct", command, cwd, requestedShell }, resolvedShell, context?.signal, timeoutPolicy, context?.onShellOutput);
     logger.info(LogTag.BuiltinTools, `[run_shell] [full] done: exitCode=${result.exitCode} timedOut=${result.timedOut} stdout.len=${result.stdout.length} stderr.len=${result.stderr.length}`);
     // 字段顺序契约：stdout 排最后（command/cwd 等短字段之后），保证下游截断的
     // 尾窗始终覆盖 stdout 末尾——测试/构建命令的汇总行（Test Files/Tests passed）就在那里。
@@ -510,7 +598,7 @@ async function executeRunShell(args: Record<string, unknown>, context?: import("
     });
   }
 
-  const result = await executePlan(plan, resolvedShell, context?.signal, timeoutPolicy);
+  const result = await executePlan(plan, resolvedShell, context?.signal, timeoutPolicy, context?.onShellOutput);
   logger.info(LogTag.BuiltinTools, `[run_shell] [${level}] done: exitCode=${result.exitCode} timedOut=${result.timedOut} stdout.len=${result.stdout.length} stderr.len=${result.stderr.length} sandboxed=${result.ranViaSandbox}`);
   // 字段顺序契约同 full 档位：stdout 置尾，保证尾窗覆盖汇总行
   return JSON.stringify({

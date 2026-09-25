@@ -23,6 +23,22 @@ describe("harness event mapper", () => {
     expect(sent[1]).toMatchObject({ type: "TOOL_CALL_END", runId: "run-1" });
   });
 
+  it("routes a command output chunk to its tool call in the current run", () => {
+    expect(capture({
+      type: "tool_output",
+      toolCallId: "shell-2",
+      action: "append",
+      text: "正在编译\n",
+    } as HarnessEvent)).toEqual([
+      expect.objectContaining({
+        type: "CUSTOM",
+        name: "cyrene.tool_output",
+        runId: "run-1",
+        value: { toolCallId: "shell-2", action: "append", text: "正在编译\n" },
+      }),
+    ]);
+  });
+
   it("maps final answers into one AG-UI text message", () => {
     expect(capture({ type: "final_answer", content: "完成" })).toEqual([
       expect.objectContaining({ type: "TEXT_MESSAGE_START", runId: "run-1" }),

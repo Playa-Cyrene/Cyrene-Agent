@@ -6,7 +6,7 @@
 }
 
 .cy-composer-stack.is-centered {
-  transform: translateY(45px);
+  transform: none;
 }
 
 .cy-composer-stack.is-docked {
@@ -15,11 +15,32 @@
 
 .cy-composer-welcome {
   display: block;
-  width: min(100%, 520px);
+  width: min(100%, 240px, 28vh);
   height: auto;
   align-self: center;
-  margin-bottom: 10px;
+  margin-bottom: 12px;
   object-fit: contain;
+}
+
+.cy-composer-greeting {
+  position: relative;
+  isolation: isolate;
+  align-self: center;
+  box-sizing: border-box;
+  width: 100%;
+  margin: 0 0 32px;
+  padding: 0 16px;
+  text-align: center;
+}
+
+.cy-composer-greeting__text {
+  margin: 0;
+  color: #000;
+  font: 500 28px/1.3 "Noto Sans SC", var(--rb-font-ui, sans-serif);
+  letter-spacing: 0.015em;
+  text-wrap: balance;
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 10%, rgb(0 0 0 / 30%) 100%);
+  mask-image: linear-gradient(to bottom, #000 0%, #000 10%, rgb(0 0 0 / 30%) 100%);
 }
 
 .cy-composer-shell {
@@ -34,7 +55,21 @@
 }
 
 .cy-composer-stack.is-centered .cy-composer-shell {
-  transform: translateY(-15px);
+  transform: none;
+}
+
+@media (max-width: 760px), (max-height: 700px) {
+  .cy-composer-welcome {
+    width: min(100%, 200px, 28vh);
+  }
+
+  .cy-composer-greeting {
+    margin-bottom: 24px;
+  }
+
+  .cy-composer-greeting__text {
+    font-size: 24px;
+  }
 }
 
 .cy-composer.ant-sender {
@@ -495,15 +530,6 @@
   stroke-linejoin: round;
 }
 
-.cy-composer__footer .cy-composer__code-folder-icon,
-.cy-composer__footer .cy-composer__terminal-folder-icon {
-  fill: none;
-  stroke: #333;
-  stroke-width: 4;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
 .cy-composer__footer .cy-composer__obsidian-icon,
 .cy-composer__footer .cy-composer__obsidian-icon path {
   stroke: none;
@@ -537,6 +563,20 @@
 .cy-model-selector__models { min-width: 180px; }
 .cy-model-selector__models button code { font-size: 12.5px; }
 .cy-model-selector__models button[data-current] { background: #fff0f5; font-weight: 600; }
+
+/* 最近项目下拉：工作文件夹按钮的历史项目复选菜单（外观与模型下拉一致） */
+.cy-recent-projects-popover .ant-popover-inner {
+  padding: 6px;
+  border: 1px solid rgba(31, 35, 48, 0.08);
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 12px 32px rgba(29, 29, 31, 0.12);
+}
+.cy-recent-projects__menu { min-width: 260px; max-width: 360px; display: grid; gap: 4px; }
+.cy-recent-projects__item { border: 0; background: transparent; text-align: left; padding: 8px; border-radius: 8px; cursor: pointer; display: grid; gap: 2px; }
+.cy-recent-projects__item:hover { background: #fff0f5; }
+.cy-recent-projects__item small { color: #8d7c83; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cy-recent-projects__item--choose-other { margin-top: 2px; border-top: 1px solid #f0e3e8; border-radius: 0; padding-top: 10px; color: #0d0d0d; font-size: 13px; font-weight: 500; }
 
 /* 聊天功能栏沿用设置页的界面字体与文字对比；消息 Markdown 保持独立排版。 */
 .cy-composer-shell .cy-composer__footer-button,

@@ -19,7 +19,6 @@ import type { WorkspaceListResult, WorkspaceReadResult } from "../shared/workspa
 import type { OpenInAppListResult, OpenInAppOpenResult } from "../shared/open-in-app-types";
 import { getLive2DIpcListenerCounts } from "./live2d-listener-diagnostics";
 import { exposeMusicApi } from "./music";
-import { normalizeChatAppearance, type ChatAppearanceSettings } from "../shared/chat-appearance";
 import type { AppUpdateApi, AppUpdateState } from "../shared/app-update";
 import type { ConversationMode } from "../shared/chat-types";
 import type { SidebarOrganizationDraft, SidebarOrganizationResult, SidebarOrganizationSnapshot } from "../shared/sidebar-organization";
@@ -265,8 +264,8 @@ const callApi = {
     ipcRenderer.on(IPC.CALL_ASR_RESULT, handler);
     return () => ipcRenderer.removeListener(IPC.CALL_ASR_RESULT, handler);
   },
-  onTtsAudio: (callback: (data: { base64: string }) => void) => {
-    const handler = (_event: unknown, data: { base64: string }) => callback(data);
+  onTtsAudio: (callback: (data: { base64: string; text?: string }) => void) => {
+    const handler = (_event: unknown, data: { base64: string; text?: string }) => callback(data);
     ipcRenderer.on(IPC.CALL_TTS_AUDIO, handler);
     return () => ipcRenderer.removeListener(IPC.CALL_TTS_AUDIO, handler);
   },
@@ -318,24 +317,6 @@ const cyreneFontApi = {
 
 contextBridge.exposeInMainWorld("cyreneFont", cyreneFontApi);
 
-const cyreneAppearanceApi = {
-  get: async () => {
-    const settings = await ipcRenderer.invoke(IPC.SETTINGS_GET_GENERAL);
-    return normalizeChatAppearance(settings);
-  },
-  onChanged: (callback: (settings: ChatAppearanceSettings) => void) => {
-    const listener = (_event: Electron.IpcRendererEvent, payload: unknown) => {
-      callback(normalizeChatAppearance(payload));
-    };
-    ipcRenderer.on(IPC.CHAT_TYPOGRAPHY_CHANGED, listener);
-    return () => {
-      ipcRenderer.off(IPC.CHAT_TYPOGRAPHY_CHANGED, listener);
-    };
-  },
-};
-
-contextBridge.exposeInMainWorld("cyreneAppearance", cyreneAppearanceApi);
-
 const settingsApi = {
   getConfig: () => ipcRenderer.invoke(IPC.SETTINGS_GET_CONFIG),
   saveConfig: (config: unknown) => ipcRenderer.invoke(IPC.SETTINGS_SAVE_CONFIG, config),
@@ -343,7 +324,8 @@ const settingsApi = {
   saveModelProfile: (profile: unknown) => ipcRenderer.invoke(IPC.SETTINGS_MODEL_PROFILE_SAVE, profile),
   deleteModelProfile: (id: string) => ipcRenderer.invoke(IPC.SETTINGS_MODEL_PROFILE_DELETE, id),
   setDefaultModelProfile: (id: string) => ipcRenderer.invoke(IPC.SETTINGS_MODEL_PROFILE_SET_DEFAULT, id),
-  testConnection: (config: { provider: string; baseUrl: string; model: string; apiKey: string; explicitTransport?: "openai" | "anthropic"; reasoning?: ReasoningPreference }) => ipcRenderer.invoke(IPC.SETTINGS_TEST_CONNECTION, config),
+  testConnection: (config: { provider: string; baseUrl: string; model: string; apiKey: string; explicitTransport?: "openai" | "anthropic" | "responses"; reasoning?: ReasoningPreference; manualReasoning?: import("../shared/manual-reasoning").ManualReasoningConfig }) => ipcRenderer.invoke(IPC.SETTINGS_TEST_CONNECTION, config),
+  previewReasoning: (config: { provider: string; baseUrl: string; model: string; apiKey: string; explicitTransport?: "openai" | "anthropic" | "responses"; reasoning?: ReasoningPreference; manualReasoning?: import("../shared/manual-reasoning").ManualReasoningConfig }) => ipcRenderer.invoke(IPC.SETTINGS_PREVIEW_REASONING, config),
   testVision: (config: { baseUrl: string; apiKey: string; model: string }) => ipcRenderer.invoke(IPC.SETTINGS_TEST_VISION, config),
   // main → settings：要求切到指定标签（窗口已打开时由 main 发这个事件）
   onSwitchSection: (callback: (section: string) => void) => {
@@ -752,6 +734,8 @@ const chatStoreApi = {
     ipcRenderer.invoke(IPC.CHATS_CLEAR_WORKSPACE, sessionId),
   pickWorkspaceFolder: () =>
     ipcRenderer.invoke(IPC.CHATS_PICK_WORKSPACE_FOLDER),
+  listRecentProjects: () =>
+    ipcRenderer.invoke(IPC.CHATS_RECENT_PROJECTS),
   initLearnWorkspace: (sessionId: string) =>
     ipcRenderer.invoke(IPC.CHATS_INIT_LEARN_WORKSPACE, sessionId),
   onWorkspaceChanged: (callback: (payload: { sessionId: string; binding: unknown }) => void) => {

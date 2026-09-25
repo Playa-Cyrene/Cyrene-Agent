@@ -48,6 +48,27 @@ import {
   createConversationTitleService,
   type ConversationTitleService,
 } from "./conversation-title-service";
+import {
+  loadGeneralSettings,
+  recordRecentProject,
+  saveGeneralSettings,
+  MAX_RECENT_PROJECTS,
+} from "../settings/settings-facade";
+
+/** 冷启动回填：按会话最近更新顺序收集已绑定的工作区，去重后截断并落盘。
+ *  只在 recentProjects 为空时执行一次；之后由 setWorkspace 绑定继续维护列表。 */
+function backfillRecentProjects(): string[] {
+  const projects: string[] = [];
+  for (const session of chatsStore.listSessions()) {
+    if (!session.workspaceRoot || projects.includes(session.workspaceRoot)) continue;
+    projects.push(session.workspaceRoot);
+    if (projects.length >= MAX_RECENT_PROJECTS) break;
+  }
+  if (projects.length > 0) {
+    saveGeneralSettings({ recentProjects: projects });
+  }
+  return projects;
+}
 
 function broadcastChanged(senderWebContents?: WebContents | null): void {
   for (const win of BrowserWindow.getAllWindows()) {
@@ -456,6 +477,8 @@ export function registerChatsIpc(
         };
         const session = chatsStore.setWorkspaceBinding(payload.sessionId, binding);
         if (!session) return { ok: false, error: "session not found" };
+        // 绑定成功即记入最近项目列表，供工作文件夹下拉复选
+        recordRecentProject(resolved);
         console.log("[Workspace] 绑定成功:",
           "sessionId=" + payload.sessionId.slice(0, 8) + "...",
           "workspaceRoot=" + resolved,
@@ -546,6 +569,16 @@ export function registerChatsIpc(
       }
     },
   );
+
+  // 最近绑定的项目文件夹：工作文件夹下拉的候选列表，只返回仍存在的目录
+  ipc.handle(IPC.CHATS_RECENT_PROJECTS, () => {
+    const stored = loadGeneralSettings().recentProjects;
+    const listed = stored.length > 0
+      ? stored
+      // 列表为空说明是升级后的首次使用，用存量会话绑过的工作区回填
+      : backfillRecentProjects();
+    return listed.filter((dir) => fs.existsSync(dir));
+  });
 
   // ── Review 快照：获取指定 Run 的不可变文件变更审查数据 ──
   // 正常终止的 Run 已在 harness-adapter 主动 finalize；

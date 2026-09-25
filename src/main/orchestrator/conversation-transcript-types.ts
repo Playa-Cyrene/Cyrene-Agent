@@ -18,6 +18,7 @@ import type { ToolCallOutcome } from "./harness/types";
 import type { ChatMessage as CanonicalChatMessage } from "./vendors/types";
 import { isContextUsageSnapshot } from "../../shared/context-usage";
 import { normalizeMusicCardData } from "../../shared/music-card";
+import { SHELL_VISIBLE_OUTPUT_LIMIT } from "../../shared/shell-output";
 
 export interface TranscriptEnvelopeBase {
   /** 会话内单调递增序号，快照/重放协议依据。 */
@@ -143,12 +144,14 @@ function isTaskDelegation(value: unknown): boolean {
 }
 
 function isToolExecution(value: unknown): boolean {
-  return isRecord(value) && hasOnlyKeys(value, ["id", "name", "displayName", "status", "result", "argsText", "roundId", "changes", "seq"]) &&
+  return isRecord(value) && hasOnlyKeys(value, ["id", "name", "displayName", "status", "result", "argsText", "roundId", "changes", "seq", "terminalOutput", "terminalOutputTruncated"]) &&
     typeof value.id === "string" && typeof value.name === "string" &&
     ["running", "success", "error"].includes(value.status as string) &&
     optionalField(value, "displayName", (field) => typeof field === "string") &&
     optionalField(value, "result", (field) => typeof field === "string") &&
     optionalField(value, "argsText", (field) => typeof field === "string") &&
+    optionalField(value, "terminalOutput", (field) => typeof field === "string" && field.length <= SHELL_VISIBLE_OUTPUT_LIMIT) &&
+    optionalField(value, "terminalOutputTruncated", (field) => typeof field === "boolean") &&
     optionalField(value, "roundId", (field) => typeof field === "string") &&
     optionalField(value, "changes", (field) => Array.isArray(field) && field.every(isToolFileChange)) &&
     optionalField(value, "seq", (field) => typeof field === "number" && Number.isInteger(field));

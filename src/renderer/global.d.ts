@@ -91,6 +91,7 @@ interface SettingsWindowApi {
     reasoning?: import("../shared/reasoning").ReasoningPreference;
     contextWindowTokens?: number;
     multimodal?: boolean;
+    modelOptions?: Record<string, { contextWindowTokens?: number; multimodal?: boolean }>;
     /** 档案内可切换的模型清单；缺省 = 单模型档案（编辑页按 [model] 展示） */
     models?: string[];
   }>; defaultModelProfileId?: string }>;
@@ -105,6 +106,7 @@ interface SettingsWindowApi {
     reasoning?: import("../shared/reasoning").ReasoningPreference;
     contextWindowTokens?: number;
     multimodal?: boolean;
+    modelOptions?: Record<string, { contextWindowTokens?: number; multimodal?: boolean }>;
     models?: string[];
   }) => Promise<{ added: boolean; profiles: unknown[]; defaultModelProfileId?: string }>;
   deleteModelProfile: (id: string) => Promise<unknown>;
@@ -122,7 +124,17 @@ interface SettingsWindowApi {
     apiKey: string;
     explicitTransport?: import("../shared/api-endpoint").ApiTransport;
     reasoning?: import("../shared/reasoning").ReasoningPreference;
+    manualReasoning?: import("../shared/manual-reasoning").ManualReasoningConfig;
   }) => Promise<{ ok: boolean; latency?: number; sample?: string; error?: string }>;
+  previewReasoning: (config: {
+    provider: string;
+    baseUrl: string;
+    model: string;
+    apiKey: string;
+    explicitTransport?: import("../shared/api-endpoint").ApiTransport;
+    reasoning?: import("../shared/reasoning").ReasoningPreference;
+    manualReasoning?: import("../shared/manual-reasoning").ManualReasoningConfig;
+  }) => Promise<Record<string, unknown>>;
   testVision: (config: { baseUrl: string; apiKey: string; model: string }) => Promise<{ ok: boolean; latency?: number; sample?: string; error?: string }>;
   getTimeoutSettings: () => Promise<import("../shared/timeout-types").TimeoutSettings>;
   saveTimeoutSettings: (config: Partial<import("../shared/timeout-types").TimeoutSettings>) => Promise<import("../shared/timeout-types").TimeoutSettings>;
@@ -145,6 +157,22 @@ declare global {
     tts?: {
       loadSettings: () => Promise<Record<string, unknown>>;
       saveSettings: (patch: Record<string, unknown>) => Promise<unknown>;
+    };
+    call?: {
+      start: () => void;
+      sendAudioFrame: (frame: ArrayBuffer) => void;
+      turnEnd: () => void;
+      ttsDone: () => void;
+      stop: () => void;
+      onState: (callback: (state: string) => void) => () => void;
+      onAsrResult: (callback: (data: { partial?: string; final?: string }) => void) => () => void;
+      onTtsAudio: (callback: (data: { base64: string; text?: string }) => void) => () => void;
+      onError: (callback: (data: { message: string }) => void) => () => void;
+    };
+    live2dSpeech?: {
+      prepare: () => void;
+      startMouth: (durationMs: number) => void;
+      stopMouth: () => void;
     };
     cyreneScheduler?: import("./settings/scheduler/types").SchedulerApi;
   }

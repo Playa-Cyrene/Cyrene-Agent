@@ -32,6 +32,31 @@ function call(id: string, args: Record<string, unknown> = { to: "a@example.com" 
 }
 
 describe("dispatchToolCall truthful execution", () => {
+  it("binds shell output to the invocation ID without changing the tool result", async () => {
+    const events: Array<{ type: string; toolCallId?: string; text?: string }> = [];
+    const shellTool = {
+      ...tool(async (_args, context) => {
+        context?.onShellOutput?.({ action: "append", text: "ready" });
+        return "done";
+      }),
+      id: "run_shell",
+      name: "执行命令",
+    };
+    const result = await dispatchToolCall(
+      { id: "shell-7", name: "run_shell", arguments: '{"command":"echo ready"}' },
+      {
+        state: state(),
+        tools: [shellTool],
+        toolContext: { userQuery: "", runId: "run-1" },
+        onEvent: (event) => events.push(event),
+      },
+    );
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "tool_output", toolCallId: "shell-7", action: "append", text: "ready",
+    }));
+    expect(result.output).toBe("done");
+  });
+
   it("preserves both the head and tail when pruning output above 30000 characters", () => {
     const output = [
       "HEAD_MARKER",

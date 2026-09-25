@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { MessageSquareText } from "lucide-react";
 import { useTranslation } from "../../../i18n";
 import { DownOutlined } from "@ant-design/icons";
 import { Group, Panel, Separator, useDefaultLayout } from "react-resizable-panels";
@@ -181,6 +182,8 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
   const [pendingWorkspaceByMode, setPendingWorkspaceByMode] = useState<
     Partial<Record<ConversationMode, { path: string; displayName?: string }>>
   >({});
+  // 最近绑定的项目文件夹：工作文件夹下拉的候选，打开下拉时再懒加载
+  const [recentProjects, setRecentProjects] = useState<string[]>([]);
   // 欢迎页（无会话）暂存的模型选择：ensureSession 建会话后落地（与 pendingWorkspaceByMode 同构）。
   const [pendingModelProfileByMode, setPendingModelProfileByMode] = useState<
     Partial<Record<ConversationMode, string>>
@@ -435,6 +438,8 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
   const queueFlow = queueFlowRef.current;
   const sessions = sessionsByMode[mode] ?? EMPTY_SESSIONS;
   const [activeSession, setActiveSession] = useState<ChatSession | null>(null);
+  const activeSessionTitle = sessions.find((session) => session.id === activeSessionId)?.title
+    ?? (activeSession && activeSession.id === activeSessionId ? activeSession.title : "");
   // 对话级模型切换的竞态防护两件套（barrier + operation token，阶段③）：
   // 惰性创建一次，闭包捕获的 chatStore/setActiveSession 引用均稳定
   const modelSwitcherRef = useRef<SessionModelSwitcher | null>(null);
@@ -1102,19 +1107,31 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
     }
   }
 
-  async function chooseWorkspace() {
-    const targetMode = mode;
+  // 把选定的工作区落到当前模式：有会话立即绑定，无会话暂存到首条消息一起绑定。
+  // 系统文件夹选择框与"最近项目"下拉共用这条落地路径。
+  async function applyWorkspaceSelection(
+    targetMode: ConversationMode,
+    workspace: { path: string; displayName: string },
+  ) {
     if (targetMode === "chat") return;
     const store = chatStore();
     if (!store) return;
-    const picked = await store.pickWorkspaceFolder();
-    if (!picked.ok || !picked.path) return;
 
-    const workspace = { path: picked.path, displayName: picked.displayName ?? t("chatPage.defaultWorkspaceName") };
     setWorkspaceNames((current) => ({ ...current, [targetMode]: workspace.displayName }));
 
     const activeId = activeSessionIdsRef.current[targetMode];
-    if (activeId) {
+    // 引用可能已过期（例如会话已在侧边栏被删除），绑定前先确认存在；
+    // 已不存在就清掉残留引用，按"无会话"走暂存路径，避免报"session not found"。
+    const activeSession = activeId ? await store.get(activeId) : null;
+    if (activeId && !activeSession) {
+      setActiveSessionIds((current) => {
+        const next = { ...current };
+        delete next[targetMode];
+        activeSessionIdsRef.current = next;
+        return next;
+      });
+    }
+    if (activeSession && activeId) {
       const result = await store.setWorkspace(activeId, workspace.path);
       if (!result.ok) {
         // 长操作失败：错误详情需阅读，用单按钮错误弹窗
@@ -1141,6 +1158,44 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
       // 还没有发送第一条消息、未创建 session，先暂存工作区，发消息时一起绑定。
       setPendingWorkspaceByMode((current) => ({ ...current, [targetMode]: workspace }));
     }
+  }
+
+  async function chooseWorkspace() {
+    const targetMode = mode;
+    if (targetMode === "chat") return;
+    const store = chatStore();
+    if (!store) return;
+    const picked = await store.pickWorkspaceFolder();
+    if (!picked.ok || !picked.path) return;
+    await applyWorkspaceSelection(targetMode, {
+      path: picked.path,
+      displayName: picked.displayName ?? t("chatPage.defaultWorkspaceName"),
+    });
+  }
+
+  // 打开工作文件夹下拉时刷新最近项目列表
+  const loadRecentProjects = useCallback(async () => {
+    const store = chatStore();
+    if (!store) return;
+    try {
+      setRecentProjects(await store.listRecentProjects());
+    } catch {
+      // 读不到就维持现有列表，不影响选择流程
+    }
+  }, []);
+
+  // 进入可绑定工作区的模式时预取最近项目：
+  // 列表为空时按钮不渲染下拉，下拉懒加载永远不会被触发，
+  // 必须主动拉一次让主进程完成"存量会话回填"，按钮才有内容可展示。
+  useEffect(() => {
+    if (mode === "chat") return;
+    void loadRecentProjects();
+  }, [mode, loadRecentProjects]);
+
+  // 从"最近项目"下拉直接选定历史项目，跳过系统文件夹选择框
+  async function selectRecentProject(projectPath: string) {
+    const folderName = projectPath.split(/[\\/]/).filter(Boolean).pop() ?? projectPath;
+    await applyWorkspaceSelection(mode, { path: projectPath, displayName: folderName });
   }
 
   async function createNewTask() {
@@ -1590,7 +1645,7 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
   }, [onOpenSettings]);
 
   return (
-    <div ref={pageRef} className="cy-page">
+    <div ref={pageRef} className="cy-page cy-page--chat">
       <ChatPageNavigation
         activePanel={activePanel}
         mode={mode}
@@ -1631,6 +1686,16 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
         onDrop={dragHandlers.onDrop}
       >
         <FileDropOverlay visible={isDraggingFiles} />
+        <header className="cy-workspace-titlebar">
+          {activeSessionTitle && (
+            <>
+              <MessageSquareText className="cy-workspace-titlebar__icon" size={16} strokeWidth={1.8} aria-hidden="true" />
+              <span className="cy-workspace-titlebar__title" title={activeSessionTitle}>
+                {activeSessionTitle}
+              </span>
+            </>
+          )}
+        </header>
         {/* 白色工作区右上角：打开菜单 + 分割线 + 右侧面板展开/收起开关（左上角 SidebarToggle 的镜像同款动画）。
             仅在会话对话视图显示：产生过消息、且当前不在工具/技能/动态等面板页时才挂载 */}
         {(hasMessages && !activePanel && (activeSession?.workspaceBinding || inspectorTabIds.length > 0)) && (
@@ -1745,6 +1810,9 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
               ? queueFlow.adjustMessage(activeSessionId, id)
               : Promise.resolve(false)}
             onChooseWorkspace={() => void chooseWorkspace()}
+            recentProjects={recentProjects}
+            onOpenRecentProjects={() => void loadRecentProjects()}
+            onSelectRecentProject={(projectPath) => void selectRecentProject(projectPath)}
             onChooseFiles={(files) => void chooseFiles(files)}
             onRemoveAttachment={removeAttachment}
             onScreenshot={() => void handleScreenshot()}

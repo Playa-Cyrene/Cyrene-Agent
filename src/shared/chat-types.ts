@@ -40,6 +40,9 @@ export interface ToolExecutionRecord {
   displayName?: string;
   status: "running" | "success" | "error";
   result?: string;
+  /** 运行中收到、并随聊天记录保存的命令输出尾窗。 */
+  terminalOutput?: string;
+  terminalOutputTruncated?: boolean;
   argsText?: string;
   roundId?: string;
   /** 结构化文件变更证据（Diff Review 卡片）；由 tool_end 事件独立携带，不依赖被截断的 result 文本。 */

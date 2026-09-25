@@ -32,3 +32,16 @@ describe("ChatPage 轨迹回退派发（CTA Phase 1）", () => {
     expect(runControllerSource).not.toMatch(/run\(\{[\s\S]*messages:/);
   });
 });
+
+describe("ChatPage 对话级模型切换接线", () => {
+  it("发送入口先等待模型切换屏障，保证切完立刻发送读到的是新模型", () => {
+    // sendMessage 第一件事即 await barrier()：不等任何 UI 反馈也要保证因果序
+    expect(chatPageSource).toMatch(/async function sendMessage\(content: string\) \{[\s\S]{0,300}?await modelSwitcher\.barrier\(\);/);
+  });
+
+  it("切模型与切档案走同一 operation token 切换器，不各自直连 IPC", () => {
+    expect(chatPageSource).toContain("createSessionModelSwitcher");
+    expect(chatPageSource).toMatch(/onSelectSessionModel=\{\(model\) => \{[\s\S]{0,300}?modelSwitcher\.switchModel\(/);
+    expect(chatPageSource).toMatch(/onSelectModelProfile=\{\(modelProfileId\) => \{[\s\S]{0,400}?modelSwitcher\.switchProfile\(/);
+  });
+});

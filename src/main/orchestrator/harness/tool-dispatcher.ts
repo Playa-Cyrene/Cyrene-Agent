@@ -172,7 +172,17 @@ export async function dispatchToolCall(
     : args.url !== undefined ? [String(args.url)]
     : [];
 
-  const run = async (): Promise<ToolExecutionOutcome> => executeToolDefinition(tool, args, ctx.toolContext);
+  const shellContext = call.name === "run_shell" && ctx.onEvent
+    ? {
+        ...ctx.toolContext,
+        userQuery: ctx.toolContext?.userQuery ?? "",
+        onShellOutput: (update: import("../tools/registry/tool-context").ShellOutputUpdate) => {
+          try { ctx.toolContext?.onShellOutput?.(update); } catch { /* 观察者不能中断命令 */ }
+          try { ctx.onEvent?.({ type: "tool_output", toolCallId: call.id, ...update }); } catch { /* UI 事件不能中断命令 */ }
+        },
+      }
+    : ctx.toolContext;
+  const run = async (): Promise<ToolExecutionOutcome> => executeToolDefinition(tool, args, shellContext);
   if (ctx.executionLedger) {
     const ledgerResult = await ctx.executionLedger.execute(
       { logicalInvocationId: `${ctx.toolContext?.runId ?? "unknown"}:${call.id}`, capability: tool.id, targetRefs, args },

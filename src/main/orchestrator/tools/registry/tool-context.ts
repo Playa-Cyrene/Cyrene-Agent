@@ -5,8 +5,11 @@
 import type { ChatMessage } from "../../vendors";
 import { ContextRefRegistry } from "../../context-ref-registry";
 import type { ConversationMode } from "../../../../shared/chat-types";
+import type { ShellOutputUpdate } from "../../../../shared/shell-output";
 
 export const contextRefRegistry = new ContextRefRegistry();
+
+export type { ShellOutputUpdate } from "../../../../shared/shell-output";
 
 /** 工具上下文。userQuery 是当前唯一稳定字段；metadata 留未来扩展（PDF/音频等），现在不填。 */
 export interface ToolContext {
@@ -39,6 +42,8 @@ export interface ToolContext {
   allowedSkillIds?: ReadonlySet<string>;
   /** 本轮工具执行权限策略；allow_all 仅用于用户显式开启的无审批渠道。 */
   permissionMode?: "normal" | "allow_all";
+  /** 仅供前台 run_shell 观察输出；异常不得影响命令执行。 */
+  onShellOutput?: (update: ShellOutputUpdate) => void;
   /** 未来扩展兜底；当前为空对象，不预设字段。遵循"地基通用，上层克制"。 */
   metadata?: Record<string, unknown>;
 }
