@@ -16,7 +16,7 @@ import tailwindcss from "@tailwindcss/vite";
  */
 function appVersionPlugin(): Plugin {
   const pkg = JSON.parse(
-    readFileSync(resolve(__dirname, "package.json"), "utf8"),
+    readFileSync(resolve(import.meta.dirname, "package.json"), "utf8"),
   ) as { version: string };
   const versionText = `昔涟 v${pkg.version}`;
   return {
@@ -97,7 +97,7 @@ const perfOutDir = process.env.CYRENE_PERF_OUT_DIR;
 
 export default defineConfig({
   plugins: [react(), appVersionPlugin(), reactRendererCspPlugin(), tailwindcss()],
-  root: resolve(__dirname, "src/renderer"),
+  root: resolve(import.meta.dirname, "src/renderer"),
   base: "./",
   ...(isPerfProfileBuild
     ? {
@@ -107,21 +107,20 @@ export default defineConfig({
       }
     : {}),
   build: {
-    outDir: perfOutDir ? resolve(__dirname, perfOutDir) : resolve(__dirname, "dist/renderer"),
+    outDir: perfOutDir ? resolve(import.meta.dirname, perfOutDir) : resolve(import.meta.dirname, "dist/renderer"),
     emptyOutDir: true,
     rolldownOptions: {
       input: isPerfHarnessBuild
         ? {
-            "chat-perf": resolve(__dirname, "src/renderer/react-perf/index.html"),
+            "chat-perf": resolve(import.meta.dirname, "src/renderer/react-perf/index.html"),
           }
         : {
-            renderer: resolve(__dirname, "src/renderer/index.html"),
-            sidebar: resolve(__dirname, "src/renderer/sidebar/index.html"),
-            stickers: resolve(__dirname, "src/renderer/sticker-manager/index.html"),
-            call: resolve(__dirname, "src/renderer/call/index.html"),
-            "chat-react": resolve(__dirname, "src/renderer/react/index.html"),
-            music: resolve(__dirname, "src/renderer/music/index.html"),
-            toast: resolve(__dirname, "src/renderer/toast/index.html"),
+            renderer: resolve(import.meta.dirname, "src/renderer/index.html"),
+            stickers: resolve(import.meta.dirname, "src/renderer/sticker-manager/index.html"),
+            "call-react": resolve(import.meta.dirname, "src/renderer/call-react/index.html"),
+            "chat-react": resolve(import.meta.dirname, "src/renderer/react/index.html"),
+            music: resolve(import.meta.dirname, "src/renderer/music/index.html"),
+            toast: resolve(import.meta.dirname, "src/renderer/toast/index.html"),
           },
     },
   },

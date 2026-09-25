@@ -252,9 +252,9 @@ export function createCallWindow(): void {
   setCallWindowLocal(window);
 
   if (isDev) {
-    window.loadURL("http://localhost:5173/call/");
+    window.loadURL("http://localhost:5173/call-react/");
   } else {
-    window.loadFile(path.join(app.getAppPath(), "dist", "renderer", "call", "index.html"));
+    window.loadFile(path.join(app.getAppPath(), "dist", "renderer", "call-react", "index.html"));
   }
 
   window.once("ready-to-show", () => {

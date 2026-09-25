@@ -46,7 +46,12 @@ describe("legacy screenshot overlay removal", () => {
   });
 
   it("does not build a screenshot renderer page", () => {
-    const viteSource = fs.readFileSync(path.join(repoRoot, "vite.config.ts"), "utf8");
+    // vite 配置已改为 ESM（vite.config.mts）；找不到时视为未配置，不应构建截图页
+    const viteConfigPath = ["vite.config.mts", "vite.config.ts"]
+      .map((name) => path.join(repoRoot, name))
+      .find((p) => fs.existsSync(p));
+    expect(viteConfigPath, "vite.config.mts / vite.config.ts 均不存在").toBeDefined();
+    const viteSource = fs.readFileSync(viteConfigPath!, "utf8");
     expect(viteSource).not.toMatch(/\bscreenshot\s*:/);
     expect(viteSource).not.toContain("src/renderer/screenshot");
   });

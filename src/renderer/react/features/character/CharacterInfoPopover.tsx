@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Phone, Settings2 } from "lucide-react";
+import { Eye, Phone, Settings2 } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { Popover } from "radix-ui";
 import { getCharacterAvatar } from "../../character-avatars";
 import { CharacterStatusPill } from "../../components/ui/CharacterStatusPill";
 import { useTranslation } from "../../i18n";
+import { VoiceCallPreviewDialog } from "./VoiceCallPreviewDialog";
 import {
   characterBridge,
   DEFAULT_RUNTIME_STATE,
@@ -93,6 +94,10 @@ export function CharacterInfoPopover() {
 
   const [open, setOpen] = useState(false);
   const [pinned, setPinned] = useState(false);
+  // 测试环境（react-dom/server）没有 window，先判存在再读 URL 参数
+  const [previewOpen, setPreviewOpen] = useState(
+    () => typeof window !== "undefined" && new URLSearchParams(window.location.search).get("voiceCallPreview") === "1",
+  );
   // 标记本次关闭请求源自触发器本身（点击 / 键盘激活），用于区分「钉住」与「真的关闭」
   const triggerClickRef = useRef(false);
   const hoverOpenTimer = useRef<number | null>(null);
@@ -168,11 +173,19 @@ export function CharacterInfoPopover() {
     setPinned(false);
   }, [clearTimers]);
 
+  const handlePreviewCall = useCallback(() => {
+    clearTimers();
+    setOpen(false);
+    setPinned(false);
+    setPreviewOpen(true);
+  }, [clearTimers]);
+
   const syncEnabled = isRuntimeSyncEnabled(config);
   const syncHint = t("character.syncDisabled");
   const avatarPath = getCharacterAvatar(CHARACTER_NAME) ?? "";
 
   return (
+    <>
     <Popover.Root open={open} onOpenChange={handleOpenChange}>
       <Popover.Trigger
         asChild
@@ -242,11 +255,17 @@ export function CharacterInfoPopover() {
                   <Phone size={15} strokeWidth={2} aria-hidden="true" />
                   {t("character.call")}
                 </button>
+                <button type="button" className="cy-character-card__preview" onClick={handlePreviewCall}>
+                  <Eye size={14} strokeWidth={1.8} aria-hidden="true" />
+                  {t("character.previewCall")}
+                </button>
               </motion.div>
             </Popover.Content>
           </Popover.Portal>
         )}
       </AnimatePresence>
     </Popover.Root>
+    <VoiceCallPreviewDialog open={previewOpen} onOpenChange={setPreviewOpen} />
+    </>
   );
 }

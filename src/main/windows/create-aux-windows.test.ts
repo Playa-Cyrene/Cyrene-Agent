@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   browserWindowOptions: [] as Array<Record<string, unknown>>,
+  loadedFiles: [] as string[],
+  loadedUrls: [] as string[],
   restoredBounds: { x: 0, y: 0, width: 1200, height: 800 },
   maximized: false,
   readyToShow: null as (() => void) | null,
@@ -19,8 +21,8 @@ vi.mock("electron", () => ({
     getBounds = vi.fn(() => mocks.restoredBounds);
     isMaximized = vi.fn(() => mocks.maximized);
     setBounds = mocks.setBounds;
-    loadFile = vi.fn();
-    loadURL = vi.fn();
+    loadFile = vi.fn((file: string) => mocks.loadedFiles.push(file));
+    loadURL = vi.fn((url: string) => mocks.loadedUrls.push(url));
     constructor(options: Record<string, unknown>) {
       mocks.browserWindowOptions.push(options);
     }
@@ -51,7 +53,7 @@ vi.mock("./window-state", () => ({
   stickerManagerWindow: null,
 }));
 
-import { createReactChatWindowShell, persistedWindowState } from "./create-aux-windows";
+import { createCallWindow, createReactChatWindowShell, persistedWindowState } from "./create-aux-windows";
 
 function lastBrowserWindowOptions() {
   const options = mocks.browserWindowOptions.at(-1);
@@ -76,6 +78,20 @@ describe("persistedWindowState", () => {
       name: "cyrene.workspace",
       windowStatePersistence: { bounds: true, displayMode: true },
     });
+  });
+});
+
+describe("React call window", () => {
+  beforeEach(() => {
+    mocks.loadedFiles.length = 0;
+    mocks.loadedUrls.length = 0;
+  });
+
+  it("loads the new React call renderer into the existing dedicated call window", () => {
+    createCallWindow();
+
+    expect(mocks.loadedFiles.at(-1)?.replaceAll("\\", "/")).toContain("dist/renderer/call-react/index.html");
+    expect(lastBrowserWindowOptions()).toMatchObject({ width: 420, height: 800, frame: false });
   });
 });
 
