@@ -50,7 +50,7 @@ win:
 nsis:
   artifactName: Cyrene-Setup-${version}.${ext}
   oneClick: false
-  differentialPackage: false
+  differentialPackage: true
   allowToChangeInstallationDirectory: true
   # Shortcut creation is controlled by the assisted install page below.
   createDesktopShortcut: false
