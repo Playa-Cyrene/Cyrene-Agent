@@ -401,6 +401,21 @@
   object-fit: contain;
 }
 
+/* 插件市场入口按钮：图标后跟文字标签，宽度自适应（其余图标按钮仍为 34px 方块） */
+.plugin-panel__icon-button.plugin-panel__market-toggle {
+  width: auto;
+  gap: 6px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+/* 带文字后图标略缩，避免头重脚轻 */
+.plugin-panel__market-toggle .plugin-panel__market-icon {
+  width: 16px;
+  height: 16px;
+}
+
 /* 市场卡片元信息分隔符与下载量强调色 */
 .plugin-card-ui__meta-sep {
   color: var(--rb-text-secondary, #6e6e73);

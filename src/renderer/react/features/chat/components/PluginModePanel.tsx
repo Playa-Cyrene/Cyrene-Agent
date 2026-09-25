@@ -10,6 +10,7 @@ import type {
 } from "../../../../../shared/plugin-management";
 import { isNewerVersion } from "../../../../../shared/version";
 import { useTranslation } from "../../../i18n";
+import { Card } from "../../../components/ui/Card";
 import { useFeedback } from "../../../components/feedback/FeedbackProvider";
 import pluginIconUrl from "../../../assets/plugin.png?url";
 import "./PluginModePanel.css";
@@ -304,13 +305,14 @@ export function PluginModePanel({ api: providedApi }: PluginModePanelProps) {
         <div className="plugin-panel__header-actions">
           <button
             type="button"
-            className={`plugin-panel__icon-button${inMarket ? " is-accent" : ""}`}
+            className={`plugin-panel__icon-button plugin-panel__market-toggle${inMarket ? " is-accent" : ""}`}
             onClick={() => setView(inMarket ? "installed" : "market")}
             disabled={!api}
             aria-label={marketToggleLabel}
             title={marketToggleLabel}
           >
             <img className="plugin-panel__market-icon" src={pluginIconUrl} alt="" />
+            <span className="plugin-panel__market-toggle-label">{marketToggleLabel}</span>
           </button>
           <button
             type="button"
@@ -420,7 +422,7 @@ export function PluginModePanel({ api: providedApi }: PluginModePanelProps) {
                     break;
                 }
                 return (
-                  <article className="plugin-card-ui" key={entry.id}>
+                  <Card as="article" className="plugin-card-ui" key={entry.id}>
                     <div className="plugin-card-ui__main">
                       <span className="plugin-card-ui__icon" aria-hidden="true">
                         <img src={pluginIconUrl} alt="" />
@@ -452,7 +454,7 @@ export function PluginModePanel({ api: providedApi }: PluginModePanelProps) {
                         {installingThis ? ` ${t("pluginPanel.market.installing")}` : label}
                       </button>
                     </div>
-                  </article>
+                  </Card>
                 );
               })}
             </div>
@@ -486,7 +488,7 @@ export function PluginModePanel({ api: providedApi }: PluginModePanelProps) {
                     ? t("pluginPanel.disable")
                     : t("pluginPanel.enable");
                 return (
-                  <article className={`plugin-card-ui is-${plugin.status}`} key={plugin.id}>
+                  <Card as="article" className={`plugin-card-ui is-${plugin.status}`} key={plugin.id}>
                     <div className="plugin-card-ui__main">
                       <span className="plugin-card-ui__icon" aria-hidden="true">
                         {plugin.icon
@@ -538,7 +540,7 @@ export function PluginModePanel({ api: providedApi }: PluginModePanelProps) {
                         {t("pluginPanel.delete")}
                       </button>
                     </div>
-                  </article>
+                  </Card>
                 );
               })}
               {overview.plugins.length > 0 && visiblePlugins.length === 0 && (
