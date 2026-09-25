@@ -18,7 +18,7 @@
   border: none;
   background: transparent;
   border-radius: 6px 0 0 6px;
-  color: var(--cy-text-muted);
+  color: var(--rb-text-secondary);
   cursor: pointer;
   transition: background 0.15s, color 0.15s, opacity 0.15s;
 }
@@ -32,7 +32,7 @@
   border: none;
   background: transparent;
   border-radius: 0 6px 6px 0;
-  color: var(--cy-text-muted);
+  color: var(--rb-text-secondary);
   cursor: pointer;
   transition: background 0.15s, color 0.15s;
 }
@@ -47,13 +47,13 @@
 
 .cy-open-workspace__main:hover,
 .cy-open-workspace__chevron:hover {
-  background: var(--cy-bg-hover);
-  color: var(--cy-text);
+  background: var(--rb-surface-hover);
+  color: var(--rb-text-primary);
 }
 
 .cy-open-workspace__main:active,
 .cy-open-workspace__chevron:active {
-  background: var(--cy-bg-active);
+  background: var(--rb-surface-active);
 }
 
 /* 两半之间的接缝细线，悬停任一侧时显现 */
@@ -62,7 +62,7 @@
 }
 
 .cy-open-workspace:hover .cy-open-workspace__main {
-  box-shadow: inset -1px 0 0 var(--cy-border, #f0ebee);
+  box-shadow: inset -1px 0 0 var(--rb-border-default, #f0ebee);
 }
 
 /* ── 点击状态 ── */
@@ -75,7 +75,7 @@
 
 /* 启动失败：红态 2 秒后自动衰减回 idle */
 .cy-open-workspace[data-phase="error"] .cy-open-workspace__main {
-  color: var(--cy-danger, #e5484d);
+  color: var(--rb-danger, #e5484d);
 }
 
 /* ── 下拉菜单 ── */
@@ -88,8 +88,8 @@
   padding: 4px;
   display: flex;
   flex-direction: column;
-  background: var(--cy-bg, #fff);
-  border: 1px solid var(--cy-border, #f0ebee);
+  background: var(--rb-surface-elevated, #fff);
+  border: 1px solid var(--rb-border-default, #f0ebee);
   border-radius: 8px;
   box-shadow: 0 6px 20px rgb(0 0 0 / 10%);
   z-index: 40;
@@ -103,18 +103,18 @@
   border: none;
   border-radius: 6px;
   background: transparent;
-  color: var(--cy-text);
+  color: var(--rb-text-primary);
   font: 500 12px/1.3 var(--rb-font-sans, sans-serif);
   cursor: pointer;
   transition: background 0.12s;
 }
 
 .cy-open-workspace__item:hover {
-  background: var(--cy-bg-hover);
+  background: var(--rb-surface-hover);
 }
 
 .cy-open-workspace__item.is-selected {
-  color: var(--cy-accent, rgb(255 91 138));
+  color: var(--rb-accent, rgb(255 91 138));
 }
 
 /* 菜单项名称占据剩余宽度，勾选标记贴右 */
@@ -136,6 +136,6 @@
 /* 提示行（检测中）：弱化展示，不可点击 */
 .cy-open-workspace__hint {
   padding: 7px 10px;
-  color: var(--cy-text-muted);
+  color: var(--rb-text-secondary);
   font: 500 11px/1.3 var(--rb-font-sans, sans-serif);
 }

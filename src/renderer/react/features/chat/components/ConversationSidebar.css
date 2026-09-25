@@ -6,7 +6,7 @@
   overflow: hidden;
   position: relative;
   z-index: 1;
-  color: var(--cy-text);
+  color: var(--rb-text-primary);
   font-family: var(--rb-font-sans, sans-serif);
 }
 
@@ -159,7 +159,7 @@
 
 .cy-conversation-sidebar__empty {
   padding: 8px;
-  color: var(--cy-text-muted);
+  color: var(--rb-text-secondary);
   font: 400 11px/1.45 var(--rb-font-sans, sans-serif);
 }
 
@@ -198,7 +198,7 @@
 
 .cy-conversation-list .ant-conversations-item-active {
   background: #fff;
-  color: var(--cy-text);
+  color: var(--rb-text-primary);
   box-shadow: 0 1px 5px rgb(46 38 41 / 7%);
 }
 
@@ -272,7 +272,7 @@
 
 .cy-session-label__pin {
   flex: none;
-  color: var(--cy-accent, #ff5b8a);
+  color: var(--rb-accent, #ff5b8a);
   font-size: 10px;
   opacity: 0.85;
 }
@@ -307,7 +307,7 @@
 }
 
 .cy-project-card {
-  color: var(--cy-text, #292528);
+  color: var(--rb-text-primary, #292528);
   font-family: var(--rb-font-sans, sans-serif);
 }
 
@@ -374,7 +374,7 @@
 
 .cy-project-card__open:hover {
   background: #fff6f8;
-  color: var(--cy-accent, #ff5b8a);
+  color: var(--rb-accent, #ff5b8a);
 }
 
 .cy-project-card__open:disabled {
@@ -385,10 +385,10 @@
 .cy-session-rename-input {
   width: 100%;
   padding: 1px 6px;
-  border: 1px solid var(--cy-accent, #ff5b8a);
+  border: 1px solid var(--rb-accent, #ff5b8a);
   border-radius: 6px;
   background: #fff;
-  color: var(--cy-text);
+  color: var(--rb-text-primary);
   font: 500 11px/1.25 var(--rb-font-sans, sans-serif);
 }
 
@@ -417,13 +417,13 @@
   line-height: 32px;
   margin: 0;
   border-radius: 6px;
-  color: var(--cy-text, #292528);
+  color: var(--rb-text-primary, #292528);
   font: 500 12px/32px var(--rb-font-sans, sans-serif);
 }
 
 .cy-session-context-menu .ant-menu-item:hover {
   background: #fff6f8;
-  color: var(--cy-accent, #ff5b8a);
+  color: var(--rb-accent, #ff5b8a);
 }
 
 .cy-session-context-menu .ant-menu-item-danger {

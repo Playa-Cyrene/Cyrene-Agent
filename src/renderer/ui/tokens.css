@@ -39,6 +39,27 @@
   --rb-border-strong: rgba(236, 72, 153, 0.40);
   --rb-border-grid:   rgba(157, 127, 234, 0.12);
 
+  /* Semantic roles shared by shell and React components. */
+  --rb-surface-page: var(--rb-bg-0);
+  --rb-surface-workspace: var(--rb-bg-1);
+  --rb-surface-elevated: var(--rb-bg-elevated);
+  --rb-surface-hover: var(--rb-bg-2);
+  --rb-surface-active: var(--rb-bg-3);
+  --rb-surface-soft: var(--rb-surface-hover);
+  --rb-text-primary: var(--rb-text-strong);
+  --rb-text-secondary: var(--rb-text-muted);
+  --rb-text-disabled: var(--rb-text-faint);
+  --rb-text-on-accent: var(--rb-text-on-pink);
+  --rb-border-default: var(--rb-border-soft);
+  --rb-border-subtle: var(--rb-border-faint);
+  --rb-border-focus: var(--rb-pink-400);
+  --rb-accent: var(--rb-pink-500);
+  --rb-accent-hover: var(--rb-pink-600);
+  --rb-danger: #fb7185;
+  --rb-success: #34d399;
+  --rb-warning: #fbbf24;
+  --rb-info: var(--rb-cyan-400);
+
   /* ===== Gradient ===== */
   --rb-grad-pink: linear-gradient(135deg, #ec4899 0%, #9f7aea 100%);
   --rb-grad-pink-hot: linear-gradient(135deg, #ff6ec7 0%, #ec4899 50%, #9f7aea 100%);
@@ -105,6 +126,11 @@
   --rb-shadow-elevated:0 12px 40px rgba(0, 0, 0, 0.55),
                        0 0 0 1px rgba(236, 72, 153, 0.10);
   --rb-shadow-pink:    0 8px 32px rgba(236, 72, 153, 0.35);
+  --rb-shadow-workspace: var(--rb-shadow-card);
+  --rb-shadow-bubble-neutral: var(--rb-shadow-elevated);
+  --rb-shadow-bubble-accent: var(--rb-shadow-pink);
+  --rb-shadow-control-hover: var(--rb-shadow-elevated);
+  --rb-shadow-control-focus: 0 0 0 3px color-mix(in srgb, var(--rb-accent) 20%, transparent), var(--rb-shadow-elevated);
 
   /* ===== Light-mode primitives (neutral defaults; pearl-white overrides these) ===== */
   --rb-card-bg:        transparent;

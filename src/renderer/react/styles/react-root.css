@@ -1,32 +1,8 @@
-/* ===== 设计变量 ===== */
+/* 组件专属胶囊配色；通用界面角色变量来自 ui/themes/pearl-white.css。 */
 :root {
-  /* 背景 */
-  --cy-bg-page: #ECECEE;
-  --cy-bg-workspace: #FFFFFF;
-  --cy-bg-hover: #fff1f6;
-  --cy-bg-active: #fde0ed;
-
-  /* 边框 */
-  --cy-border: rgba(0, 0, 0, 0.08);
-  
-  /* 文字 */
-  --cy-text: #1d1d1f;
-  --cy-text-muted: #8e8e93;
-  
-  /* 强调色 */
-  --cy-accent: #FF5B8A;
-  
-  /* 胶囊组件 */
   --cy-pill-bg: #fff9fb;
   --cy-pill-border: #ff9fbd;
   --cy-pill-status: #7d3557;
-
-  /* 投影 */
-  --cy-shadow-workspace: inset 0 2px 8px rgba(31, 35, 48, 0.04), inset 0 0 2px rgba(31, 35, 48, 0.03);
-  --cy-shadow-bubble-neutral: 2px 2px 3px rgba(31, 35, 48, 0.06), 3px 5px 16px rgba(31, 35, 48, 0.055);
-  --cy-shadow-bubble-accent: 2px 2px 4px rgba(255, 91, 138, 0.12), 3px 7px 16px rgba(255, 91, 138, 0.16);
-  --cy-shadow-control-hover: 2px 2px 5px rgba(31, 35, 48, 0.075), 3px 8px 18px rgba(31, 35, 48, 0.065);
-  --cy-shadow-control-focus: 0 0 0 3px rgba(255, 91, 138, 0.10), 2px 6px 16px rgba(31, 35, 48, 0.08);
 }
 
 html, body {
@@ -46,14 +22,14 @@ html, body {
 .cy-page {
   height: 100vh;
   width: 100vw;
-  background: var(--cy-bg-page);
+  background: var(--rb-surface-page);
   box-sizing: border-box;
   padding: 50px 10px 10px 262px;
   position: relative;
   display: flex;
   gap: 10px;
   /* 不给 padding 加过渡：layout 属性动画每帧强制整窗 reflow，连点侧栏开关时主线程饱和、鼠标事件排队 */
-  border: 1px solid var(--cy-border);
+  border: 1px solid var(--rb-border-default);
   border-radius: var(--cy-window-radius, 24px);
   overflow: hidden;
   user-select: none;
@@ -99,10 +75,10 @@ html, body {
   inset: 10px;
   display: grid;
   place-items: center;
-  border: 2px dashed var(--cy-accent);
+  border: 2px dashed var(--rb-accent);
   border-radius: max(8px, calc(var(--cy-window-radius, 12px) - 2px));
   background: rgb(255 255 255 / 88%);
-  color: var(--cy-accent);
+  color: var(--rb-accent);
   font: 600 15px/1.4 var(--rb-font-sans, sans-serif);
   pointer-events: none;
   backdrop-filter: blur(3px);
@@ -217,7 +193,7 @@ html, body {
   width: 1px;
   height: 16px;
   flex-shrink: 0;
-  background: var(--cy-border, #f0ebee);
+  background: var(--rb-border-default, #f0ebee);
 }
 
 /* 全局文字选中：用应用粉色强调色替代浏览器默认蓝 */
@@ -267,7 +243,7 @@ html, body {
 
 .cy-dock-separator:hover::after,
 .cy-dock-separator:active::after {
-  background: var(--cy-accent, #ff5b8a);
+  background: var(--rb-accent, #ff5b8a);
 }
 
 .cy-page-newtask {
@@ -298,10 +274,10 @@ html, body {
 .cy-workspace {
   width: 100%;
   height: 100%;
-  background: var(--cy-bg-workspace);
+  background: var(--rb-surface-workspace);
   border-radius: 10px;
-  border: 1px solid var(--cy-border);
-  box-shadow: var(--cy-shadow-workspace);
+  border: 1px solid var(--rb-border-default);
+  box-shadow: var(--rb-shadow-workspace);
   position: relative;
   display: flex;
   min-height: 0;
@@ -321,21 +297,21 @@ html, body {
   height: 48px;
   gap: 8px;
   padding: 0 24px;
-  border-bottom: 1px solid var(--cy-border);
-  background: var(--cy-bg-workspace);
+  border-bottom: 1px solid var(--rb-border-default);
+  background: var(--rb-surface-workspace);
   app-region: drag;
   -webkit-app-region: drag;
 }
 
 .cy-workspace-titlebar__icon {
   flex: 0 0 auto;
-  color: var(--cy-accent);
+  color: var(--rb-accent);
 }
 
 .cy-workspace-titlebar__title {
   max-width: calc(100% - 140px);
   overflow: hidden;
-  color: var(--cy-text);
+  color: var(--rb-text-primary);
   font-size: 13px;
   font-weight: 600;
   text-overflow: ellipsis;
@@ -400,8 +376,8 @@ html, body {
   padding: 0;
   border: none;
   border-radius: 50%;
-  background: var(--cy-surface, rgba(255, 255, 255, 0.92));
-  color: var(--cy-text-primary, #4c3762);
+  background: var(--rb-surface-elevated, rgba(255, 255, 255, 0.92));
+  color: var(--rb-text-primary, #4c3762);
   box-shadow: 0 4px 14px rgba(76, 55, 98, 0.18);
   cursor: pointer;
   transition: transform 0.2s ease, opacity 0.2s ease;
@@ -441,7 +417,7 @@ html, body {
   border-radius: 20px;
   background: rgba(255, 255, 255, 0.92);
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
-  color: var(--cy-text);
+  color: var(--rb-text-primary);
   font-size: 13px;
   pointer-events: none;
   animation: cy-compressing-fade-in 0.25s ease;

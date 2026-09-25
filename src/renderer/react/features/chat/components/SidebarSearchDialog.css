@@ -1,9 +1,9 @@
 .cy-sidebar-search-dialog-modal .ant-modal-content {
   padding: 10px;
   overflow: hidden;
-  border: 1px solid var(--cy-border, rgb(0 0 0 / 8%));
+  border: 1px solid var(--rb-border-default, rgb(0 0 0 / 8%));
   border-radius: 14px;
-  background: var(--cy-bg-workspace, #fff);
+  background: var(--rb-surface-workspace, #fff);
   box-shadow: 0 18px 60px rgb(26 24 32 / 20%);
 }
 
@@ -21,7 +21,7 @@
 .cy-sidebar-search-dialog > .ant-input-affix-wrapper {
   min-height: 34px;
   border-radius: 999px;
-  background: var(--cy-bg-workspace, #fff);
+  background: var(--rb-surface-workspace, #fff);
   box-shadow: none;
 }
 
@@ -53,14 +53,14 @@
   border: 0;
   border-radius: 8px;
   background: transparent;
-  color: var(--cy-text, #252329);
+  color: var(--rb-text-primary, #252329);
   cursor: pointer;
   text-align: left;
 }
 
 .cy-sidebar-search-dialog__result:hover,
 .cy-sidebar-search-dialog__result.is-active {
-  background: var(--cy-bg-hover, #f6f3f5);
+  background: var(--rb-surface-hover, #f6f3f5);
 }
 
 .cy-sidebar-search-dialog__result > svg {

@@ -172,7 +172,7 @@ function SkillIcon({ skillId }: { skillId: string; name: string }) {
   return (
     <span
       className="skill-card__icon"
-      style={{ background: "var(--cy-bg-active, #fde0ed)", color: "var(--cy-accent, #ff5b8a)" }}
+      style={{ background: "var(--rb-surface-active, #fde0ed)", color: "var(--rb-accent, #ff5b8a)" }}
     >
       {"brand" in spec ? (
         <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">

@@ -14,10 +14,10 @@
 }
 
 .cy-streamdown-message {
-  --background: var(--rb-surface, #fff);
+  --background: var(--rb-surface-elevated, #fff);
   --foreground: var(--rb-text-default, #1f1f1f);
   --muted: var(--rb-surface-soft, #f5f5f5);
-  --muted-foreground: var(--cy-text-muted, #7a7a7a);
+  --muted-foreground: var(--rb-text-secondary, #7a7a7a);
   --border: var(--rb-border-soft, #e5e5e5);
   --color-muted-foreground: var(--muted-foreground);
   color: inherit;

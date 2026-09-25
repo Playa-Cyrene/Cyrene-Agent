@@ -129,7 +129,7 @@ function ToolIcon({ toolId }: { toolId: string }) {
   return (
     <span
       className="tool-card__icon"
-      style={{ background: "var(--cy-bg-active, #fde0ed)", color: "var(--cy-accent, #ff5b8a)" }}
+      style={{ background: "var(--rb-surface-active, #fde0ed)", color: "var(--rb-accent, #ff5b8a)" }}
     >
       {"brand" in spec ? (
         // 品牌图标用官方 path，颜色统一走主题色，保持整卡配色一致

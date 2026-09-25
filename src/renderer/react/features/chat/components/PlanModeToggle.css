@@ -23,13 +23,13 @@
 
 .cy-plan-panel > strong {
   margin: 3px 4px 4px;
-  color: var(--cy-text);
+  color: var(--rb-text-primary);
   font: 600 14px/1.35 var(--rb-font-sans, sans-serif);
 }
 
 .cy-plan-panel > span {
   margin: 0 4px 12px;
-  color: var(--cy-text-muted);
+  color: var(--rb-text-secondary);
   font: 400 12px/1.35 var(--rb-font-sans, sans-serif);
 }
 
@@ -57,11 +57,11 @@
 
 .cy-plan-popover .ant-segmented-item-selected::after {
   border-radius: 8px;
-  background: var(--cy-accent);
+  background: var(--rb-accent);
   box-shadow: none;
 }
 
 /* 激活态：按钮文字+图标轻微染色，区别于 thinking 按钮 */
 .cy-plan-control.is-active {
-  color: var(--cy-accent, #ff5b8a);
+  color: var(--rb-accent, #ff5b8a);
 }

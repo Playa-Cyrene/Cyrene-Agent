@@ -10,11 +10,11 @@
   border: 0;
   background: transparent;
   cursor: pointer;
-  color: var(--cy-text-muted);
+  color: var(--rb-text-secondary);
 }
 
 .cy-context-usage-ring:hover {
-  color: var(--cy-accent);
+  color: var(--rb-accent);
 }
 
 .cy-context-usage-ring svg {
@@ -33,7 +33,7 @@
 }
 
 .cy-context-usage-ring.is-normal .cy-context-usage-ring__progress {
-  stroke: var(--cy-accent);
+  stroke: var(--rb-accent);
 }
 
 .cy-context-usage-ring.is-warm .cy-context-usage-ring__progress {
@@ -49,7 +49,7 @@
 /* Popover 外壳对齐表情包选择器：16px 圆角 + 边框 + 收紧内边距。 */
 .cy-context-usage-popover .ant-popover-inner {
   padding: 14px 16px;
-  border: 1px solid var(--cy-border);
+  border: 1px solid var(--rb-border-default);
   border-radius: 16px;
 }
 
@@ -122,7 +122,7 @@
 
 .cy-context-usage-menu__mood span {
   font: 12px/1.5 var(--rb-font-sans, sans-serif);
-  color: var(--cy-text-muted);
+  color: var(--rb-text-secondary);
 }
 
 .cy-context-usage-menu__mood.is-warm span {
@@ -142,12 +142,12 @@
 
 .cy-context-usage-menu__header strong {
   font: 600 13px/1.4 var(--rb-font-sans, sans-serif);
-  color: var(--cy-text);
+  color: var(--rb-text-primary);
 }
 
 .cy-context-usage-menu__header span {
   font: 12px/1.4 var(--rb-font-sans, sans-serif);
-  color: var(--cy-text-muted);
+  color: var(--rb-text-secondary);
 }
 
 /* 总占比进度条：单色，随档位变色（呼应圆环）。 */
@@ -155,7 +155,7 @@
   height: 4px;
   overflow: hidden;
   border-radius: 2px;
-  background: var(--cy-border);
+  background: var(--rb-border-default);
 }
 
 .cy-context-usage-menu__progress span {
@@ -166,7 +166,7 @@
 }
 
 .cy-context-usage-menu__progress.is-normal span {
-  background: var(--cy-accent);
+  background: var(--rb-accent);
 }
 
 .cy-context-usage-menu__progress.is-warm span {
@@ -190,7 +190,7 @@
   align-items: center;
   gap: 10px;
   font: 12px/1.6 var(--rb-font-sans, sans-serif);
-  color: var(--cy-text);
+  color: var(--rb-text-primary);
 }
 
 .cy-context-usage-menu__dot {
@@ -198,7 +198,7 @@
   height: 8px;
   flex: none;
   border-radius: 50%;
-  background: var(--cy-accent);
+  background: var(--rb-accent);
   /* 透明度由组件内联提供：按排序位次递减。 */
 }
 
@@ -213,18 +213,18 @@
 .cy-context-usage-menu__tokens {
   min-width: 44px;
   text-align: right;
-  color: var(--cy-text);
+  color: var(--rb-text-primary);
   font-variant-numeric: tabular-nums;
 }
 
 .cy-context-usage-menu__share {
   width: 38px;
   text-align: right;
-  color: var(--cy-text-muted);
+  color: var(--rb-text-secondary);
   font-variant-numeric: tabular-nums;
 }
 
 .cy-context-usage-menu__footnote {
   font: 11px/1.4 var(--rb-font-sans, sans-serif);
-  color: var(--cy-text-muted);
+  color: var(--rb-text-secondary);
 }

@@ -8,18 +8,18 @@
   border: none;
   background: transparent;
   border-radius: 6px;
-  color: var(--cy-text-muted);
+  color: var(--rb-text-secondary);
   cursor: pointer;
   transition: background 0.15s, color 0.15s;
 }
 
 .cy-inspector-toggle:hover {
-  background: var(--cy-bg-hover);
-  color: var(--cy-text);
+  background: var(--rb-surface-hover);
+  color: var(--rb-text-primary);
 }
 
 .cy-inspector-toggle:active {
-  background: var(--cy-bg-active);
+  background: var(--rb-surface-active);
 }
 
 .cy-inspector-toggle > svg {

@@ -7,7 +7,7 @@
   min-height: 0;
   box-sizing: border-box;
   overflow: hidden;
-  background: var(--cy-bg-workspace, #fff);
+  background: var(--rb-surface-workspace, #fff);
   user-select: none;
 }
 
@@ -21,7 +21,7 @@
 .moments-panel__scroll::-webkit-scrollbar { width: 6px; }
 .moments-panel__scroll::-webkit-scrollbar-track { background: transparent; }
 .moments-panel__scroll::-webkit-scrollbar-thumb {
-  background: var(--cy-border, #e8e8ec);
+  background: var(--rb-border-default, #e8e8ec);
   border-radius: 3px;
 }
 
@@ -40,20 +40,20 @@
 
 .moments-panel__title {
   margin: 0;
-  color: var(--cy-text, #1d1d1f);
+  color: var(--rb-text-primary, #1d1d1f);
   font-size: 20px;
   font-weight: 700;
 }
 
 .moments-panel__subtitle {
-  color: var(--cy-text-muted, #6e6e73);
+  color: var(--rb-text-secondary, #6e6e73);
   font-size: 12px;
 }
 
 .moments-panel__error {
   margin: 12px 0;
   padding: 8px 12px;
-  border: 1px solid var(--cy-border, #e8e8ec);
+  border: 1px solid var(--rb-border-default, #e8e8ec);
   border-radius: 8px;
   color: #d4384d;
   font-size: 12px;
@@ -63,7 +63,7 @@
 .moments-panel__empty {
   padding: 56px 0;
   text-align: center;
-  color: var(--cy-text-muted, #6e6e73);
+  color: var(--rb-text-secondary, #6e6e73);
   font-size: 13px;
 }
 
@@ -85,9 +85,9 @@
   overflow-y: auto;
   min-width: 148px;
   padding: 4px;
-  border: 1px solid var(--cy-border, #e8e8ec);
+  border: 1px solid var(--rb-border-default, #e8e8ec);
   border-radius: 10px;
-  background: var(--cy-bg-elevated, #fff);
+  background: var(--rb-surface-elevated, #fff);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
   /* QQ 群选择框通常不显示滑块，靠滚轮与键盘翻页（项目里选项不会多到需要拖动） */
   scrollbar-width: none;
@@ -99,7 +99,7 @@
 
 .moments-composer__mention-empty {
   padding: 10px 12px;
-  color: var(--cy-text-muted, #6e6e73);
+  color: var(--rb-text-secondary, #6e6e73);
   font-size: 12px;
 }
 
@@ -112,7 +112,7 @@
   border: none;
   border-radius: 6px;
   background: transparent;
-  color: var(--cy-text, #1d1d1f);
+  color: var(--rb-text-primary, #1d1d1f);
   font-size: 13px;
   text-align: left;
   cursor: pointer;
@@ -120,7 +120,7 @@
 
 .moments-composer__mention-option.is-active,
 .moments-composer__mention-option:hover {
-  background: var(--cy-bg-hover, rgba(0, 0, 0, 0.05));
+  background: var(--rb-surface-hover, rgba(0, 0, 0, 0.05));
 }
 
 .moments-composer__mention-avatar {
@@ -135,10 +135,10 @@
 
 .moments-composer {
   position: relative;
-  border: 1px solid var(--cy-border, #e8e8ec);
+  border: 1px solid var(--rb-border-default, #e8e8ec);
   border-radius: 12px;
   padding: 12px 14px 10px;
-  background: var(--cy-bg-elevated, #fafafc);
+  background: var(--rb-surface-elevated, #fafafc);
 }
 
 .moments-composer__title {
@@ -149,18 +149,18 @@
   outline: none;
   padding: 2px 2px 6px;
   background: transparent;
-  color: var(--cy-text, #1d1d1f);
+  color: var(--rb-text-primary, #1d1d1f);
   font-size: 14px;
   font-weight: 600;
 }
 
 .moments-composer__title::placeholder {
-  color: var(--cy-text-muted, #6e6e73);
+  color: var(--rb-text-secondary, #6e6e73);
   font-weight: 400;
 }
 
 .moments-composer__title:focus {
-  border-bottom-color: var(--cy-border, #e8e8ec);
+  border-bottom-color: var(--rb-border-default, #e8e8ec);
 }
 
 .moments-composer__text {
@@ -171,14 +171,14 @@
   outline: none;
   resize: none;
   background: transparent;
-  color: var(--cy-text, #1d1d1f);
+  color: var(--rb-text-primary, #1d1d1f);
   font-size: 14px;
   line-height: 1.6;
   font-family: inherit;
 }
 
 .moments-composer__text::placeholder {
-  color: var(--cy-text-muted, #6e6e73);
+  color: var(--rb-text-secondary, #6e6e73);
 }
 
 .moments-composer__previews {
@@ -194,7 +194,7 @@
   height: 72px;
   border-radius: 8px;
   overflow: hidden;
-  border: 1px solid var(--cy-border, #e8e8ec);
+  border: 1px solid var(--rb-border-default, #e8e8ec);
 }
 
 .moments-composer__preview img {
@@ -241,7 +241,7 @@
   gap: 5px;
   border: none;
   background: transparent;
-  color: var(--cy-text-muted, #6e6e73);
+  color: var(--rb-text-secondary, #6e6e73);
   font-size: 12px;
   cursor: pointer;
   padding: 4px 6px;
@@ -249,12 +249,12 @@
 }
 
 .moments-composer__tool:hover {
-  color: var(--cy-accent, #ff5b8a);
+  color: var(--rb-accent, #ff5b8a);
   background: rgba(255, 91, 138, 0.08);
 }
 
 .moments-composer__count {
-  color: var(--cy-text-muted, #6e6e73);
+  color: var(--rb-text-secondary, #6e6e73);
 }
 
 .moments-composer__error {
@@ -267,7 +267,7 @@
   border: none;
   border-radius: 8px;
   padding: 7px 22px;
-  background: var(--cy-accent, #ff5b8a);
+  background: var(--rb-accent, #ff5b8a);
   color: #fff;
   font-size: 13px;
   font-weight: 600;
@@ -288,7 +288,7 @@
   display: flex;
   gap: 12px;
   padding: 20px 0;
-  border-bottom: 1px solid var(--cy-border, #e8e8ec);
+  border-bottom: 1px solid var(--rb-border-default, #e8e8ec);
 }
 
 .moments-panel__feed .moment-card:last-child {
@@ -301,8 +301,8 @@
   height: 42px;
   border-radius: 8px;
   overflow: hidden;
-  background: var(--cy-bg-elevated, #fafafc);
-  border: 1px solid var(--cy-border, #e8e8ec);
+  background: var(--rb-surface-elevated, #fafafc);
+  border: 1px solid var(--rb-border-default, #e8e8ec);
   display: grid;
   place-items: center;
 }
@@ -315,7 +315,7 @@
 }
 
 .moment-card__avatar-fallback {
-  color: var(--cy-accent, #ff5b8a);
+  color: var(--rb-accent, #ff5b8a);
   font-size: 16px;
   font-weight: 700;
 }
@@ -326,7 +326,7 @@
 }
 
 .moment-card__name {
-  color: var(--cy-accent, #ff5b8a);
+  color: var(--rb-accent, #ff5b8a);
   font-size: 14px;
   font-weight: 600;
   line-height: 1.3;
@@ -334,7 +334,7 @@
 
 .moment-card__title {
   margin-top: 4px;
-  color: var(--cy-text, #1d1d1f);
+  color: var(--rb-text-primary, #1d1d1f);
   font-size: 15px;
   font-weight: 700;
   line-height: 1.5;
@@ -342,7 +342,7 @@
 
 .moment-card__text {
   margin-top: 3px;
-  color: var(--cy-text, #1d1d1f);
+  color: var(--rb-text-primary, #1d1d1f);
   font-size: 14px;
   line-height: 1.65;
   white-space: pre-wrap;
@@ -370,7 +370,7 @@
   aspect-ratio: 1 / 1;
   object-fit: cover;
   border-radius: 6px;
-  border: 1px solid var(--cy-border, #e8e8ec);
+  border: 1px solid var(--rb-border-default, #e8e8ec);
   display: block;
 }
 
@@ -388,7 +388,7 @@
 }
 
 .moment-card__time {
-  color: var(--cy-text-muted, #6e6e73);
+  color: var(--rb-text-secondary, #6e6e73);
   font-size: 12px;
 }
 
@@ -398,7 +398,7 @@
   gap: 3px;
   border: none;
   background: transparent;
-  color: var(--cy-text-muted, #6e6e73);
+  color: var(--rb-text-secondary, #6e6e73);
   font-size: 12px;
   cursor: pointer;
   padding: 0;
@@ -425,10 +425,10 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  border: 1px solid var(--cy-border, #e8e8ec);
+  border: 1px solid var(--rb-border-default, #e8e8ec);
   border-radius: 6px;
-  background: var(--cy-bg-elevated, #fafafc);
-  color: var(--cy-text-muted, #6e6e73);
+  background: var(--rb-surface-elevated, #fafafc);
+  color: var(--rb-text-secondary, #6e6e73);
   font-size: 12px;
   padding: 3px 9px;
   cursor: pointer;
@@ -436,13 +436,13 @@
 }
 
 .moment-card__action:hover {
-  color: var(--cy-accent, #ff5b8a);
-  border-color: var(--cy-accent, #ff5b8a);
+  color: var(--rb-accent, #ff5b8a);
+  border-color: var(--rb-accent, #ff5b8a);
 }
 
 .moment-card__action.is-active {
-  color: var(--cy-accent, #ff5b8a);
-  border-color: var(--cy-accent, #ff5b8a);
+  color: var(--rb-accent, #ff5b8a);
+  border-color: var(--rb-accent, #ff5b8a);
 }
 
 .moment-card__action-count {
@@ -454,7 +454,7 @@
 .moment-card__interactions {
   margin-top: 10px;
   border-radius: 8px;
-  background: var(--cy-bg-elevated, #fafafc);
+  background: var(--rb-surface-elevated, #fafafc);
   padding: 8px 12px;
   font-size: 13px;
   line-height: 1.6;
@@ -464,7 +464,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  color: var(--cy-accent, #ff5b8a);
+  color: var(--rb-accent, #ff5b8a);
   font-weight: 600;
   padding: 2px 0;
 }
@@ -491,7 +491,7 @@
   cursor: pointer;
   font-size: 13px;
   line-height: 1.6;
-  color: var(--cy-text, #1d1d1f);
+  color: var(--rb-text-primary, #1d1d1f);
 }
 
 .moment-card__comment:hover {
@@ -505,7 +505,7 @@
 }
 
 .moment-card__comment-name {
-  color: var(--cy-accent, #ff5b8a);
+  color: var(--rb-accent, #ff5b8a);
   font-weight: 600;
 }
 
@@ -515,7 +515,7 @@
 }
 
 .moment-card__comment-reply {
-  color: var(--cy-text-muted, #6e6e73);
+  color: var(--rb-text-secondary, #6e6e73);
   margin: 0 2px;
 }
 
@@ -534,24 +534,24 @@
 .moment-card__comment-editor input {
   flex: 1;
   min-width: 0;
-  border: 1px solid var(--cy-border, #e8e8ec);
+  border: 1px solid var(--rb-border-default, #e8e8ec);
   border-radius: 6px;
   outline: none;
   padding: 5px 9px;
   font-size: 13px;
-  background: var(--cy-bg-workspace, #fff);
-  color: var(--cy-text, #1d1d1f);
+  background: var(--rb-surface-workspace, #fff);
+  color: var(--rb-text-primary, #1d1d1f);
 }
 
 .moment-card__comment-editor input:focus {
-  border-color: var(--cy-accent, #ff5b8a);
+  border-color: var(--rb-accent, #ff5b8a);
 }
 
 .moment-card__comment-send {
   border: none;
   border-radius: 6px;
   padding: 5px 12px;
-  background: var(--cy-accent, #ff5b8a);
+  background: var(--rb-accent, #ff5b8a);
   color: #fff;
   font-size: 12px;
   cursor: pointer;
@@ -565,14 +565,14 @@
 .moment-card__comment-cancel {
   border: none;
   background: transparent;
-  color: var(--cy-text-muted, #6e6e73);
+  color: var(--rb-text-secondary, #6e6e73);
   font-size: 12px;
   cursor: pointer;
   padding: 5px 4px;
 }
 
 .moment-card__comment-cancel:hover {
-  color: var(--cy-text, #1d1d1f);
+  color: var(--rb-text-primary, #1d1d1f);
 }
 
 .moment-card__comment-error {
@@ -605,14 +605,14 @@
   border: none;
   border-radius: 50%;
   background: transparent;
-  color: var(--cy-text-muted, #6e6e73);
+  color: var(--rb-text-secondary, #6e6e73);
   font-size: 16px;
   cursor: pointer;
 }
 
 .moments-panel__notice-bell:hover {
   background: #f4f4f5;
-  color: var(--cy-text, #1d1d1f);
+  color: var(--rb-text-primary, #1d1d1f);
 }
 
 .moments-panel__notice-badge {
@@ -638,9 +638,9 @@
   right: 0;
   z-index: 30;
   width: 300px;
-  border: 1px solid var(--cy-border, #e8e8ec);
+  border: 1px solid var(--rb-border-default, #e8e8ec);
   border-radius: 12px;
-  background: var(--cy-bg-elevated, #fff);
+  background: var(--rb-surface-elevated, #fff);
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.12);
   overflow: hidden;
 }
@@ -649,14 +649,14 @@
   padding: 10px 14px 8px;
   font-size: 13px;
   font-weight: 700;
-  color: var(--cy-text, #1d1d1f);
-  border-bottom: 1px solid var(--cy-border, #e8e8ec);
+  color: var(--rb-text-primary, #1d1d1f);
+  border-bottom: 1px solid var(--rb-border-default, #e8e8ec);
 }
 
 .moments-notice-popover__empty {
   padding: 28px 0;
   text-align: center;
-  color: var(--cy-text-muted, #6e6e73);
+  color: var(--rb-text-secondary, #6e6e73);
   font-size: 12px;
 }
 
@@ -700,7 +700,7 @@
 
 .moments-notice-item__text {
   font-size: 13px;
-  color: var(--cy-text, #1d1d1f);
+  color: var(--rb-text-primary, #1d1d1f);
   line-height: 1.5;
 }
 
@@ -711,12 +711,12 @@
 
 /* 昔涟的名字走粉色主色，与角色蓝区分开 */
 .moments-notice-item__name.is-cyrene {
-  color: var(--cy-accent, #ff5b8a);
+  color: var(--rb-accent, #ff5b8a);
 }
 
 .moments-notice-item__excerpt {
   font-size: 12px;
-  color: var(--cy-text-muted, #6e6e73);
+  color: var(--rb-text-secondary, #6e6e73);
   overflow: hidden;
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -725,7 +725,7 @@
 
 .moments-notice-item__time {
   font-size: 11px;
-  color: var(--cy-text-muted, #6e6e73);
+  color: var(--rb-text-secondary, #6e6e73);
   opacity: 0.8;
 }
 

@@ -47,7 +47,7 @@
 
 .cy-settings-sidebar__nav,
 .cy-settings-content {
-  scrollbar-color: var(--rb-border-strong, var(--cy-border)) transparent;
+  scrollbar-color: var(--rb-border-strong, var(--rb-border-default)) transparent;
   scrollbar-width: thin;
 }
 
@@ -66,7 +66,7 @@
   min-height: 32px;
   border: 3px solid transparent;
   border-radius: 999px;
-  background: var(--rb-border-strong, var(--cy-border));
+  background: var(--rb-border-strong, var(--rb-border-default));
   background-clip: padding-box;
 }
 

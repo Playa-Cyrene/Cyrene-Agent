@@ -8,7 +8,7 @@
   background: #f1f1f3;
   border-radius: 12px;
   border: 1px solid rgba(31, 35, 48, 0.07);
-  box-shadow: var(--cy-shadow-bubble-neutral);
+  box-shadow: var(--rb-shadow-bubble-neutral);
   gap: 1px;
 }
 

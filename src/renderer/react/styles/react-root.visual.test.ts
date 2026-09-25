@@ -4,14 +4,17 @@ import { JSDOM } from "jsdom";
 import { describe, expect, it } from "vitest";
 
 const stylesheet = readFileSync(resolve(__dirname, "react-root.css"), "utf8");
+const sharedTokens = readFileSync(resolve(__dirname, "../../ui/tokens.css"), "utf8");
+const pearlTheme = readFileSync(resolve(__dirname, "../../ui/themes/pearl-white.css"), "utf8");
 
 describe("chat workspace surface", () => {
-  it("uses the installer motif on a softly pink reading surface", () => {
+  it("uses the neutral page and workspace surfaces with the installer motif", () => {
     const dom = new JSDOM(`
-      <style>${stylesheet}</style>
+    <html data-ui-theme="pearl-white"><head><style>${sharedTokens}\n${stylesheet}\n${pearlTheme}</style></head><body>
       <main class="cy-page">
         <section class="cy-workspace is-empty"></section>
       </main>
+    </body></html>
     `, { pretendToBeVisual: true });
     const { document } = dom.window;
     const rootStyle = dom.window.getComputedStyle(document.documentElement);
@@ -19,8 +22,8 @@ describe("chat workspace surface", () => {
     const emptyPattern = rules.find((rule) => rule.selectorText === ".cy-workspace::before");
     const filledPattern = rules.find((rule) => rule.selectorText === ".cy-workspace.has-messages::before");
 
-    expect(rootStyle.getPropertyValue("--cy-bg-page").trim()).toBe("#FAF4F8");
-    expect(rootStyle.getPropertyValue("--cy-bg-workspace").trim()).toBe("#FFFBFC");
+    expect(rootStyle.getPropertyValue("--rb-surface-page").trim()).toBe("#ECECEE");
+    expect(rootStyle.getPropertyValue("--rb-surface-workspace").trim()).toBe("#FFFFFF");
     expect(emptyPattern).toBeDefined();
     expect(emptyPattern?.style.backgroundImage).toContain("cyrene-surface-pattern.svg");
     expect(emptyPattern?.style.opacity).toBe("0.9");

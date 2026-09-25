@@ -1,10 +1,11 @@
 /* Pearl-white semantic theme contract. */
 [data-ui-theme="pearl-white"] {
-  --rb-surface-page: #faf4f8;
-  --rb-surface-workspace: #fffbfc;
+  --rb-surface-page: #ECECEE;
+  --rb-surface-workspace: #FFFFFF;
   --rb-surface-elevated: #ffffff;
   --rb-surface-hover: #fff1f6;
   --rb-surface-active: #fde0ed;
+  --rb-surface-soft: var(--rb-surface-hover);
   --rb-text-primary: #1d1d1f;
   --rb-text-secondary: #8e8e93;
   --rb-text-disabled: #6e6e73;

@@ -12,13 +12,13 @@
 }
 
 .cy-user-avatar:focus-visible {
-  outline: 2px solid var(--cy-accent);
+  outline: 2px solid var(--rb-accent);
   outline-offset: 3px;
   border-radius: 999px;
 }
 
 .cy-user-avatar:hover .cy-user-avatar-label {
-  color: var(--cy-text);
+  color: var(--rb-text-primary);
 }
 
 .cy-user-avatar-circle {
@@ -50,6 +50,6 @@
 
 .cy-user-avatar-label {
   font-size: 13px;
-  color: var(--cy-text-muted);
+  color: var(--rb-text-secondary);
   transition: color 0.15s;
 }

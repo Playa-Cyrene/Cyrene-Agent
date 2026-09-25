@@ -20,9 +20,9 @@
   box-sizing: border-box;
   padding: 9px 16px;
   font-size: 13px;
-  color: var(--rb-text-primary, var(--cy-text, #1d1d1f));
-  background: var(--rb-surface-elevated, var(--cy-bg-page, #f8f7f6));
-  border: 1px solid var(--rb-border-default, var(--cy-border, #f2f2f2));
+  color: var(--rb-text-primary, var(--rb-text-primary, #1d1d1f));
+  background: var(--rb-surface-elevated, var(--rb-surface-page, #f8f7f6));
+  border: 1px solid var(--rb-border-default, var(--rb-border-default, #f2f2f2));
   border-radius: 10px;
   outline: none;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
@@ -40,18 +40,18 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--cy-text-muted, #8e8e93);
-  background: var(--cy-bg-page, #f8f7f6);
-  border: 1px solid var(--cy-border, #f2f2f2);
+  color: var(--rb-text-secondary, #8e8e93);
+  background: var(--rb-surface-page, #f8f7f6);
+  border: 1px solid var(--rb-border-default, #f2f2f2);
   border-radius: 8px;
   cursor: pointer;
   transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease;
 }
 
 .skill-panel__icon-btn:hover {
-  color: var(--cy-accent, #ff5b8a);
-  background: var(--cy-bg-active, #fde0ed);
-  border-color: var(--cy-bg-active, #fde0ed);
+  color: var(--rb-accent, #ff5b8a);
+  background: var(--rb-surface-active, #fde0ed);
+  border-color: var(--rb-surface-active, #fde0ed);
 }
 
 .skill-panel__icon-btn:disabled {
@@ -70,7 +70,7 @@
   padding: 6px 14px;
   font-size: 12.5px;
   font-weight: 500;
-  color: var(--cy-text-muted, #8e8e93);
+  color: var(--rb-text-secondary, #8e8e93);
   background: transparent;
   border: none;
   border-radius: 999px;
@@ -79,12 +79,12 @@
 }
 
 .skill-panel__tab:hover {
-  color: var(--cy-text, #1d1d1f);
+  color: var(--rb-text-primary, #1d1d1f);
 }
 
 .skill-panel__tab.is-active {
-  background: var(--cy-bg-active, #fde0ed);
-  color: var(--cy-accent, #ff5b8a);
+  background: var(--rb-surface-active, #fde0ed);
+  color: var(--rb-accent, #ff5b8a);
 }
 
 /* 来源过滤（全部 / 内置 / 用户） */
@@ -98,7 +98,7 @@
   padding: 5px 12px;
   font-size: 11.5px;
   font-weight: 500;
-  color: var(--cy-text-muted, #8e8e93);
+  color: var(--rb-text-secondary, #8e8e93);
   background: transparent;
   border: none;
   border-radius: 999px;
@@ -107,12 +107,12 @@
 }
 
 .skill-panel__filter-tab:hover {
-  color: var(--cy-text, #1d1d1f);
+  color: var(--rb-text-primary, #1d1d1f);
 }
 
 .skill-panel__filter-tab.is-active {
-  background: var(--cy-bg-page, #f8f7f6);
-  color: var(--cy-text, #1d1d1f);
+  background: var(--rb-surface-page, #f8f7f6);
+  color: var(--rb-text-primary, #1d1d1f);
 }
 
 /* 技能卡片列表：单列 */
@@ -128,7 +128,7 @@
   padding: 40px 12px;
   text-align: center;
   font-size: 12px;
-  color: var(--cy-text-muted, #8e8e93);
+  color: var(--rb-text-secondary, #8e8e93);
 }
 
 .skill-card {
@@ -143,11 +143,11 @@
 }
 
 .skill-card:hover {
-  background: var(--cy-bg-page, #f8f7f6);
+  background: var(--rb-surface-page, #f8f7f6);
 }
 
 .skill-card.is-off .skill-card__name {
-  color: var(--cy-text-muted, #8e8e93);
+  color: var(--rb-text-secondary, #8e8e93);
 }
 
 .skill-card__top {
@@ -183,7 +183,7 @@
   gap: 6px;
   font-size: 13.5px;
   font-weight: 600;
-  color: var(--cy-text, #1d1d1f);
+  color: var(--rb-text-primary, #1d1d1f);
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -194,8 +194,8 @@
   padding: 1px 6px;
   font-size: 10px;
   font-weight: 500;
-  color: var(--cy-text-muted, #8e8e93);
-  background: var(--cy-bg-page, #f8f7f6);
+  color: var(--rb-text-secondary, #8e8e93);
+  background: var(--rb-surface-page, #f8f7f6);
   border-radius: 999px;
 }
 
@@ -226,13 +226,13 @@
 
 .skill-card__version {
   font-size: 10px;
-  color: var(--cy-text-muted, #8e8e93);
+  color: var(--rb-text-secondary, #8e8e93);
 }
 
 .skill-card__desc {
   font-size: 11.5px;
   line-height: 1.45;
-  color: var(--cy-text-muted, #8e8e93);
+  color: var(--rb-text-secondary, #8e8e93);
   overflow: hidden;
   display: -webkit-box;
   -webkit-box-orient: vertical;
@@ -259,7 +259,7 @@
 }
 
 .skill-card__pill.is-on {
-  background: var(--cy-accent, #ff5b8a);
+  background: var(--rb-accent, #ff5b8a);
 }
 
 .skill-card__pill-knob {

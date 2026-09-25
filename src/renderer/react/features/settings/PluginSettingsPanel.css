@@ -1,14 +1,9 @@
 .cy-settings-plugin-panel {
-  --cy-bg-workspace: transparent;
-  --cy-bg-page: color-mix(in srgb, var(--rb-text-primary) 4%, var(--rb-surface-elevated));
-  --cy-bg-active: color-mix(in srgb, var(--rb-accent) 11%, var(--rb-surface-elevated));
-  --cy-text: var(--rb-text-primary);
-  --cy-text-muted: var(--rb-text-secondary);
-  --cy-border: var(--rb-border-default);
-  --cy-accent: var(--rb-accent);
-  --cy-accent-hover: var(--rb-accent-hover);
+  --rb-surface-workspace: transparent;
+  --rb-surface-page: color-mix(in srgb, var(--rb-text-primary) 4%, var(--rb-surface-elevated));
+  --rb-surface-active: color-mix(in srgb, var(--rb-accent) 11%, var(--rb-surface-elevated));
   --cy-pill-border: color-mix(in srgb, var(--rb-accent) 42%, var(--rb-border-default));
-  --cy-danger: var(--rb-feedback-danger);
+  --rb-danger: var(--rb-feedback-danger);
   min-width: 0;
 }
 

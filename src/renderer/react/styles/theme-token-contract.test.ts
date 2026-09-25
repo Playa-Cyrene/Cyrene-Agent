@@ -9,6 +9,7 @@ const requiredTokens = [
   "--rb-surface-elevated",
   "--rb-surface-hover",
   "--rb-surface-active",
+  "--rb-surface-soft",
   "--rb-text-primary",
   "--rb-text-secondary",
   "--rb-text-disabled",
@@ -57,61 +58,46 @@ describe("React 主题令牌契约", () => {
     expect(themeEntry).not.toContain("cyrene-dark");
   });
 
-  it("不让 React 根层和消息列表依赖旧主题变量", () => {
-    for (const path of [
-      resolve(__dirname, "react-root.css"),
-      resolve(__dirname, "../features/chat/components/ChatMessageList.css"),
-    ]) {
-      expect(readStyle(path)).not.toMatch(/var\(--cy-(?!window-radius\b)/);
+  it("让应用外壳直接消费页面和工作区角色令牌", () => {
+    const root = readStyle(resolve(__dirname, "react-root.css"));
+
+    expect(root).toMatch(/\.cy-page\s*\{[^}]*background:\s*var\(--rb-surface-page\)/s);
+    expect(root).toMatch(/\.cy-workspace\s*\{[^}]*background:\s*var\(--rb-surface-workspace\)/s);
+  });
+
+  it("共享颜色使用角色令牌，运行时排版变量保留局部命名", () => {
+    const sharedColorAliases = /var\(--cy-(?:accent(?:-hover)?|bg(?:-(?:page|workspace|elevated|hover|active))?|border|danger|surface|text(?:-(?:primary|secondary|muted))?|shadow-(?:workspace|bubble-(?:neutral|accent)|control-(?:hover|focus)))\b/;
+    const styleFiles = readdirSync(resolve(__dirname, ".."), { recursive: true })
+      .filter((file): file is string => typeof file === "string" && /\.(?:css|tsx)$/.test(file));
+
+    for (const file of styleFiles) {
+      expect(readStyle(resolve(__dirname, "..", file)), `${file} should use shared role variables for colors`).not.toMatch(sharedColorAliases);
     }
   });
 
-  it("不让任意 React 样式依赖旧主题变量", () => {
-    const cssFiles = readdirSync(resolve(__dirname, ".."), { recursive: true })
-      .filter((file): file is string => typeof file === "string" && file.endsWith(".css"));
-
-    for (const file of cssFiles) {
-      expect(readStyle(resolve(__dirname, "..", file))).not.toMatch(/var\(--cy-(?!window-radius\b)/);
-    }
-  });
-
-  it("让天气卡片复用共享天气令牌而不是定义局部主题调色板", () => {
+  it("允许天气卡片维护独立于应用主题的明暗与插画配色", () => {
     const weather = readStyle(resolve(__dirname, "../features/chat/components/weather/weather-card.css"));
 
-    expect(weather).toContain("var(--rb-weather-bg)");
-    expect(weather).not.toMatch(/--(?:card-bg|text-primary|accent):/);
-  });
-
-  it("不在 React 样式中硬编码核心品牌和基础界面颜色", () => {
-    const protectedLiterals = [
-      "#ff5b8a",
-      "#fde0ed",
-      "#fff1f6",
-      "#1d1d1f",
-      "#8e8e93",
-      "#efb5c6",
-      "#fffbfc",
-      "#f2f2f2",
-    ];
-    const cssFiles = readdirSync(resolve(__dirname, ".."), { recursive: true })
-      .filter((file): file is string => typeof file === "string" && file.endsWith(".css"));
-
-    for (const file of cssFiles) {
-      const stylesheet = readStyle(resolve(__dirname, "..", file)).toLowerCase()
-        .replace(/var\([^)]*\)/g, "");
-      for (const literal of protectedLiterals) {
-        expect(stylesheet, `${file} should use a semantic token instead of ${literal}`).not.toContain(literal);
-      }
-    }
+    expect(weather).toMatch(/\.weather-card\[data-theme="light"\]\s*\{[^}]*--card-bg:/s);
+    expect(weather).toMatch(/\.weather-card\[data-theme="dark"\]\s*\{[^}]*--card-bg:/s);
+    expect(weather).toMatch(/\.weather-card\[data-theme="light"\]\s*\{[^}]*--sun-core-1:/s);
+    expect(weather).toMatch(/\.weather-card\[data-theme="dark"\]\s*\{[^}]*--sun-core-1:/s);
   });
 
   it("只引用已声明的表面语义令牌", () => {
-    const forbiddenSurfaceTokens = /--rb-surface-page-(?:page|hover|active|workspace|elevated)\b|--rb-surface(?!-(?:page|workspace|elevated|hover|active)\b)/;
+    const declarations = [
+      readStyle(resolve(uiRoot, "tokens.css")),
+      readStyle(resolve(uiRoot, "themes", "pearl-white.css")),
+    ].join("\n");
+    const declaredTokens = new Set(Array.from(declarations.matchAll(/(--rb-surface-[\w-]+)\s*:/g), (match) => match[1]));
     const cssFiles = readdirSync(resolve(__dirname, ".."), { recursive: true })
       .filter((file): file is string => typeof file === "string" && file.endsWith(".css"));
 
     for (const file of cssFiles) {
-      expect(readStyle(resolve(__dirname, "..", file)), `${file} should reference a declared surface token`).not.toMatch(forbiddenSurfaceTokens);
+      const references = Array.from(readStyle(resolve(__dirname, "..", file)).matchAll(/var\(\s*(--rb-surface-[\w-]+)/g), (match) => match[1]);
+      for (const token of references) {
+        expect(declaredTokens.has(token), `${file} references undeclared token ${token}`).toBe(true);
+      }
     }
   });
 

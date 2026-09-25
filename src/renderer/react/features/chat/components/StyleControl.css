@@ -5,7 +5,7 @@
 .cy-style-panel > strong {
   display: block;
   margin: 2px 4px 8px;
-  color: var(--cy-text);
+  color: var(--rb-text-primary);
   font: 600 14px/1.35 var(--rb-font-sans, sans-serif);
 }
 
@@ -32,7 +32,7 @@
 
 .cy-style-panel__option:hover {
   background: #fff0f5;
-  color: var(--cy-accent);
+  color: var(--rb-accent);
 }
 
 .cy-style-panel__option.is-active {

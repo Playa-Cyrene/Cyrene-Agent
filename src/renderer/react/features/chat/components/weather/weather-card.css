@@ -18,7 +18,7 @@
   animation: weather-card-breathe 7s ease-in-out infinite;
 }
 
-/* Theme variables scoped to the card via data-theme attribute */
+/* Card theme is independent from the app theme; its glass and illustration colors stay scoped here. */
 .weather-card[data-theme="light"] {
   --card-bg: rgba(255, 255, 255, 0.62);
   --card-border: rgba(255, 255, 255, 0.85);

@@ -36,11 +36,11 @@
   gap: 8px;
   margin: 0 auto 16px;
   padding: 6px 12px;
-  border: 1px solid var(--cy-border);
+  border: 1px solid var(--rb-border-default);
   border-radius: 999px;
-  background: color-mix(in srgb, var(--cy-bg-workspace) 88%, transparent);
+  background: color-mix(in srgb, var(--rb-surface-workspace) 88%, transparent);
   box-shadow: 0 4px 16px rgb(43 33 54 / 8%);
-  color: var(--cy-text-secondary);
+  color: var(--rb-text-secondary);
   font-size: 12px;
   line-height: 1.4;
   backdrop-filter: blur(12px);
@@ -57,7 +57,7 @@
   height: 6px;
   flex: 0 0 6px;
   border-radius: 50%;
-  background: var(--cy-accent);
+  background: var(--rb-accent);
 }
 
 .cy-message {
@@ -100,14 +100,14 @@
     radial-gradient(circle at 30% 28%, rgb(61 174 255 / 42%) 0%, transparent 55%),
     radial-gradient(circle at 70% 75%, rgb(236 72 153 / 46%) 0%, transparent 60%),
     rgb(255 255 255 / 80%);
-  border: 1px solid var(--cy-border);
+  border: 1px solid var(--rb-border-default);
 }
 
 .cy-message--user .ant-bubble-content {
   border-radius: 16px 16px 4px;
-  background: var(--cy-accent);
+  background: var(--rb-accent);
   color: #fff;
-  box-shadow: var(--cy-shadow-bubble-accent);
+  box-shadow: var(--rb-shadow-bubble-accent);
 }
 
 .cy-message--user:has(.cy-message__sticker:only-child) .ant-bubble-content {
@@ -137,7 +137,7 @@
 }
 
 .cy-message--assistant .cy-message__channel-source {
-  color: var(--cy-text-secondary);
+  color: var(--rb-text-secondary);
 }
 
 .cy-message__attachments {
@@ -201,7 +201,7 @@
   border: 0;
   border-radius: 0;
   background: transparent;
-  color: var(--cy-text);
+  color: var(--rb-text-primary);
   box-shadow: none;
 }
 
@@ -321,7 +321,7 @@
   padding: 3px 2px;
   border: 0;
   background: transparent;
-  color: var(--cy-text);
+  color: var(--rb-text-primary);
   font: 600 13px/1.4 var(--rb-font-sans, sans-serif);
   text-align: start;
   cursor: pointer;
@@ -419,7 +419,7 @@
   padding: 5px 2px;
   border: 0;
   background: transparent;
-  color: var(--cy-text);
+  color: var(--rb-text-primary);
   font: 600 12px/1.4 var(--rb-font-sans, sans-serif);
   text-align: left;
   cursor: pointer;
@@ -463,7 +463,7 @@
 
 /* 完成态标题后的文件改动提示：项目主粉高亮 */
 .cy-agent-round__files {
-  color: var(--cy-accent, #ff5b8a);
+  color: var(--rb-accent, #ff5b8a);
   font-weight: 600;
 }
 
@@ -487,7 +487,7 @@
 .cy-run-activity__process {
   padding: 7px 9px;
   border-left: 2px solid rgb(209 144 173 / 45%);
-  color: var(--cy-text-secondary);
+  color: var(--rb-text-secondary);
   font-size: 12px;
 }
 
@@ -500,7 +500,7 @@
 
 .cy-run-activity__process-label {
   margin-bottom: 4px;
-  color: var(--cy-text-muted);
+  color: var(--rb-text-secondary);
   font-size: 11px;
   font-weight: 600;
 }
@@ -512,7 +512,7 @@
 
 .cy-run-activity__empty {
   padding: 6px 2px;
-  color: var(--cy-text-muted);
+  color: var(--rb-text-secondary);
   font: 500 12px/1.45 var(--rb-font-sans, sans-serif);
 }
 
@@ -521,7 +521,7 @@
   align-items: center;
   gap: 8px;
   min-height: 52px;
-  color: var(--cy-text-muted);
+  color: var(--rb-text-secondary);
   font: 500 13px/1.4 var(--rb-font-sans, sans-serif);
 }
 
@@ -634,7 +634,7 @@
   padding: 8px;
   border-radius: 8px;
   background: #f4f4f5;
-  color: var(--cy-text-muted);
+  color: var(--rb-text-secondary);
   font: 12px/1.55 var(--rb-font-mono, monospace);
   white-space: pre-wrap;
 }
@@ -659,20 +659,20 @@
 }
 
 .cy-ask-user-qa__question {
-  color: var(--cy-text-muted);
+  color: var(--rb-text-secondary);
   font-size: 12px;
   line-height: 1.5;
 }
 
 .cy-ask-user-qa__answer {
-  color: var(--cy-text);
+  color: var(--rb-text-primary);
   font-size: 12.5px;
   line-height: 1.5;
   font-weight: 500;
 }
 
 .cy-message-reasoning {
-  color: var(--cy-text-muted);
+  color: var(--rb-text-secondary);
 }
 
 .cy-message-reasoning .ant-think-status-icon {
@@ -715,7 +715,7 @@
 }
 
 .cy-message-reasoning .cy-message-markdown {
-  color: var(--cy-text-muted);
+  color: var(--rb-text-secondary);
   font-weight: 400;
   font-size: 13px;
   line-height: 1.68;
@@ -767,7 +767,7 @@
 }
 
 .cy-message--system {
-  color: var(--cy-text-muted);
+  color: var(--rb-text-secondary);
 }
 
 /* 基础规则只保留跨场景共享的布局与全局字体；字号/行高/字重由各使用场景自己声明，
@@ -837,7 +837,7 @@
   border: 0;
   border-radius: 0;
   background: transparent;
-  color: var(--cy-accent);
+  color: var(--rb-accent);
   font-family: inherit;
   font-size: 0.96em;
   font-weight: 600;
@@ -850,7 +850,7 @@
 }
 
 .cy-file-link:hover {
-  color: color-mix(in srgb, var(--cy-accent) 82%, #8f3657);
+  color: color-mix(in srgb, var(--rb-accent) 82%, #8f3657);
   text-decoration: underline;
 }
 
@@ -941,7 +941,7 @@
   padding: 10px 12px;
   border-radius: 8px;
   background: #f7f2f4;
-  color: var(--cy-text);
+  color: var(--rb-text-primary);
   font: 12px/1.6 Consolas, "Cascadia Code", monospace;
   white-space: pre-wrap;
   word-break: break-word;
@@ -981,7 +981,7 @@
   padding: 10px 12px;
   border-radius: 8px;
   background: #f7f2f4;
-  color: var(--cy-text);
+  color: var(--rb-text-primary);
   font: 12px/1.6 Consolas, "Cascadia Code", monospace;
   white-space: pre-wrap;
   word-break: break-word;
@@ -996,7 +996,7 @@
   border: 1px solid rgb(31 35 48 / 10%);
   border-radius: 10px;
   background: #f2f2f3;
-  color: var(--cy-text);
+  color: var(--rb-text-primary);
   font: 12px/1.6 Consolas, "Cascadia Code", monospace;
   white-space: pre-wrap;
   word-break: break-word;
@@ -1054,8 +1054,8 @@
 }
 
 .cy-message-markdown input[type="checkbox"]:checked {
-  border-color: var(--cy-accent);
-  background: var(--cy-accent);
+  border-color: var(--rb-accent);
+  background: var(--rb-accent);
 }
 
 .cy-message-markdown input[type="checkbox"]:checked::after {
@@ -1079,7 +1079,7 @@
 }
 
 .cy-message-markdown a {
-  color: var(--cy-accent);
+  color: var(--rb-accent);
 }
 
 .cy-message-markdown blockquote {
@@ -1139,7 +1139,7 @@
 .cy-message-markdown [data-streamdown="table"] td {
   padding: 8px 12px;
   border: 0;
-  color: var(--cy-text);
+  color: var(--rb-text-primary);
   font-size: 13px;
   vertical-align: top;
 }
@@ -1217,7 +1217,7 @@
 }
 
 .cy-last-turn-action:hover {
-  color: var(--cy-accent);
+  color: var(--rb-accent);
   transform: scale(1.08);
 }
 
@@ -1282,7 +1282,7 @@
 .cy-last-message-editor__actions button.is-primary {
   border-color: #fff;
   background: #fff;
-  color: var(--cy-accent);
+  color: var(--rb-accent);
   font-weight: 600;
 }
 
@@ -1292,7 +1292,7 @@
 }
 
 .cy-tts-button:hover {
-  color: var(--cy-accent) !important;
+  color: var(--rb-accent) !important;
   transform: scale(1.08);
 }
 
@@ -1310,7 +1310,7 @@
 }
 
 .cy-tts-button.is-playing {
-  color: var(--cy-accent) !important;
+  color: var(--rb-accent) !important;
 }
 
 .cy-tts-button__wave {

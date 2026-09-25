@@ -9,7 +9,7 @@
   border: none;
   border-radius: 8px;
   cursor: pointer;
-  color: var(--cy-text, #1d1d1f);
+  color: var(--rb-text-primary, #1d1d1f);
   transition: background 0.15s ease;
 }
 
@@ -18,7 +18,7 @@
 }
 
 .cy-side-action.is-active {
-  background: var(--cy-bg-active, #fde0ed);
+  background: var(--rb-surface-active, #fde0ed);
 }
 
 .cy-side-action-icon {
@@ -33,7 +33,7 @@
 }
 
 .cy-side-action.is-active .cy-side-action-icon {
-  color: var(--cy-accent, #ff5b8a);
+  color: var(--rb-accent, #ff5b8a);
 }
 
 .cy-side-action-label {
@@ -44,7 +44,7 @@
 
 .cy-side-action--search kbd {
   margin-left: auto;
-  color: var(--cy-text-muted, #8e8e93);
+  color: var(--rb-text-secondary, #8e8e93);
   font: 400 10px/1 var(--rb-font-sans, sans-serif);
 }
 

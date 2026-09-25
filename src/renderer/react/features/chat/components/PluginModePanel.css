@@ -8,7 +8,7 @@
   box-sizing: border-box;
   overflow-x: hidden;
   overflow-y: auto;
-  background: var(--cy-bg-workspace, #fff);
+  background: var(--rb-surface-workspace, #fff);
   user-select: none;
 }
 
@@ -31,14 +31,14 @@
 
 .plugin-panel__title {
   margin: 0;
-  color: var(--cy-text, #1d1d1f);
+  color: var(--rb-text-primary, #1d1d1f);
   font-size: 22px;
   font-weight: 700;
 }
 
 .plugin-panel__subtitle {
   margin: 6px 0 0;
-  color: var(--cy-text-muted, #6e6e73);
+  color: var(--rb-text-secondary, #6e6e73);
   font-size: 12px;
 }
 
@@ -48,7 +48,7 @@
 }
 
 .plugin-panel__registry-link {
-  color: var(--cy-accent, #ff5b8a);
+  color: var(--rb-accent, #ff5b8a);
   text-decoration: none;
 }
 
@@ -65,7 +65,7 @@
 }
 
 .plugin-panel__source-switch-label {
-  color: var(--cy-text-muted, #6e6e73);
+  color: var(--rb-text-secondary, #6e6e73);
   font-size: 11px;
   margin-right: 2px;
 }
@@ -74,9 +74,9 @@
   display: inline-flex;
   align-items: center;
   padding: 0 8px;
-  border: 1px solid var(--cy-border, #e5e5ea);
+  border: 1px solid var(--rb-border-default, #e5e5ea);
   border-radius: 999px;
-  color: var(--cy-text-muted, #6e6e73);
+  color: var(--rb-text-secondary, #6e6e73);
   background: transparent;
   font-size: 11px;
   line-height: 18px;
@@ -86,7 +86,7 @@
 
 .plugin-panel__source-chip:hover:not(:disabled) {
   border-color: var(--cy-pill-border, #ff9fbd);
-  color: var(--cy-accent, #ff5b8a);
+  color: var(--rb-accent, #ff5b8a);
 }
 
 .plugin-panel__source-chip:disabled {
@@ -96,15 +96,15 @@
 
 /* 数据源（当前提供列表的源）用强调色加粗 */
 .plugin-panel__source-chip.is-used {
-  border-color: var(--cy-accent, #ff5b8a);
-  color: var(--cy-accent, #ff5b8a);
+  border-color: var(--rb-accent, #ff5b8a);
+  color: var(--rb-accent, #ff5b8a);
   font-weight: 600;
 }
 
 /* 探测失败（已死）的源标红并划线 */
 .plugin-panel__source-chip.is-dead {
-  border-color: var(--cy-danger, #e5484d);
-  color: var(--cy-danger, #e5484d);
+  border-color: var(--rb-danger, #e5484d);
+  color: var(--rb-danger, #e5484d);
   text-decoration: line-through;
 }
 
@@ -123,28 +123,28 @@
   width: 34px;
   height: 34px;
   padding: 0;
-  border: 1px solid var(--cy-border, #e8e8ec);
+  border: 1px solid var(--rb-border-default, #e8e8ec);
   border-radius: 10px;
-  color: var(--cy-text-muted, #6e6e73);
-  background: var(--cy-bg-page, #f8f7f6);
+  color: var(--rb-text-secondary, #6e6e73);
+  background: var(--rb-surface-page, #f8f7f6);
   cursor: pointer;
   transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease;
 }
 
 .plugin-panel__icon-button:hover:not(:disabled) {
-  color: var(--cy-accent, #ff5b8a);
+  color: var(--rb-accent, #ff5b8a);
   border-color: var(--cy-pill-border, #ff9fbd);
 }
 
 .plugin-panel__icon-button.is-accent {
   color: #fff;
-  border-color: var(--cy-accent, #ff5b8a);
-  background: var(--cy-accent, #ff5b8a);
+  border-color: var(--rb-accent, #ff5b8a);
+  background: var(--rb-accent, #ff5b8a);
 }
 
 .plugin-panel__icon-button.is-accent:hover:not(:disabled) {
   color: #fff;
-  background: var(--cy-accent-hover, #f04b7c);
+  background: var(--rb-accent-hover, #f04b7c);
 }
 
 .plugin-panel__icon-button:disabled {
@@ -161,11 +161,11 @@
   width: 100%;
   box-sizing: border-box;
   padding: 9px 16px;
-  border: 1px solid var(--cy-border, #e8e8ec);
+  border: 1px solid var(--rb-border-default, #e8e8ec);
   border-radius: 10px;
   outline: none;
-  color: var(--cy-text, #1d1d1f);
-  background: var(--cy-bg-page, #f8f7f6);
+  color: var(--rb-text-primary, #1d1d1f);
+  background: var(--rb-surface-page, #f8f7f6);
   font-size: 13px;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
@@ -210,7 +210,7 @@
 .plugin-panel__empty {
   grid-column: 1 / -1;
   padding: 40px 12px;
-  color: var(--cy-text-muted, #6e6e73);
+  color: var(--rb-text-secondary, #6e6e73);
   font-size: 12px;
   text-align: center;
 }
@@ -227,7 +227,7 @@
 }
 
 .plugin-card-ui:hover {
-  background: var(--cy-bg-page, #f8f7f6);
+  background: var(--rb-surface-page, #f8f7f6);
 }
 
 .plugin-card-ui__main {
@@ -245,8 +245,8 @@
   height: 42px;
   overflow: hidden;
   border-radius: 10px;
-  color: var(--cy-text-muted, #6e6e73);
-  background: var(--cy-bg-page, #f8f7f6);
+  color: var(--rb-text-secondary, #6e6e73);
+  background: var(--rb-surface-page, #f8f7f6);
   font-size: 22px;
   flex-shrink: 0;
 }
@@ -271,7 +271,7 @@
 
 .plugin-card-ui__name {
   overflow: hidden;
-  color: var(--cy-text, #1d1d1f);
+  color: var(--rb-text-primary, #1d1d1f);
   font-size: 13.5px;
   font-weight: 600;
   text-overflow: ellipsis;
@@ -279,7 +279,7 @@
 }
 
 .plugin-card-ui__version {
-  color: var(--cy-text-muted, #6e6e73);
+  color: var(--rb-text-secondary, #6e6e73);
   font-size: 10.5px;
   flex-shrink: 0;
 }
@@ -287,8 +287,8 @@
 .plugin-card-ui__status {
   padding: 1px 6px;
   border-radius: 999px;
-  color: var(--cy-text-muted, #6e6e73);
-  background: var(--cy-bg-page, #f1f1f4);
+  color: var(--rb-text-secondary, #6e6e73);
+  background: var(--rb-surface-page, #f1f1f4);
   font-size: 10px;
   flex-shrink: 0;
 }
@@ -314,7 +314,7 @@
 .plugin-card-ui__error {
   margin: 3px 0 0;
   overflow: hidden;
-  color: var(--cy-text-muted, #6e6e73);
+  color: var(--rb-text-secondary, #6e6e73);
   font-size: 11.5px;
   line-height: 1.4;
   text-overflow: ellipsis;
@@ -339,10 +339,10 @@
 .plugin-card-ui__button {
   min-width: 52px;
   padding: 5px 10px;
-  border: 1px solid var(--cy-border, #e8e8ec);
+  border: 1px solid var(--rb-border-default, #e8e8ec);
   border-radius: 999px;
-  color: var(--cy-text-muted, #6e6e73);
-  background: var(--cy-bg-workspace, #fff);
+  color: var(--rb-text-secondary, #6e6e73);
+  background: var(--rb-surface-workspace, #fff);
   font-size: 11.5px;
   font-weight: 500;
   cursor: pointer;
@@ -350,15 +350,15 @@
 }
 
 .plugin-card-ui__button:hover:not(:disabled) {
-  color: var(--cy-accent, #ff5b8a);
-  border-color: var(--cy-bg-active, #fde0ed);
-  background: var(--cy-bg-active, #fde0ed);
+  color: var(--rb-accent, #ff5b8a);
+  border-color: var(--rb-surface-active, #fde0ed);
+  background: var(--rb-surface-active, #fde0ed);
 }
 
 .plugin-card-ui__button.is-enabled {
   color: #fff;
-  border-color: var(--cy-accent, #ff5b8a);
-  background: var(--cy-accent, #ff5b8a);
+  border-color: var(--rb-accent, #ff5b8a);
+  background: var(--rb-accent, #ff5b8a);
 }
 
 .plugin-card-ui__button.is-danger:hover:not(:disabled) {
@@ -378,7 +378,7 @@
 
 .plugin-panel::-webkit-scrollbar-thumb {
   border-radius: 3px;
-  background: var(--cy-border, #e8e8ec);
+  background: var(--rb-border-default, #e8e8ec);
 }
 
 @media (max-width: 760px) {
@@ -403,9 +403,9 @@
 
 /* 市场卡片元信息分隔符与下载量强调色 */
 .plugin-card-ui__meta-sep {
-  color: var(--cy-text-muted, #6e6e73);
+  color: var(--rb-text-secondary, #6e6e73);
 }
 
 .plugin-card-ui__downloads {
-  color: var(--cy-accent, #ff5b8a);
+  color: var(--rb-accent, #ff5b8a);
 }

@@ -5,7 +5,7 @@
   padding: 40px 0;
   text-align: center;
   font-size: 12px;
-  color: var(--cy-text-secondary, #6e6e73);
+  color: var(--rb-text-secondary, #6e6e73);
 }
 
 /* 四列瀑布布局，沿用旧版 .sticker-grid 的 column-count 思路（不同高度也能自适应） */
@@ -30,15 +30,15 @@
   margin-bottom: 12px;
   break-inside: avoid;
   padding: 10px;
-  background: var(--cy-bg-page, #f8f7f6);
-  border: 1px solid var(--cy-border, #f2f2f2);
+  background: var(--rb-surface-page, #f8f7f6);
+  border: 1px solid var(--rb-border-default, #f2f2f2);
   border-radius: 14px;
   overflow: hidden;
   transition: opacity 0.16s ease, filter 0.16s ease, transform 0.16s ease, background 0.16s ease;
 }
 
 .cy-settings-theme-modal .cy-sticker-modal__card:hover {
-  background: var(--cy-bg-active, #fde0ed);
+  background: var(--rb-surface-active, #fde0ed);
 }
 
 .cy-settings-theme-modal .cy-sticker-modal__card img {
@@ -80,7 +80,7 @@
 }
 
 .cy-settings-theme-modal .cy-sticker-modal__pill.is-on {
-  background: var(--cy-accent, #FF5B8A);
+  background: var(--rb-accent, #FF5B8A);
 }
 
 .cy-settings-theme-modal .cy-sticker-modal__pill:disabled {
@@ -122,7 +122,7 @@
   display: block;
   margin-top: 6px;
   font-size: 11px;
-  color: var(--cy-text-secondary, #6e6e73);
+  color: var(--rb-text-secondary, #6e6e73);
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;

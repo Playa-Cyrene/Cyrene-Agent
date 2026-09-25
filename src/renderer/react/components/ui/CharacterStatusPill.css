@@ -18,12 +18,12 @@
 .cy-character-pill:hover,
 .cy-character-pill[data-state="open"] {
   transform: translateY(-1px);
-  border-color: var(--cy-accent);
+  border-color: var(--rb-accent);
   box-shadow: 0 3px 10px rgba(255, 91, 138, 0.24);
 }
 
 .cy-character-pill:focus-visible {
-  outline: 2px solid var(--cy-accent);
+  outline: 2px solid var(--rb-accent);
   outline-offset: 2px;
 }
 
@@ -44,12 +44,12 @@
   width: 9px;
   height: 9px;
   border-radius: 50%;
-  background: var(--cy-text-muted);
+  background: var(--rb-text-secondary);
   box-shadow: 0 0 0 2px var(--cy-pill-bg);
 }
 
 .cy-character-pill.is-online .cy-character-pill__presence {
-  background: var(--cy-accent);
+  background: var(--rb-accent);
 }
 
 .cy-character-pill.is-online .cy-character-pill__presence::after {

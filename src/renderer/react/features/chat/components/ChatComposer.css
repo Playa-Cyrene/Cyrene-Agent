@@ -51,7 +51,7 @@
   overflow: hidden;
   border-radius: 22px;
   background: #f4f4f4;
-  box-shadow: var(--cy-shadow-bubble-neutral);
+  box-shadow: var(--rb-shadow-bubble-neutral);
 }
 
 .cy-composer-stack.is-centered .cy-composer-shell {
@@ -77,8 +77,8 @@
   z-index: 1;
   border: 1px solid rgba(31, 35, 48, 0.07);
   border-radius: 22px;
-  background: #fff;
-  box-shadow: var(--cy-shadow-bubble-neutral);
+  background: var(--rb-surface-elevated);
+  box-shadow: var(--rb-shadow-bubble-neutral);
   transition:
     border-color 160ms ease,
     box-shadow 160ms ease;
@@ -86,12 +86,12 @@
 
 .cy-composer.ant-sender:hover {
   border-color: rgba(31, 35, 48, 0.11);
-  box-shadow: var(--cy-shadow-control-hover);
+  box-shadow: var(--rb-shadow-control-hover);
 }
 
 .cy-composer.ant-sender:focus-within {
   border-color: rgba(255, 91, 138, 0.32);
-  box-shadow: var(--cy-shadow-control-focus);
+  box-shadow: var(--rb-shadow-control-focus);
 }
 
 .cy-composer .ant-sender-content {
@@ -102,7 +102,7 @@
 
 .cy-composer .ant-sender-input {
   min-height: 70px;
-  color: var(--cy-text);
+  color: var(--rb-text-primary);
   font: 400 15px/1.6 var(--rb-font-sans, sans-serif);
   resize: none;
 }
@@ -120,7 +120,7 @@
   height: 38px;
   border-radius: 50%;
   color: #fff;
-  background: var(--cy-accent);
+  background: var(--rb-accent);
 }
 
 .cy-composer .ant-sender-actions-btn:disabled {
@@ -233,8 +233,8 @@
   border: 1px solid rgba(255, 91, 138, 0.38);
   border-radius: 7px;
   outline: none;
-  background: #fff;
-  color: var(--cy-text);
+  background: var(--rb-surface-elevated);
+  color: var(--rb-text-primary);
   font: 400 13px/1.4 var(--rb-font-sans, sans-serif);
   box-shadow: 0 0 0 2px rgba(255, 91, 138, 0.08);
 }
@@ -344,10 +344,10 @@
   align-items: center;
   gap: 7px;
   padding: 5px 8px;
-  border: 1px solid var(--cy-border);
+  border: 1px solid var(--rb-border-default);
   border-radius: 10px;
-  background: #f7f7f7;
-  color: var(--cy-text);
+  background: var(--rb-surface-hover);
+  color: var(--rb-text-primary);
   font: 500 12px/1.2 var(--rb-font-sans, sans-serif);
 }
 
@@ -429,12 +429,12 @@
 }
 
 .cy-composer__attachment button:hover {
-  color: var(--cy-accent);
+  color: var(--rb-accent);
 }
 
 .cy-sticker-popover .ant-popover-inner {
   padding: 10px;
-  border: 1px solid var(--cy-border);
+  border: 1px solid var(--rb-border-default);
   border-radius: 16px;
 }
 
@@ -473,7 +473,7 @@
 .cy-sticker-picker__empty {
   grid-column: 1 / -1;
   padding: 24px;
-  color: var(--cy-text-muted);
+  color: var(--rb-text-secondary);
   text-align: center;
 }
 
@@ -501,7 +501,7 @@
 .cy-composer__footer-button:hover,
 .cy-composer__agent-button:hover,
 .cy-composer__icon-button:hover {
-  color: var(--cy-accent);
+  color: var(--rb-accent);
 }
 
 .cy-composer__footer-button:disabled {
@@ -592,7 +592,7 @@
 .cy-composer-shell .cy-composer__footer-button:hover,
 .cy-composer-shell .cy-composer__agent-button:hover,
 .cy-composer-shell .cy-composer__icon-button:hover {
-  color: var(--cy-accent);
+  color: var(--rb-accent);
 }
 
 .cy-composer-shell .cy-composer__footer-button:disabled,

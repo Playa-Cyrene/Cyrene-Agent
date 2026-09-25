@@ -7,18 +7,18 @@
   border: none;
   background: transparent;
   border-radius: 8px;
-  color: var(--cy-text-muted);
+  color: var(--rb-text-secondary);
   cursor: pointer;
   transition: background 0.15s, color 0.15s;
 }
 
 .cy-sidebar-toggle:hover {
-  background: var(--cy-bg-hover);
-  color: var(--cy-text);
+  background: var(--rb-surface-hover);
+  color: var(--rb-text-primary);
 }
 
 .cy-sidebar-toggle:active {
-  background: var(--cy-bg-active);
+  background: var(--rb-surface-active);
 }
 
 .cy-sidebar-toggle > svg {
