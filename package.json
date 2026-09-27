@@ -132,7 +132,7 @@
     "package-manager-detector": "^1.8.0",
     "pdfkit": "^0.19.1",
     "pixi-live2d-display": "0.5.0-beta",
-    "pixi.js": "^7.3.0",
+    "pixi.js": "^8.21.0",
     "playwright": "^1.63.0",
     "qr-image": "^3.2.0",
     "qrcode": "^1.5.4",
