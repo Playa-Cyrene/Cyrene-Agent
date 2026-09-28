@@ -55,6 +55,9 @@ function reactRendererCsp(isDev: boolean): string {
     `connect-src ${connectSrc}`,
     "media-src 'self' data: blob: https:",
     "worker-src 'self' blob:",
+    // 插件设置面板经 cyrene-plugin:// 自定义协议以 iframe 挂载，需在 frame-src 放行；
+    // 否则 default-src 'self' 会拦截面板加载（ERR_BLOCKED_BY_CSP）。
+    "frame-src 'self' cyrene-plugin:",
     "object-src 'none'",
     "base-uri 'self'",
   ].join("; ");
