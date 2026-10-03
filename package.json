@@ -165,7 +165,7 @@
     "silk-wasm": "^3.7.1",
     "simple-git": "^3.36.0",
     "turndown": "^7.2.4",
-    "vscode-jsonrpc": "^9.0.1",
+    "vscode-jsonrpc": "^9.0.3",
     "vscode-languageserver-types": "^3.18.0",
     "wink-bm25-text-search": "^3.1.2",
     "ws": "^8.21.0",
