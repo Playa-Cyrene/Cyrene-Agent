@@ -157,7 +157,7 @@
     "nodemailer": "^9.0.1",
     "openai": "7.5.0",
     "package-manager-detector": "^1.8.0",
-    "pdfkit": "^0.19.1",
+    "pdfkit": "^0.20.2",
     "playwright": "^1.63.0",
     "qr-image": "^3.2.0",
     "qrcode": "^1.5.4",
