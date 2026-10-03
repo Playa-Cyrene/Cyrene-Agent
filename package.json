@@ -132,7 +132,7 @@
     "@ast-grep/napi": "^0.45.1",
     "@lancedb/lancedb": "^0.30.0",
     "@larksuiteoapi/node-sdk": "^1.68.0",
-    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@modelcontextprotocol/sdk": "^1.31.0",
     "@modelcontextprotocol/server-filesystem": "2026.8.31",
     "@node-rs/jieba": "^2.0.1",
     "@nut-tree-fork/nut-js": "^4.2.6",
