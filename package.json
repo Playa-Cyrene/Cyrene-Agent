@@ -133,7 +133,7 @@
     "@ag-ui/core": "1.0.0",
     "@anthropic-ai/sandbox-runtime": "^0.0.71",
     "@anthropic-ai/sdk": "^0.126.0",
-    "@ast-grep/napi": "^0.45.1",
+    "@ast-grep/napi": "^0.45.3",
     "@lancedb/lancedb": "^0.30.0",
     "@larksuiteoapi/node-sdk": "^1.68.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
