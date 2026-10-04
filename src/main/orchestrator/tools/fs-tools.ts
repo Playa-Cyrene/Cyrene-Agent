@@ -14,6 +14,7 @@ import { logger, LogTag } from "../../logger";
 import { ToolExecutionError } from "./registry/tool-execution-error";
 import { app } from "electron";
 import { getRunReviewTracker } from "../review/run-review-tracker";
+import { extractDocText, isOfficeTextExt } from "./builtin-tools/office-text-extract";
 
 const LOG_PREFIX = "[FsTools]";
 
@@ -62,6 +63,29 @@ async function executeReadFile(args: Record<string, unknown>): Promise<string> {
     });
   }
   if (!stat.isFile()) return JSON.stringify({ success: false, errorCode: "NOT_A_FILE", error: "不是文件（是目录或其它）: " + filePath, retryable: false });
+
+  // Office 结构化文档（L2：.docx/.xlsx/.xlsm）：进程内抽正文后按文本返回，无需视觉模型。
+  // zcode 的 Read 经 legacy.read 委托到此函数，因此自动获得该能力。
+  const extForOffice = path.extname(filePath).toLowerCase();
+  if (isOfficeTextExt(extForOffice)) {
+    const docText = await extractDocText(filePath, extForOffice);
+    if (docText === null) {
+      return JSON.stringify({ success: false, errorCode: "OFFICE_PARSE_FAILED", error: "Office 文档解析失败或无正文: " + filePath, path: filePath, retryable: false });
+    }
+    const oStart = Math.max(1, Number(args.startLine) || 1);
+    const oMax = Math.max(1, Math.min(2000, Number(args.maxLines) || 500));
+    const oLines = docText.split("\n");
+    const oWindow = oLines.slice(oStart - 1, oStart - 1 + oMax);
+    return JSON.stringify({
+      path: filePath,
+      kind: "office",
+      startLine: oStart,
+      endLine: oStart + oWindow.length - 1,
+      totalLines: oLines.length,
+      content: oWindow.map((line, i) => String(oStart + i).padStart(5, " ") + " | " + line).join("\n"),
+      truncated: oStart - 1 + oWindow.length < oLines.length,
+    });
+  }
 
   const startLine = Math.max(1, Number(args.startLine) || 1);
   const maxLines = Math.max(1, Math.min(2000, Number(args.maxLines) || 500));
@@ -151,6 +175,7 @@ toolRegistry.register({
   name: "读取文件",
   description:
     "读取本地文本文件（小说、笔记、代码、配置、日志等）。返回带行号的文本内容。" +
+    "Word(.docx)、Excel(.xlsx/.xlsm) 会自动抽取正文文本（进程内解析，不需视觉模型）；PDF/旧版 .doc/.xls 无解析库、读不了。" +
     "支持最大 10MB 的文本文件；totalLines 是真实总行数，可用 startLine/maxLines 精确翻页。\n" +
     "文件超过 10MB 会明确报错，改用 search_text 直接获取匹配行的上下文。\n\n" +
     "何时用：\n" +
@@ -160,6 +185,7 @@ toolRegistry.register({
     "不要用于：\n" +
     "- 凭印象猜内容（绝对不行，必须先 read）\n" +
     "- 读图片 → read_image\n" +
+    "- 读 PDF / 旧版 .doc/.xls（本工具无法抽字）\n" +
     "- 列目录 → list_dir\n\n" +
     "用户本轮附加文件时，会提供绝对路径；读取附件必须先调用本工具。\n" +
     "参数：path (必填，绝对路径)，startLine (可选，默认 1)，maxLines (可选，默认 500)。",

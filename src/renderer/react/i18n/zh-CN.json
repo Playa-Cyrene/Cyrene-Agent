@@ -659,6 +659,15 @@
     "progress": "{{completed}}/{{total}} 已完成",
     "empty": "暂无任务"
   },
+  "fileCard": {
+    "panelAria": "搜索结果",
+    "count": "找到 {{count}} 个文件",
+    "openHint": "点击用系统默认程序打开",
+    "matchedContent": "内容命中",
+    "matchedName": "文件名命中",
+    "unreadableImage": "图片 · 需视觉识别",
+    "unreadableOther": "无法直接读取内容"
+  },
   "fileChange": {
     "panelAria": "文件变更",
     "summary": "{{count}} 个文件变更",

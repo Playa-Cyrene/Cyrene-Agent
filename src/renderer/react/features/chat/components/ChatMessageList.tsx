@@ -36,6 +36,7 @@ import { WeatherCard } from "./weather/WeatherCard";
 import { buildAskUserQa, buildFlatRunTimeline, countRoundChangedFiles, describeToolExecution, resolveAgentRoundTitle } from "./agent-rounds";
 import { TaskDelegationRow } from "./TaskDelegationRow";
 import { extractFileChanges, FileChangeCard } from "./FileChangeCard";
+import { extractFileCards, FileCardBlock } from "./FileCardBlock";
 import { FileLinkContext, type FileLinkEnv } from "./FileLinkContext";
 import { ReviewPanel } from "./ReviewPanel";
 import { reportChatPerfRender } from "./chat-perf-probe";
@@ -840,6 +841,10 @@ function ToolResultContent({ tool, result, changes }: { tool: ToolExecutionRecor
   }
   if (changes && changes.length > 0) return <FileChangeCard changes={changes} />;
   if (result) {
+    if (tool.name === "find_files") {
+      const cards = extractFileCards(result);
+      if (cards) return <FileCardBlock files={cards} />;
+    }
     const parsed = extractFileChanges(result);
     if (parsed) return <FileChangeCard changes={parsed} />;
     return <ToolOutputTerminal tool={tool} result={result} />;

@@ -23,6 +23,9 @@ import { installMcpServerTool } from "./builtin-tools/install-mcp-tool";
 import { runVerificationTool } from "./builtin-tools/run-verification-tool";
 import { runShellTool } from "./builtin-tools/run-shell-tool";
 import { shellJobTool } from "./builtin-tools/shell-job-tool";
+import { findFilesTool } from "./builtin-tools/find-files-tool";
+import { openFileTool } from "./builtin-tools/open-file-tool";
+import { sendFileTool } from "./builtin-tools/send-file-tool";
 
 let sendToLive2DWindow: (channel: string, payload?: unknown) => void = () => {};
 export function setLive2dWindowSender(sender: typeof sendToLive2DWindow): void {
@@ -42,3 +45,9 @@ logger.info(LogTag.BuiltinTools, "registered: fetch_url / download_file / run_sh
 toolRegistry.register(weatherTool);
 toolRegistry.register(webSearchTool);
 toolRegistry.register(createPlayLive2DActionTool({ sendToLive2DWindow }));
+
+// ── 文件搜索·呈现·打开·发回渠道（追加在末尾，不影响上方 10 个的相对顺序/快照）──
+// 三者均 risk:fs-read / effectKind:read，只读不修改文件内容。
+toolRegistry.register(findFilesTool);
+toolRegistry.register(openFileTool);
+toolRegistry.register(sendFileTool);

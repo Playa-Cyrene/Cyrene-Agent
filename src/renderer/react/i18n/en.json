@@ -659,6 +659,15 @@
     "progress": "{{completed}}/{{total}} done",
     "empty": "No tasks"
   },
+  "fileCard": {
+    "panelAria": "Search results",
+    "count": "{{count}} file(s) found",
+    "openHint": "Click to open with default app",
+    "matchedContent": "content match",
+    "matchedName": "name match",
+    "unreadableImage": "image · needs vision to read",
+    "unreadableOther": "content not directly readable"
+  },
   "fileChange": {
     "panelAria": "File changes",
     "summary": "{{count}} file changes",

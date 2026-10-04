@@ -12,6 +12,7 @@
 //   把 OutgoingMessage 按目标渠道的 cap 翻译 —— image→text 描述 / card→markdown / sticker 跳过。
 import type {
   IncomingMessage,
+  OutgoingFileAttachment,
   OutgoingMessage,
 } from "./types";
 import { randomUUID } from "node:crypto";
@@ -105,7 +106,7 @@ export interface DispatcherDeps {
   readonly buildAndRunAgent: (
     msg: IncomingMessage,
     inputOrSessionId: ChannelAgentInput,
-  ) => Promise<{ text: string; sticker: string | null }>;
+  ) => Promise<{ text: string; sticker: string | null; attachments?: OutgoingFileAttachment[] }>;
   /** 延迟读取渠道设置，避免应用就绪前访问加密存储。 */
   readonly loadSettings: () => ChannelsSettings;
   /** 读取与渠道发送有关的通用设置。 */
@@ -248,7 +249,7 @@ export class ChannelDispatcher {
       assistantTurnId,
     });
 
-    let result: { text: string; sticker: string | null };
+    let result: { text: string; sticker: string | null; attachments?: OutgoingFileAttachment[] };
     try {
       result = await this.deps.buildAndRunAgent(msg, {
         sessionId: context.sessionId,
@@ -268,6 +269,7 @@ export class ChannelDispatcher {
       incoming: msg,
       replyText: result.text,
       sticker: result.sticker,
+      attachments: result.attachments,
       settings: {
         ttsEnabled: this.settings.ttsEnabled,
         stickerEnabled: this.settings.stickerEnabled,

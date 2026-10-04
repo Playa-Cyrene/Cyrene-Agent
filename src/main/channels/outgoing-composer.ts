@@ -15,6 +15,7 @@ import type {
   ChannelCapability,
   ChannelId,
   IncomingMessage,
+  OutgoingFileAttachment,
   OutgoingMessage,
   OutgoingPart,
 } from "./types";
@@ -42,6 +43,8 @@ export interface ComposeOutgoingInput {
   replyText: string;
   sticker: string | null;
   capability?: ChannelCapability;
+  /** send_file 记账、随本回复发回来源会话的文件附件。 */
+  attachments?: OutgoingFileAttachment[];
   settings: {
     ttsEnabled: boolean;
     stickerEnabled: boolean;
@@ -184,6 +187,14 @@ export function createOutgoingComposer(
         input.replyText,
         input.mobileMessageSegmentation,
       );
+
+      // send_file 附件→file part（用户既有文件，不计入 transientFiles、不删）。
+      // 无 file 能力的渠道由下方 downgradeToCapability 自动降级为「[文件] 名字」。
+      for (const att of input.attachments ?? []) {
+        if (att?.filePath) {
+          parts.push({ kind: "file", filePath: att.filePath, name: att.name, mime: att.mime });
+        }
+      }
 
       if (shouldAppendChannelTtsAudio(
         input.incoming.channel,
