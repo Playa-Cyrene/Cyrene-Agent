@@ -1,0 +1,483 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>订阅 OAuth</title>
+  <style>
+    :root { --bg: #fff9fc; --card: #ffffff; --border: #f3e2ec; --accent: #e84a8a; --muted: #8d7c83; --ok: #2e9e6b; --bad: #d64545; }
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; }
+    body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: #3b2a32; }
+    .app-shell { height: 100vh; display: flex; flex-direction: column; }
+    .titlebar { height: 44px; flex: 0 0 44px; display: flex; align-items: center; gap: 9px; padding-left: 14px; background: #fff; border-bottom: 1px solid var(--border); -webkit-app-region: drag; user-select: none; position: relative; z-index: 5; }
+    .titlebar__icon { width: 22px; height: 22px; object-fit: contain; pointer-events: none; }
+    .titlebar h1 { font-size: 14px; margin: 0; flex: 1; font-weight: 600; }
+    .window-controls { align-self: stretch; display: flex; -webkit-app-region: no-drag; }
+    .titlebar button { border: 0; background: transparent; width: 46px; height: 43px; padding: 0; border-radius: 0; cursor: pointer; color: var(--muted); display: grid; place-items: center; }
+    .titlebar button svg { width: 14px; height: 14px; pointer-events: none; }
+    .titlebar button:hover { background: #fdeef5; }
+    .titlebar button.close:hover { background: #ffe2e8; color: var(--bad); }
+    .titlebar button:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
+    .content-scroll { flex: 1; min-height: 0; overflow-y: auto; scrollbar-gutter: stable; }
+    .wrap { padding: 16px; display: grid; gap: 14px; max-width: 760px; margin: 0 auto; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 14px 16px; }
+    .card h2 { font-size: 14px; margin: 0 0 10px; font-weight: 600; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    .card h2 > .hint { margin-left: auto; font-weight: 400; text-align: right; }
+    .hint { font-size: 12px; color: var(--muted); }
+    .provider { border: 1px solid var(--border); border-radius: 12px; padding: 12px; margin-bottom: 10px; }
+    .provider:last-child { margin-bottom: 0; }
+    .provider-head { display: flex; align-items: center; gap: 10px; }
+    .provider-name { font-weight: 600; font-size: 14px; flex: 1; }
+    .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+    .dot.on { background: var(--ok); }
+    .dot.off { background: var(--bad); }
+    .provider-meta { font-size: 12px; color: var(--muted); margin-top: 4px; min-height: 14px; overflow-wrap: anywhere; }
+    .provider-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+    .accounts { display: grid; gap: 6px; margin-top: 10px; }
+    .account { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 10px; font-size: 12px; }
+    .account.is-active { border-color: var(--accent); background: #fdf3f8; }
+    .account__radio { color: var(--accent); font-size: 11px; }
+    .account__label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .account button { padding: 2px 8px; font-size: 11px; }
+    button { border: 1px solid var(--border); background: #fff; color: #3b2a32; border-radius: 8px; padding: 6px 12px; font-size: 13px; cursor: pointer; }
+    button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    button:disabled { opacity: .5; cursor: default; }
+    .proxy-box { font-family: ui-monospace, monospace; font-size: 13px; background: #fdf3f8; border: 1px dashed var(--accent); border-radius: 10px; padding: 10px 12px; color: #a41f60; overflow-wrap: anywhere; }
+    .proxy-box .copy { background: transparent; border: 0; color: var(--accent); font-size: 12px; padding: 2px 6px; cursor: pointer; }
+    .usage-row { display: grid; grid-template-columns: minmax(86px, 110px) minmax(100px, 1fr) minmax(150px, auto); align-items: center; gap: 10px; font-size: 12px; margin: 8px 0; }
+    .bar { height: 8px; background: #f4e4ec; border-radius: 4px; overflow: hidden; }
+    .bar > span { display: block; height: 100%; background: linear-gradient(90deg, #f6a1c8, var(--accent)); border-radius: 4px; }
+    .models { display: flex; flex-wrap: wrap; gap: 6px; }
+    .model-tag { font-size: 12px; border: 1px solid var(--border); border-radius: 20px; padding: 3px 10px; cursor: pointer; }
+    .model-tag.selected { background: #fdeef5; border-color: var(--accent); color: #a41f60; }
+    .status-msg { font-size: 12px; color: var(--muted); margin: 6px 0; min-height: 16px; }
+    .status-msg.ok { color: var(--ok); }
+    .status-msg.err { color: var(--bad); }
+    .busy { opacity: .55; pointer-events: none; }
+    @media (max-width: 620px) {
+      .wrap { padding: 12px; }
+      .card h2 > .hint { width: 100%; margin-left: 0; text-align: left; }
+      .usage-row { grid-template-columns: 1fr; gap: 5px; }
+      .provider-head { align-items: flex-start; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="titlebar">
+      <img class="titlebar__icon" src="./icon.png" alt="" draggable="false" />
+      <h1>订阅 OAuth</h1>
+      <div class="window-controls">
+        <button id="btn-min" type="button" aria-label="最小化">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5h10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /></svg>
+        </button>
+        <button id="btn-close" class="close" type="button" aria-label="关闭">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8m0-8-8 8" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /></svg>
+        </button>
+      </div>
+    </header>
+
+    <main class="content-scroll">
+    <div class="wrap">
+    <div class="card">
+        <h2>本地代理<span class="hint">三种原生协议自动直通</span></h2>
+      <div class="proxy-box" id="proxy-box">正在启动…</div>
+      <div class="hint" style="margin-top:8px">
+        登录后点「查看用量/模型」→「同步模型到渠道档案」即可；同一订阅服务的模型在同一页管理，插件会自动选择原生协议，无需手动创建端点或填写 API Key。
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>订阅账号</h2>
+      <div id="providers"></div>
+    </div>
+
+    <div class="card">
+      <h2>用量 / 模型</h2>
+      <div class="status-msg" id="detail-msg">选中一个已登录的订阅查看用量与模型。</div>
+      <div id="detail"></div>
+    </div>
+
+      <div class="status-msg" id="status-msg"></div>
+    </div>
+    </main>
+  </div>
+
+  <script>
+    const { ipcRenderer } = require("electron");
+
+    const PROVIDER_NAMES = { chatgpt: "ChatGPT（Plus / Pro）", claude: "Claude（Pro / Max）", grok: "Grok（SuperGrok / X Premium+）" };
+    let state = null;      // statusPayload 缓存
+    let activeProvider = null;
+
+    const $ = (id) => document.getElementById(id);
+
+    function setStatus(text, kind) {
+      const el = $("status-msg");
+      el.textContent = text || "";
+      el.className = "status-msg" + (kind ? " " + kind : "");
+    }
+
+    function formatTime(ts) {
+      if (!ts) return "";
+      return new Date(ts).toLocaleString();
+    }
+
+    function displayAccountLabel(value) {
+      const text = typeof value === "string" ? value.trim() : "";
+      if (!text) return "已登录账号";
+      const email = text.match(/^([^@]+)@(.+)$/);
+      if (email) {
+        const local = email[1];
+        return `${local.slice(0, 1)}***@${email[2]}`;
+      }
+      if (text.length > 12) return `${text.slice(0, 4)}…${text.slice(-4)}`;
+      return text;
+    }
+
+    async function refreshStatus() {
+      state = await ipcRenderer.invoke("plugin:subscription-oauth:status");
+      renderProxy();
+      renderProviders();
+    }
+
+    function renderProxy() {
+      const box = $("proxy-box");
+      if (!state || !state.port) { box.textContent = "代理未启动"; return; }
+      box.innerHTML = "";
+      const addr = `http://127.0.0.1:${state.port}/v1`;
+      const code = document.createElement("code");
+      code.textContent = addr;
+      const copy = document.createElement("button");
+      copy.className = "copy";
+      copy.textContent = "复制";
+      copy.onclick = () => { navigator.clipboard.writeText(addr); copy.textContent = "已复制"; setTimeout(() => { copy.textContent = "复制"; }, 1500); };
+      box.append(code, " ", copy);
+    }
+
+    async function loginProvider(id, btn) {
+      btn.disabled = true;
+      setStatus(`正在打开浏览器登录 ${PROVIDER_NAMES[id]}…`);
+      const result = await ipcRenderer.invoke("plugin:subscription-oauth:login", id);
+      if (result.ok) {
+        setStatus(`${PROVIDER_NAMES[id]} 登录成功`, "ok");
+      } else {
+        setStatus(result.error || "登录失败", "err");
+      }
+      await refreshStatus();
+      if (result.ok) await selectProvider(id);
+    }
+
+    async function logoutProvider(id) {
+      await ipcRenderer.invoke("plugin:subscription-oauth:logout", id);
+      setStatus(`${PROVIDER_NAMES[id]} 已退出`, "ok");
+      if (activeProvider === id) { activeProvider = null; $("detail").innerHTML = ""; $("detail-msg").textContent = "选中一个已登录的订阅查看用量与模型。"; }
+      await refreshStatus();
+    }
+
+    function renderProviders() {
+      const wrap = $("providers");
+      wrap.innerHTML = "";
+      for (const id of ["chatgpt", "claude", "grok"]) {
+        const info = state.providers[id];
+        if (!info) continue;
+        const box = document.createElement("div");
+        box.className = "provider";
+
+        const head = document.createElement("div");
+        head.className = "provider-head";
+        const dot = document.createElement("span");
+        dot.className = "dot " + (info.connected ? "on" : "off");
+        const name = document.createElement("span");
+        name.className = "provider-name";
+        name.textContent = PROVIDER_NAMES[id];
+        head.append(dot, name);
+
+        const accounts = Array.isArray(info.accounts) ? info.accounts : [];
+        const active = accounts.find((a) => a.id === info.activeAccountId);
+
+        const meta = document.createElement("div");
+        meta.className = "provider-meta";
+        meta.textContent = info.connected
+          ? `当前账号：${displayAccountLabel(active ? active.label : info.accountLabel)} · 过期 ${formatTime(info.expiresAt)}`
+          : "未登录";
+
+        box.append(head, meta);
+
+        // 账号列表（多账号时显示切换/删除）
+        if (accounts.length > 0) {
+          const list = document.createElement("div");
+          list.className = "accounts";
+          for (const acc of accounts) {
+            const row = document.createElement("div");
+            row.className = "account" + (acc.id === info.activeAccountId ? " is-active" : "");
+
+            const radio = document.createElement("span");
+            radio.className = "account__radio";
+            radio.textContent = acc.id === info.activeAccountId ? "●" : "○";
+
+            const label = document.createElement("span");
+            label.className = "account__label";
+            const safeLabel = displayAccountLabel(acc.label || acc.id);
+            label.textContent = safeLabel;
+            label.setAttribute("aria-label", safeLabel);
+
+            row.append(radio, label);
+
+            if (acc.id !== info.activeAccountId) {
+              const btnUse = document.createElement("button");
+              btnUse.textContent = "切换";
+              btnUse.onclick = async () => {
+                setStatus(`正在切换到 ${safeLabel}…`);
+                const res = await ipcRenderer.invoke("plugin:subscription-oauth:switchAccount", id, acc.id);
+                if (res && res.ok) {
+                  setStatus(`已切换到 ${safeLabel}`, "ok");
+                  await refreshStatus();
+                  if (activeProvider === id) await selectProvider(id);
+                } else {
+                  setStatus("切换失败：" + ((res && res.error) || "未知错误"), "err");
+                }
+              };
+              row.appendChild(btnUse);
+            }
+            const btnDel = document.createElement("button");
+            btnDel.textContent = "删除";
+            btnDel.onclick = async () => {
+              const res = await ipcRenderer.invoke("plugin:subscription-oauth:removeAccount", id, acc.id);
+              if (res && res.ok) {
+                setStatus(`已删除账号 ${safeLabel}`, "ok");
+                await refreshStatus();
+                if (activeProvider === id) await selectProvider(id);
+              } else {
+                setStatus("删除失败：" + ((res && res.error) || "未知错误"), "err");
+              }
+            };
+            row.appendChild(btnDel);
+            list.appendChild(row);
+          }
+          box.appendChild(list);
+        }
+
+        const actions = document.createElement("div");
+        actions.className = "provider-actions";
+        const btnLogin = document.createElement("button");
+        btnLogin.className = info.connected ? "" : "primary";
+        btnLogin.textContent = info.connected ? "登录其他账号" : "登录";
+        btnLogin.onclick = () => loginProvider(id, btnLogin);
+        actions.append(btnLogin);
+        if (info.connected) {
+          const btnSelect = document.createElement("button");
+          btnSelect.textContent = "查看用量/模型";
+          btnSelect.onclick = () => selectProvider(id);
+          actions.append(btnSelect);
+        }
+        box.appendChild(actions);
+
+        wrap.appendChild(box);
+      }
+    }
+
+    async function selectProvider(id) {
+      activeProvider = id;
+      const msg = $("detail-msg");
+      const detail = $("detail");
+      detail.innerHTML = "";
+      msg.textContent = `加载 ${PROVIDER_NAMES[id]} 数据…`;
+      const [usageRes, catalogRes] = await Promise.all([
+        ipcRenderer.invoke("plugin:subscription-oauth:usage", id),
+        ipcRenderer.invoke("plugin:subscription-oauth:catalog", id),
+      ]);
+      detail.innerHTML = "";
+      msg.textContent = "";
+
+      if (usageRes && usageRes.ok && usageRes.usage) {
+        const usage = usageRes.usage;
+        const h = document.createElement("div");
+        h.textContent = usage.plan ? `计划：${usage.plan}` : "用量";
+        h.style.fontSize = "12px"; h.style.fontWeight = "600"; h.style.marginBottom = "6px";
+        detail.appendChild(h);
+        for (const w of usage.windows || []) {
+          const row = document.createElement("div");
+          row.className = "usage-row";
+          const label = document.createElement("span"); label.textContent = w.label;
+          const bar = document.createElement("div"); bar.className = "bar";
+          const fill = document.createElement("span"); fill.style.width = Math.min(100, w.usedPercent || 0) + "%";
+          bar.appendChild(fill);
+          const pct = document.createElement("span");
+          pct.textContent = `${(w.usedPercent || 0).toFixed(1)}%${w.resetsAt ? " · " + formatTime(w.resetsAt) : ""}`;
+          row.append(label, bar, pct);
+          detail.appendChild(row);
+        }
+      } else {
+        const err = document.createElement("div");
+        err.className = "status-msg err";
+        err.textContent = "用量查询失败：" + ((usageRes && usageRes.error) || "未知错误");
+        detail.appendChild(err);
+      }
+
+      // 可见模型
+      if (catalogRes && catalogRes.ok && catalogRes.models.length) {
+        detail.appendChild(buildModelSection(
+          `可用模型（${catalogRes.models.length}）`,
+          catalogRes.models,
+          id,
+          false,
+        ));
+      }
+
+      // 隐藏模型（visibility=hide/none，如新旗舰 gpt-6-astra）
+      const hidden = (catalogRes && catalogRes.hidden) || [];
+      if (hidden.length) {
+        detail.appendChild(buildModelSection(
+          `隐藏模型（${hidden.length}）· 目录标记为不公开，仍可添加`,
+          hidden,
+          id,
+          true,
+        ));
+      }
+
+      // 一键写入按钮
+      if (catalogRes && catalogRes.ok && catalogRes.models.length) {
+        const btnRow = document.createElement("div");
+        btnRow.style.display = "flex";
+        btnRow.style.gap = "8px";
+        btnRow.style.marginTop = "10px";
+        btnRow.style.flexWrap = "wrap";
+
+        const syncBtn = document.createElement("button");
+        syncBtn.className = "primary";
+        syncBtn.textContent = "同步模型到渠道档案";
+        syncBtn.onclick = async () => {
+          syncBtn.disabled = true;
+          setStatus("正在同步渠道模型清单…");
+          const result = await ipcRenderer.invoke("plugin:subscription-oauth:syncProfiles", id, {});
+          applySyncResult(result);
+          syncBtn.disabled = false;
+        };
+        btnRow.appendChild(syncBtn);
+
+        if (hidden.length) {
+          const allBtn = document.createElement("button");
+          allBtn.textContent = "同步并包含隐藏模型";
+          allBtn.title = "把 visibility=hide/none 的模型（如 gpt-6-astra）也加入该渠道清单";
+          allBtn.onclick = async () => {
+            allBtn.disabled = true;
+            setStatus("正在同步渠道模型（含隐藏模型）…");
+            const result = await ipcRenderer.invoke("plugin:subscription-oauth:syncProfiles", id, { includeHidden: true });
+            applySyncResult(result);
+            allBtn.disabled = false;
+          };
+          btnRow.appendChild(allBtn);
+        }
+        detail.appendChild(btnRow);
+        const channelHint = document.createElement("div");
+        channelHint.className = "status-msg";
+        channelHint.textContent = "同一订阅服务只保留一个渠道档案，模型在同一页管理；旧档案会自动合并，保留旧聊天的模型选择。";
+        detail.appendChild(channelHint);
+      }
+
+      // 手动添加模型（目录未列出时的兜底）
+      if (catalogRes && catalogRes.ok) {
+        const row = document.createElement("div");
+        row.style.display = "flex";
+        row.style.gap = "8px";
+        row.style.marginTop = "10px";
+        row.style.alignItems = "center";
+        const input = document.createElement("input");
+        input.type = "text";
+        input.placeholder = "手动添加模型 ID，如 gpt-6-astra";
+        input.style.flex = "1";
+        input.style.minWidth = "180px";
+        input.style.padding = "6px 10px";
+        input.style.border = "1px solid var(--border)";
+        input.style.borderRadius = "8px";
+        input.style.fontSize = "13px";
+        const addBtn = document.createElement("button");
+        addBtn.textContent = "添加";
+        addBtn.onclick = async () => {
+          const modelId = input.value.trim();
+          if (!modelId) { setStatus("请填写模型 ID", "err"); return; }
+          addBtn.disabled = true;
+          setStatus(`正在添加 ${modelId}…`);
+          const result = await ipcRenderer.invoke("plugin:subscription-oauth:addModel", id, modelId);
+          applySyncResult(result);
+          if (result && result.ok) input.value = "";
+          addBtn.disabled = false;
+        };
+        row.append(input, addBtn);
+        detail.appendChild(row);
+        const hint = document.createElement("div");
+        hint.className = "status-msg";
+        hint.textContent = "目录里没有的模型（如新旗舰）可在此手动添加；能否使用取决于订阅与后端是否支持。";
+        detail.appendChild(hint);
+      }
+    }
+
+    /** 模型标签区：点击单个模型即追加到该渠道的模型清单。 */
+    function buildModelSection(title, models, providerId, isHidden) {
+      const wrap = document.createElement("div");
+      const h2 = document.createElement("div");
+      h2.textContent = title;
+      h2.style.fontSize = "12px";
+      h2.style.fontWeight = "600";
+      h2.style.margin = "10px 0 6px";
+      h2.style.color = isHidden ? "#b06a8a" : "";
+      wrap.appendChild(h2);
+
+      const box = document.createElement("div");
+      box.className = "models";
+      for (const m of models) {
+        const tag = document.createElement("span");
+        tag.className = "model-tag";
+        if (isHidden) tag.style.opacity = "0.8";
+        const label = m.name === m.id ? m.id : `${m.name}（${m.id}）`;
+        const efforts = Array.isArray(m.efforts) && m.efforts.length ? ` · 思考：${m.efforts.join("/")}` : "";
+        const ctx = formatContext(m.contextWindow);
+        const ctxLabel = ctx ? ` · 上下文：${ctx}` : "";
+        tag.textContent = label + ctxLabel + efforts;
+        tag.title = (m.description || m.id)
+          + (ctx ? `\n上下文长度：${ctx}` : "")
+          + (efforts ? `\n档位：${m.efforts.join(" > ")}（高→低）` : "")
+          + (isHidden ? "\n目录标记为隐藏，可能对新账号/客户端版本不可用" : "");
+        tag.onclick = async () => {
+          tag.classList.add("selected");
+          setStatus(`正在加入渠道清单：${m.id}…`);
+          const result = await ipcRenderer.invoke("plugin:subscription-oauth:syncProfiles", providerId, { models: [m] });
+          applySyncResult(result);
+          tag.classList.remove("selected");
+        };
+        box.appendChild(tag);
+      }
+      wrap.appendChild(box);
+      return wrap;
+    }
+
+    /** 上下文长度友好显示：512000 → 512k。 */
+    function formatContext(tokens) {
+      if (typeof tokens !== "number" || !Number.isFinite(tokens) || tokens <= 0) return "";
+      if (tokens >= 1000) return Math.round(tokens / 1000) + "k";
+      return String(tokens);
+    }
+
+    /** 统一的写入结果提示。 */
+    function applySyncResult(result) {
+      if (result && result.ok) {
+        const migration = result.removed > 0 ? `，已合并 ${result.removed} 个旧档案` : "";
+        const availability = result.degraded ? "重启 Cyrene 后生效。" : "可在聊天窗口的该渠道下切换模型。";
+        setStatus(
+          `已同步到一个渠道档案，包含 ${result.modelCount} 个模型${migration}。${availability}${result.warning || ""}`,
+          result.migrationPending || result.degraded ? "" : "ok",
+        );
+      } else {
+        setStatus("写入失败：" + ((result && result.error) || "未知错误"), "err");
+      }
+    }
+
+    // 标题栏控制
+    $("btn-min").onclick = () => ipcRenderer.send("plugin:subscription-oauth:win-minimize");
+    $("btn-close").onclick = () => ipcRenderer.send("plugin:subscription-oauth:win-close");
+
+    refreshStatus().catch((e) => setStatus("加载失败：" + (e && e.message || e), "err"));
+  </script>
+</body>
+</html>

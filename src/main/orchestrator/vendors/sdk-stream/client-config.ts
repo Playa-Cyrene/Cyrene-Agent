@@ -12,6 +12,31 @@ export interface AnthropicClientConfig {
   fetch?: typeof fetch;
 }
 
+/** Observe network chunks before SDK parsing, including SSE comment heartbeats. */
+export function withStreamActivity(delegate: typeof fetch, onActivity?: () => void): typeof fetch {
+  if (!onActivity) return delegate;
+  return async (input, init) => {
+    const response = await delegate(input, init);
+    if (!response.ok || !response.body) return response;
+    onActivity();
+    const reader = response.body.getReader();
+    const body = new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        try {
+          const { done, value } = await reader.read();
+          if (done) { controller.close(); reader.releaseLock(); return; }
+          if (value?.byteLength) onActivity();
+          controller.enqueue(value);
+        } catch (error) { controller.error(error); reader.releaseLock(); }
+      },
+      async cancel(reason) {
+        try { await reader.cancel(reason); } finally { reader.releaseLock(); }
+      },
+    });
+    return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
+  };
+}
+
 function withoutTrailingSlash(value: string): string {
   return value.replace(/\/+$/, "");
 }

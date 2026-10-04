@@ -47,6 +47,7 @@ const EFFORT_LABEL: Record<ReasoningEffort, string> = {
   high: "高",
   xhigh: "极高",
   max: "最强",
+  ultra: "极限",
 };
 
 export function computeReasoningDropdown(

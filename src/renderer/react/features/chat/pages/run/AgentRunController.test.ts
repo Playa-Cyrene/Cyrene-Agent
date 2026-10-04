@@ -193,12 +193,45 @@ describe("AgentRunController", () => {
 
     expect(host.patchMessage).toHaveBeenCalledWith("session-1", "assistant-1", {
       modelRetry: { phase: "waiting", retryNumber: 2, maxRetries: 5, delayMs: 4000, category: "NETWORK" },
+      runStage: { kind: "understanding" },
     });
     expect(store.checkpointPresentation.mock.calls.some((call) => JSON.stringify(call[3]).includes("modelRetry"))).toBe(false);
 
     api.emit({ type: "RUN_FINISHED", runId: "run-1", result: { status: "success" } });
     await promise;
     expect(host.patchMessage.mock.calls.some(([, , patch]) => (patch as { modelRetry?: unknown }).modelRetry === null)).toBe(true);
+  });
+
+  it("does not keep a completed todo in the executing stage while the model continuation retries", async () => {
+    const api = createFakeApi({ success: true, runId: "run-1" });
+    const store = createFakeStore();
+    const { host } = createRecordingHost();
+    const { promise } = launch(createInput(), { api, store, host, registries: createRegistries() });
+    await flush();
+    api.emit(RUN_STARTED_EVENT);
+    api.emit({ type: "TOOL_CALL_START", runId: "run-1", toolCallId: "todo", toolCallName: "update_todo" });
+    api.emit({ type: "TOOL_CALL_RESULT", runId: "run-1", toolCallId: "todo", content: "updated", status: "success" });
+    expect(host.patchMessage.mock.calls.at(-1)?.[2]).toEqual({ runStage: { kind: "understanding" } });
+    api.emit({ type: "CUSTOM", name: "cyrene.model.retry", runId: "run-1", value: { phase: "attempting", retryNumber: 1, maxRetries: 5, category: "TIMEOUT" } });
+    expect(host.patchMessage.mock.calls.at(-1)?.[2]).toMatchObject({ runStage: { kind: "understanding" } });
+    api.emit({ type: "RUN_FINISHED", runId: "run-1", result: { status: "success" } });
+    await promise;
+    expect(host.patchMessage.mock.calls.flatMap(([, , patch]) => patch.toolExecutions ?? []).filter((tool) => tool.id === "todo").at(-1)?.status).toBe("success");
+  });
+
+  it("retains the executing stage for a different tool that is still running", async () => {
+    const api = createFakeApi({ success: true, runId: "run-1" });
+    const store = createFakeStore();
+    const { host } = createRecordingHost();
+    const { promise } = launch(createInput(), { api, store, host, registries: createRegistries() });
+    await flush();
+    api.emit(RUN_STARTED_EVENT);
+    api.emit({ type: "TOOL_CALL_START", runId: "run-1", toolCallId: "todo", toolCallName: "update_todo" });
+    api.emit({ type: "TOOL_CALL_START", runId: "run-1", toolCallId: "image", toolCallName: "generate_image", toolCallDisplayName: "生成图片" });
+    api.emit({ type: "TOOL_CALL_RESULT", runId: "run-1", toolCallId: "todo", content: "updated", status: "success" });
+    expect(host.patchMessage.mock.calls.at(-1)?.[2]).toEqual({ runStage: { kind: "executing", detail: "生成图片" } });
+    api.emit({ type: "RUN_FINISHED", runId: "run-1", result: { status: "cancelled" } });
+    await promise;
   });
 
   it("keeps shell output with its own tool across the final result and checkpoint", async () => {

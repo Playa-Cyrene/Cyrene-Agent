@@ -1,0 +1,11 @@
+{
+  "apiVersion": 1,
+  "id": "subscription-oauth",
+  "name": "订阅 OAuth（ChatGPT / Claude / Grok）",
+  "version": "1.3.4",
+  "description": "用订阅账号登录 ChatGPT / Claude / Grok，经本地代理使用订阅模型，并支持 ChatGPT / Grok 订阅生图在聊天内直接预览。",
+  "author": "1971687396",
+  "entry": "index.cjs",
+  "icon": "icon.png",
+  "deps": ["secrets"]
+}

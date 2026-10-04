@@ -8,6 +8,7 @@ import {
 interface MutableToolCall {
   index: number;
   id?: string;
+  itemId?: string;
   name: string;
   arguments: string;
   ended: boolean;
@@ -33,20 +34,28 @@ export class CyreneStreamAccumulator {
         this.text += delta.delta;
         return;
       case "tool_call_start": {
-        const toolCall = this.getOrCreateToolCall(delta.index);
+        const toolCall = this.getOrResolveToolCall(delta.index, delta.id, delta.itemId);
         this.assignStableId(toolCall, delta.id);
+        this.assignStableItemId(toolCall, delta.itemId);
         toolCall.name += delta.nameDelta ?? "";
         return;
       }
       case "tool_call_arguments_delta": {
-        const toolCall = this.getOrCreateToolCall(delta.index);
+        const toolCall = this.getOrResolveToolCall(delta.index, delta.id, delta.itemId);
         this.assignStableId(toolCall, delta.id);
+        this.assignStableItemId(toolCall, delta.itemId);
         toolCall.arguments += delta.delta;
         return;
       }
       case "tool_call_end": {
-        const toolCall = this.getOrCreateToolCall(delta.index);
+        const toolCall = this.getOrResolveToolCall(delta.index, delta.id, delta.itemId, delta.terminalSnapshot);
         this.assignStableId(toolCall, delta.id);
+        this.assignStableItemId(toolCall, delta.itemId);
+        // Responses transports may expose complete function metadata only in
+        // output_item.done / response.completed. These fields are authoritative
+        // snapshots, so replace incomplete streamed fragments instead of appending.
+        if (delta.name !== undefined) toolCall.name = delta.name;
+        if (delta.arguments !== undefined) toolCall.arguments = delta.arguments;
         toolCall.ended = true;
         return;
       }
@@ -125,6 +134,55 @@ export class CyreneStreamAccumulator {
     return created;
   }
 
+  private getOrResolveToolCall(index: number, id?: string, itemId?: string, terminalSnapshot = false): MutableToolCall {
+    if (itemId) {
+      // item_id and call_id are different identities. In particular, a delayed
+      // call_id must not make two parallel calls swap their terminal snapshots.
+      const byItemId = this.sortedToolCalls().find((toolCall) => toolCall.itemId === itemId);
+      if (byItemId) return byItemId;
+    }
+    if (id) {
+      // A Responses terminal response can compact server-side search/reasoning items,
+      // so its output-array position is not guaranteed to equal the streamed
+      // output_index. Stable identities must win over the positional hint.
+      const byId = this.sortedToolCalls().find((toolCall) => toolCall.id === id);
+      if (byId) return byId;
+    }
+
+    if (terminalSnapshot && (id || itemId)) {
+      // Legacy endpoints without native item IDs can be recovered only when
+      // there is a single unidentified call. Never guess between parallel calls.
+      const unidentified = this.sortedToolCalls().filter((toolCall) => !toolCall.id && !toolCall.itemId);
+      if (unidentified.length === 1) return unidentified[0];
+      if (unidentified.length > 1) {
+        throw new ProviderProtocolError("E_TOOL_CALL_INCOMPLETE",
+          "Cannot match parallel terminal tool calls without stable call_id or item_id");
+      }
+      // All existing calls have distinct identities: this is a new terminal-only
+      // call, not the live call that happened to occupy its compacted array slot.
+      if (this.toolCalls.has(index)) {
+        const nextIndex = Math.max(...this.toolCalls.keys()) + 1;
+        return this.getOrCreateToolCall(nextIndex);
+      }
+    }
+
+    const byIndex = this.toolCalls.get(index);
+    if (byIndex) return byIndex;
+
+    return this.getOrCreateToolCall(index);
+  }
+
+  private assignStableItemId(toolCall: MutableToolCall, itemId?: string): void {
+    if (!itemId) return;
+    if (toolCall.itemId && toolCall.itemId !== itemId) {
+      throw new ProviderProtocolError(
+        "E_TOOL_CALL_ID_CHANGED",
+        `Tool call at index ${toolCall.index} changed its native item id`,
+      );
+    }
+    toolCall.itemId = itemId;
+  }
+
   private assignStableId(toolCall: MutableToolCall, id: string | undefined): void {
     if (!id) return;
     if (!toolCall.id) {
@@ -147,18 +205,18 @@ export class CyreneStreamAccumulator {
     if (!toolCall.ended || !toolCall.id || !toolCall.name.trim()) {
       throw new ProviderProtocolError(
         "E_TOOL_CALL_INCOMPLETE",
-        `Tool call at index ${toolCall.index} is missing its terminal marker, id, or name`,
+        `Tool call at index ${toolCall.index} is missing its terminal marker, id, or name`
+          + ` (terminal=${toolCall.ended ? "present" : "missing"}, call_id=${toolCall.id ? "present" : "missing"}, name=${toolCall.name.trim() ? "present" : "missing"})`,
       );
     }
 
     try {
       JSON.parse(toolCall.arguments);
-    } catch (error) {
+    } catch {
       throw new ProviderProtocolError(
         "E_TOOL_CALL_INCOMPLETE",
-        `Tool call at index ${toolCall.index} has incomplete JSON arguments: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
+        // Modern JSON.parse errors can quote the input (including private prompts).
+        `Tool call at index ${toolCall.index} has incomplete JSON arguments`,
       );
     }
 

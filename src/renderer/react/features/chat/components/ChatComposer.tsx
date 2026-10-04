@@ -569,6 +569,7 @@ function ModelFailureNotice({ failure }: { failure: ModelFailureInfo }) {
             {failure.vendorType && <><dt>{t("composer.modelError.type")}</dt><dd>{failure.vendorType}</dd></>}
             {failure.requestId && <><dt>{t("composer.modelError.requestId")}</dt><dd>{failure.requestId}</dd></>}
           </dl>
+          {failure.providerMessage && <p className="cy-model-error-dialog__hint">{failure.providerMessage}</p>}
           <p className="cy-model-error-dialog__hint">{failure.category === "UNKNOWN"
             ? t("composer.modelError.unknownHint")
             : t("composer.modelError.hint")}</p>

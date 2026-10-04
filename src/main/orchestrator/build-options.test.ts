@@ -76,6 +76,22 @@ async function buildAgentRunOptions(
 }
 
 describe("build-options", () => {
+  it("preserves current canonical reference images and user identity even for a text-only model", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-tool-reference-test-"));
+    try {
+      const imagePath = path.join(dir, "reference.png");
+      fs.writeFileSync(imagePath, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52]));
+      const deps = createBuildDeps();
+      deps.loadModelSettings = () => ({ provider: "test", baseUrl: "https://example.test", model: "text-only", apiKey: "k", multimodal: false });
+      const result = await buildAgentRunOptions({
+        currentUser: { turnId: "user-turn-7", text: "draw", visibleContent: "draw", attachments: [{ kind: "image", name: "reference.png", filePath: imagePath }] },
+      }, deps);
+      expect(result.options.userMessageId).toBe("user-turn-7");
+      expect(result.options.inputImages).toEqual([{ url: expect.stringMatching(/^data:image\/png;base64,/) }]);
+      expect(typeof result.options.messages.at(-1)?.content).toBe("string");
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  });
+
   it.each(["chat", "work", "learn", "code"] as const)("uses the explicit %s mode prompt", async (mode) => {
     const deps = createBuildDeps();
     deps.buildModePrompt = (target) => `[MODE:${target}]`;
@@ -197,6 +213,38 @@ describe("build-options", () => {
     expect((result.options.tools ?? []).map((t: { id: string }) => t.id)).toEqual(["music_search"]);
     // 有工具时 chat 也注入工具目录 prompt（进 harness stablePrefix）。
     expect(result.options.toolSystemContent).toContain("TOOL_SYSTEM");
+  });
+
+  it("hides host search tools when the selected profile uses upstream native search", async () => {
+    const deps = createBuildDeps();
+    deps.loadModelSettings = () => ({
+      provider: "ChatGPT（OpenAI）订阅",
+      baseUrl: "http://127.0.0.1:6231/v1",
+      model: "gpt-5.6-luna",
+      apiKey: "oauth-subscription",
+      explicitTransport: "responses",
+      nativeWebSearch: true,
+    });
+    deps.loadGeneralSettings = () => ({
+      currentStyleId: "default",
+      customStyle: { diversity: { driver: "model-default" }, repetition: "model-default" },
+      searchEngine: "bocha",
+    } as never);
+    deps.toolRegistry.getEnabled = () => [
+      { id: "web_search", name: "联网搜索", description: "d", enabled: true },
+      { id: "minimax-web-search-web_search", name: "MiniMax 搜索", description: "d", enabled: true },
+      { id: "read_file", name: "读文件", description: "d", enabled: true },
+    ] as never;
+
+    const result = await buildAgentRunOptions({
+      sessionId: "native-search",
+      modelProfileId: "oauth-sub-chatgpt-gpt-5.6-luna",
+      mode: "work",
+      executionMode: "work",
+      messages: [{ role: "user", content: "查一下今天的新闻" }],
+    }, deps);
+
+    expect((result.options.tools ?? []).map((tool: { id: string }) => tool.id)).toEqual(["read_file"]);
   });
   it("does not include legacy Ask Soul prompt fields", async () => {
     const deps = createBuildDeps()

@@ -3,6 +3,14 @@ import { PROVIDER_CAPABILITIES, getCapability } from "./capabilities";
 import { getAdapterForConfig } from "./index";
 
 describe("PROVIDER_CAPABILITIES — schema smoke", () => {
+  test.each([
+    ["ChatGPT（OpenAI）订阅", "chatgpt"],
+    ["Claude（Anthropic）订阅", "claude"],
+    ["Grok（xAI）订阅", "grok"],
+  ])("resolves the %s subscription label to %s without adding preset entries", (label, id) => {
+    expect(getCapability(label)?.id).toBe(id);
+    expect(PROVIDER_CAPABILITIES.some((capability) => capability.displayName === label)).toBe(false);
+  });
   test("每条 capability 都有 id 与 displayName，且非空", () => {
     for (const cap of PROVIDER_CAPABILITIES) {
       expect(cap.id, `entry missing id`).toBeTruthy();

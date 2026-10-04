@@ -47,6 +47,7 @@ import { executeToolDefinition } from "../tools/registry/tool-executor";
 import { toolRegistry } from "../tools/registry/tool-registry";
 import type { ToolOutputStore } from "./tool-output/tool-output-store";
 import { ToolOutputPersistenceError } from "./tool-output/file-tool-output-store";
+import { parseGeneratedImageResult } from "../../../shared/generated-image";
 
 const READ_ONLY_BUILTINS = new Set([
   ASK_USER_TOOL_ID,
@@ -304,20 +305,33 @@ export async function dispatchToolCall(
         },
       }
     : ctx.toolContext;
-  const run = async (): Promise<ToolExecutionOutcome> => executeToolDefinition(tool, args, shellContext);
-  if (ctx.executionLedger) {
-    const ledgerResult = await ctx.executionLedger.execute(
-      { logicalInvocationId: `${ctx.toolContext?.runId ?? "unknown"}:${call.id}`, capability: tool.id, targetRefs, args },
-      run,
-    );
-    result = {
-      toolId: tool.id,
-      args,
-      ...ledgerResult.outcome,
-      ...(ledgerResult.cached ? { deduplicated: true } : {}),
-    };
-  } else {
-    result = { toolId: tool.id, args, ...await run() };
+  let acceptingProgress = true;
+  const executionContext = {
+    ...shellContext,
+    userQuery: shellContext?.userQuery ?? "",
+    reportProgress: (message: string) => {
+      if (!acceptingProgress || ctx.signal?.aborted || shellContext?.signal?.aborted || typeof message !== "string" || !message.trim()) return;
+      try { ctx.onEvent?.({ type: "progress_text", content: message.slice(0, 300) }); } catch { /* UI cannot interrupt generation */ }
+    },
+  };
+  const run = async (): Promise<ToolExecutionOutcome> => executeToolDefinition(tool, args, executionContext);
+  try {
+    if (ctx.executionLedger) {
+      const ledgerResult = await ctx.executionLedger.execute(
+        { logicalInvocationId: `${ctx.toolContext?.runId ?? "unknown"}:${call.id}`, capability: tool.id, targetRefs, args },
+        run,
+      );
+      result = {
+        toolId: tool.id,
+        args,
+        ...ledgerResult.outcome,
+        ...(ledgerResult.cached ? { deduplicated: true } : {}),
+      };
+    } else {
+      result = { toolId: tool.id, args, ...await run() };
+    }
+  } finally {
+    acceptingProgress = false;
   }
 
   // 截断输出（长输出按预算截断，只把可消费的 preview 交给模型）
@@ -369,7 +383,7 @@ export async function dispatchToolCall(
       type: "tool_end",
       toolCallId: call.id,
       outcome: result.status === "succeeded" ? "success" : "failure",
-      preview: preview.slice(0, 200),
+      preview: parseGeneratedImageResult(preview) ? preview : preview.slice(0, 200),
       // Diff Review 卡片证据走独立字段，不受 preview 截断影响
       changes: extractFileChangesFromOutput(result.output),
     });

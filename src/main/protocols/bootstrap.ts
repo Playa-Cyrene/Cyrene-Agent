@@ -8,6 +8,7 @@ import { parseMomentMediaUrl, resolveMomentMediaPath } from "../moments/moment-m
 import { getMomentsMediaRootDir } from "../moments/moments-store";
 import { parseLearnExamPageRequest, resolveLearnExamPageAsset } from "./learn-exam-page-protocol";
 import { buildLearnExamCsp } from "./learn-exam-csp";
+import { createGeneratedImageProtocol } from "./generated-image-protocol";
 
 const LEARN_EXAM_SESSION_PARTITION = "cyrene-learn-exam";
 
@@ -22,6 +23,7 @@ export function getLearnExamPageSession(): Session {
  */
 export function registerPrivilegedSchemes(): void {
   protocol.registerSchemesAsPrivileged([
+    { scheme: "generated-image", privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } },
     { scheme: "local-sticker", privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } },
     { scheme: "moment-media", privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } },
     { scheme: "cyrene-exam", privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } },
@@ -35,6 +37,7 @@ export function registerPrivilegedSchemes(): void {
  * - moment-media:// 将请求映射到 userData/moments-media/<postId>/ 下的文件（白名单映射式解析）
  */
 export function registerProtocolHandlers(): void {
+  protocol.handle("generated-image", createGeneratedImageProtocol(app.getPath("userData")));
   protocol.handle("local-sticker", (request) => {
     const file = parseLocalStickerFileFromUrl(request.url);
     if (!file) return new Response("Invalid sticker URL", { status: 404 });

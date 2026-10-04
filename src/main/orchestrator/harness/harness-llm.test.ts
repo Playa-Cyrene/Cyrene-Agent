@@ -62,9 +62,28 @@ beforeEach(() => {
   fakeGetAdapter.mockReturnValue(adapter);
   globalThis.fetch = vi.fn();
 });
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 
 describe("callLLM retries", () => {
+  it("wires raw stream activity to the retry idle timer without inventing visible output", async () => {
+    vi.useFakeTimers();
+    fakeStreamChat.mockImplementationOnce(async (input) => {
+      for (let i = 0; i < 4; i += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 35_000));
+        if (input.signal.aborted) throw new Error("unexpected idle timeout");
+        input.onStreamActivity();
+      }
+      return makeResponse();
+    });
+    const reasoning = vi.fn();
+    const text = vi.fn();
+    const checked = expect(callLLM(vendorConfig, promptLayers, messages, [], harnessConfig, undefined, reasoning, text)).resolves.toMatchObject({ text: "done" });
+    await vi.advanceTimersByTimeAsync(140_000);
+    await checked;
+    expect(fakeStreamChat).toHaveBeenCalledTimes(1);
+    expect(reasoning).not.toHaveBeenCalled();
+    expect(text).not.toHaveBeenCalled();
+  });
   it("retries a MiniMax-style 529 even when its vendor code is classified as unknown", async () => {
     const minimax529 = new AgentRuntimeError("E_MODEL_REQUEST_FAILED", "HTTP 529 server_error", {
       modelFailure: { provider: "minimax", model: "MiniMax-M3", category: "UNKNOWN", status: 529, vendorCode: "server_error" },
@@ -132,7 +151,7 @@ describe("summarizeHistory retries", () => {
     expect(statuses.map((status) => status.phase)).toEqual(["waiting", "attempting", "cleared"]);
   });
 
-  it("retries an explicit quota business code under HTTP 429 within the configured budget", async () => {
+  it("does not repeatedly retry an explicit quota business code under HTTP 429", async () => {
     globalThis.fetch = vi.fn(async () => new Response('{"error":{"code":"organization_usage_limit_exceeded"}}', {
       status: 429,
       headers: { "content-type": "application/json", "retry-after": "0" },
@@ -142,6 +161,6 @@ describe("summarizeHistory retries", () => {
       maxRetries: harnessConfig.modelRequestMaxRetries,
       idleTimeoutMs: harnessConfig.modelRequestIdleTimeoutMs,
     })).rejects.toThrow("HTTP 429");
-    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
   });
 });

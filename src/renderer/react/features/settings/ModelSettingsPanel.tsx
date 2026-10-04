@@ -72,6 +72,7 @@ interface ModelProfile {
   apiKey: string;
   explicitTransport?: ApiTransport;
   reasoning?: ReasoningPreference;
+  nativeWebSearch?: boolean;
   contextWindowTokens?: number;
   multimodal?: boolean;
   modelOptions?: Record<string, { contextWindowTokens?: number; multimodal?: boolean; manualReasoning?: ManualReasoningConfig }>;
@@ -596,6 +597,7 @@ export function ModelSettingsPanel() {
         apiKey: currentApiKey(),
         explicitTransport: transport,
         reasoning,
+        nativeWebSearch: profiles.find((profile) => profile.id === activeId)?.nativeWebSearch,
         // 新字段按模型保存；兼容字段镜像默认模型值，确保旧版读取时保持合理行为。
         modelOptions: savedModelOptions,
         contextWindowTokens: defaultOption.contextWindowTokens,

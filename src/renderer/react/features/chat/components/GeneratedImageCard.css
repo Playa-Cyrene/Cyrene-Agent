@@ -1,0 +1,6 @@
+.cy-generated-image { margin: 12px 0; max-width: 520px; border: 1px solid var(--rb-border-default); border-radius: 18px; overflow: hidden; background: var(--rb-bg-2); }
+.cy-generated-image .ant-image { display: block; width: 100%; }
+.cy-generated-image .ant-image-img { display: block; max-height: 640px; object-fit: contain; }
+.cy-generated-image figcaption { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 16px; color: var(--rb-text-secondary); }
+.cy-generated-image button { border: 1px solid var(--rb-border-default); border-radius: 10px; padding: 6px 12px; background: var(--rb-bg-1); color: var(--rb-text-primary); cursor: pointer; }
+.cy-generated-image [role="status"] { padding: 0 16px 12px; font-size: 12px; }

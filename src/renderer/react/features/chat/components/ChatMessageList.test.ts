@@ -28,6 +28,18 @@ vi.mock("./SvgCardBlock", () => ({ SvgCardBlock: () => null }));
 import { assembleMessageItems, createMessageItems, formatChannelSourceLabel, MarkdownContent, resolveChannelConversationLabel, RunActivityDetail, type ChatMessageItem, type EnabledSticker } from "./ChatMessageList";
 import { extractMessageStickerId, stripMessageStickerMarkers } from "./message-sticker";
 
+describe("generated image delivery", () => {
+  it("shows an image outside the collapsed activity even with no final model answer", () => {
+    const image = { kind: "cyrene.generated-image", id: "bce7e272-0c22-4c45-975d-69c6c1db15c7", provider: "ChatGPT" };
+    const items = createMessageItems([{ id: "image-turn", role: "assistant", content: "", runActivity: { startedAt: 1, completedAt: 2, reasoningMs: 0 }, toolExecutions: [
+      { id: "image-1", name: "subscription-oauth_generate_image", status: "success", result: JSON.stringify(image) },
+      { id: "image-2", name: "subscription-oauth_generate_image", status: "success", result: JSON.stringify(image) },
+    ] }], []);
+    expect(items.filter((item) => item.role === "generatedImage")).toHaveLength(1);
+    expect(items.find((item) => item.role === "generatedImage")?.extraInfo).toEqual({ image });
+  });
+});
+
 describe("React chat sticker messages", () => {
   it("extracts a persisted user sticker marker and hides the raw marker", () => {
     expect(extractMessageStickerId("[sticker:hugtight]")).toBe("hugtight");

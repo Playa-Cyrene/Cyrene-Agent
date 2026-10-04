@@ -246,6 +246,8 @@ export interface ModelSettingsLite {
   multimodal?: boolean;
   /** 独立视觉模型配置（可选）。image-router 路由判定用。 */
   vision?: { baseUrl: string; apiKey: string; model: string };
+  /** true 时网页搜索由模型上游服务端执行，宿主第三方搜索工具不得暴露。 */
+  nativeWebSearch?: boolean;
   /** 上下文窗口大小（Token）。来自 ModelSettings.contextWindowTokens。 */
   contextWindowTokens?: number;
   /** 主模型请求的额外重试次数；旧设置回退到 5。 */
@@ -879,7 +881,14 @@ export async function buildAgentRunOptions(
 
   // 搜索后端互斥过滤：每轮只暴露当前后端对应的搜索工具
   const generalSettings = deps.loadGeneralSettings();
-  const activeSearchBackend = ((generalSettings as Record<string, unknown>).searchEngine as string ?? "off") as SearchBackend;
+  const configuredSearchBackend = ((generalSettings as Record<string, unknown>).searchEngine as string ?? "off") as SearchBackend;
+  // 订阅 OAuth 档案由代理注入厂商原生的服务端搜索工具。此时必须把宿主搜索
+  // 后端视为关闭，避免同一轮同时出现第三方 web_search 与上游原生搜索。
+  // id / 占位 key 两项仅用于兼容升级前尚未写入 nativeWebSearch 的旧档案。
+  const usesNativeWebSearch = settings.nativeWebSearch === true
+    || input.modelProfileId?.startsWith("oauth-sub-") === true
+    || (settings.apiKey === "oauth-subscription" && settings.provider.includes("订阅"));
+  const activeSearchBackend: SearchBackend = usesNativeWebSearch ? "off" : configuredSearchBackend;
   // Chat 模式 fallbackCapabilities 路径：人格内置工具直接开放；
   // 文件工具仍要求本轮带附件。
   const builtinChatTools = isChatMode
@@ -935,10 +944,13 @@ export async function buildAgentRunOptions(
       : {}),
   })).filter((s) => s.id);
   const runTools = capabilities.tools;
-  const searchToolIds = filteredBySearch
+  const searchToolIds = runTools
     .filter((t) => t.id === "web_search" || t.id.startsWith("minimax-web-search-"))
     .map((t) => t.id);
-  console.log(`[Cyrene] 搜索后端=${activeSearchBackend} 暴露搜索工具=[${searchToolIds.join(", ") || "无"}]`);
+  console.log(
+    `[Cyrene] 搜索后端=${usesNativeWebSearch ? "上游原生" : activeSearchBackend}`
+    + ` 暴露宿主搜索工具=[${searchToolIds.join(", ") || "无"}]`,
+  );
   const baseSoulSystemPrompt = deps.buildModePrompt?.(resolvedMode)
     ?? deps.buildSoulSystemBasePrompt(basePromptMode);
   // Chat 工具增强开启且有勾选工具时，chat 也注入工具目录 prompt
@@ -1042,6 +1054,16 @@ export async function buildAgentRunOptions(
       )
     : undefined;
 
+  // Tools receive only this user action's attachments, not pictures from model
+  // history. A text-only/caption route must not discard references for image tools.
+  const toolImages = currentAttachments?.filter((attachment) => attachment.kind === "image" && attachment.filePath)
+    ?? input.imageAttachments ?? [];
+  const inputImages = toolImages.flatMap((image) => {
+    if (!image.filePath) return [];
+    const validated = validateCaptionImagePath(image.filePath);
+    return validated.ok ? [{ url: `data:${validated.mime};base64,${validated.buffer.toString("base64")}` }] : [];
+  });
+
   // 轨迹侧崩溃孤儿：并入 recoveryContext，与派发侧（渠道恢复上下文）在 bridge 合并
   const transcriptRecoveryContext = transcriptContext?.uncertainEffects.length
     ? formatTranscriptUncertainEffects(transcriptContext.uncertainEffects)
@@ -1065,6 +1087,8 @@ export async function buildAgentRunOptions(
         ? Math.max(1, Math.min(MAX_PARALLEL_TOOL_CALLS, Math.trunc(generalSettings.maxParallelToolCalls)))
         : 4,
       messages: fcMessages,
+      userMessageId: input.currentUser?.turnId ?? input.userTurnId,
+      inputImages,
       cleanMessages: cleanFcMessages,
       conversationId,
       executionMode,

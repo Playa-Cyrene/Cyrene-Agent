@@ -4,6 +4,7 @@
 // displayName 必须与 renderer settings.ts 的 MODEL_PRESETS.providerName 完全一致。
 import type { ProviderCapability } from "./types";
 import { VENDOR_REGISTRY } from "../../../shared/vendor-registry";
+import { subscriptionProviderId } from "../../../shared/subscription-provider";
 
 // VENDOR_REGISTRY 保持旧能力表顺序（minimax 开头）——导出数组的顺序是可观察行为，
 // 由 order-snapshot.test.ts 的 capability 顺序断言钉死。
@@ -13,12 +14,13 @@ export const PROVIDER_CAPABILITIES: readonly ProviderCapability[] =
 const byDisplayName = new Map(PROVIDER_CAPABILITIES.map(c => [c.displayName, c]));
 
 export function getCapability(provider: string): ProviderCapability | undefined {
-  return byDisplayName.get(provider);
+  const id = subscriptionProviderId(provider);
+  return byDisplayName.get(provider) ?? (id ? PROVIDER_CAPABILITIES.find((capability) => capability.id === id) : undefined);
 }
 
 /** 兜底：未知厂商按 OpenAI 兼容处理（保守可用），避免直接崩。 */
 export function getCapabilityOrOpenAI(provider: string): ProviderCapability {
-  return byDisplayName.get(provider) ?? {
+  return getCapability(provider) ?? {
     id: "unknown",
     displayName: provider,
     transport: "openai",

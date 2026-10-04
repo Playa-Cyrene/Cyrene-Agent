@@ -143,7 +143,7 @@ describe("model catalog", () => {
       contextWindowTokens: 256000,
       multimodal: false,
       modelProfiles: [
-        { id: "p-full", provider: "GLM（智谱）", baseUrl: "https://a.com", apiKey: "k", model: "m", contextWindowTokens: 128000, multimodal: true },
+        { id: "p-full", provider: "GLM（智谱）", baseUrl: "https://a.com", apiKey: "k", model: "m", contextWindowTokens: 128000, multimodal: true, nativeWebSearch: true },
         { id: "p-legacy", provider: "GLM（智谱）", baseUrl: "https://b.com", apiKey: "k2", model: "m2" },
       ],
     });
@@ -151,11 +151,13 @@ describe("model catalog", () => {
     const full = resolveModelSettingsProfile(settings, "p-full");
     expect(full.contextWindowTokens).toBe(128000);
     expect(full.multimodal).toBe(true);
+    expect(full.nativeWebSearch).toBe(true);
 
     // 老档案无档案级字段 → 回退全局值
     const legacyProfile = resolveModelSettingsProfile(settings, "p-legacy");
     expect(legacyProfile.contextWindowTokens).toBe(256000);
     expect(legacyProfile.multimodal).toBe(false);
+    expect(legacyProfile.nativeWebSearch).toBeUndefined();
 
     // 未持久化 multimodal → 默认 true（多模态模型用户开箱即直发图片，
     // 判错有服务端 400 + caption 自动降级兜底）；显式 false 保留

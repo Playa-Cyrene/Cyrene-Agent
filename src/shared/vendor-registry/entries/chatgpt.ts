@@ -118,7 +118,7 @@ export const CHATGPT_REGISTRY = defineVendor({
     // 不前置会被 Astra 规则误吞。
     { modelPattern: /^gpt-6\.1/i, modelInferencePattern: /^gpt-6\.1/i, metadata: legacyMetadata("迁自 src/shared/vendor-registry/entries/chatgpt.ts"), capability: {
       control: "effort",
-      supportedEfforts: ["low", "medium", "high", "xhigh", "max"],
+      supportedEfforts: ["low", "medium", "high", "xhigh", "max", "ultra"],
       defaultEffort: "medium",
       requestStyle: "openai-effort",
       supportsDisable: true,
@@ -131,7 +131,7 @@ export const CHATGPT_REGISTRY = defineVendor({
     // transport 不受限（capability 默认 transport 已是 responses）。
     { modelPattern: /^gpt-6-(?:sol|luna)/i, modelInferencePattern: /^gpt-6-(?:sol|luna)/i, metadata: legacyMetadata("迁自 src/shared/vendor-registry/entries/chatgpt.ts"), capability: {
       control: "effort",
-      supportedEfforts: ["low", "medium", "high", "xhigh", "max"],
+      supportedEfforts: ["low", "medium", "high", "xhigh", "max", "ultra"],
       defaultEffort: "medium",
       requestStyle: "openai-effort",
       supportsDisable: true,
@@ -143,7 +143,7 @@ export const CHATGPT_REGISTRY = defineVendor({
     // defaultEffort 是 Cyrene 的产品默认档（质量/延迟/成本的平衡点），非官方 API 默认。
     { modelPattern: /^gpt-6/i, modelInferencePattern: /^gpt-6/i, metadata: legacyMetadata("迁自 src/shared/vendor-registry/entries/chatgpt.ts"), capability: {
       control: "effort",
-      supportedEfforts: ["low", "medium", "high", "xhigh", "max"],
+      supportedEfforts: ["low", "medium", "high", "xhigh", "max", "ultra"],
       defaultEffort: "medium",
       requestStyle: "openai-effort",
       supportsDisable: false,
@@ -154,7 +154,7 @@ export const CHATGPT_REGISTRY = defineVendor({
     // supportsProMode=true：Responses API 支持 reasoning.mode:"pro"（与 effort 正交）。
     { modelPattern: /^gpt-5\.6/i, modelInferencePattern: /^gpt-5\.6/i, metadata: legacyMetadata("迁自 src/shared/vendor-registry/entries/chatgpt.ts"), capability: {
       control: "effort",
-      supportedEfforts: ["low", "medium", "high", "xhigh", "max"],
+      supportedEfforts: ["low", "medium", "high", "xhigh", "max", "ultra"],
       defaultEffort: "medium",
       requestStyle: "openai-effort",
       supportsDisable: true,

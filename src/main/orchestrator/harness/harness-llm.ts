@@ -141,6 +141,7 @@ export async function callLLM(
         config: vendorConfig,
         timeoutMs: config.totalTimeoutMs,
         signal: attempt.signal,
+        onStreamActivity: attempt.onStreamActivity,
         onDelta: (delta) => {
           receivedStreamDelta = true;
           attempt.onStreamActivity();

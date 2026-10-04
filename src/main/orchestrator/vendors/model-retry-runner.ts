@@ -3,6 +3,28 @@ import type { ModelRetryStatus } from "../../../shared/model-retry";
 import { isModelFailureInfo, type ModelFailureInfo } from "../../../shared/model-error";
 import { AgentRuntimeError } from "../agent-runtime-error";
 import { nextModelRetryDelayMs, readRetryAfterMs } from "./model-retry-policy";
+import { classifyModelFailure } from "./model-error-classifier";
+
+const TERMINAL_CATEGORIES = new Set<ModelFailureInfo["category"]>([
+  "AUTH", "PERMISSION", "BILLING", "QUOTA", "INVALID_REQUEST", "NOT_FOUND",
+  "CONTEXT_LIMIT", "PAYLOAD_TOO_LARGE", "CONTENT_POLICY", "CONFLICT", "CANCELLED",
+]);
+
+function isRetryableFailure(error: unknown, failure: ModelFailureInfo | undefined): boolean {
+  if (failure?.retryable === false || failure && TERMINAL_CATEGORIES.has(failure.category)) return false;
+  // Also respect HTTP admission errors that were not classified by the caller.
+  let current = error;
+  const visited = new Set<object>();
+  for (let depth = 0; depth < 8 && typeof current === "object" && current !== null; depth += 1) {
+    if (visited.has(current)) break;
+    visited.add(current);
+    const record = current as Record<string, unknown>;
+    const status = typeof record.status === "number" ? record.status : depth === 0 ? failure?.status : undefined;
+    if (status !== undefined && status >= 400 && status < 500 && status !== 408 && status !== 429) return false;
+    current = record.cause;
+  }
+  return true;
+}
 
 export interface ModelRetryAttemptInput {
   signal: AbortSignal;
@@ -60,6 +82,7 @@ export async function runModelRequestWithRetry<T>(
   let activeRetryNumber = 0;
   let statusActive = false;
   let visibleOutput = false;
+  let retryCategory: ModelFailureInfo["category"] = "UNKNOWN";
 
   const emitStatus = (status: ModelRetryStatus): void => {
     statusActive = status.phase !== "cleared";
@@ -80,7 +103,7 @@ export async function runModelRequestWithRetry<T>(
       if (retryNumber > 0) {
         const remaining = options.getRemainingBudgetMs?.();
         if (remaining !== undefined && remaining <= 0) throwBudgetTimeout(undefined);
-        emitStatus({ phase: "attempting", retryNumber, maxRetries });
+        emitStatus({ phase: "attempting", retryNumber, maxRetries, category: retryCategory });
       }
 
       const controller = new AbortController();
@@ -114,6 +137,10 @@ export async function runModelRequestWithRetry<T>(
           ? makeIdleTimeoutError(options.provider, options.model, originalError)
           : originalError;
         if (visibleOutput) throw error;
+        const failure = findModelFailure(error) ?? classifyModelFailure({
+          provider: options.provider, model: options.model, error,
+        });
+        if (!isRetryableFailure(error, failure)) throw error;
 
         if (retryNumber >= maxRetries) throw error;
 
@@ -123,9 +150,10 @@ export async function runModelRequestWithRetry<T>(
         const remaining = options.getRemainingBudgetMs?.();
         if (remaining !== undefined && remaining <= delayMs) throwBudgetTimeout(error);
 
+        retryCategory = failure.category;
         emitStatus({
           phase: "waiting", retryNumber: retryNumber + 1, maxRetries, delayMs,
-          category: findModelFailure(error)?.category ?? "UNKNOWN",
+          category: retryCategory,
         });
         try {
           await sleep(delayMs, undefined, { signal: options.signal });

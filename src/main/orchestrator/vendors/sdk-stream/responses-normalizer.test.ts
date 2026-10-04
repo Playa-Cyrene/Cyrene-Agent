@@ -55,20 +55,61 @@ describe("normalizeResponsesEvent", () => {
     })).toEqual([{ type: "tool_call_arguments_delta", index: 2, delta: '{"city"' }]);
   });
 
-  test("response.function_call_arguments.done → tool_call_end（不重放全量）", () => {
+  test("response.function_call_arguments.done → tool_call_end（携带参数快照）", () => {
     expect(normalizeResponsesEvent({
       type: "response.function_call_arguments.done",
       output_index: 2,
       arguments: '{"city":"BJ"}',
-    })).toEqual([{ type: "tool_call_end", index: 2 }]);
+    })).toEqual([{ type: "tool_call_end", index: 2, arguments: '{"city":"BJ"}' }]);
   });
 
-  test("response.output_item.done（function_call）→ tool_call_end 兜底（含 id）", () => {
+  test("preserves the native item ID and the function name supplied by arguments.done", () => {
+    expect(normalizeResponsesEvent({
+      type: "response.function_call_arguments.done",
+      item_id: "fc-image",
+      output_index: 18,
+      name: "subscription-oauth_generate_image",
+      arguments: '{"prompt":"portrait"}',
+    })).toEqual([{
+      type: "tool_call_end", index: 18, itemId: "fc-image",
+      name: "subscription-oauth_generate_image", arguments: '{"prompt":"portrait"}',
+    }]);
+  });
+
+  test("response.output_item.done（function_call）→ 完整 tool_call_end 快照", () => {
     expect(normalizeResponsesEvent({
       type: "response.output_item.done",
       output_index: 2,
       item: { type: "function_call", call_id: "call_1", name: "get_weather", arguments: "{}" },
-    })).toEqual([{ type: "tool_call_end", index: 2, id: "call_1" }]);
+    })).toEqual([{
+      type: "tool_call_end",
+      index: 2,
+      id: "call_1",
+      name: "get_weather",
+      arguments: "{}",
+    }]);
+  });
+
+  test("response.completed 用终态 output 兜底补全 function_call", () => {
+    expect(normalizeResponsesEvent({
+      type: "response.completed",
+      response: {
+        output: [
+          { type: "reasoning", summary: [] },
+          { type: "function_call", call_id: "call_1", name: "generate_image", arguments: '{"prompt":"x"}' },
+        ],
+      },
+    })).toEqual([
+      {
+        type: "tool_call_end",
+        index: 1,
+        terminalSnapshot: true,
+        id: "call_1",
+        name: "generate_image",
+        arguments: '{"prompt":"x"}',
+      },
+      { type: "finish", reason: "stop" },
+    ]);
   });
 
   test("response.completed → usage（含 cached）+ finish stop", () => {
@@ -130,6 +171,19 @@ describe("normalizeResponsesEvent", () => {
       .toThrowError(ProviderProtocolError);
     expect(() => normalizeResponsesEvent({ type: "error" }))
       .toThrowError("Responses stream returned an error event");
+  });
+
+  test("nested stream errors preserve structured status and request ID, not the response ID", () => {
+    for (const event of [
+      { type: "error", error: { message: "Permission denied", code: "forbidden", type: "permission_error", status: 403, request_id: "req-stream-1" } },
+      { type: "response.failed", response: { id: "resp-not-request-id", error: { message: "Permission denied", code: "forbidden", type: "permission_error", status: 403, request_id: "req-stream-1" } } },
+    ]) {
+      let error: unknown;
+      try { normalizeResponsesEvent(event); } catch (caught) { error = caught; }
+      expect(error).toMatchObject({ message: "Permission denied", providerDetails: {
+        vendorCode: "forbidden", vendorType: "permission_error", status: 403, requestId: "req-stream-1",
+      } });
+    }
   });
 
   test("未知事件静默跳过（对齐 openai-normalizer 防御式写法）", () => {

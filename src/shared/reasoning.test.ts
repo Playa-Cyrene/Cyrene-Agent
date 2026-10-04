@@ -98,22 +98,22 @@ describe("MODEL_REASONING_RULES — 规则匹配优先级", () => {
 // ── B. 9 家全部存在性 ──────────────────────────────────────
 
 describe("MODEL_REASONING_RULES — 9 家全部存在性", () => {
-  test("chatgpt gpt-6-astra → effort 五档 + supportsDisable=false + supportsProMode（2026-09-03 新旗舰）", () => {
+  test("chatgpt gpt-6-astra → effort 六档（含 ultra）+ supportsDisable=false + supportsProMode（2026-09-03 新旗舰）", () => {
     const cap = resolveReasoningCapability("chatgpt", "gpt-6-astra");
     expect(cap.control).toBe("effort");
     expect(cap.requestStyle).toBe("openai-effort");
-    expect(cap.supportedEfforts).toEqual(["low", "medium", "high", "xhigh", "max"]);
+    expect(cap.supportedEfforts).toEqual(["low", "medium", "high", "xhigh", "max", "ultra"]);
     // 官方迁移说明：不支持 none 档 → UI 不显示"关闭"，off 折叠为 on 落 defaultEffort
     expect(cap.supportsDisable).toBe(false);
     // 官方迁移指南：pro mode 与 5.6 一致继续支持
     expect(cap.supportsProMode).toBe(true);
   });
 
-  test("chatgpt gpt-6-sol → effort 五档 + 可关闭（none 档）+ supportsProMode（2026-09-22 发布）", () => {
+  test("chatgpt gpt-6-sol → effort 六档（含 ultra） + 可关闭（none 档）+ supportsProMode（2026-09-22 发布）", () => {
     const cap = resolveReasoningCapability("chatgpt", "gpt-6-sol");
     expect(cap.control).toBe("effort");
     expect(cap.requestStyle).toBe("openai-effort");
-    expect(cap.supportedEfforts).toEqual(["low", "medium", "high", "xhigh", "max"]);
+    expect(cap.supportedEfforts).toEqual(["low", "medium", "high", "xhigh", "max", "ultra"]);
     // 官方模型页：effort 支持 none → 可关闭，与 Astra（不支持 none）不同
     expect(cap.supportsDisable).toBe(true);
     expect(cap.supportsProMode).toBe(true);
@@ -131,7 +131,7 @@ describe("MODEL_REASONING_RULES — 9 家全部存在性", () => {
     const cap = resolveReasoningCapability("chatgpt", "gpt-6.1-sol");
     expect(cap.control).toBe("effort");
     expect(cap.requestStyle).toBe("openai-effort");
-    expect(cap.supportedEfforts).toEqual(["low", "medium", "high", "xhigh", "max"]);
+    expect(cap.supportedEfforts).toEqual(["low", "medium", "high", "xhigh", "max", "ultra"]);
     // 若被 ^gpt-6（Astra）规则先吞，supportsDisable 会是 false
     expect(cap.supportsDisable).toBe(true);
     expect(cap.supportsProMode).toBe(true);
@@ -320,6 +320,17 @@ describe("MODEL_REASONING_RULES — 9 家全部存在性", () => {
     expect(cap.supportsDisable).toBe(true);
   });
 
+  test("xai grok-4.6 → effort + openai-effort（订阅 OAuth 场景，跨家族兜底命中）", () => {
+    const cap = resolveReasoningCapability("unknown", "grok-4.6");
+    expect(cap.control).toBe("effort");
+    expect(cap.requestStyle).toBe("openai-effort");
+    expect(cap.supportedEfforts).toEqual(["low", "medium", "high", "xhigh"]);
+    expect(cap.defaultEffort).toBe("high");
+    expect(cap.supportsDisable).toBe(false);
+    // 同厂商匹配也命中
+    expect(resolveReasoningCapability("xai", "grok-4.6").control).toBe("effort");
+  });
+
   test("未知 provider + 任意 model → none", () => {
     const cap = resolveReasoningCapability("unknown", "anything");
     expect(cap.control).toBe("none");
@@ -340,7 +351,7 @@ describe("normalizeReasoningPreference — 白名单", () => {
   });
 
   test("effort 不在白名单 → mode 保留、effort 丢弃", () => {
-    expect(normalizeReasoningPreference({ mode: "on", effort: "ultra" }))
+    expect(normalizeReasoningPreference({ mode: "on", effort: "extreme" }))
       .toEqual({ mode: "on" });
   });
 
@@ -610,7 +621,7 @@ describe("foldReasoning — 持久化折叠（用户第三轮修订 #4）", () =
 
   test("H3b 合法 mode + 非法 effort → normalize 后是 {mode}，作为更新（清掉非法 effort）", () => {
     const existing = { mode: "on" as const, effort: "high" as const };
-    expect(foldReasoning({ mode: "on", effort: "ultra" }, existing, true)).toEqual({ mode: "on" });
+    expect(foldReasoning({ mode: "on", effort: "extreme" }, existing, true)).toEqual({ mode: "on" });
   });
 
   test("H4 显式 undefined/null → 视作用户主动清空，返 undefined", () => {

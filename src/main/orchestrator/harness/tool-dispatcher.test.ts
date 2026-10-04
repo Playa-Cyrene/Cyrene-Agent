@@ -32,6 +32,43 @@ function call(id: string, args: Record<string, unknown> = { to: "a@example.com" 
 }
 
 describe("dispatchToolCall truthful execution", () => {
+  it("emits bounded image stages only while a tool is running, preserving the image descriptor", async () => {
+    const events: Array<{ type: string; content?: string; preview?: string }> = [];
+    let report: ((message: string) => void) | undefined;
+    const output = JSON.stringify({ kind: "cyrene.generated-image", id: "11111111-1111-4111-8111-111111111111", provider: "ChatGPT", reused: true });
+    await dispatchToolCall(call("image-1"), {
+      state: state(), tools: [tool(async (_args, context) => {
+        report = context?.reportProgress;
+        report?.("正在保存图片".repeat(100));
+        return output;
+      })],
+      onEvent: (event) => events.push(event),
+    });
+    report?.("late stage");
+    expect(events.filter((event) => event.type === "progress_text")).toEqual([
+      { type: "progress_text", content: "正在保存图片".repeat(100).slice(0, 300) },
+    ]);
+    expect(events).toContainEqual(expect.objectContaining({ type: "tool_end", preview: output }));
+  });
+
+  it("ignores stages after cancellation even if a background observer retains the callback", async () => {
+    const controller = new AbortController();
+    const events: Array<{ type: string }> = [];
+    let report: ((message: string) => void) | undefined;
+    await expect(dispatchToolCall(call("image-cancel"), {
+      state: state(), toolContext: { userQuery: "draw", signal: controller.signal },
+      tools: [tool(async (_args, context) => {
+        report = context?.reportProgress;
+        controller.abort();
+        report?.("canceled stage");
+        throw Object.assign(new Error("cancelled"), { name: "AbortError" });
+      })],
+      onEvent: (event) => events.push(event),
+    })).rejects.toMatchObject({ name: "AbortError" });
+    report?.("late stage");
+    expect(events.some((event) => event.type === "progress_text")).toBe(false);
+  });
+
   it("binds shell output to the invocation ID without changing the tool result", async () => {
     const events: Array<{ type: string; toolCallId?: string; text?: string }> = [];
     const shellTool = {

@@ -135,7 +135,7 @@ export function resolveEffectiveReasoning(
 
 const MODE_SET: ReadonlySet<ReasoningMode> = new Set(["auto", "off", "on"]);
 const EFFORT_SET: ReadonlySet<ReasoningEffort> = new Set([
-  "minimal", "low", "medium", "high", "xhigh", "max",
+  "minimal", "low", "medium", "high", "xhigh", "max", "ultra",
 ]);
 
 /**

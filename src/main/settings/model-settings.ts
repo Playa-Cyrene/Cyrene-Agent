@@ -71,6 +71,11 @@ export interface ProviderProfile {
    * true 时图片直发主模型（direct），false 走独立视觉模型转述（caption）。
    */
   multimodal?: boolean;
+  /**
+   * 由模型上游提供服务端网页搜索。启用后宿主不再向该档案暴露第三方搜索工具，
+   * 具体的原生搜索工具由对应代理/上游协议注入。
+   */
+  nativeWebSearch?: boolean;
 }
 
 /**
@@ -135,6 +140,8 @@ export interface ModelSettings {
    * 详见 ProviderProfile.explicitTransport。
    */
   explicitTransport?: "openai" | "anthropic" | "responses" | "auto";
+  /** 当前档案是否使用上游服务端网页搜索。 */
+  nativeWebSearch?: boolean;
   /**
    * 当前厂商 reasoning 偏好的顶层镜像（与 explicitTransport 同思路）。
    * 真值在 perProvider[currentProvider].reasoning；顶层字段是 view。
@@ -308,6 +315,9 @@ function normalizeProviderProfile(
     multimodal: (input as { multimodal?: unknown })?.multimodal === true || (input as { multimodal?: unknown })?.multimodal === false
       ? (input as { multimodal: boolean }).multimodal
       : undefined,
+    nativeWebSearch: (input as { nativeWebSearch?: unknown })?.nativeWebSearch === true || (input as { nativeWebSearch?: unknown })?.nativeWebSearch === false
+      ? (input as { nativeWebSearch: boolean }).nativeWebSearch
+      : undefined,
   };
 }
 
@@ -421,6 +431,7 @@ export function normalizeModelSettings(input: Partial<ModelSettings> | null | un
     model: profile.model,
     apiKey: profile.apiKey,
     explicitTransport: profile.explicitTransport,
+    nativeWebSearch: profile.nativeWebSearch,
     reasoning: profile.reasoning,  // 顶层镜像：与 explicitTransport 同源（perProvider[currentProvider].reasoning）
     perProvider,
     modelProfiles,
@@ -493,6 +504,7 @@ export function resolveModelSettingsProfile(settings: ModelSettings, id?: string
     model: profile.model,
     apiKey: profile.apiKey,
     explicitTransport: profile.explicitTransport,
+    nativeWebSearch: profile.nativeWebSearch,
     reasoning: profile.reasoning,
     manualReasoning: modelOption?.manualReasoning,
     // 档案级字段覆盖镜像；未定义时回退全局值（老档案 = 现行为）

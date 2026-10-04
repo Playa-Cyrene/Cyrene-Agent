@@ -6,7 +6,7 @@
 //   2. tool_choice 少一层嵌套：named 直接 {type:'function', name}
 //   3. 多轮回放：完整 output items 存 rawAssistant，下一轮经 replay policy + toResponseInputItems() 原顺序重放
 //   4. store:false 恒定发送（无状态，不留服务端会话）
-//   5. 加密 reasoning 回放：仅 OpenAI 官方端点 include reasoning.encrypted_content，第三方不发
+//   5. 加密 reasoning 回放：OpenAI 官方端点或已识别的订阅代理；其它第三方不发
 //   6. maxTokens → max_output_tokens；reasoning_effort → reasoning:{effort}
 //   7. system 消息聚合为顶层 instructions，不进 input
 //
@@ -26,6 +26,7 @@ import { getTimeoutSettings } from "../../timeout-manager";
 import { resolveAutomaticToolChoicePolicy, resolveToolChoicePolicy } from "./tool-choice-policy";
 import { getVendorRuntimeSettings } from "./runtime-settings";
 import { resolveApiEndpoint } from "../../../shared/api-endpoint";
+import { isChatGPTSubscriptionProxy } from "../../../shared/subscription-provider";
 
 // ── wire 形状（仅声明 adapter 实际读写的字段，与 SDK 类型保持手工对齐） ──
 
@@ -76,9 +77,10 @@ export function isOfficialOpenAIEndpoint(baseUrl: string): boolean {
   }
 }
 
-/** 该档案是否启用 encrypted reasoning 回放：capability 标记 + 官方端点双条件。 */
+/** capability 标记 + 官方端点/插件所属订阅代理双条件。 */
 export function shouldIncludeEncryptedReasoning(cfg: VendorConfig, cap: ProviderCapability): boolean {
-  return cap.responsesEncryptedReasoning === true && isOfficialOpenAIEndpoint(cfg.baseUrl);
+  return cap.responsesEncryptedReasoning === true
+    && (isOfficialOpenAIEndpoint(cfg.baseUrl) || isChatGPTSubscriptionProxy(cfg));
 }
 
 // ── input items 构建 ──
@@ -95,7 +97,7 @@ function toUserContentBlocks(content: NonNullable<ChatMessage["content"]>): Arra
 /**
  * Responses 多轮回放策略（施工文档关键决策 #4）：
  *   rawAssistant → replay policy → toResponseInputItems() → input[]
- * - 官方端点：reasoning 带 encrypted_content 的保留
+ * - 官方端点/订阅代理：保留带 encrypted_content 的 reasoning 及原生搜索记录
  * - 第三方：reasoning 一律丢弃（无加密内容可引用）
  * - message / function_call 恒定保留；未知类型防御性丢弃
  */
@@ -106,6 +108,7 @@ function replayRawAssistant(rawAssistant: unknown, includeEncryptedReasoning: bo
     const type = (item as { type?: unknown }).type;
     if (type === "message" || type === "function_call") return true;
     if (type === "reasoning") return includeEncryptedReasoning && typeof (item as WireReasoningItem).encrypted_content === "string";
+    if (type === "web_search_call") return includeEncryptedReasoning;
     return false;
   });
   try {

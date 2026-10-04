@@ -10,6 +10,7 @@ export default defineConfig({
       "src/shared/**/*.test.ts",
       "src/cli/**/*.test.ts",
       "skills/**/tests/**/*.test.ts",
+      "examples/**/*.test.ts",
       "scripts/cline-poc/**/*.test.ts",
       // packages/*/src/**/*.test.ts 临时禁用：plugin-sdk/src/testing/index.test.ts
       // 在 windows-2025 镜像下会让 vitest fork worker 静默崩溃（无 stdout/stderr）

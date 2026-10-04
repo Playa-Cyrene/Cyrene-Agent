@@ -326,6 +326,37 @@ describe("ResponsesAdapter — rawAssistant 多轮回放", () => {
     arguments: "{}",
   };
 
+  test("subscription todo continuation keeps encrypted reasoning, native search and matching call output in order", () => {
+    const search = { type: "web_search_call", id: "ws_1", status: "completed", action: { type: "search", query: "Cyrene reference" } };
+    const call = { ...functionCallItem, name: "update_todo" };
+    const { body } = makeBody([
+      { role: "user", content: "生成角色照片" },
+      { role: "assistant", content: "", rawAssistant: [reasoningWithEncrypted, search, call], toolCalls: [{ id: call.call_id, name: call.name, arguments: call.arguments }] },
+      { role: "tool", toolCallId: call.call_id, content: "待办列表已更新" },
+    ], {
+      cap: chatgptCap,
+      config: { provider: "ChatGPT（OpenAI）订阅", apiKey: "oauth-subscription", baseUrl: "http://127.0.0.1:6288/v1" },
+    });
+    expect(body.store).toBe(false);
+    expect(body.include).toEqual(["reasoning.encrypted_content"]);
+    expect((body.input as unknown[]).slice(1)).toEqual([
+      reasoningWithEncrypted, search, call,
+      { type: "function_call_output", call_id: call.call_id, output: "待办列表已更新" },
+    ]);
+  });
+
+  test.each([
+    { provider: "custom", apiKey: "oauth-subscription", baseUrl: "http://127.0.0.1:6231/v1" },
+    { provider: "ChatGPT（OpenAI）订阅", apiKey: "other", baseUrl: "http://127.0.0.1:6231/v1" },
+    { provider: "ChatGPT（OpenAI）订阅", apiKey: "oauth-subscription", baseUrl: "https://proxy.example.test/v1" },
+    { provider: "ChatGPT（OpenAI）订阅", apiKey: "oauth-subscription", baseUrl: "http://127.0.0.1:6231/unrelated" },
+    { provider: "ChatGPT（OpenAI）订阅", apiKey: "oauth-subscription", baseUrl: "http://127.0.0.1.evil.test:6231/v1" },
+  ])("does not enable encrypted replay for an unrelated proxy: $baseUrl / $provider / $apiKey", (config) => {
+    const { body } = makeBody([{ role: "assistant", content: "", rawAssistant: [reasoningWithEncrypted, messageItem] }], { cap: chatgptCap, config });
+    expect(body.include).toBeUndefined();
+    expect(body.input).toEqual([messageItem]);
+  });
+
   test("官方端点：带 encrypted_content 的 reasoning 原顺序保留回放", () => {
     const { body } = makeBody([
       { role: "user", content: "hi" },

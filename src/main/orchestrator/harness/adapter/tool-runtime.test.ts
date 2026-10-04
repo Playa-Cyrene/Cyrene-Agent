@@ -103,6 +103,30 @@ describe("harness tool runtime", () => {
     }));
   });
 
+  it("passes current-turn attachments and stable user identity without exposing channel credentials", () => {
+    const runtime = prepareToolRuntime({
+      options: {
+        conversationId: "thread-1", userMessageId: "user-turn-7", conversationMode: "chat",
+        messages: [
+          { role: "user", content: [{ type: "image_url", image_url: { url: "https://old.test/history.png" } }] },
+          { role: "assistant", content: "previous" },
+          { role: "user", content: [{ type: "text", text: "paint" }, { type: "image_url", image_url: { url: "https://current.test/reference.png" } }] },
+        ],
+        permissionMode: "allow_all",
+      } as never,
+      signal: new AbortController().signal,
+      prepared: {
+        threadId: "thread-1", runId: "run-1", systemPrompt: "system", tools: [], runStore: {},
+        vendorConfig: { provider: "openai", model: "subscription-model", apiKey: "never-expose", baseUrl: "private-base-url" },
+      } as never,
+      sendBaseEvent: vi.fn(),
+    });
+    expect(runtime.toolContext.userMessageId).toBe("user-turn-7");
+    expect(runtime.toolContext.inputImages).toEqual([{ url: "https://current.test/reference.png" }]);
+    expect(runtime.toolContext.metadata).toEqual({ provider: "openai", model: "subscription-model" });
+    expect(runtime.toolContext.storeGeneratedImage).toBeTypeOf("function");
+  });
+
   describe("Plan 只读不变量（先于 allow_all，按 effectKind 判断）", () => {
     beforeEach(() => {
       isPlanReadOnly.mockReturnValue(true);

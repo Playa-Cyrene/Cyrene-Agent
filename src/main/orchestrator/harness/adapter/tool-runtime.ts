@@ -1,4 +1,5 @@
 import { app } from "electron";
+import { createGeneratedImageStore } from "../../../generated-image-store";
 import type { BaseEvent } from "@ag-ui/core";
 import type { ToolDefinition } from "../../tools/registry/tool-registry";
 import { resolveEffectKind, toolRegistry } from "../../tools/registry/tool-registry";
@@ -71,6 +72,13 @@ export function prepareToolRuntime(input: {
   };
 
   const toolContext: ToolContext = {
+    userMessageId: options.userMessageId,
+    inputImages: options.inputImages ?? (() => {
+      const user = [...options.messages].reverse().find((message) => message.role === "user");
+      return Array.isArray(user?.content) ? user.content.flatMap((block) => block.type === "image_url" ? [{ url: block.image_url.url }] : []) : [];
+    })(),
+    metadata: { provider: vendorConfig.provider, model: vendorConfig.model },
+    storeGeneratedImage: (image) => createGeneratedImageStore(app.getPath("userData")).save(image),
     userQuery: extractLastUserQuery(options.messages),
     conversationId: options.conversationId ?? "default",
     runId,

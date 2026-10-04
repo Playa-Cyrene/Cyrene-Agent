@@ -25,9 +25,14 @@ const mocks = vi.hoisted(() => ({
   },
   saveModelSettings: vi.fn(),
   saveModelProfile: vi.fn(),
+  imageRead: vi.fn(),
+  showSaveDialog: vi.fn(),
+  copyFile: vi.fn(),
 }));
 
 vi.mock("electron", () => ({
+  app: { getPath: () => "C:\\generated-image-test" },
+  dialog: { showSaveDialog: mocks.showSaveDialog },
   BrowserWindow: {
     fromWebContents: vi.fn(),
     getAllWindows: () => [],
@@ -39,6 +44,9 @@ vi.mock("electron", () => ({
     on: vi.fn(),
   },
 }));
+
+vi.mock("../generated-image-store", () => ({ createGeneratedImageStore: () => ({ read: mocks.imageRead }) }));
+vi.mock("node:fs/promises", async (importOriginal) => ({ ...await importOriginal<typeof import("node:fs/promises")>(), copyFile: mocks.copyFile }));
 
 vi.mock("../settings/model-settings", async () => {
   // 复用 shared 四件套的真实语义拼出④：mock 只替换磁盘读写，不手写解析规则
@@ -81,6 +89,9 @@ describe("chat reasoning IPC", () => {
     mocks.sessions.clear();
     mocks.saveModelSettings.mockReset();
     mocks.saveModelProfile.mockReset();
+    mocks.imageRead.mockReset();
+    mocks.showSaveDialog.mockReset();
+    mocks.copyFile.mockReset();
   });
 
   async function register() {
@@ -90,6 +101,23 @@ describe("chat reasoning IPC", () => {
       windowManager: null,
     });
   }
+
+  it("saves the original only to the user-selected destination and treats dialog cancellation as non-error", async () => {
+    await register();
+    const save = mocks.handlers.get(IPC.CHAT_SAVE_GENERATED_IMAGE)!;
+    const id = "11111111-1111-4111-8111-111111111111";
+    mocks.imageRead.mockReturnValue({ filePath: "C:\\generated-image-test\\generated-images\\original", extension: "png" });
+    mocks.showSaveDialog.mockResolvedValueOnce({ canceled: false, filePath: "C:\\chosen-test-output.png" });
+    expect(await save({ sender: {} }, { id })).toEqual({ ok: true });
+    expect(mocks.imageRead).toHaveBeenCalledWith(id, "original");
+    expect(mocks.copyFile).toHaveBeenCalledWith("C:\\generated-image-test\\generated-images\\original", "C:\\chosen-test-output.png");
+    mocks.copyFile.mockClear();
+    mocks.showSaveDialog.mockResolvedValueOnce({ canceled: true });
+    expect(await save({ sender: {} }, { id })).toEqual({ ok: false, cancelled: true });
+    expect(mocks.copyFile).not.toHaveBeenCalled();
+    mocks.imageRead.mockImplementationOnce(() => { throw new Error("C:\\private-path"); });
+    expect(await save({ sender: {} }, { id: "../private-path" })).toEqual({ ok: false, error: "图片不存在或保存失败，请重试" });
+  });
 
   it("reads reasoning capability from the model profile bound to the current session", async () => {
     mocks.sessions.set("session-openai", { id: "session-openai", modelProfileId: "openai-profile" });

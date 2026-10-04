@@ -143,6 +143,14 @@ afterEach(async () => {
 });
 
 describe("模型清单编辑组件", () => {
+  it.each([true, false])("编辑已有订阅档案时保留 nativeWebSearch=%s", async (nativeWebSearch) => {
+    const profile = { ...LEGACY_PROFILE, nativeWebSearch };
+    const settings = installSettings([profile], profile.id);
+    await renderPanel();
+    const payload = await saveAndGetPayload(settings);
+    expect(payload.nativeWebSearch).toBe(nativeWebSearch);
+  });
+
   it("在运行设置中默认显示并保存 5 次模型请求重试", async () => {
     const settings = installSettings([], undefined);
     await renderPanel();

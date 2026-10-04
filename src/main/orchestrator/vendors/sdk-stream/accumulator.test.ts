@@ -67,6 +67,34 @@ describe("CyreneStreamAccumulator", () => {
     );
   });
 
+  it("backfills delayed terminal tool metadata without duplicating streamed arguments", () => {
+    const accumulator = new CyreneStreamAccumulator();
+    accumulator.apply({ type: "tool_call_start", index: 8, id: "call-image" });
+    accumulator.apply({ type: "tool_call_arguments_delta", index: 8, delta: '{"prompt":' });
+    accumulator.apply({
+      type: "tool_call_end",
+      index: 8,
+      id: "call-image",
+      name: "subscription-oauth_generate_image",
+      arguments: '{"prompt":"Cyrene"}',
+    });
+    // Responses can report the same call at a compacted output-array index in
+    // response.completed. The stable id must prevent a duplicate tool call.
+    accumulator.apply({
+      type: "tool_call_end",
+      index: 1,
+      id: "call-image",
+      name: "subscription-oauth_generate_image",
+      arguments: '{"prompt":"Cyrene"}',
+    });
+
+    expect(accumulator.finalize(null).toolCalls).toEqual([{
+      id: "call-image",
+      name: "subscription-oauth_generate_image",
+      arguments: '{"prompt":"Cyrene"}',
+    }]);
+  });
+
   it.each([
     {
       name: "missing id",
@@ -112,6 +140,40 @@ describe("CyreneStreamAccumulator", () => {
         code: "E_TOOL_CALL_INCOMPLETE",
       }),
     );
+  });
+
+  it("does not substitute a native item ID for a missing call_id", () => {
+    const accumulator = new CyreneStreamAccumulator();
+    accumulator.apply({ type: "tool_call_start", index: 18, itemId: "fc-only", nameDelta: "generate_image" });
+    accumulator.apply({ type: "tool_call_end", index: 18, itemId: "fc-only", arguments: "{}" });
+    expect(() => accumulator.finalize(null)).toThrowError("call_id=missing");
+  });
+
+  it("rejects ambiguous parallel terminal snapshots instead of pairing unidentified calls in order", () => {
+    const accumulator = new CyreneStreamAccumulator();
+    accumulator.apply({ type: "tool_call_start", index: 0 });
+    accumulator.apply({ type: "tool_call_start", index: 18 });
+    expect(() => accumulator.apply({
+      type: "tool_call_end", index: 0, terminalSnapshot: true,
+      id: "call-second", name: "second", arguments: "{}",
+    })).toThrowError("Cannot match parallel terminal tool calls");
+  });
+
+  it("rejects conflicting item IDs even when call_id remains the same", () => {
+    const accumulator = new CyreneStreamAccumulator();
+    accumulator.apply({ type: "tool_call_start", index: 0, id: "call-1", itemId: "fc-1", nameDelta: "search" });
+    expect(() => accumulator.apply({
+      type: "tool_call_end", index: 0, id: "call-1", itemId: "fc-2", arguments: "{}",
+    })).toThrowError("changed its native item id");
+  });
+
+  it("keeps argument fragments with their item ID even if a positional hint changes", () => {
+    const accumulator = new CyreneStreamAccumulator();
+    accumulator.apply({ type: "tool_call_start", index: 18, itemId: "fc-1", id: "call-1", nameDelta: "search" });
+    accumulator.apply({ type: "tool_call_arguments_delta", index: 18, itemId: "fc-1", delta: '{"q":' });
+    accumulator.apply({ type: "tool_call_arguments_delta", index: 0, itemId: "fc-1", delta: '"x"}' });
+    accumulator.apply({ type: "tool_call_end", index: 0, itemId: "fc-1" });
+    expect(accumulator.finalize(null).toolCalls).toEqual([{ id: "call-1", name: "search", arguments: '{"q":"x"}' }]);
   });
 
   it("exposes partial usage with missing fields filled as zero", () => {

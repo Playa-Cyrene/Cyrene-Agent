@@ -44,6 +44,8 @@ import { Archive, ScanLine } from "lucide-react";
 import type { BrowserElementSelection } from "../../../../../shared/browser-panel-types";
 import { Marker, MarkerContent, MarkerIcon } from "../../../components/ui/marker";
 import { VirtualChatMessageList } from "./VirtualChatMessageList";
+import { GeneratedImageCard } from "./GeneratedImageCard";
+import { parseGeneratedImageResult, type GeneratedImageResult } from "../../../../../shared/generated-image";
 
 export interface ChatMessageItem {
   id: string;
@@ -1170,6 +1172,13 @@ function createRoles(
       info.extraInfo?.tools?.length ? <ToolExecutionContent tools={info.extraInfo.tools} /> : null
     ),
   },
+  generatedImage: {
+    placement: "start" as const,
+    variant: "borderless" as const,
+    avatar: null,
+    rootClassName: "cy-message cy-message--generated-image",
+    contentRender: (_content: string, info: { extraInfo?: { image?: GeneratedImageResult } }) => info.extraInfo?.image ? <GeneratedImageCard image={info.extraInfo.image} /> : null,
+  },
   waiting: {
     placement: "start" as const,
     variant: "borderless" as const,
@@ -1312,6 +1321,13 @@ function convertMessage(message: ChatMessageItem, enabledStickers: readonly Enab
         extraInfo: { tools: [tools[index]] },
       });
     }
+  }
+  const seenImages = new Set<string>();
+  for (const tool of tools) {
+    const image = parseGeneratedImageResult(tool.result);
+    if (!image || seenImages.has(image.id)) continue;
+    seenImages.add(image.id);
+    assistantItems.push({ key: `${message.id}-image-${image.id}`, role: "generatedImage", content: "", extraInfo: { image } });
   }
   if (message.weather) {
     assistantItems.push({

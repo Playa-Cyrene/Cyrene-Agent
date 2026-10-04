@@ -93,7 +93,27 @@ export type PluginJsonSchema = {
   required?: string[];
 };
 
+/** Durable, opaque image result; do not return Base64 or disk paths in tool text. */
+export interface PluginGeneratedImageResult {
+  kind: "cyrene.generated-image";
+  id: string;
+  provider?: string;
+  reused?: boolean;
+}
+
+export interface PluginGeneratedImageInput {
+  /** Caller-owned UUID v4 permits safe redelivery after a response failure. */
+  id: string;
+  original: Uint8Array;
+  preview: Uint8Array;
+}
+
 export interface PluginToolContext {
+  userMessageId?: string;
+  inputImages?: Array<{ url: string }>;
+  /** Optional additive host capabilities. Older hosts remain compatible. */
+  reportProgress?: (message: string) => void;
+  storeGeneratedImage?: (image: PluginGeneratedImageInput) => Promise<PluginGeneratedImageResult>;
   userQuery: string;
   conversationId?: string;
   runId?: string;

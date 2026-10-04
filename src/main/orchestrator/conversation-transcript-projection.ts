@@ -19,6 +19,7 @@ import type {
   TranscriptPresentationPatch,
 } from "./conversation-transcript-types";
 import type { ChatMessage, ChatMessageContent, ToolCall } from "./vendors/types";
+import { parseGeneratedImageResult } from "../../shared/generated-image";
 
 export interface TranscriptRunReader {
   get(runId: string): HarnessRunSession | null;
@@ -573,6 +574,28 @@ function contentToText(content: ChatMessageContent | undefined): string {
   return content.map((block) => block.type === "text" ? block.text : "[image]").join("");
 }
 
+/** Recover image cards from committed tool facts, even if the renderer crashed before checkpointing. */
+function restoreImageTool(target: CanonicalUiMessage, id: string, name: string, result: string): void {
+  const tools = target.message.toolExecutions ?? [];
+  const previous = tools.find((tool) => tool.id === id);
+  const tool = { ...previous, id, name, status: "success" as const, result };
+  target.message.toolExecutions = previous ? tools.map((item) => item.id === id ? tool : item) : [...tools, tool];
+}
+
+function restoreGeneratedImages(byAlias: Map<string, CanonicalUiMessage>, entries: TranscriptEntry[]): void {
+  for (const entry of entries) {
+    if (entry.kind !== "tool_result" || entry.payload.outcome !== "success") continue;
+    const target = byAlias.get(entry.payload.assistantEntryId);
+    if (!target || typeof entry.payload.message.content !== "string") continue;
+    try {
+      const observation = JSON.parse(entry.payload.message.content);
+      const image = parseGeneratedImageResult(observation.output);
+      if (!image) continue;
+      restoreImageTool(target, entry.payload.toolCallId, entry.payload.message.name ?? "generated_image", JSON.stringify(image));
+    } catch { /* Ordinary tool results are not media. */ }
+  }
+}
+
 function makeUiMessage(node: ActiveNode): CanonicalUiMessage | null {
   if (node.kind === "user") {
     return {
@@ -765,6 +788,19 @@ function projectSeedDelta(
       messageId: message.id,
     }))).map((node) => ({ ...node })),
   };
+  const seededAssistantEntries = new Map<string, string[]>();
+  for (const node of seed.state?.nodes ?? []) {
+    if (node.kind !== "assistant") continue;
+    const ids = seededAssistantEntries.get(node.messageId) ?? [];
+    ids.push(node.entryId);
+    seededAssistantEntries.set(node.messageId, ids);
+  }
+  const seededImages = seed.messages.flatMap((message) => {
+    const entryIds = seededAssistantEntries.get(message.id);
+    if (!entryIds?.length) return [];
+    const tools = (message.toolExecutions ?? []).filter((tool) => tool.status === "success" && parseGeneratedImageResult(tool.result));
+    return tools.length ? [{ messageId: message.id, entryIds, tools }] : [];
+  });
 
   // Restore aliases for canonical assistant entries that were folded into one
   // UI message in the seed. This is what lets a later patch address the
@@ -916,6 +952,19 @@ function projectSeedDelta(
     const target = byAlias.get(messageId);
     if (target) applyPatch(target, record.patch);
   }
+  // A late renderer checkpoint must not erase canonical images already in the
+  // seed. Restore only if every original node remains on the active branch,
+  // even when a retry reuses the same UI message ID after a rewind.
+  const retainedEntryIds = new Set(state.nodes.map((node) => node.entryId));
+  for (const record of seededImages) {
+    const target = byAlias.get(record.messageId);
+    if (!target || !record.entryIds.every((id) => retainedEntryIds.has(id))) continue;
+    for (const tool of record.tools) {
+      const image = parseGeneratedImageResult(tool.result);
+      if (image) restoreImageTool(target, tool.id, tool.name, JSON.stringify(image));
+    }
+  }
+  restoreGeneratedImages(byAlias, activeEntries);
   return {
     throughSeq: Math.max(seed.throughSeq, ...activeEntries.map((entry) => entry.seq), 0),
     messages: messages.map((item) => item.message),
@@ -997,6 +1046,7 @@ function projectionFromActive(
   }
 
   const resultMessages = messages.map((item) => item.message);
+  restoreGeneratedImages(byAlias, entries);
   return {
     throughSeq: Math.max(seed?.throughSeq ?? 0, active.throughSeq),
     messages: resultMessages,

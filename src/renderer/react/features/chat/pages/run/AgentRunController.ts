@@ -1119,6 +1119,12 @@ export class AgentRunController {
         result: (event.content ?? "").slice(0, 4000),
         changes: event.changes,
       });
+      const runningTool = this.toolExecutions.find((tool) => tool.status === "running");
+      this.deps.host.patchMessage(this.input.sessionId, this.input.assistantId, {
+        runStage: runningTool
+          ? { kind: "executing", detail: runningTool.displayName ?? runningTool.name }
+          : { kind: "understanding" },
+      });
       void this.checkpointRun("running", true);
     } else if (event.type === "TOOL_CALL_END" && event.toolCallId) {
       this.updateRunTool(event.toolCallId, {});
@@ -1275,6 +1281,8 @@ export class AgentRunController {
       const status = normalizeModelRetryStatus(event.value);
       this.deps.host.patchMessage(this.input.sessionId, this.input.assistantId, {
         modelRetry: status?.phase === "cleared" ? null : status,
+        ...(status && status.phase !== "cleared" && !this.toolExecutions.some((tool) => tool.status === "running")
+          ? { runStage: { kind: "understanding" as const } } : {}),
       });
     } else if (event.type === "CUSTOM" && event.name === "cyrene.sticker") {
       this.sticker = typeof event.value === "string" ? event.value : null;

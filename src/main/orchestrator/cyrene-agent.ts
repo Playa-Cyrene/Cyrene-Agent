@@ -97,6 +97,9 @@ export type AgentExecutionMode = "work" | "chat";
 
 /** CyreneAgent.run() 需要的输入——桥层构造好后塞进 input.state 或 forwardedProps。 */
 export interface CyreneRunOptions {
+  userMessageId?: string;
+  /** Current user attachments for tools, independent of the chat model's vision route. */
+  inputImages?: Array<{ url: string }>;
   settings: AgentLoopSettings;
   /** 本 Run 快照的 Harness 安全工具并发上限。 */
   maxParallelToolCalls?: number;

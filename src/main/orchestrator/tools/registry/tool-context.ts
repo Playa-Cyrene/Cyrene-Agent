@@ -11,8 +11,13 @@ export const contextRefRegistry = new ContextRefRegistry();
 
 export type { ShellOutputUpdate } from "../../../../shared/shell-output";
 
-/** 工具上下文。userQuery 是当前唯一稳定字段；metadata 留未来扩展（PDF/音频等），现在不填。 */
+/** 工具上下文：当前用户输入、运行身份和可选宿主能力；不包含渠道凭据。 */
 export interface ToolContext {
+  /** Stable input identity across a retry; a new user message must get a new identity. */
+  userMessageId?: string;
+  inputImages?: Array<{ url: string }>;
+  reportProgress?: (message: string) => void;
+  storeGeneratedImage?: (image: import("../../../../shared/generated-image").GeneratedImageInput) => Promise<import("../../../../shared/generated-image").GeneratedImageResult>;
   /** 用户当前问题（最后一条 user 消息文本）。最核心字段。 */
   userQuery: string;
   /** 当前聊天会话 ID；需要跨轮隔离状态的工具必须使用该字段。 */
@@ -44,7 +49,7 @@ export interface ToolContext {
   permissionMode?: "normal" | "allow_all";
   /** 仅供前台 run_shell 观察输出；异常不得影响命令执行。 */
   onShellOutput?: (update: ShellOutputUpdate) => void;
-  /** 未来扩展兜底；当前为空对象，不预设字段。遵循"地基通用，上层克制"。 */
+  /** 当前渠道的 provider/model 等非敏感提示，不注入 apiKey 或 token。 */
   metadata?: Record<string, unknown>;
 }
 

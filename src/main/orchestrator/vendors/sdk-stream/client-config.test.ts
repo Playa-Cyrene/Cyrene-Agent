@@ -1,9 +1,55 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createEndpointPinnedFetch,
   deriveAnthropicClientConfig,
   deriveOpenAIClientConfig,
+  withStreamActivity,
 } from "./client-config";
+
+afterEach(() => vi.useRealTimers());
+
+describe("raw network stream activity", () => {
+  it("observes SSE heartbeats before parsing and preserves response headers and bytes", async () => {
+    const activity = vi.fn();
+    const bytes = new TextEncoder().encode(": keep-alive\n\n");
+    const response = new Response(new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(bytes); controller.close(); } }), {
+      headers: { "content-type": "text/event-stream", "x-request-id": "req-stream" },
+    });
+    const delegate = vi.fn<typeof fetch>().mockResolvedValue(response);
+    const wrapped = await withStreamActivity(delegate, activity)("https://mock.test/responses");
+    expect(wrapped.headers.get("x-request-id")).toBe("req-stream");
+    expect(await wrapped.text()).toBe(": keep-alive\n\n");
+    expect(activity).toHaveBeenCalledTimes(2); // headers + one actual byte chunk
+    expect(delegate.mock.calls[0][0]).toBe("https://mock.test/responses");
+  });
+
+  it("does not synthesize activity when there are no network bytes", async () => {
+    vi.useFakeTimers();
+    const activity = vi.fn();
+    const cancel = vi.fn();
+    const delegate = vi.fn<typeof fetch>().mockResolvedValue(new Response(new ReadableStream({ cancel })));
+    const wrapped = await withStreamActivity(delegate, activity)("https://mock.test/responses");
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(activity).toHaveBeenCalledTimes(1);
+    await wrapped.body!.cancel("user cancelled");
+    expect(cancel).toHaveBeenCalledWith("user cancelled");
+  });
+
+  it("does not replace HTTP error responses or register failed admissions as stream progress", async () => {
+    const activity = vi.fn();
+    const response = new Response('{"error":{"code":"forbidden"}}', { status: 403, headers: { "x-request-id": "req-admission" } });
+    const delegate = vi.fn<typeof fetch>().mockResolvedValue(response);
+    expect(await withStreamActivity(delegate, activity)("https://mock.test/responses")).toBe(response);
+    expect(activity).not.toHaveBeenCalled();
+  });
+
+  it("forwards stream failures and cancellation without buffering the whole response", async () => {
+    const failure = new Error("stream interrupted");
+    const delegate = vi.fn<typeof fetch>().mockResolvedValue(new Response(new ReadableStream({ pull(controller) { controller.error(failure); } })));
+    const response = await withStreamActivity(delegate, vi.fn())("https://mock.test/responses");
+    await expect(response.text()).rejects.toBe(failure);
+  });
+});
 
 describe("SDK client configuration", () => {
   it.each([

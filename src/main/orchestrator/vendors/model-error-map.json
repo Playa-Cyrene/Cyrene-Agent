@@ -309,6 +309,15 @@
     },
     "chatgpt": {
       "codes": {
+        "subscription_sharing_user_not_eligible": { "category": "PERMISSION", "retryable": false },
+        "subscription_sharing_usage_limit_exceeded": { "category": "QUOTA", "retryable": false },
+        "subscription_sharing_usage_unavailable": { "category": "UNAVAILABLE", "retryable": true },
+        "subscription_sharing_user_unavailable": { "category": "UNAVAILABLE", "retryable": true },
+        "subscription_sharing_unsupported_capability": { "category": "INVALID_REQUEST", "retryable": false },
+        "subscription_sharing_route_not_supported": { "category": "PERMISSION", "retryable": false },
+        "subscription_sharing_invalid_user": { "category": "AUTH", "retryable": false },
+        "chatpass_v2_scope_not_authorized": { "category": "PERMISSION", "retryable": false },
+        "chatpass_v2_invalid_authorization_context": { "category": "PERMISSION", "retryable": false },
         "credit_balance_exhausted": {
           "category": "BILLING",
           "retryable": false

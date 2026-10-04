@@ -32,6 +32,7 @@ import { TASK_TOOL_ID } from "./builtin-tools";
 import { extractFileChangesFromOutput } from "../tools/registry/tool-evidence";
 import { classifyToolResultError } from "./error-classifier";
 import { decideRetry, getRetryParams, sleepWithJitter } from "./retry-policy";
+import { parseGeneratedImageResult } from "../../../shared/generated-image";
 import { isToolBreakerTripped, nextToolFailureStreak, toolBreakerMessage } from "./tool-breaker";
 import { isCancellationError, raceWithSignal } from "../../abort-utils";
 import type { HarnessRun } from "./cyrene-harness";
@@ -355,7 +356,7 @@ async function commitToolResult(
     type: "tool_end",
     toolCallId: call.id,
     outcome: result.outcome,
-    preview: (result.preview ?? result.message).slice(0, 200),
+    preview: parseGeneratedImageResult(result.preview ?? result.message) ? (result.preview ?? result.message) : (result.preview ?? result.message).slice(0, 200),
     // Diff Review 卡片证据走独立字段，不受 preview 截断影响
     changes: extractFileChangesFromOutput(result.output),
   });

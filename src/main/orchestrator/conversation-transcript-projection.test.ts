@@ -80,6 +80,66 @@ function compactedFixture(): TranscriptEntry[] {
 }
 
 describe("conversation transcript projection", () => {
+  function imageResult(assistantEntryId: string): TranscriptEntry {
+    const seq = ++nextSeq;
+    return {
+      seq, id: `image-result-${seq}`, at: seq, kind: "tool_result",
+      payload: {
+        assistantEntryId, toolCallId: "image-call", outcome: "success",
+        message: { role: "tool", toolCallId: "image-call", name: "subscription-oauth_generate_image", content: JSON.stringify({
+          outcome: "success", output: JSON.stringify({ kind: "cyrene.generated-image", id: "11111111-1111-4111-8111-111111111111", provider: "ChatGPT" }),
+        }) },
+      },
+    };
+  }
+
+  it("restores a saved image from canonical results without a renderer checkpoint or final answer", () => {
+    nextSeq = 0;
+    const request = user("u1", "draw");
+    const toolRound = assistant("a1", "", [{ id: "image-call", name: "subscription-oauth_generate_image", arguments: "{}" }]);
+    const image = imageResult(toolRound.id);
+    const entries = [request, toolRound, image, assistant("a1", "")];
+    const full = reduceTranscriptProjection(entries);
+    const incremental = reduceTranscriptProjection(entries.slice(2), reduceTranscriptProjection(entries.slice(0, 2)));
+    for (const projection of [full, incremental]) {
+      expect(projection.messages[1].toolExecutions).toEqual([expect.objectContaining({
+        id: "image-call", status: "success", result: expect.stringContaining("cyrene.generated-image"),
+      })]);
+      expect(projection.messages[1].content).toBe("");
+    }
+  });
+
+  it("does not erase a committed image when a later renderer checkpoint has an empty tool list", () => {
+    nextSeq = 0;
+    const request = user("u1", "draw");
+    const toolRound = assistant("a1", "", [{ id: "image-call", name: "subscription-oauth_generate_image", arguments: "{}" }]);
+    const entries = [request, toolRound, imageResult(toolRound.id)];
+    const checkpoint: TranscriptEntry = {
+      seq: ++nextSeq, id: "late-patch", at: nextSeq, kind: "presentation_patch",
+      payload: { messageId: "a1", patchRevision: 1, patch: { content: "image ready", toolExecutions: [] } },
+    };
+    const full = reduceTranscriptProjection([...entries, checkpoint]);
+    const seeded = reduceTranscriptProjection([checkpoint], reduceTranscriptProjection(entries));
+    expect(seeded.messages[1].toolExecutions).toEqual(full.messages[1].toolExecutions);
+    expect(seeded.messages[1].toolExecutions).toHaveLength(1);
+  });
+
+  it.each(["a1", "a2"])("does not resurrect a rewound image when the new UI message is %s", (nextTurnId) => {
+    nextSeq = 0;
+    const request = user("u1", "draw");
+    const old = assistant("a1", "", [{ id: "image-call", name: "subscription-oauth_generate_image", arguments: "{}" }]);
+    const entries = [request, old, imageResult(old.id)];
+    const rewind: TranscriptEntry = {
+      seq: ++nextSeq, id: "rewind", at: nextSeq, kind: "turn_rewind", turnId: "u1",
+      payload: { anchorUserTurnId: "u1", disposition: "keep_user", reason: "regenerate" },
+    };
+    const delta = [rewind, assistant(nextTurnId, "new answer")];
+    for (const projection of [reduceTranscriptProjection([...entries, ...delta]), reduceTranscriptProjection(delta, reduceTranscriptProjection(entries))]) {
+      expect(projection.messages.map((message) => message.id)).toEqual([request.id, nextTurnId]);
+      expect(projection.messages.some((message) => message.toolExecutions?.length)).toBe(false);
+    }
+  });
+
   it("墓碑移除目标 user 及其尾部但不删除更早 UI 历史", () => {
     nextSeq = 0;
     const result = reduceTranscriptProjection([

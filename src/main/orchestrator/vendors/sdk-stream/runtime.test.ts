@@ -3,6 +3,7 @@ import { AgentRuntimeError } from "../../agent-runtime-error";
 import { AnthropicAdapter } from "../anthropic-adapter";
 import { OpenAICompatAdapter } from "../openai-adapter";
 import { ResponsesAdapter } from "../responses-adapter";
+import { runModelRequestWithRetry } from "../model-retry-runner";
 import type { ChatRequest, ProviderCapability, VendorConfig } from "../types";
 import { streamChatWithSdk, type SdkStreamRuntimeDeps } from "./runtime";
 import type { UnifiedStreamDelta } from "./types";
@@ -77,6 +78,63 @@ afterEach(() => {
 });
 
 describe("streamChatWithSdk", () => {
+  it("keeps native search progress alive without treating it as visible output", async () => {
+    vi.useFakeTimers();
+    const adapter = new ResponsesAdapter("chatgpt", responsesCapability);
+    const visible = vi.fn();
+    const statuses = vi.fn();
+    const factory = vi.fn(async ({ signal }: Parameters<SdkStreamRuntimeDeps["responses"]>[0]) => {
+      return (async function* () {
+        for (const type of ["response.created", "response.web_search_call.in_progress", "response.web_search_call.searching"]) {
+          await new Promise((resolve) => setTimeout(resolve, 35_000));
+          if (signal.aborted) throw signal.reason;
+          yield { type };
+        }
+        await new Promise((resolve) => setTimeout(resolve, 35_000));
+        if (signal.aborted) throw signal.reason;
+        yield { type: "response.completed", response: { status: "completed", output: [] } };
+      })();
+    });
+    const result = runModelRequestWithRetry((attempt) => streamChatWithSdk({
+      adapter, request, config: responsesConfig, timeoutMs: 300_000, signal: attempt.signal,
+      onStreamActivity: attempt.onStreamActivity,
+      onDelta: (delta) => {
+        if (delta.type === "text_delta" || delta.type === "reasoning_delta") {
+          visible();
+          attempt.onVisibleDelta();
+        }
+      },
+    }, { responses: factory, openAI: unusedFactory, anthropic: unusedFactory }), {
+      provider: "chatgpt", model: request.model, maxRetries: 0, idleTimeoutMs: 60_000, onStatus: statuses,
+    });
+    const checked = expect(result).resolves.toMatchObject({ text: "" });
+    await vi.advanceTimersByTimeAsync(140_000);
+    await checked;
+    expect(factory).toHaveBeenCalledTimes(1);
+    expect(visible).not.toHaveBeenCalled();
+    expect(statuses).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each(["openai", "responses", "anthropic"] as const)("reports raw %s activity even when there is no display delta", async (transport) => {
+    const activity = vi.fn();
+    const adapter = transport === "openai" ? new OpenAICompatAdapter("chatgpt", openAICapability)
+      : transport === "responses" ? new ResponsesAdapter("chatgpt", responsesCapability)
+        : new AnthropicAdapter("claude", anthropicCapability);
+    await streamChatWithSdk({
+      adapter, request, config: transport === "anthropic" ? anthropicConfig : openAIConfig,
+      timeoutMs: 1_000, onStreamActivity: activity,
+    }, {
+      openAI: async () => iterableOf({ choices: [] }),
+      responses: async () => iterableOf(
+        { type: "response.web_search_call.searching" },
+        { type: "response.completed", response: { status: "completed", output: [] } },
+      ),
+      anthropic: async () => ({ events: iterableOf({ type: "ping" }), finalMessage: async () => ({ content: [] }) }),
+    });
+    expect(activity).toHaveBeenCalledTimes(transport === "responses" ? 2 : 1);
+  });
+
   it("streams OpenAI deltas before returning the accumulated response", async () => {
     const adapter = new OpenAICompatAdapter("chatgpt", openAICapability);
     const seen: UnifiedStreamDelta[] = [];
@@ -429,6 +487,134 @@ describe("streamChatWithSdk", () => {
     ]);
     expect(response.assistantMessage.rawAssistant).toEqual(output);
   });
+
+  it("recovers a Responses tool call whose name arrives only in the terminal item", async () => {
+    const adapter = new ResponsesAdapter("chatgpt", responsesCapability);
+    const output = [
+      { type: "reasoning", summary: [] },
+      {
+        type: "function_call",
+        call_id: "call-image",
+        name: "subscription-oauth_generate_image",
+        arguments: '{"prompt":"Cyrene"}',
+      },
+    ];
+    const deps: SdkStreamRuntimeDeps = {
+      openAI: unusedFactory,
+      responses: async () => iterableOf(
+        {
+          type: "response.output_item.added",
+          output_index: 8,
+          item: { type: "function_call", call_id: "call-image", arguments: "" },
+        },
+        {
+          type: "response.function_call_arguments.delta",
+          output_index: 8,
+          delta: '{"prompt":',
+        },
+        {
+          type: "response.function_call_arguments.done",
+          output_index: 8,
+          arguments: '{"prompt":"Cyrene"}',
+        },
+        {
+          type: "response.output_item.done",
+          output_index: 8,
+          item: output[1],
+        },
+        {
+          type: "response.completed",
+          response: { output, usage: { input_tokens: 8, output_tokens: 4 } },
+        },
+      ),
+      anthropic: unusedFactory,
+    };
+
+    const response = await streamChatWithSdk({
+      adapter,
+      request,
+      config: responsesConfig,
+      timeoutMs: 1_000,
+    }, deps);
+
+    expect(response.toolCalls).toEqual([{
+      id: "call-image",
+      name: "subscription-oauth_generate_image",
+      arguments: '{"prompt":"Cyrene"}',
+    }]);
+    expect(response.assistantMessage.rawAssistant).toEqual(output);
+  });
+
+  it("recovers a delayed function name at index 18 and retains the call for the next tool round", async () => {
+    const adapter = new ResponsesAdapter("chatgpt", responsesCapability);
+    const reasoning = { type: "reasoning", id: "rs-image", encrypted_content: "opaque-test-context", summary: [] };
+    const call = { type: "function_call", id: "fc-image", call_id: "call-image", arguments: "" };
+    const args = '{"prompt":"portrait"}';
+    const deps: SdkStreamRuntimeDeps = {
+      openAI: unusedFactory,
+      anthropic: unusedFactory,
+      responses: async () => iterableOf(
+        { type: "response.output_item.done", output_index: 17, item: reasoning },
+        { type: "response.output_item.added", output_index: 18, item: call },
+        { type: "response.function_call_arguments.delta", output_index: 18, item_id: call.id, delta: args },
+        { type: "response.function_call_arguments.done", output_index: 18, item_id: call.id, name: "subscription-oauth_generate_image", arguments: args },
+        { type: "response.completed", response: { status: "completed", output: [reasoning] } },
+      ),
+    };
+    const response = await streamChatWithSdk({ adapter, request, config: responsesConfig, timeoutMs: 1_000 }, deps);
+    expect(response.toolCalls).toEqual([{
+      id: call.call_id, name: "subscription-oauth_generate_image", arguments: args,
+    }]);
+    expect(response.assistantMessage.rawAssistant).toEqual([
+      reasoning, { ...call, name: "subscription-oauth_generate_image", arguments: args },
+    ]);
+  });
+
+  it("matches parallel compacted terminal calls by item ID when call_id was delayed", async () => {
+    const adapter = new ResponsesAdapter("chatgpt", responsesCapability);
+    const output = [
+      { type: "function_call", id: "fc-second", call_id: "call-second", name: "second", arguments: '{"value":2}' },
+      { type: "function_call", id: "fc-first", call_id: "call-first", name: "first", arguments: '{"value":1}' },
+    ];
+    const deps: SdkStreamRuntimeDeps = {
+      openAI: unusedFactory,
+      anthropic: unusedFactory,
+      responses: async () => iterableOf(
+        { type: "response.output_item.added", output_index: 0, item: { type: "function_call", id: "fc-first" } },
+        { type: "response.output_item.added", output_index: 18, item: { type: "function_call", id: "fc-second" } },
+        { type: "response.function_call_arguments.delta", output_index: 0, item_id: "fc-first", delta: '{"value":1}' },
+        { type: "response.function_call_arguments.delta", output_index: 18, item_id: "fc-second", delta: '{"value":2}' },
+        { type: "response.completed", response: { status: "completed", output } },
+      ),
+    };
+    const response = await streamChatWithSdk({ adapter, request, config: responsesConfig, timeoutMs: 1_000 }, deps);
+    expect(response.toolCalls).toEqual([
+      { id: "call-first", name: "first", arguments: '{"value":1}' },
+      { id: "call-second", name: "second", arguments: '{"value":2}' },
+    ]);
+    expect(response.assistantMessage.rawAssistant).toEqual(output);
+  });
+
+  it.each(["missing call_id", "missing terminal marker", "incomplete arguments", "terminal incomplete"])(
+    "still rejects an actually incomplete Responses call: %s", async (failure) => {
+      const adapter = new ResponsesAdapter("chatgpt", responsesCapability);
+      const call = { type: "function_call", id: "fc-only", name: "generate_image",
+        ...(failure !== "missing call_id" ? { call_id: "call-only" } : {}), arguments: "" };
+      const args = failure === "incomplete arguments" ? '{"prompt":' : '{"prompt":"x"}';
+      const events = [
+        { type: "response.output_item.added", output_index: 18, item: call },
+        { type: "response.function_call_arguments.delta", output_index: 18, item_id: call.id, delta: args },
+        ...(failure === "missing terminal marker" ? [] : [{
+          type: "response.function_call_arguments.done", output_index: 18, item_id: call.id, name: call.name, arguments: args,
+        }]),
+        { type: "response.completed", response: { status: "completed", output: failure === "terminal incomplete"
+          ? [{ ...call, arguments: args, status: "incomplete" }] : [] } },
+      ];
+      await expect(streamChatWithSdk({ adapter, request, config: responsesConfig, timeoutMs: 1_000 }, {
+        openAI: unusedFactory, anthropic: unusedFactory, responses: async () => iterableOf(...events),
+      })).rejects.toMatchObject({ modelFailure: { vendorCode: "E_TOOL_CALL_INCOMPLETE" } });
+    },
+  );
 
   it("does not create a request deadline when timeoutMs is zero", async () => {
     vi.useFakeTimers();

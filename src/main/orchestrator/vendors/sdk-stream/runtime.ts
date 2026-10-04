@@ -11,11 +11,13 @@ import {
   deriveAnthropicClientConfig,
   deriveOpenAIClientConfig,
   deriveResponsesClientConfig,
+  withStreamActivity,
   type AnthropicClientConfig,
   type OpenAIClientConfig,
 } from "./client-config";
 import { normalizeOpenAIChunk } from "./openai-normalizer";
 import { normalizeResponsesEvent } from "./responses-normalizer";
+import { ResponsesOutputTracker } from "./responses-output";
 import {
   ProviderProtocolError,
   type StreamDiagnostic,
@@ -26,12 +28,14 @@ export interface OpenAIStreamFactoryInput {
   client: OpenAIClientConfig;
   body: Record<string, unknown>;
   signal: AbortSignal;
+  onStreamActivity?: () => void;
 }
 
 export interface AnthropicStreamFactoryInput {
   client: AnthropicClientConfig;
   body: Record<string, unknown>;
   signal: AbortSignal;
+  onStreamActivity?: () => void;
 }
 
 export interface SdkStreamRuntimeDeps {
@@ -49,24 +53,26 @@ export interface SdkStreamRunInput {
   config: VendorConfig;
   timeoutMs: number;
   signal?: AbortSignal;
+  /** Raw protocol progress (including native search and non-visible reasoning). */
+  onStreamActivity?: () => void;
   onDelta?: (delta: UnifiedStreamDelta) => void;
   onDiagnostic?: (diagnostic: StreamDiagnostic) => void;
 }
 
 const defaultDeps: SdkStreamRuntimeDeps = {
-  openAI: async ({ client: options, body, signal }) => {
-    const client = new OpenAI(options);
+  openAI: async ({ client: options, body, signal, onStreamActivity }) => {
+    const client = new OpenAI({ ...options, fetch: withStreamActivity(fetch, onStreamActivity) });
     const stream = await client.chat.completions.create(body as never, { signal });
     return stream as unknown as AsyncIterable<unknown>;
   },
-  responses: async ({ client: options, body, signal }) => {
-    const client = new OpenAI(options);
+  responses: async ({ client: options, body, signal, onStreamActivity }) => {
+    const client = new OpenAI({ ...options, fetch: withStreamActivity(fetch, onStreamActivity) });
     // stream 是 body 字段不是第二个参数（SDK 7.5 重载签名，施工文档已核实）
     const stream = await client.responses.create({ ...body, stream: true } as never, { signal });
     return stream as unknown as AsyncIterable<unknown>;
   },
-  anthropic: async ({ client: options, body, signal }) => {
-    const client = new Anthropic(options);
+  anthropic: async ({ client: options, body, signal, onStreamActivity }) => {
+    const client = new Anthropic({ ...options, fetch: withStreamActivity(options.fetch ?? fetch, onStreamActivity) });
     const stream = client.messages.stream(body as never, { signal });
     return {
       events: stream as unknown as AsyncIterable<unknown>,
@@ -143,8 +149,7 @@ export async function streamChatWithSdk(
   // 本次请求的完整地址 —— 失败日志要带上；catch 块读不到 try 内的局部变量，提升到外层。
   let requestEndpoint = "";
   const commitDelta = (delta: UnifiedStreamDelta) => {
-    if (delta.type === "finish"
-      && (input.adapter.transport === "openai" || input.adapter.transport === "responses")) {
+    if (delta.type === "finish" && input.adapter.transport === "openai") {
       for (const toolCall of accumulator.snapshot().toolCalls) {
         if (!toolCall.ended) {
           const end: UnifiedStreamDelta = {
@@ -191,9 +196,11 @@ export async function streamChatWithSdk(
         client: deriveOpenAIClientConfig(prepared.endpoint, input.config.apiKey),
         body: prepared.body,
         signal: controller.signal,
+        onStreamActivity: input.onStreamActivity,
       });
       let lastChunk: unknown = null;
       for await (const chunk of chunks) {
+        input.onStreamActivity?.();
         lastChunk = chunk;
         for (const delta of normalizeOpenAIChunk(chunk)) dispatch(delta);
       }
@@ -216,12 +223,22 @@ export async function streamChatWithSdk(
         client: deriveResponsesClientConfig(prepared.endpoint, input.config.apiKey),
         body: prepared.body,
         signal: controller.signal,
+        onStreamActivity: input.onStreamActivity,
       });
       let finalResponse: Record<string, unknown> | undefined;
+      const outputTracker = new ResponsesOutputTracker();
       for await (const event of chunks) {
+        input.onStreamActivity?.();
+        outputTracker.observe(event);
         const terminal = responsesTerminalResponse(event);
-        if (terminal) finalResponse = terminal;
-        for (const delta of normalizeResponsesEvent(event)) dispatch(delta);
+        if (terminal) {
+          finalResponse = outputTracker.reconcile(terminal, accumulator.snapshot(),
+            (event as Record<string, unknown>).type === "response.completed");
+        }
+        const normalizedEvent = terminal
+          ? { ...(event as Record<string, unknown>), response: finalResponse }
+          : event;
+        for (const delta of normalizeResponsesEvent(normalizedEvent)) dispatch(delta);
       }
       if (finalResponse === undefined || !Array.isArray(finalResponse.output)) {
         const reason = finalResponse === undefined
@@ -269,9 +286,11 @@ export async function streamChatWithSdk(
       client: deriveAnthropicClientConfig(prepared.endpoint, input.config.apiKey, authStyle),
       body: prepared.body,
       signal: controller.signal,
+      onStreamActivity: input.onStreamActivity,
     });
     const normalizer = new AnthropicEventNormalizer();
     for await (const event of stream.events) {
+      input.onStreamActivity?.();
       for (const delta of normalizer.normalize(event)) dispatch(delta);
     }
     flushTaggedThink();

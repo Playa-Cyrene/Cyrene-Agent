@@ -41,6 +41,7 @@ interface ChatWindowApi {
   getEnabledStickers: () => Promise<Array<{ id: string; src: string }>>;
   /** 读取本地图片并转为 dataUrl 预览；失败返回 ok=false + error */
   getImagePreview: (filePath: string) => Promise<{ ok: boolean; dataUrl?: string; error?: string }>;
+  saveGeneratedImage: (id: string) => Promise<{ ok: boolean; cancelled?: boolean; error?: string }>;
   /** 主进程通用设置（只声明渲染端读取的字段） */
   getGeneralSettings: () => Promise<{
     language?: string;
@@ -88,6 +89,7 @@ interface SettingsWindowApi {
     apiKey: string;
     explicitTransport?: import("../shared/api-endpoint").ApiTransport;
     reasoning?: import("../shared/reasoning").ReasoningPreference;
+    nativeWebSearch?: boolean;
     contextWindowTokens?: number;
     multimodal?: boolean;
     modelOptions?: Record<string, { contextWindowTokens?: number; multimodal?: boolean }>;
@@ -103,6 +105,7 @@ interface SettingsWindowApi {
     apiKey: string;
     explicitTransport?: import("../shared/api-endpoint").ApiTransport;
     reasoning?: import("../shared/reasoning").ReasoningPreference;
+    nativeWebSearch?: boolean;
     contextWindowTokens?: number;
     multimodal?: boolean;
     modelOptions?: Record<string, { contextWindowTokens?: number; multimodal?: boolean }>;

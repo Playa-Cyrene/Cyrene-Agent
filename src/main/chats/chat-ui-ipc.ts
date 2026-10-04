@@ -1,4 +1,6 @@
-import { BrowserWindow } from "electron";
+import { app, BrowserWindow, dialog } from "electron";
+import * as fs from "node:fs/promises";
+import { createGeneratedImageStore } from "../generated-image-store";
 import { IPC } from "../../shared/ipc-channels";
 import { createIpcScope, type IpcScope } from "../application/ipc-scope";
 import { getCapabilityOrOpenAI } from "../orchestrator/vendors";
@@ -202,6 +204,19 @@ export function registerChatUiIpc(deps: ChatUiIpcDependencies): void {
       ok: true,
       dataUrl: `data:${validated.mime};base64,${validated.buffer.toString("base64")}`,
     };
+  });
+
+  ipc.handle(IPC.CHAT_SAVE_GENERATED_IMAGE, async (event, payload: { id?: unknown }) => {
+    try {
+      if (typeof payload?.id !== "string") throw new Error("Invalid image id");
+      const image = createGeneratedImageStore(app.getPath("userData")).read(payload.id, "original");
+      const options = { title: "保存生成图片", defaultPath: `generated-${payload.id.slice(0, 8)}.${image.extension}`, filters: [{ name: "图片", extensions: [image.extension] }] };
+      const owner = BrowserWindow.fromWebContents(event.sender);
+      const selected = owner ? await dialog.showSaveDialog(owner, options) : await dialog.showSaveDialog(options);
+      if (selected.canceled || !selected.filePath) return { ok: false, cancelled: true };
+      await fs.copyFile(image.filePath, selected.filePath);
+      return { ok: true };
+    } catch { return { ok: false, error: "图片不存在或保存失败，请重试" }; }
   });
 
   ipc.handle(IPC.CHAT_GET_IMAGE_SEND_STRATEGY, (_event, payload: unknown) => {

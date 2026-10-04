@@ -23,7 +23,8 @@ export type ReasoningEffort =
   | "medium"
   | "high"
   | "xhigh"
-  | "max";
+  | "max"
+  | "ultra";
 
 export type ReasoningControl =
   | "none"

@@ -1,5 +1,5 @@
 import map from "./model-error-map.json";
-import type { ModelErrorCategory, ModelFailureInfo } from "../../../shared/model-error";
+import { sanitizeModelErrorMessage, type ModelErrorCategory, type ModelFailureInfo } from "../../../shared/model-error";
 
 type Entry = { category: ModelErrorCategory; retryable?: boolean | "conditional" };
 type ProviderMap = {
@@ -15,6 +15,11 @@ type ProviderMap = {
 
 const providers = (map as { providers: Record<string, ProviderMap> }).providers;
 const providerAliases: Record<string, string> = { openai: "chatgpt", anthropic: "claude", doubao_seed: "doubao", xai_grok: "grok" };
+const httpCategories: Record<number, ModelErrorCategory> = {
+  400: "INVALID_REQUEST", 401: "AUTH", 402: "BILLING", 403: "PERMISSION", 404: "NOT_FOUND",
+  408: "TIMEOUT", 409: "CONFLICT", 413: "PAYLOAD_TOO_LARGE", 422: "INVALID_REQUEST",
+  429: "RATE_LIMIT", 503: "UNAVAILABLE", 504: "TIMEOUT",
+};
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
@@ -40,15 +45,16 @@ export function classifyModelFailure(input: {
     ?? (typeof protocolDetails?.status === "number" ? protocolDetails.status : undefined);
   const vendorCode = safeString(bodyError?.code ?? protocolDetails?.vendorCode ?? root?.vendorCode ?? root?.code ?? root?.error_code ?? root?.errorCode);
   const vendorType = safeString(bodyError?.type ?? bodyError?.status ?? protocolDetails?.vendorType ?? root?.vendorType ?? root?.type ?? root?.error_type);
-  const requestId = safeString(root?.request_id ?? root?.requestId ?? root?.["x-request-id"] ?? protocolDetails?.requestId ?? root?.id);
+  const requestId = safeString(root?.request_id ?? root?.requestID ?? root?.requestId ?? root?.["x-request-id"]
+    ?? bodyError?.request_id ?? protocolDetails?.requestId);
   let entry: Entry | undefined = vendorCode
     ? table?.business_codes?.[vendorCode] ?? table?.codes?.[vendorCode]
     : undefined;
-  const providerMessage = safeString(bodyError?.message ?? root?.message)?.toLowerCase();
+  const providerMessage = sanitizeModelErrorMessage(bodyError?.message ?? root?.detail ?? protocolDetails?.message ?? root?.message);
   const messageOverride = table?.message_overrides?.find((override) =>
     (!override.code || override.code === vendorCode)
     && providerMessage
-    && override.contains.some((needle) => providerMessage.includes(needle.toLowerCase())));
+    && override.contains.some((needle) => providerMessage.toLowerCase().includes(needle.toLowerCase())));
   if (messageOverride) entry = { category: messageOverride.category, retryable: messageOverride.retryable };
   if (!entry && vendorCode && table?.structured_codes?.[vendorCode]) {
     entry = { category: table.structured_codes[vendorCode] };
@@ -58,6 +64,10 @@ export function classifyModelFailure(input: {
   if (!entry && status) {
     const category = table?.http_fallback?.[String(status)];
     if (category) entry = { category, retryable: status === 429 || status >= 500 };
+  }
+  if (!entry && status) {
+    const category = httpCategories[status] ?? (status >= 500 && status <= 599 ? "SERVER_ERROR" : undefined);
+    if (category) entry = { category, retryable: status === 408 || status === 429 || status >= 500 };
   }
   // Message heuristics are intentionally disabled: provider text is not a stable code surface.
   const category = entry?.category
@@ -69,6 +79,7 @@ export function classifyModelFailure(input: {
     ...(Number.isInteger(status) ? { status } : {}),
     ...(vendorCode ? { vendorCode } : {}), ...(vendorType ? { vendorType } : {}),
     ...(requestId ? { requestId } : {}), ...(table?.docsUrl ? { docsUrl: table.docsUrl } : {}),
+    ...(providerMessage ? { providerMessage } : {}),
     ...(entry?.retryable !== undefined ? { retryable: entry.retryable } : {}),
   };
 }
