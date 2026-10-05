@@ -6,6 +6,7 @@ import type { PluginManagementApi, PluginPanelApi } from "../shared/plugin-manag
 import type { MomentsApi } from "../shared/moments-types";
 import type { WorkspaceListResult, WorkspaceReadResult } from "../shared/workspace-files-types";
 import type { OpenInAppListResult, OpenInAppOpenResult } from "../shared/open-in-app-types";
+import type { SkillSuggestionItem, SkillSuggestionMode } from "../shared/skill-suggestions";
 
 interface SystemApi {
   openExternal: (url: string) => Promise<{ ok: boolean; error?: string }>;
@@ -39,6 +40,8 @@ interface ChatWindowApi {
   toggleMaximize: () => void;
   /** 已启用的贴纸列表（主进程返回 { id, src } 结构） */
   getEnabledStickers: () => Promise<Array<{ id: string; src: string }>>;
+  /** 重新扫描并读取当前会话模式下可调用的 slash 技能。 */
+  getSkillSuggestions: (mode: SkillSuggestionMode) => Promise<SkillSuggestionItem[]>;
   /** 读取本地图片并转为 dataUrl 预览；失败返回 ok=false + error */
   getImagePreview: (filePath: string) => Promise<{ ok: boolean; dataUrl?: string; error?: string }>;
   /** 主进程通用设置（只声明渲染端读取的字段） */

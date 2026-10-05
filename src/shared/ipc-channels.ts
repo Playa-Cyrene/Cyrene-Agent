@@ -351,6 +351,8 @@ export const IPC = {
   SKILL_CLEAR_MODE_OVERRIDE: "skill:clear-mode-override",
   // skill catalog（skill 页拉取元数据：id/name/description/modes）
   SKILL_GET_CATALOG: "skill:get-catalog",
+  // 输入框 /skill 自动补全：按会话模式重新扫描并返回启用的技能。
+  SKILL_GET_SUGGESTIONS: "skill:get-suggestions",
   // 重新扫描 user skills 目录，安装/删除 skill 后无需重启即可刷新 UI
   SKILL_RESCAN: "skill:rescan",
 

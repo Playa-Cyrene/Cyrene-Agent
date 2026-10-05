@@ -94,6 +94,91 @@
   box-shadow: var(--rb-shadow-control-focus);
 }
 
+.cy-skill-suggestion.ant-cascader {
+  display: block;
+  width: 100%;
+}
+
+.cy-skill-suggestion__content {
+  width: 100%;
+}
+
+.cy-skill-suggestion__popup.ant-cascader-dropdown {
+  max-width: min(760px, calc(100vw - 24px));
+  padding: 6px;
+  border: 1px solid var(--rb-border-elevated);
+  border-radius: 14px;
+  background: var(--rb-surface-elevated);
+  box-shadow: var(--rb-shadow-elevated);
+  overflow: hidden;
+}
+
+.cy-skill-suggestion__popup .ant-cascader-menus,
+.cy-skill-suggestion__popup .ant-cascader-menu {
+  width: 100%;
+  min-width: 0;
+}
+
+.cy-skill-suggestion__popup .ant-cascader-menu {
+  max-height: min(360px, 50vh);
+  overflow-y: auto;
+}
+
+.cy-skill-suggestion__popup .ant-cascader-menu-item {
+  width: 100%;
+  max-width: none;
+  min-height: 34px;
+  border-radius: 8px;
+}
+
+.cy-skill-suggestion__popup .ant-cascader-menu-item-content {
+  flex: 1 1 auto;
+  width: 100%;
+}
+
+.cy-skill-suggestion__popup .ant-suggestion-item {
+  width: 100%;
+}
+
+.cy-skill-suggestion__label {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
+}
+
+.cy-skill-suggestion__label strong {
+  flex: 0 0 176px;
+  overflow: hidden;
+  color: var(--rb-text-primary);
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cy-skill-suggestion__label small {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--rb-text-secondary);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cy-skill-suggestion__source {
+  color: var(--rb-text-disabled);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.cy-skill-suggestion__status {
+  color: var(--rb-text-secondary);
+  font-size: 12px;
+}
+
 .cy-composer .ant-sender-content {
   min-height: 100px;
   padding: 16px 16px 9px;

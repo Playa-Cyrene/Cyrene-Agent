@@ -2,6 +2,7 @@ import { app, dialog } from "electron";
 import * as fs from "fs";
 import * as path from "path";
 import { IPC } from "../../shared/ipc-channels";
+import type { SkillSuggestionMode } from "../../shared/skill-suggestions";
 import { createIpcScope, type IpcScope } from "../application/ipc-scope";
 import { getStickerManagerConfig, setStickerEnabled } from "../orchestrator/sticker-settings";
 import { addUserSticker, deleteUserSticker } from "../sticker-storage";
@@ -454,6 +455,19 @@ export function registerMemoryUserToolIpc(deps: MemoryUserToolIpcDependencies): 
         version: s.version,
         references: s.references,
       }));
+  });
+
+  // 输入框 slash 菜单：每次打开都重扫技能目录，确保用户刚安装/删除的 skill 即时可见。
+  // 模式过滤和启用状态统一复用注册表规则，渲染端只拿到菜单所需的可序列化字段。
+  ipc.handle(IPC.SKILL_GET_SUGGESTIONS, (_event, payload: unknown) => {
+    const mode = (payload as { mode?: unknown } | null)?.mode;
+    if (mode !== "work" && mode !== "code" && mode !== "learn") return [];
+
+    rescanSkills();
+    return skillRegistry
+      .getEnabledForMode(mode as SkillSuggestionMode, loadGeneralSettings().skillModeOverrides)
+      .filter((skill) => !skill.hiddenFromUi)
+      .map(({ id, name, description, source }) => ({ id, name, description, source }));
   });
 
   // 重新扫描 user skills 目录，安装/删除 skill 后无需重启即可刷新 UI。

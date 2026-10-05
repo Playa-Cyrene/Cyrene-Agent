@@ -1,14 +1,21 @@
-import { Sender } from "@ant-design/x";
+import { Sender, Suggestion } from "@ant-design/x";
 import { Popover } from "antd";
-import { AlertTriangle, BookOpen, ChevronDown, ExternalLink, FolderOpen, Plus, ScanLine } from "lucide-react";
+import { AlertTriangle, BookOpen, ChevronDown, ExternalLink, FolderOpen, Package, Plus, ScanLine } from "lucide-react";
 import { Dialog } from "radix-ui";
-import { useEffect, useRef, useState, type ClipboardEvent, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent, type ReactNode } from "react";
 import { useTranslation } from "../../../i18n";
 import { useUserCallPreference } from "../../../hooks/useUserNickname";
 import { resolveAsset } from "../../../../../shared/renderer-base";
 import type { BrowserElementSelection } from "../../../../../shared/browser-panel-types";
 import type { ContextUsageSnapshot } from "../../../../../shared/context-usage";
 import type { ModelFailureInfo } from "../../../../../shared/model-error";
+import type { SkillSuggestionItem, SkillSuggestionMode } from "../../../../../shared/skill-suggestions";
+import {
+  filterSlashSkillSuggestions,
+  getActiveSlashSkillToken,
+  replaceActiveSlashSkillToken,
+  type ActiveSlashSkillToken,
+} from "./slashSkillSuggestions";
 import { ContextUsageRing } from "./ContextUsageRing";
 import { ReasoningControl } from "./ReasoningControl";
 import { StyleControl } from "./StyleControl";
@@ -93,6 +100,15 @@ const WELCOME_IMAGE_BY_MODE: Record<string, string> = {
 };
 
 const WELCOME_GREETING_BOUNDARY_HOURS = [5, 9, 12, 14, 18, 23] as const;
+const SKILL_SUGGESTION_STATUS_VALUE = "__cyrene_skill_suggestion_status__";
+
+function isSkillSuggestionMode(mode: string): mode is SkillSuggestionMode {
+  return mode === "work" || mode === "code" || mode === "learn";
+}
+
+function slashSkillTokenKey(mode: string, value: string, token: ActiveSlashSkillToken): string {
+  return `${mode}:${value.slice(token.start, token.end)}`;
+}
 
 function getWelcomeGreetingKey(date: Date) {
   const hour = date.getHours();
@@ -135,6 +151,14 @@ interface EnabledSticker {
   id: string;
   src: string;
   description?: string;
+}
+
+interface SkillSuggestionMenuItem {
+  value: string;
+  label: ReactNode;
+  icon?: ReactNode;
+  extra?: ReactNode;
+  disabled?: boolean;
 }
 
 export function parseComposerMessage(mode: string, content: string): {
@@ -308,6 +332,20 @@ export function ChatComposer({
   const preferredAddress = useUserCallPreference();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const compositionActiveRef = useRef(false);
+  const latestComposerValueRef = useRef(value);
+  const slashTokenRef = useRef<ActiveSlashSkillToken | null>(null);
+  const slashOpenRef = useRef(false);
+  const slashRequestIdRef = useRef(0);
+  const slashSuppressedTokenKeyRef = useRef<string | null>(null);
+  const selectedSkillForCloseRef = useRef<string | null>(null);
+  const lastSkillModeRef = useRef(mode);
+  const skillSuggestionsRef = useRef<SkillSuggestionItem[]>([]);
+  const filteredSkillSuggestionsRef = useRef<SkillSuggestionItem[]>([]);
+  const [activeSlashToken, setActiveSlashToken] = useState<ActiveSlashSkillToken | null>(null);
+  const [skillSuggestions, setSkillSuggestions] = useState<SkillSuggestionItem[]>([]);
+  const [skillSuggestionsLoading, setSkillSuggestionsLoading] = useState(false);
+  const [slashSuggestionsOpen, setSlashSuggestionsOpen] = useState(false);
+  const [activeSlashSuggestionIndex, setActiveSlashSuggestionIndex] = useState(0);
   const [welcomeGreetingDate, setWelcomeGreetingDate] = useState(() => new Date());
   const [enabledStickers, setEnabledStickers] = useState<EnabledSticker[]>([]);
   const supportsWorkFiles = ["work", "code"].includes(mode);
@@ -370,11 +408,205 @@ export function ChatComposer({
 
   const hasComposerHeader = attachments.length > 0 || selectedStickers.length > 0;
 
+  latestComposerValueRef.current = value;
+
+  const getComposerTextarea = () => fileInputRef.current?.parentElement?.querySelector("textarea") ?? null;
+
+  const closeSkillSuggestions = (suppressCurrentToken: boolean) => {
+    const token = slashTokenRef.current;
+    if (suppressCurrentToken && token) {
+      slashSuppressedTokenKeyRef.current = slashSkillTokenKey(mode, latestComposerValueRef.current, token);
+    }
+    slashRequestIdRef.current += 1;
+    slashOpenRef.current = false;
+    setSlashSuggestionsOpen(false);
+    setSkillSuggestionsLoading(false);
+  };
+
+  const synchronizeSlashSkillToken = (
+    nextValue: string,
+    selectionStart?: number,
+    selectionEnd?: number,
+  ) => {
+    latestComposerValueRef.current = nextValue;
+    if (!isSkillSuggestionMode(mode) || compositionActiveRef.current) {
+      slashTokenRef.current = null;
+      setActiveSlashToken(null);
+      closeSkillSuggestions(false);
+      return;
+    }
+
+    const textarea = getComposerTextarea();
+    const start = selectionStart ?? textarea?.selectionStart ?? nextValue.length;
+    const end = selectionEnd ?? textarea?.selectionEnd ?? start;
+    const previousToken = slashTokenRef.current;
+    const token = getActiveSlashSkillToken(nextValue, start, end);
+    slashTokenRef.current = token;
+    setActiveSlashToken(token);
+
+    if (!token) {
+      slashSuppressedTokenKeyRef.current = null;
+      setActiveSlashSuggestionIndex(0);
+      closeSkillSuggestions(false);
+      return;
+    }
+
+    const tokenKey = slashSkillTokenKey(mode, nextValue, token);
+    if (previousToken && slashSkillTokenKey(mode, nextValue, previousToken) !== tokenKey) {
+      setActiveSlashSuggestionIndex(0);
+    }
+    if (slashSuppressedTokenKeyRef.current === tokenKey) {
+      closeSkillSuggestions(false);
+      return;
+    }
+    if (slashOpenRef.current) return;
+
+    slashOpenRef.current = true;
+    setSlashSuggestionsOpen(true);
+    setSkillSuggestionsLoading(true);
+    setSkillSuggestions([]);
+    skillSuggestionsRef.current = [];
+    setActiveSlashSuggestionIndex(0);
+    const requestId = ++slashRequestIdRef.current;
+    const request = window.chat?.getSkillSuggestions?.(mode);
+    if (!request) {
+      setSkillSuggestionsLoading(false);
+      return;
+    }
+    void request.then((items) => {
+      if (requestId !== slashRequestIdRef.current || !slashOpenRef.current) return;
+      skillSuggestionsRef.current = items;
+      setSkillSuggestions(items);
+    }).catch(() => {
+      if (requestId !== slashRequestIdRef.current || !slashOpenRef.current) return;
+      skillSuggestionsRef.current = [];
+      setSkillSuggestions([]);
+    }).finally(() => {
+      if (requestId === slashRequestIdRef.current) setSkillSuggestionsLoading(false);
+    });
+  };
+
+  const filteredSkillSuggestions = useMemo(
+    () => filterSlashSkillSuggestions(skillSuggestions, activeSlashToken?.query ?? ""),
+    [activeSlashToken?.query, skillSuggestions],
+  );
+  filteredSkillSuggestionsRef.current = filteredSkillSuggestions;
+
+  const slashSuggestionItems = useMemo<SkillSuggestionMenuItem[]>(() => {
+    if (skillSuggestionsLoading) {
+      return [{
+        value: SKILL_SUGGESTION_STATUS_VALUE,
+        disabled: true,
+        label: <span className="cy-skill-suggestion__status">{t("composer.skillSuggestionLoading")}</span>,
+      }];
+    }
+    if (filteredSkillSuggestions.length === 0) {
+      return [{
+        value: SKILL_SUGGESTION_STATUS_VALUE,
+        disabled: true,
+        label: <span className="cy-skill-suggestion__status">{t("composer.skillSuggestionEmpty")}</span>,
+      }];
+    }
+    return filteredSkillSuggestions.map((skill) => ({
+      value: skill.id,
+      label: (
+        <span className="cy-skill-suggestion__label">
+          <strong>{skill.name || skill.id}</strong>
+          <small>/{skill.id}{skill.description ? ` · ${skill.description}` : ""}</small>
+        </span>
+      ),
+      icon: <Package size={15} aria-hidden="true" />,
+      extra: (
+        <span className="cy-skill-suggestion__source">
+          {t(skill.source === "user" ? "composer.skillSuggestionSourceUser" : "composer.skillSuggestionSourceBuiltin")}
+        </span>
+      ),
+    }));
+  }, [filteredSkillSuggestions, skillSuggestionsLoading, t]);
+
+  const applySkillSuggestion = (skillId: string, selectedFromMenu: boolean) => {
+    const skill = skillSuggestionsRef.current.find((item) => item.id === skillId);
+    const token = slashTokenRef.current;
+    if (!skill || !token) return;
+
+    const currentValue = latestComposerValueRef.current;
+    const completion = replaceActiveSlashSkillToken(currentValue, token, skill.id);
+    selectedSkillForCloseRef.current = selectedFromMenu ? skill.id : null;
+    slashSuppressedTokenKeyRef.current = slashSkillTokenKey(mode, completion.value, {
+      start: token.start,
+      end: token.start + skill.id.length + 1,
+      query: skill.id,
+    });
+    slashTokenRef.current = null;
+    setActiveSlashToken(null);
+    closeSkillSuggestions(false);
+    onChange(completion.value);
+    window.requestAnimationFrame(() => {
+      const textarea = getComposerTextarea();
+      if (!textarea) return;
+      textarea.focus();
+      textarea.setSelectionRange(completion.cursor, completion.cursor);
+    });
+  };
+
+  const handleSkillSuggestionsOpenChange = (open: boolean) => {
+    if (!open) {
+      const selectedSkillId = selectedSkillForCloseRef.current;
+      selectedSkillForCloseRef.current = null;
+      if (selectedSkillId) {
+        slashSuppressedTokenKeyRef.current = `${mode}:/${selectedSkillId}`;
+      } else {
+        const token = slashTokenRef.current;
+        if (token) slashSuppressedTokenKeyRef.current = slashSkillTokenKey(mode, latestComposerValueRef.current, token);
+      }
+      closeSkillSuggestions(false);
+      return;
+    }
+    slashOpenRef.current = true;
+    setSlashSuggestionsOpen(true);
+  };
+
+  const handleComposerValueChange = (nextValue: string, event?: { target?: EventTarget | null }) => {
+    const target = event?.target as HTMLTextAreaElement | undefined;
+    onChange(nextValue);
+    synchronizeSlashSkillToken(nextValue, target?.selectionStart, target?.selectionEnd);
+  };
+
+  useEffect(() => {
+    if (lastSkillModeRef.current !== mode) {
+      lastSkillModeRef.current = mode;
+      slashTokenRef.current = null;
+      closeSkillSuggestions(false);
+    }
+    const textarea = getComposerTextarea();
+    synchronizeSlashSkillToken(value, textarea?.selectionStart, textarea?.selectionEnd);
+    // Value and mode are the controlled inputs; the latest textarea selection is read after render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, value]);
+
   // Sender 的 onKeyDown 声明在 Element 层级；函数体只用基类属性，参数随组件声明放宽
-  const handleSenderKeyDown = (event: KeyboardEvent<Element>) => {
-    if (!modelBusy || event.key !== "Enter" || event.shiftKey || event.ctrlKey || event.altKey || event.metaKey) return;
+  const handleSenderKeyDown = (
+    event: KeyboardEvent<Element>,
+    suggestionKeyDown?: (event: KeyboardEvent<Element>) => void,
+  ) => {
     const nativeEvent = event.nativeEvent as globalThis.KeyboardEvent;
-    if (compositionActiveRef.current || nativeEvent.isComposing || nativeEvent.keyCode === 229) return;
+    const composing = compositionActiveRef.current || nativeEvent.isComposing || nativeEvent.keyCode === 229;
+    const hasModifier = event.shiftKey || event.ctrlKey || event.altKey || event.metaKey;
+    if (slashOpenRef.current && !composing && (event.key !== "Enter" || !hasModifier)) {
+      suggestionKeyDown?.(event);
+    }
+    if (slashOpenRef.current && !composing && event.key === "Enter" && !hasModifier) {
+      event.preventDefault();
+      const skill = filteredSkillSuggestionsRef.current[activeSlashSuggestionIndex];
+      if (skill) applySkillSuggestion(skill.id, false);
+      return false;
+    }
+    if (slashOpenRef.current && !composing && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+      const count = Math.max(filteredSkillSuggestionsRef.current.length, 1);
+      setActiveSlashSuggestionIndex((current) => (current + (event.key === "ArrowDown" ? 1 : count - 1)) % count);
+    }
+    if (!modelBusy || event.key !== "Enter" || event.shiftKey || event.ctrlKey || event.altKey || event.metaKey) return;
+    if (composing) return;
     event.preventDefault();
     if (value.trim()) onQueueMessage?.(value);
     // Sender 会先调用 onKeyDown；返回 false 可阻止它继续执行内建提交逻辑。
@@ -429,11 +661,28 @@ export function ChatComposer({
     onPasteImage(file);
   };
 
+  const handleCompositionEndCapture = () => {
+    compositionActiveRef.current = false;
+    window.requestAnimationFrame(() => {
+      const textarea = getComposerTextarea();
+      synchronizeSlashSkillToken(
+        textarea?.value ?? latestComposerValueRef.current,
+        textarea?.selectionStart,
+        textarea?.selectionEnd,
+      );
+    });
+  };
+
   return (
     <div
       className={`cy-composer-stack ${docked ? "is-docked" : "is-centered"}`}
       onCompositionStartCapture={() => { compositionActiveRef.current = true; }}
-      onCompositionEndCapture={() => { compositionActiveRef.current = false; }}
+      onCompositionEndCapture={handleCompositionEndCapture}
+      onMouseUpCapture={(event) => {
+        const textarea = getComposerTextarea();
+        if (event.target !== textarea || !textarea) return;
+        synchronizeSlashSkillToken(textarea.value, textarea.selectionStart, textarea.selectionEnd);
+      }}
     >
       {!docked && <img className="cy-composer-welcome" src={welcomeImageUrl} alt="" />}
       {!docked && (
@@ -462,6 +711,17 @@ export function ChatComposer({
             event.currentTarget.value = "";
           }}
         />
+        <Suggestion
+        open={slashSuggestionsOpen}
+        onOpenChange={handleSkillSuggestionsOpenChange}
+        items={slashSuggestionItems}
+        onSelect={(skillId) => applySkillSuggestion(skillId, true)}
+        popupAlign={{ points: ["bc", "tc"] }}
+        block
+        rootClassName="cy-skill-suggestion"
+        classNames={{ content: "cy-skill-suggestion__content", popup: "cy-skill-suggestion__popup" }}
+        >
+        {({ onKeyDown: handleSuggestionKeyDown }) => (
         <Sender
         rootClassName="cy-composer"
         value={value}
@@ -470,10 +730,11 @@ export function ChatComposer({
         loading={modelBusy}
         disabled={!modelBusy && requiresWorkspace && !workspaceName}
         autoSize={{ minRows: 3, maxRows: 7 }}
-        onChange={onChange}
+        onChange={handleComposerValueChange}
         onCancel={onCancel}
         onPaste={handlePaste}
-        onKeyDown={handleSenderKeyDown}
+        onKeyUp={(event) => synchronizeSlashSkillToken(event.currentTarget.value, event.currentTarget.selectionStart, event.currentTarget.selectionEnd)}
+        onKeyDown={(event) => handleSenderKeyDown(event, handleSuggestionKeyDown)}
         onSubmit={(submitValue) => {
           if (!submitValue.trim()) return;
           onSubmit(submitValue);
@@ -537,6 +798,8 @@ export function ChatComposer({
           </div>
         }
         />
+        )}
+        </Suggestion>
         <div className="cy-composer__footer">
         {supportsWorkFiles && workspaceSelectable && (
           <WorkspaceFolderButton
