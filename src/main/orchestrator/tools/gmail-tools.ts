@@ -57,6 +57,7 @@ function json(value: unknown): string {
 }
 
 function safeFailure(error: unknown): string {
+  if (error instanceof ToolExecutionError) throw error;
   if (error instanceof GmailServiceError) return `[错误] ${error.message}`;
   return "[错误] Gmail 操作失败，请检查连接后重试。";
 }
@@ -478,7 +479,7 @@ export function registerGmailTools(service: GmailService): void {
           return presentDraft(cardFromDraft({
             provider: "gmail",
             from: profile.emailAddress,
-            draft: { ...input, bodyMarkdown: draft.message.textBody },
+            draft: { ...input, bodyMarkdown: input.bodyMarkdown },
             gmailDraftId: draft.id,
             attachments: draft.message.attachments,
           }));
@@ -544,7 +545,7 @@ export function registerGmailTools(service: GmailService): void {
           return presentDraft(cardFromDraft({
             provider: "gmail",
             from: profile.emailAddress,
-            draft: { ...input, bodyMarkdown: draft.message.textBody },
+            draft: { ...input, bodyMarkdown: forwardedBody },
             gmailDraftId: draft.id,
             attachments: draft.message.attachments,
           }));

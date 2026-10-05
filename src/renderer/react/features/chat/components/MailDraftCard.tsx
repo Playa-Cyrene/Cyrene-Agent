@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { Alert, Button, Input, Modal, Space } from "antd";
-import { ChevronDown, ChevronUp, Clipboard, Paperclip, Send, Trash2, X } from "lucide-react";
+import { ChevronDown, ChevronUp, Clipboard, Paperclip, Pencil, Send, Trash2, X } from "lucide-react";
 import type { MailDraftCardData, MailDraftStatus } from "../../../../../shared/mail-draft-card";
 import { useTranslation } from "../../../i18n";
+import { MarkdownContent } from "./ChatMessageList";
 import "./MailDraftCard.css";
 
 const { TextArea } = Input;
@@ -16,10 +17,19 @@ export function MailDraftCard(props: {
   const { t } = useTranslation();
   const [card, setCard] = useState(props.card);
   const [expanded, setExpanded] = useState(false);
+  const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [toInput, setToInput] = useState(props.card.to.join(", "));
+  const [ccInput, setCcInput] = useState(props.card.cc.join(", "));
+  const [bccInput, setBccInput] = useState(props.card.bcc.join(", "));
 
-  useEffect(() => setCard(props.card), [props.card]);
+  useEffect(() => {
+    setCard(props.card);
+    setToInput(props.card.to.join(", "));
+    setCcInput(props.card.cc.join(", "));
+    setBccInput(props.card.bcc.join(", "));
+  }, [props.card]);
 
   function publish(next: MailDraftCardData) {
     setCard(next);
@@ -34,13 +44,26 @@ export function MailDraftCard(props: {
     return value.split(/[,;\n]/).map((part) => part.trim()).filter(Boolean);
   }
 
+  function currentDraft(): MailDraftCardData {
+    return { ...card, to: splitAddresses(toInput), cc: splitAddresses(ccInput), bcc: splitAddresses(bccInput) };
+  }
+
+  function cancelEdits() {
+    setCard(props.card);
+    setToInput(props.card.to.join(", "));
+    setCcInput(props.card.cc.join(", "));
+    setBccInput(props.card.bcc.join(", "));
+    setEditing(false);
+  }
+
   async function save() {
     if (!window.mailDrafts || busy) return;
     setBusy(true); setError("");
     try {
-      const result = await window.mailDrafts.update(card);
+      const result = await window.mailDrafts.update(currentDraft());
       if (!result.ok || !result.card) throw new Error(result.error ?? "MAIL_DRAFT_SAVE_FAILED");
       publish(result.card);
+      setEditing(false);
     } catch { setError(t("mailDraft.saveFailed")); }
     finally { setBusy(false); }
   }
@@ -59,10 +82,16 @@ export function MailDraftCard(props: {
   async function send() {
     if (!window.mailDrafts || busy || card.status !== "draft") return;
     setBusy(true); setError("");
-    const sending = { ...card, status: "sending" as const };
+    const draft = currentDraft();
+    const sending = { ...draft, status: "sending" as const };
     publish(sending);
     try {
-      const result = await window.mailDrafts.send(card);
+      const result = await window.mailDrafts.send(draft);
+      if (result.card) {
+        publish(result.card);
+        setError(result.error ?? "");
+        return;
+      }
       const status: MailDraftStatus = result.status ?? (result.ok ? "sent" : "unknown");
       publish({ ...sending, status });
       if (!result.ok) setError(result.error ?? t("mailDraft.sendFailed"));
@@ -70,6 +99,17 @@ export function MailDraftCard(props: {
       publish({ ...sending, status: "unknown" });
       setError(t("mailDraft.sendUnknown"));
     } finally { setBusy(false); }
+  }
+
+  async function retryDraft() {
+    if (!window.mailDrafts || busy || card.provider !== "gmail" || card.status !== "reconnect_required") return;
+    setBusy(true); setError("");
+    try {
+      const result = await window.mailDrafts.update({ ...card, status: "draft" });
+      if (!result.ok || !result.card) throw new Error(result.error ?? "MAIL_DRAFT_RETRY_FAILED");
+      publish(result.card);
+    } catch { setError(t("mailDraft.retryFailed")); }
+    finally { setBusy(false); }
   }
 
   function confirmDelete() {
@@ -114,26 +154,34 @@ export function MailDraftCard(props: {
       </Space>
     </header>
     <div className="cy-mail-draft__identity"><span>{t("mailDraft.from")}</span><span>{card.from || t("mailDraft.senderUnavailable")}</span></div>
-    <label className="cy-mail-draft__field"><span>{t("mailDraft.to")}</span><Input disabled={locked} value={card.to.join(", ")} onChange={(event) => update("to", splitAddresses(event.target.value))} /></label>
+    <div className="cy-mail-draft__field"><span>{t("mailDraft.to")}</span>{editing ? <Input disabled={locked} value={toInput} onChange={(event) => setToInput(event.target.value)} /> : <span className="cy-mail-draft__value">{card.to.join(", ")}</span>}</div>
     {expanded && <>
-      <label className="cy-mail-draft__field"><span>{t("mailDraft.cc")}</span><Input disabled={locked} value={card.cc.join(", ")} onChange={(event) => update("cc", splitAddresses(event.target.value))} /></label>
-      <label className="cy-mail-draft__field"><span>{t("mailDraft.bcc")}</span><Input disabled={locked} value={card.bcc.join(", ")} onChange={(event) => update("bcc", splitAddresses(event.target.value))} /></label>
+      <div className="cy-mail-draft__field"><span>{t("mailDraft.cc")}</span>{editing ? <Input disabled={locked} value={ccInput} onChange={(event) => setCcInput(event.target.value)} /> : <span className="cy-mail-draft__value">{card.cc.join(", ")}</span>}</div>
+      <div className="cy-mail-draft__field"><span>{t("mailDraft.bcc")}</span>{editing ? <Input disabled={locked} value={bccInput} onChange={(event) => setBccInput(event.target.value)} /> : <span className="cy-mail-draft__value">{card.bcc.join(", ")}</span>}</div>
     </>}
-    <label className="cy-mail-draft__field"><span>{t("mailDraft.subject")}</span><Input disabled={locked} value={card.subject} onChange={(event) => update("subject", event.target.value)} /></label>
-    <TextArea className="cy-mail-draft__body" disabled={locked} autoSize={{ minRows: expanded ? 8 : 4, maxRows: 24 }} value={card.bodyMarkdown} onChange={(event) => update("bodyMarkdown", event.target.value)} />
+    <div className="cy-mail-draft__field"><span>{t("mailDraft.subject")}</span>{editing ? <Input disabled={locked} value={card.subject} onChange={(event) => update("subject", event.target.value)} /> : <span className="cy-mail-draft__value">{card.subject}</span>}</div>
+    {editing
+      ? <TextArea className="cy-mail-draft__body" disabled={locked} autoSize={{ minRows: expanded ? 8 : 4, maxRows: 24 }} value={card.bodyMarkdown} onChange={(event) => update("bodyMarkdown", event.target.value)} />
+      : <div className="cy-mail-draft__preview"><MarkdownContent content={card.bodyMarkdown} /></div>}
     {card.attachments.length > 0 && <ul className="cy-mail-draft__attachments">{card.attachments.map((attachment) => <li key={attachment.id}><span>{attachment.name}</span><span>{Math.max(1, Math.round(attachment.size / 1024))} KB</span>{card.status === "draft" && <Button type="text" danger size="small" icon={<X size={14} />} aria-label={t("mailDraft.removeAttachment")} disabled={busy} onClick={() => update("attachments", card.attachments.filter((item) => item.id !== attachment.id))} />}</li>)}</ul>}
     {error && <Alert type="error" showIcon message={error} />}
     <footer className="cy-mail-draft__actions">
       {card.status === "draft" && <>
         <Button size="small" icon={<Paperclip size={14} />} disabled={busy || card.attachments.length >= 10} onClick={() => void addAttachments()}>{t("mailDraft.attach")}</Button>
-        <Button size="small" disabled={busy} onClick={() => void save()}>{t("mailDraft.save")}</Button>
+        {editing ? <>
+          <Button size="small" disabled={busy} onClick={cancelEdits}>{t("mailDraft.cancel")}</Button>
+          <Button size="small" disabled={busy} onClick={() => void save()}>{t("mailDraft.save")}</Button>
+        </> : <Button size="small" icon={<Pencil size={14} />} disabled={busy} onClick={() => setEditing(true)}>{t("mailDraft.edit")}</Button>}
         <Button type="primary" size="small" icon={<Send size={14} />} loading={busy} onClick={() => void send()}>{t("mailDraft.send")}</Button>
+      </>}
+      {card.status === "reconnect_required" && <>
+        <Button type="link" size="small" disabled={busy} onClick={() => void retryDraft()}>{t("mailDraft.retryDraft")}</Button>
+        <Button type="link" size="small" onClick={() => void window.settings?.openSection?.("email")}>{t("mailDraft.reconnect")}</Button>
       </>}
       {card.status === "unknown" && <span className="cy-mail-draft__hint">
         {t(card.provider === "gmail" ? "mailDraft.checkSent" : "mailDraft.checkSmtpSent")}
         {card.provider === "gmail" && <Button type="link" size="small" onClick={() => void window.system?.openExternal("https://mail.google.com/mail/u/0/#sent")}>{t("mailDraft.openSent")}</Button>}
       </span>}
-      {card.status === "reconnect_required" && <Button type="link" size="small" onClick={() => void window.settings?.openSection?.("email")}>{t("mailDraft.reconnect")}</Button>}
     </footer>
   </section>;
 }

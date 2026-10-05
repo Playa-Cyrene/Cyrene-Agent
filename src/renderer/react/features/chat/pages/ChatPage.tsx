@@ -463,6 +463,7 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
   // 渲染态消息快照 ref：待发队列流程查询消息是否已在视图（刷新恢复时不重复追加）
   const messagesBySessionRef = useRef(messagesBySession);
   messagesBySessionRef.current = messagesBySession;
+  const activeMailDraftControllersRef = useRef<Record<string, AgentRunController>>({});
 
   // 待发队列流程：入队/认领/派发/恢复的页面链路（独立模块，便于流程级测试）。
   // host 经 ref 每次渲染刷新到最新闭包；流程实例与入队失败缓存跨渲染稳定。
@@ -1045,7 +1046,14 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
       },
       startRun: runModel,
     });
-    await controller.start();
+    activeMailDraftControllersRef.current[input.assistantId] = controller;
+    try {
+      await controller.start();
+    } finally {
+      if (activeMailDraftControllersRef.current[input.assistantId] === controller) {
+        delete activeMailDraftControllersRef.current[input.assistantId];
+      }
+    }
   }
 
   function isSessionBusy(sessionId: string): boolean {
@@ -2004,7 +2012,12 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
             onRegenerateLastResponse={mode === "chat" ? regenerateLastChatResponse : undefined}
             onTtsCacheKey={activeSessionId ? handleTtsCacheKeyForActiveSession : undefined}
             onMailDraftChange={activeSessionId ? (messageId, card) => {
-              const current = messagesBySession[activeSessionId]?.find((message) => message.id === messageId);
+              const controller = activeMailDraftControllersRef.current[messageId];
+              if (controller) {
+                controller.updateEmailDraftCard(card);
+                return;
+              }
+              const current = messagesBySessionRef.current[activeSessionId]?.find((message) => message.id === messageId);
               if (!current) return;
               const cards = current.emailDraftCards ?? [];
               const index = cards.findIndex((item) => item.id === card.id);

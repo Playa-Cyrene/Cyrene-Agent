@@ -7,6 +7,7 @@ import {
   collectAttachmentRefs,
   gmailDraftSummary,
   MAX_GMAIL_ATTACHMENT_BYTES,
+  MAX_GMAIL_BODY_BYTES,
   toGmailMessage,
   toGmailSummary,
   type GmailAttachmentRef,
@@ -89,6 +90,7 @@ function mapGmailError(error: unknown, notFoundCode: "message_not_found" | "draf
   if (code === "GMAIL_SAFE_STORAGE_UNAVAILABLE") return new GmailServiceError("safe_storage_unavailable");
   if (code === "GMAIL_NOT_CONNECTED") return new GmailServiceError("not_connected");
   if (code === "GMAIL_REAUTH_REQUIRED") return new GmailServiceError("reauthorization_required");
+  if (code === "GMAIL_REFRESH_TEMPORARY_FAILURE") return new GmailServiceError("network_error");
   const status = errorStatus(error);
   if (status === 404) return new GmailServiceError(notFoundCode);
   if (status === 401) return new GmailServiceError("reauthorization_required");
@@ -204,6 +206,7 @@ export class GmailService {
     const id = validateId(messageId, "messageId");
     try {
       const response = await this.call((api) => api.users.messages.get({ userId: USER_ID, id, format: "full" }));
+      await this.hydrateExternalTextBodies(response, MAX_GMAIL_BODY_BYTES);
       return toGmailMessage(response);
     } catch (error) {
       throw mapGmailError(error, "message_not_found");
@@ -214,10 +217,11 @@ export class GmailService {
     const id = validateId(threadId, "threadId");
     try {
       const response = await this.call((api) => api.users.threads.get({ userId: USER_ID, id, format: "full" }));
+      const messages = (response.messages ?? []).slice(-MAX_THREAD_MESSAGES);
+      for (const message of messages) await this.hydrateExternalTextBodies(message, MAX_THREAD_MESSAGE_BODY_BYTES);
       return {
         id: response.id ?? id,
-        messages: (response.messages ?? []).slice(-MAX_THREAD_MESSAGES)
-          .map((message) => toGmailMessage(message, MAX_THREAD_MESSAGE_BODY_BYTES)),
+        messages: messages.map((message) => toGmailMessage(message, MAX_THREAD_MESSAGE_BODY_BYTES)),
       };
     } catch (error) {
       throw mapGmailError(error, "message_not_found");
@@ -342,6 +346,7 @@ export class GmailService {
     try {
       const draft = await this.getDraftResource(id);
       if (!draft.message) throw new GmailServiceError("draft_not_found");
+      await this.hydrateExternalTextBodies(draft.message, MAX_GMAIL_BODY_BYTES);
       return { id: draft.id ?? id, message: toGmailMessage(draft.message) };
     } catch (error) {
       throw mapGmailError(error, "draft_not_found");
@@ -422,6 +427,7 @@ export class GmailService {
 
   async createForwardDraft(messageId: string, input: GmailDraftInput): Promise<GmailDraft> {
     const source = await this.getMessageResource(messageId);
+    await this.hydrateExternalTextBodies(source, MAX_GMAIL_BODY_BYTES);
     const message = toGmailMessage(source);
     const forwardBlock = [
       "",
@@ -578,6 +584,43 @@ export class GmailService {
       return await this.call((api) => api.users.messages.get({ userId: USER_ID, id, format: "full" }));
     } catch (error) {
       throw mapGmailError(error, "message_not_found");
+    }
+  }
+
+  private async hydrateExternalTextBodies(message: gmail_v1.Schema$Message, maxBytes: number): Promise<void> {
+    let remainingBytes = maxBytes;
+    const candidates = partsOf(message).filter((part) => {
+      const mimeType = (part.mimeType ?? "").toLowerCase();
+      return !part.filename
+        && (mimeType === "text/plain" || mimeType === "text/html")
+        && Boolean(part.body?.attachmentId)
+        && !part.body?.data;
+    });
+    for (const part of candidates) {
+      if (remainingBytes <= 0) break;
+      const body = part.body!;
+      const declaredSize = Math.max(0, Number(body.size) || 0);
+      if (declaredSize > remainingBytes) continue;
+      try {
+        const response = await this.call((api) => api.users.messages.attachments.get({
+          userId: USER_ID,
+          messageId: validateId(message.id ?? "", "messageId"),
+          id: body.attachmentId!,
+        }));
+        if (typeof response.data !== "string") continue;
+        const maxEncodedLength = Math.ceil(remainingBytes * 4 / 3) + 4;
+        const boundedData = response.data.slice(0, maxEncodedLength);
+        const decodedBytes = Buffer.from(boundedData, "base64url").byteLength;
+        body.data = boundedData;
+        remainingBytes = Math.max(0, remainingBytes - decodedBytes);
+        if (response.data.length > boundedData.length) {
+          body.size = Math.max(declaredSize, decodedBytes + 1);
+        } else if (body.size == null) {
+          body.size = decodedBytes;
+        }
+      } catch {
+        // Leave external text unhydrated; the message decoder marks it incomplete.
+      }
     }
   }
 

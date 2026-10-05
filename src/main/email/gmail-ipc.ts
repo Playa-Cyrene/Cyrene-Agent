@@ -24,7 +24,7 @@ function draftCard(card: MailDraftCardData, draft: Awaited<ReturnType<GmailServi
     cc: draft.message.cc,
     bcc: draft.message.bcc,
     subject: draft.message.subject,
-    bodyMarkdown: draft.message.textBody,
+    bodyMarkdown: card.bodyMarkdown,
     attachments: draft.message.attachments,
     status: "draft",
   };
@@ -76,15 +76,17 @@ export function registerGmailIpc(input: {
   });
   ipc.handle(IPC.MAIL_DRAFT_UPDATE, async (_event, value: unknown) => {
     const card = normalizeMailDraftCardData(value);
-    if (!card || card.status !== "draft") return { ok: false, error: "邮件草稿数据无效或当前状态不可编辑。" };
+    const isReconnectCheck = card?.provider === "gmail" && card.status === "reconnect_required";
+    if (!card || (card.status !== "draft" && !isReconnectCheck)) return { ok: false, error: "邮件草稿数据无效或当前状态不可编辑。" };
+    const draftCardInput = isReconnectCheck ? { ...card, status: "draft" as const } : card;
     if (card.provider === "smtp") {
       const updated = normalizeMailDraftCardData({ ...card, from: getSmtpSenderIdentity() ?? "" });
       return updated ? { ok: true, card: updated } : { ok: false, error: "SMTP 发件身份不可用。" };
     }
     try {
-      const draft = await service.updateDraft(card.gmailDraftId!, draftInput(card));
+      const draft = await service.updateDraft(draftCardInput.gmailDraftId!, draftInput(draftCardInput));
       const profile = await service.getProfile();
-      return { ok: true, card: draftCard(card, draft, profile.emailAddress) };
+      return { ok: true, card: draftCard(draftCardInput, draft, profile.emailAddress) };
     } catch {
       return { ok: false, error: "无法保存 Gmail 草稿，请检查连接和草稿状态。" };
     }
@@ -104,6 +106,16 @@ export function registerGmailIpc(input: {
       return { ok: false, status: "draft" as const, error: "请填写收件人、主题和正文。" };
     }
     if (card.provider === "smtp") {
+      const currentSender = getSmtpSenderIdentity() ?? "";
+      if (currentSender.trim().toLowerCase() !== card.from.trim().toLowerCase()) {
+        const updatedCard = normalizeMailDraftCardData({ ...card, from: currentSender });
+        return {
+          ok: false,
+          status: "draft" as const,
+          ...(updatedCard ? { card: updatedCard } : {}),
+          error: "SMTP 发件账号已变化。请核对更新后的发件身份，再点击发送。",
+        };
+      }
       try {
         const attachments: Array<{ filename: string; contentType: string; content: Buffer }> = [];
         let attachmentBytes = 0;
@@ -121,8 +133,15 @@ export function registerGmailIpc(input: {
         return { ok: false, status: "draft" as const, error: "附件已失效，请重新选择文件。" };
       }
     }
+    let updated: Awaited<ReturnType<GmailService["updateDraft"]>>;
     try {
-      const updated = await service.updateDraft(card.gmailDraftId!, draftInput(card));
+      updated = await service.updateDraft(card.gmailDraftId!, draftInput(card));
+    } catch (error) {
+      const code = error && typeof error === "object" && "code" in error ? String((error as { code?: unknown }).code) : "";
+      if (["not_connected", "reauthorization_required"].includes(code)) return { ok: false, status: "reconnect_required" as const, error: "Gmail 授权失效，请重新连接。" };
+      return { ok: false, status: "draft" as const, error: "Gmail 草稿尚未发送，保存失败后可以重试。" };
+    }
+    try {
       await service.sendDraft(updated.id);
       return { ok: true, status: "sent" as const };
     } catch (error) {

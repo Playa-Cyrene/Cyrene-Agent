@@ -613,6 +613,16 @@ export class AgentRunController {
     if (runId) this.deps.api?.reportRunPersisted?.({ runId, finalMessageId: this.input.assistantId });
   }
 
+  /** Card actions from the user and card presentation events share this run-local source of truth. */
+  updateEmailDraftCard(card: MailDraftCardData): void {
+    const existing = this.emailDraftCards.findIndex((item) => item.id === card.id);
+    this.emailDraftCards = existing < 0
+      ? [...this.emailDraftCards, card]
+      : this.emailDraftCards.map((item, index) => index === existing ? card : item);
+    this.deps.host.patchMessage(this.input.sessionId, this.input.assistantId, { emailDraftCards: this.emailDraftCards });
+    void this.checkpointRun(this.terminalStatus ? "terminal" : "running", true);
+  }
+
   /** 构建当前内存展示状态；写入时只提交相对上次成功检查点的差量。 */
   private buildCheckpoint(status: "running" | "waiting_user" | "terminal"): ChatMessage {
     return {
@@ -981,12 +991,7 @@ export class AgentRunController {
     if (event.type === "CUSTOM" && event.name === "cyrene.mail_draft_card") {
       const card = normalizeMailDraftCardData((event.value as { card?: unknown } | null | undefined)?.card);
       if (!card) return;
-      const existing = this.emailDraftCards.findIndex((item) => item.id === card.id);
-      this.emailDraftCards = existing < 0
-        ? [...this.emailDraftCards, card]
-        : this.emailDraftCards.map((item, index) => index === existing ? card : item);
-      this.deps.host.patchMessage(this.input.sessionId, this.input.assistantId, { emailDraftCards: this.emailDraftCards });
-      void this.checkpointRun("running", true);
+      this.updateEmailDraftCard(card);
       return;
     } else if (event.type === "CUSTOM" && event.name === "cyrene.image_attachments") {
       const value = event.value as { messageId?: unknown; attachments?: unknown } | null | undefined;

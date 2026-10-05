@@ -26,8 +26,11 @@
 .cy-mail-draft__identity span:first-child { width: 58px; flex: none; }
 .cy-mail-draft__field { display: grid; grid-template-columns: 58px minmax(0, 1fr); align-items: center; gap: 8px; padding: 5px 2px; }
 .cy-mail-draft__field > span { color: var(--rb-text-secondary); font-size: 13px; }
+.cy-mail-draft__field > .cy-mail-draft__value { min-width: 0; overflow-wrap: anywhere; color: var(--rb-text-primary); }
 .cy-mail-draft__field .ant-input { background: transparent; }
 .cy-mail-draft__body { margin-top: 10px; resize: vertical; }
+.cy-mail-draft__preview { max-height: 560px; overflow: auto; padding: 4px 2px; border-top: 1px solid var(--rb-border-default); }
+.cy-mail-draft__preview .cy-streamdown-message { color: var(--rb-text-primary); }
 .cy-mail-draft__attachments { margin: 10px 0 0; padding: 0; list-style: none; }
 .cy-mail-draft__attachments li { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 8px; padding: 4px 0; color: var(--rb-text-secondary); font-size: 12px; }
 .cy-mail-draft__attachments li > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

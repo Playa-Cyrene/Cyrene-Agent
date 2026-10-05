@@ -120,8 +120,11 @@ function decodeHeaderValue(value: string): string {
 
 function decodeBase64Url(data: string | null | undefined, maxBytes: number): { bytes: Buffer; truncated: boolean } {
   if (!data) return { bytes: Buffer.alloc(0), truncated: false };
-  const bytes = Buffer.from(data, "base64url");
-  const truncated = bytes.byteLength > maxBytes;
+  // Bound allocation before decoding; Gmail can return large bodies inline.
+  const maxEncodedLength = Math.ceil(maxBytes * 4 / 3) + 4;
+  const boundedData = data.slice(0, maxEncodedLength);
+  const bytes = Buffer.from(boundedData, "base64url");
+  const truncated = data.length > boundedData.length || bytes.byteLength > maxBytes;
   return {
     bytes: truncated ? bytes.subarray(0, maxBytes) : bytes,
     truncated,
@@ -187,18 +190,20 @@ export function decodeGmailPayload(
   let remainingBytes = maxBodyBytes;
   let bodyTruncated = false;
   const visit = (part: gmail_v1.Schema$MessagePart): void => {
-    if (part.filename || part.body?.attachmentId) {
+    const mimeType = (part.mimeType ?? "").toLowerCase();
+    const isTextBody = mimeType === "text/plain" || mimeType === "text/html";
+    if (part.filename || (part.body?.attachmentId && !isTextBody)) {
       for (const child of part.parts ?? []) visit(child);
       return;
     }
-    const mimeType = (part.mimeType ?? "").toLowerCase();
     if (mimeType === "text/plain" || mimeType === "text/html") {
+      if (part.body?.attachmentId && !part.body.data) bodyTruncated = true;
       if (remainingBytes <= 0) {
         bodyTruncated ||= (part.body?.size ?? 0) > 0;
       } else {
         const decoded = decodeBase64Url(part.body?.data, remainingBytes);
         remainingBytes -= decoded.bytes.byteLength;
-        bodyTruncated ||= decoded.truncated;
+        bodyTruncated ||= decoded.truncated || (part.body?.size ?? 0) > decoded.bytes.byteLength;
         try {
           const text = new TextDecoder(charsetForPart(part), { fatal: false }).decode(decoded.bytes);
           (mimeType === "text/plain" ? textParts : htmlParts).push({ text, truncated: decoded.truncated });

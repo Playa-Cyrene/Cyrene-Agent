@@ -195,7 +195,7 @@ async function runModel(input: ModelRunInput, streaming: boolean): Promise<ChatR
       ...(generatedImages.length ? { generatedImages } : {}),
       assistantMessage: { ...finalized.assistantMessage,
         providerReplay: { version: 1, origin, content: JSON.parse(JSON.stringify(replayContent)) as typeof content } } };
-    dumpResponse(traceId, { transport: input.adapter.transport, ok: true, ...response,
+    if (traceId) dumpResponse(traceId, { transport: input.adapter.transport, ok: true, ...response,
       generatedImages: generatedImages.map(image => ({ id: image.id, mime: image.mime,
         byteLength: Math.max(0, Math.floor(image.base64.length * 3 / 4)
           - (image.base64.endsWith("==") ? 2 : image.base64.endsWith("=") ? 1 : 0)) })) });

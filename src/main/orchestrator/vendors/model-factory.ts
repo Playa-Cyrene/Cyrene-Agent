@@ -52,7 +52,11 @@ export function prepareModelCall(input: {
     for (const key of POLICY_FIELDS) if (!(key in controls)) delete body[key];
     Object.assign(body, controls);
     if (adapter.transport === "responses") body.store = false;
-    input.onRequest?.(dumpRequest({ transport: adapter.transport, endpoint: policyHttp.url, body }));
+    const hasEmailTools = (request.tools ?? []).some(({ name }) =>
+      name === "send_email" || name === "email_create_draft" || name.startsWith("gmail_"));
+    // Requests and responses in a run with email tools can contain private mail data.
+    // Do not write either side of that exchange to the optional prompt dump.
+    input.onRequest?.(hasEmailTools ? "" : dumpRequest({ transport: adapter.transport, endpoint: policyHttp.url, body }));
     const headers = new Headers(original.headers);
     for (const [name, value] of Object.entries(policyHttp.headers)) headers.set(name, value);
     return delegate(policyHttp.url, { method: "POST", headers, body: JSON.stringify(body), signal: original.signal });

@@ -15,6 +15,7 @@ import { toolRegistry } from "./registry/tool-registry";
 import { requestUserChoice, type ChoiceOption } from "../../user-choice";
 import { logger, LogTag } from "../../logger";
 import type { ToolContext } from "./registry/tool-context";
+import { ToolExecutionError } from "./registry/tool-execution-error";
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -190,7 +191,13 @@ async function executeSendEmail(args: Record<string, unknown>, context?: ToolCon
   const result = await sendSmtpMail({ to, cc, subject, body, html, attachmentPaths: attachments });
   if (result.status === "sent") return "[send_email] 邮件已发送。";
   if (result.status === "failed") return "[错误] SMTP 配置不可用或邮件未发送。";
-  return "[错误] SMTP 发送结果未知。先查看已发送邮件，不要立即重发。";
+  throw new ToolExecutionError(
+    "SMTP_SEND_RESULT_UNKNOWN",
+    "SMTP 发送结果未知。先查看已发送邮件，不要立即重发。",
+    "timeout",
+    false,
+    "unknown",
+  );
 }
 
 // ══════════════════════════════════════════════════════════

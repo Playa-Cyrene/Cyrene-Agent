@@ -20,6 +20,9 @@ interface PendingAuthorization {
   resolveCompletion: (status: GmailAccountStatus) => void;
   timer: ReturnType<typeof setTimeout>;
   finished: boolean;
+  committing: boolean;
+  callbackProcessing: boolean;
+  credentialEpoch: number;
 }
 
 function randomUrlSafe(bytes = 32): string {
@@ -59,6 +62,12 @@ function toStoredTokens(credentials: Credentials, fallback?: GmailTokens): Gmail
   };
 }
 
+function isRevokedRefreshToken(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const root = error as { code?: unknown; response?: { data?: { error?: unknown } } };
+  return root.response?.data?.error === "invalid_grant" || root.code === "invalid_grant";
+}
+
 function reply(res: import("node:http").ServerResponse, status: number, message: string): void {
   res.writeHead(status, { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" });
   res.end(message);
@@ -66,6 +75,8 @@ function reply(res: import("node:http").ServerResponse, status: number, message:
 
 export class GmailAuthService {
   private readonly pending = new Map<string, PendingAuthorization>();
+  private credentialEpoch = 0;
+  private tokenWriteQueue: Promise<unknown> = Promise.resolve();
 
   constructor(
     private readonly tokenStore = new GmailTokenStore(),
@@ -109,6 +120,7 @@ export class GmailAuthService {
 
       let resolveCompletion!: (status: GmailAccountStatus) => void;
       const completion = new Promise<GmailAccountStatus>((resolve) => { resolveCompletion = resolve; });
+      const credentialEpoch = ++this.credentialEpoch;
       const flow = {
         flowId: randomUrlSafe(24),
         client,
@@ -119,10 +131,13 @@ export class GmailAuthService {
         resolveCompletion,
         timer: setTimeout(() => undefined, AUTH_TIMEOUT_MS),
         finished: false,
+        committing: false,
+        callbackProcessing: false,
+        credentialEpoch,
       } satisfies PendingAuthorization;
       clearTimeout(flow.timer);
       flow.timer = setTimeout(() => {
-        void this.finishFlow(flow, { state: "disconnected" });
+        if (!flow.committing) void this.finishFlow(flow, { state: "disconnected" });
       }, AUTH_TIMEOUT_MS);
       flow.timer.unref?.();
 
@@ -164,16 +179,27 @@ export class GmailAuthService {
 
   async cancelAuthorization(flowId: string): Promise<void> {
     const flow = this.pending.get(flowId);
-    if (flow) await this.finishFlow(flow, { state: "disconnected" });
+    if (!flow) return;
+    if (flow.committing) {
+      await flow.completion;
+      return;
+    }
+    await this.finishFlow(flow, { state: "disconnected" });
   }
 
   async disconnect(): Promise<void> {
+    this.credentialEpoch += 1;
     for (const flow of this.pending.values()) {
-      if (!flow.finished) await this.finishFlow(flow, { state: "disconnected" });
+      if (flow.finished) continue;
+      if (flow.committing) await flow.completion;
+      else await this.finishFlow(flow, { state: "disconnected" });
     }
 
-    const tokens = await this.tokenStore.load().catch(() => null);
-    await this.tokenStore.clear();
+    const tokens = await this.serializeTokenWrite(async () => {
+      const current = await this.tokenStore.load().catch(() => null);
+      await this.tokenStore.clear();
+      return current;
+    });
     if (!tokens?.refresh_token) return;
     const clientId = this.getClientId();
     if (!clientId) return;
@@ -186,8 +212,11 @@ export class GmailAuthService {
   }
 
   async shutdown(): Promise<void> {
+    this.credentialEpoch += 1;
     await Promise.all([...this.pending.values()].map(async (flow) => {
-      if (!flow.finished) await this.finishFlow(flow, { state: "disconnected" });
+      if (flow.finished) return;
+      if (flow.committing) await flow.completion;
+      else await this.finishFlow(flow, { state: "disconnected" });
     }));
     this.pending.clear();
   }
@@ -196,22 +225,30 @@ export class GmailAuthService {
     const clientId = this.getClientId();
     if (!clientId) throw new Error("GMAIL_NOT_CONFIGURED");
     if (!this.tokenStore.isSecureStorageAvailable) throw new Error("GMAIL_SAFE_STORAGE_UNAVAILABLE");
+    const credentialEpoch = this.credentialEpoch;
     const tokens = await this.tokenStore.load();
+    if (credentialEpoch !== this.credentialEpoch) throw new Error("GMAIL_NOT_CONNECTED");
     if (!tokens) throw new Error("GMAIL_NOT_CONNECTED");
 
     const client = new OAuth2Client({ clientId });
     client.setCredentials(credentialsFromTokens(tokens));
     client.on("tokens", (updated: Credentials) => {
-      void this.persistRefreshedCredentials(updated, tokens);
+      void this.persistRefreshedCredentials(updated, tokens, credentialEpoch);
     });
 
     if (tokens.expiry_date !== undefined && tokens.expiry_date <= Date.now() + 60_000) {
       try {
         await client.getAccessToken();
-        await this.persistRefreshedCredentials(client.credentials, tokens);
-      } catch {
-        await this.tokenStore.clear().catch(() => undefined);
-        throw new Error("GMAIL_REAUTH_REQUIRED");
+        await this.persistRefreshedCredentials(client.credentials, tokens, credentialEpoch);
+      } catch (error) {
+        if (credentialEpoch !== this.credentialEpoch) throw new Error("GMAIL_NOT_CONNECTED");
+        if (isRevokedRefreshToken(error)) {
+          await this.serializeTokenWrite(async () => {
+            if (credentialEpoch === this.credentialEpoch) await this.tokenStore.clear();
+          });
+          throw new Error("GMAIL_REAUTH_REQUIRED");
+        }
+        throw new Error("GMAIL_REFRESH_TEMPORARY_FAILURE");
       }
     }
     return client;
@@ -247,6 +284,10 @@ export class GmailAuthService {
       reply(res, 400, "Authorization state did not match. Return to the app and try again.");
       return;
     }
+    if (flow.callbackProcessing) {
+      reply(res, 409, "This Gmail authorization response is already being processed.");
+      return;
+    }
 
     const oauthError = callback.searchParams.get("error");
     if (oauthError) {
@@ -261,10 +302,19 @@ export class GmailAuthService {
       return;
     }
 
+    flow.callbackProcessing = true;
     try {
       const { tokens } = await flow.client.getToken({ code, codeVerifier: flow.codeVerifier });
+      if (flow.finished || flow.credentialEpoch !== this.credentialEpoch) {
+        reply(res, 409, "This Gmail authorization was cancelled. Return to the app.");
+        return;
+      }
       if (!tokens.access_token) throw new Error("GMAIL_ACCESS_TOKEN_MISSING");
       const tokenInfo = await flow.client.getTokenInfo(tokens.access_token);
+      if (flow.finished || flow.credentialEpoch !== this.credentialEpoch) {
+        reply(res, 409, "This Gmail authorization was cancelled. Return to the app.");
+        return;
+      }
       if (!tokenInfo.scopes.includes(GMAIL_MODIFY_SCOPE)) {
         reply(res, 400, "Gmail access was not granted. Return to the app and try again.");
         await this.finishFlow(flow, { state: "disconnected" });
@@ -272,7 +322,11 @@ export class GmailAuthService {
       }
       const previous = await this.tokenStore.load().catch(() => null);
       const stored = toStoredTokens(tokens, previous ?? undefined);
-      await this.tokenStore.save(stored);
+      flow.committing = true;
+      await this.serializeTokenWrite(async () => {
+        if (flow.finished || flow.credentialEpoch !== this.credentialEpoch) throw new Error("GMAIL_AUTH_CANCELLED");
+        await this.tokenStore.save(stored);
+      });
       reply(res, 200, "Gmail is connected. You can return to the app.");
       await this.finishFlow(flow, { state: "connected" });
     } catch (error) {
@@ -284,13 +338,23 @@ export class GmailAuthService {
     }
   }
 
-  private async persistRefreshedCredentials(updated: Credentials, fallback: GmailTokens): Promise<void> {
-    try {
-      const current = await this.tokenStore.load();
-      await this.tokenStore.save(toStoredTokens(updated, current ?? fallback));
-    } catch {
-      // Keep token data out of logs. The next API call will surface reauthorization if persistence failed.
-    }
+  private async persistRefreshedCredentials(updated: Credentials, fallback: GmailTokens, credentialEpoch: number): Promise<void> {
+    await this.serializeTokenWrite(async () => {
+      if (credentialEpoch !== this.credentialEpoch) return;
+      try {
+        const current = await this.tokenStore.load();
+        if (credentialEpoch !== this.credentialEpoch) return;
+        await this.tokenStore.save(toStoredTokens(updated, current ?? fallback));
+      } catch {
+        // Keep token data out of logs. The next API call will surface reauthorization if persistence failed.
+      }
+    });
+  }
+
+  private serializeTokenWrite<T>(operation: () => Promise<T>): Promise<T> {
+    const next = this.tokenWriteQueue.then(operation, operation);
+    this.tokenWriteQueue = next.then(() => undefined, () => undefined);
+    return next;
   }
 
   private async finishFlow(flow: PendingAuthorization, status: GmailAccountStatus): Promise<void> {

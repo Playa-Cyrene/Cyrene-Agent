@@ -533,7 +533,7 @@ contextBridge.exposeInMainWorld("gmail", {
 contextBridge.exposeInMainWorld("mailDrafts", {
   update: (card: MailDraftCardData) => ipcRenderer.invoke(IPC.MAIL_DRAFT_UPDATE, card) as Promise<{ ok: boolean; card?: MailDraftCardData; error?: string }>,
   delete: (card: MailDraftCardData) => ipcRenderer.invoke(IPC.MAIL_DRAFT_DELETE, card) as Promise<{ ok: boolean; status?: "deleted"; error?: string }>,
-  send: (card: MailDraftCardData) => ipcRenderer.invoke(IPC.MAIL_DRAFT_SEND, card) as Promise<{ ok: boolean; status?: MailDraftCardData["status"]; error?: string }>,
+  send: (card: MailDraftCardData) => ipcRenderer.invoke(IPC.MAIL_DRAFT_SEND, card) as Promise<{ ok: boolean; status?: MailDraftCardData["status"]; card?: MailDraftCardData; error?: string }>,
   pickAttachments: () => ipcRenderer.invoke(IPC.GMAIL_PICK_ATTACHMENTS) as Promise<{ ok: boolean; attachments: MailAttachmentRef[] }>,
 });
 

@@ -159,7 +159,7 @@ interface GmailWindowApi {
 interface MailDraftWindowApi {
   update: (card: import("../shared/mail-draft-card").MailDraftCardData) => Promise<{ ok: boolean; card?: import("../shared/mail-draft-card").MailDraftCardData; error?: string }>;
   delete: (card: import("../shared/mail-draft-card").MailDraftCardData) => Promise<{ ok: boolean; status?: "deleted"; error?: string }>;
-  send: (card: import("../shared/mail-draft-card").MailDraftCardData) => Promise<{ ok: boolean; status?: import("../shared/mail-draft-card").MailDraftStatus; error?: string }>;
+  send: (card: import("../shared/mail-draft-card").MailDraftCardData) => Promise<{ ok: boolean; status?: import("../shared/mail-draft-card").MailDraftStatus; card?: import("../shared/mail-draft-card").MailDraftCardData; error?: string }>;
   pickAttachments: () => Promise<{ ok: boolean; attachments: import("../shared/mail-draft-card").MailAttachmentRef[] }>;
 }
 
