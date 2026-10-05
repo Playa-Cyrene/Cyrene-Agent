@@ -101,6 +101,9 @@ importers:
       llamaindex:
         specifier: ^0.12.1
         version: 0.12.1(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(hono@4.12.25)(rxjs@7.8.1)(tree-sitter@0.22.4)(web-tree-sitter@0.24.7)(zod@4.4.3)
+      marked:
+        specifier: ^16.4.2
+        version: 16.4.2
       music-metadata:
         specifier: ^11.15.0
         version: 11.15.0
@@ -294,9 +297,6 @@ importers:
       lucide-react:
         specifier: ^1.32.0
         version: 1.32.0(react@19.3.0)
-      marked:
-        specifier: ^16.4.2
-        version: 16.4.2
       mdast-util-to-string:
         specifier: ^4.0.0
         version: 4.0.0
