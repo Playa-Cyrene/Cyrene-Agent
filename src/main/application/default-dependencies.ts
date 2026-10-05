@@ -150,6 +150,8 @@ import { createExamDraftStore } from "../learn/exam-draft";
 import { registerExamPaperIpc } from "../learn/exam-paper-ipc";
 import { registerLearnExamPageIpc } from "../learn/exam-page-ipc";
 import { registerLearnExamTools } from "../orchestrator/learn-exam-tools";
+import { GmailAuthService } from "../email/gmail-auth-service";
+import { GmailService } from "../email/gmail-service";
 
 import { createIpcScope } from "./ipc-scope";
 import { createShutdownCoordinator } from "./shutdown";
@@ -450,6 +452,10 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
           getServerOverrides: () => loadGeneralSettings().lspServerOverrides,
         });
 
+        // Gmail clients are lazy: service construction reads no mailbox data and starts no network request.
+        const gmailAuth = new GmailAuthService();
+        const gmail = new GmailService(gmailAuth);
+
         // 截图：原生 helper IPC、全局热键。预热在 background 阶段执行。
         const initialSettings = loadGeneralSettings();
         const screenshot = initializeScreenshotService({
@@ -479,6 +485,8 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
           proactive: proactiveLifecycle,
           git,
           lsp,
+          gmailAuth,
+          gmail,
           screenshot,
           music,
           update,
@@ -516,7 +524,7 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
       },
 
       // 工具注册：集中到一个显式入口（依赖沙箱/Git/LSP 就绪）
-      registerAllTools: (services) => registerAllTools({ lspManager: services.lsp }),
+      registerAllTools: (services) => registerAllTools({ lspManager: services.lsp, gmailService: services.gmail }),
 
       initRag: async () => {
         const modelSettings = loadModelSettings();

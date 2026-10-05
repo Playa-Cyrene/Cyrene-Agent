@@ -101,6 +101,10 @@ export interface ToolDefinition {
   needsContext?: boolean;
   /** Ledger 策略：success_terminal 缓存终态成功（默认），bypass 不缓存。 */
   ledgerPolicy?: "success_terminal" | "bypass";
+  /** 输入参数可能含邮件正文、地址等个人数据；运行预览和轨迹声明必须脱敏。 */
+  sensitiveArgs?: boolean;
+  /** 输出可能含收件邮件正文；只保留在当前模型轮次，不写工具结果存档或会话轨迹。 */
+  sensitiveOutput?: boolean;
   /** 标记为已废弃：从新运行的模型可用工具列表中隐藏，但保留注册用于旧会话兼容。 */
   deprecated?: boolean;
   /** Browser tools are exposed only in the matching run-local control phase. */

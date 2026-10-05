@@ -61,6 +61,25 @@ const IDEMPOTENT_BUILTINS = new Set([
   WRITE_PLAN_TOOL_ID,
 ]);
 
+function parseMailDraftPresentation(
+  toolName: string,
+  args: Record<string, unknown>,
+  output: string,
+): ToolObservation["presentation"] | undefined {
+  const isDraftProducer = toolName === "email_create_draft"
+    || ((toolName === "gmail_reply" || toolName === "gmail_forward") && args.action === "draft");
+  if (!isDraftProducer || output.length > 250_000) return undefined;
+  try {
+    const value = JSON.parse(output) as Record<string, unknown>;
+    const card = value?.kind === "mail_draft_card" && value.card && typeof value.card === "object" && !Array.isArray(value.card)
+      ? value.card as Record<string, unknown>
+      : undefined;
+    return card ? { type: "mail_draft_card", data: card } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Keep built-in lifecycle metadata accurate when no registry definition exists. */
 export function resolveToolDispatchSideEffect(
   toolName: string,
@@ -283,7 +302,7 @@ export async function dispatchToolCall(
     type: "tool_start",
     toolCallId: call.id,
     toolName: call.name,
-    args,
+    args: tool.sensitiveArgs ? { redacted: true } : args,
     displayName: tool.name,
   });
 
@@ -305,7 +324,7 @@ export async function dispatchToolCall(
       }
     : ctx.toolContext;
   const run = async (): Promise<ToolExecutionOutcome> => executeToolDefinition(tool, args, shellContext);
-  if (ctx.executionLedger) {
+  if (ctx.executionLedger && tool.ledgerPolicy !== "bypass" && !tool.sensitiveArgs && !tool.sensitiveOutput) {
     const ledgerResult = await ctx.executionLedger.execute(
       { logicalInvocationId: `${ctx.toolContext?.runId ?? "unknown"}:${call.id}`, capability: tool.id, targetRefs, args },
       run,
@@ -347,17 +366,26 @@ export async function dispatchToolCall(
     }
   }
 
+  const presentation = parseMailDraftPresentation(call.name, args, result.output);
   const observation: ToolDispatchResult = {
     outcome,
     category: result.category,
     toolSideEffect: sideEffect,
     retryDecision: result.retryable ? "retry" : "no_retry",
     tool: call.name,
-    target: (args.path as string | undefined) ?? (args.command as string | undefined) ?? (args.query as string | undefined),
+    ...(!tool.sensitiveArgs ? {
+      target: (args.path as string | undefined) ?? (args.command as string | undefined) ?? (args.query as string | undefined),
+    } : {}),
     message: preview,
     output: result.output,
     truncated,
     preview,
+    ...(tool.sensitiveOutput ? {
+      activityPreview: result.status === "succeeded"
+        ? tool.name.includes("draft") || args.action === "draft" ? "邮件草稿已准备" : "邮件操作已完成"
+        : "邮件操作未成功",
+    } : {}),
+    ...(presentation ? { presentation } : {}),
     rawResult: result,
   };
   const persisted = ctx.deferOutputPersistence
@@ -369,9 +397,9 @@ export async function dispatchToolCall(
       type: "tool_end",
       toolCallId: call.id,
       outcome: result.status === "succeeded" ? "success" : "failure",
-      preview: preview.slice(0, 200),
+      preview: (observation.activityPreview ?? preview).slice(0, 200),
       // Diff Review 卡片证据走独立字段，不受 preview 截断影响
-      changes: extractFileChangesFromOutput(result.output),
+      changes: tool.sensitiveOutput ? undefined : extractFileChangesFromOutput(result.output),
     });
   }
 
@@ -387,6 +415,7 @@ export async function persistToolDispatchResult(
   result: ToolDispatchResult,
   ctx: ToolDispatchContext,
 ): Promise<ToolDispatchResult> {
+  if (ctx.tools.find((tool) => tool.id === call.name)?.sensitiveOutput) return result;
   if (!shouldPersistResult(call, result) || !ctx.toolOutputStore || result.toolOutputRef) return result;
   const conversationId = ctx.toolContext?.conversationId;
   const runId = ctx.toolContext?.runId;

@@ -2,6 +2,8 @@ import { loadGeneralSettings } from "../../../settings/settings-facade";
 import { loadModelSettings } from "../../../settings/model-settings";
 import type { GeneralSettings } from "../../../settings/general-settings";
 import { registerEmailTools } from "../email-tools";
+import { registerGmailTools } from "../gmail-tools";
+import type { GmailService } from "../../../email/gmail-service";
 import { registerDocumentTools } from "../document-tools";
 // fs-tools / built-in-tools 仍依赖模块加载副作用，先集中在此，后续可继续显式化
 import "../fs-tools";
@@ -24,7 +26,7 @@ export function syncBuiltInToolToggles(settings: GeneralSettings): void {
   toolRegistry.setEnabled("plan_trip", settings.travelEnabled);
 }
 
-export function registerAllTools(deps: { lspManager: LspManager }): void {
+export function registerAllTools(deps: { lspManager: LspManager; gmailService?: GmailService }): void {
   registerLspTool(deps.lspManager, toolRegistry);
   registerSearchTextTool();
   registerAstGrepTools();
@@ -51,6 +53,7 @@ export function registerAllTools(deps: { lspManager: LspManager }): void {
 
   registerTravelTools();
   registerEmailTools();
+  if (deps.gmailService) registerGmailTools(deps.gmailService);
 
   syncBuiltInToolToggles(loadGeneralSettings());
 }

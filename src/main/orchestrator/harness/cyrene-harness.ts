@@ -212,7 +212,7 @@ export async function runCyreneHarness(input: HarnessInput): Promise<HarnessResu
       // canonical assistant 先于任何工具 dispatch 落盘（fail-closed）：
       // 写失败 = 本轮协议断裂，直接终态 error，不得带着缺失的声明继续执行。
       run.currentAssistantEntryId = await input.transcriptSink?.appendAssistant({
-        message: assistantMessage,
+        message: transcriptSafeAssistantToolCalls(assistantMessage, run.currentTools),
         roundId,
       });
     } catch (error) {
@@ -746,6 +746,17 @@ function toAssistantMessage(response: ChatResponse): ChatMessage {
     role: "assistant",
     content: response.text,
     ...(response.toolCalls?.length ? { toolCalls: response.toolCalls } : {}),
+  };
+}
+
+/** 邮件工具参数可能含收件人、主题或正文；运行期保留原消息给模型，轨迹只保留工具声明。 */
+function transcriptSafeAssistantToolCalls(message: ChatMessage, tools: HarnessInput["tools"]): ChatMessage {
+  const sensitiveIds = new Set(tools.filter((tool) => tool.sensitiveArgs).map((tool) => tool.id));
+  if (!message.toolCalls?.some((call) => sensitiveIds.has(call.name))) return message;
+  return {
+    role: "assistant",
+    content: "[邮件工具调用已脱敏]",
+    toolCalls: message.toolCalls.map((call) => sensitiveIds.has(call.name) ? { ...call, arguments: "{}" } : call),
   };
 }
 

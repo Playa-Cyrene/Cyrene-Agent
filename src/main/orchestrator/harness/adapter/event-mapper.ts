@@ -147,6 +147,16 @@ export function sendHarnessEventAsAgui(
       } as BaseEvent);
       break;
     }
+    case "mail_draft_card": {
+      send({
+        type: EventType.CUSTOM,
+        name: "cyrene.mail_draft_card",
+        value: { toolCallId: event.toolCallId, card: event.data },
+        threadId,
+        runId,
+      } as BaseEvent);
+      break;
+    }
     case "todo_update": {
       send({
         type: EventType.CUSTOM,

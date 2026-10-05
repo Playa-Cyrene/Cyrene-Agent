@@ -16,6 +16,7 @@ import type { ToolRiskLevel } from "../../permission-policy";
 import type { ToolFileChange } from "../../../shared/chat-types";
 import type { ContextUsageSnapshot } from "../../../shared/context-usage";
 import type { ToolOutputRef, ToolOutputStore } from "./tool-output/tool-output-store";
+import { createHash } from "node:crypto";
 export type { ToolErrorCategory } from "../tools/registry/tool-execution-error";
 export type { TodoItem, TodoStatus } from "../../../shared/task-session";
 
@@ -56,6 +57,10 @@ export interface ToolObservation {
   fullOutputRef?: string;
   /** Runtime-only 完整输出记录；写入 Checkpoint，不进入模型消息。 */
   toolOutputRef?: ToolOutputRef;
+  /** 面向 UI 的专用呈现数据；由 Harness 白名单事件转发，不混入工具结果正文。 */
+  presentation?: { type: "mail_draft_card"; data: Record<string, unknown> };
+  /** 工具活动面板可见的短摘要；敏感工具不得从原始输出推导预览。 */
+  activityPreview?: string;
   /** 工具返回的原始输出（未截断前），可能被截断后只保留 preview */
   output?: string;
 }
@@ -174,6 +179,7 @@ export type HarnessEvent =
   | { type: "tool_start"; toolCallId: string; toolName: string; args: Record<string, unknown>; displayName?: string }
   | ({ type: "tool_output"; toolCallId: string } & import("../tools/registry/tool-context").ShellOutputUpdate)
   | { type: "tool_end"; toolCallId: string; outcome: ToolCallOutcome; preview: string; changes?: ToolFileChange[] }
+  | { type: "mail_draft_card"; toolCallId: string; data: Record<string, unknown> }
   | { type: "todo_update"; items: TodoItem[] }
   | { type: "context_usage"; snapshot: ContextUsageSnapshot }
   | { type: "ask_user"; card: unknown }
@@ -376,6 +382,11 @@ export function parseToolCallArgs(call: ToolCall): Record<string, unknown> {
 
 /** 生成工具调用的 fingerprint（用于 uncertainEffects 重复拦截） */
 export function toolCallFingerprint(toolName: string, args: Record<string, unknown>): string {
+  if (toolName === "send_email" || toolName.startsWith("gmail_") || toolName.startsWith("email_")) {
+    const sortedArgs = Object.keys(args).sort().map((key) => [key, args[key]]);
+    const digest = createHash("sha256").update(JSON.stringify(sortedArgs)).digest("hex");
+    return `${toolName}(sha256:${digest})`;
+  }
   const sortedArgs = Object.keys(args)
     .sort()
     .map((k) => `${k}=${String(args[k])}`)

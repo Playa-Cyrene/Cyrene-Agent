@@ -38,6 +38,16 @@ export interface ChoiceOption {
   description?: string;
 }
 
+export interface RequestUserChoiceOptions {
+  /** Omit question text from application logs because it contains user data. */
+  sensitive?: boolean;
+  /** Avoid copying the prompt into OS notification previews. */
+  suppressToast?: boolean;
+  /** Aborting the run rejects the pending choice before the action can execute. */
+  signal?: AbortSignal;
+  runId?: string;
+}
+
 /** 发给渲染端的卡片数据。 */
 export interface LegacyChoiceCardData {
   id: string;
@@ -104,14 +114,18 @@ export function requestUserChoice(
   question: string,
   options: ChoiceOption[],
   defaultValue?: string,
+  requestOptions: RequestUserChoiceOptions = {},
 ): Promise<string> {
-  return new Promise<string>((resolve) => {
+  return new Promise<string>((resolve, reject) => {
     const id = "choice-" + (++choiceCounter) + "-" + Date.now();
     const choiceTimeout = getTimeoutSettings().userChoiceTimeout;
+    let abortHandler: (() => void) | undefined;
 
     const timer = setTimeout(() => {
       pendingChoices.delete(id);
-      console.warn(LOG_PREFIX, "选择超时（" + choiceTimeout + "ms），使用默认值:", defaultValue ?? "(空)");
+      if (abortHandler) requestOptions.signal?.removeEventListener("abort", abortHandler);
+      if (requestOptions.sensitive) console.warn(LOG_PREFIX, "敏感选择超时（" + choiceTimeout + "ms）");
+      else console.warn(LOG_PREFIX, "选择超时（" + choiceTimeout + "ms），使用默认值:", defaultValue ?? "(空)");
       // 通知渲染端清卡：超时已用默认值结算，卡片再点也只会得到 ok:false
       choiceDismissSender?.({ id, revision: 1, reason: "timeout" });
       // 注意力提醒：超时结算通知 ToastService 清 toast
@@ -119,8 +133,14 @@ export function requestUserChoice(
       resolve(defaultValue ?? "");
     }, choiceTimeout);
 
+    const cleanup = (): void => {
+      clearTimeout(timer);
+      if (abortHandler) requestOptions.signal?.removeEventListener("abort", abortHandler);
+    };
+
     pendingChoices.set(id, {
       resolve: (value) => {
+        cleanup();
         resolve(typeof value === "string" ? value : defaultValue ?? "");
         // 注意力提醒：用户作答即结算，通知 ToastService 清 toast
         toastEvents.publishChoiceDismiss({ cardId: id, revision: 1, reason: "answered" });
@@ -128,19 +148,39 @@ export function requestUserChoice(
       },
       timer,
       status: "open",
-      runId: undefined,
+      runId: requestOptions.runId,
     });
 
+    if (requestOptions.signal) {
+      abortHandler = () => {
+        const pending = pendingChoices.get(id);
+        if (!pending || pending.status !== "open") return;
+        cleanup();
+        pendingChoices.delete(id);
+        choiceDismissSender?.({ id, revision: 1, reason: "cancelled" });
+        toastEvents.publishChoiceDismiss({ cardId: id, revision: 1, reason: "cancelled" });
+        reject(createAbortError());
+      };
+      if (requestOptions.signal.aborted) abortHandler();
+      else requestOptions.signal.addEventListener("abort", abortHandler, { once: true });
+    }
+
+    if (!pendingChoices.has(id)) return;
+
     const payload: ChoiceCardData = { id, question, options, default: defaultValue };
-    console.log(LOG_PREFIX, "发送选择请求:", id, question);
+    if (requestOptions.sensitive) console.log(LOG_PREFIX, "发送敏感选择请求:", id);
+    else console.log(LOG_PREFIX, "发送选择请求:", id, question);
 
     if (choiceCardSender) {
       choiceCardSender(payload);
       // 注意力提醒：选择卡发布通知 ToastService
-      toastEvents.publishChoiceCard({ ...extractCardIdentity(payload), revision: 1 });
+      if (!requestOptions.suppressToast) {
+        toastEvents.publishChoiceCard({ ...extractCardIdentity(payload), revision: 1 });
+      }
     } else {
       // 没注入回调（理论上不会发生），直接返回默认值
       clearTimeout(timer);
+      if (abortHandler) requestOptions.signal?.removeEventListener("abort", abortHandler);
       pendingChoices.delete(id);
       console.warn(LOG_PREFIX, "未注入卡片回调，使用默认值");
       resolve(defaultValue ?? "");

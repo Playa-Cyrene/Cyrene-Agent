@@ -13,8 +13,8 @@ import nodemailer from "nodemailer";
 import { toolRegistry } from "./registry/tool-registry";
 import { requestUserChoice, type ChoiceOption } from "../../user-choice";
 import { logger, LogTag } from "../../logger";
+import type { ToolContext } from "./registry/tool-context";
 
-const LOG_PREFIX = "[EmailTools]";
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // ══════════════════════════════════════════════════════════
@@ -48,11 +48,18 @@ export function setEmailConfig(
   fromNameGetter = fromNameFn;
 }
 
+/** 当前配置中的 SMTP 发件账号，未启用或未配置时不返回地址。 */
+export function getSmtpSenderIdentity(): string | null {
+  if (!(emailEnabledGetter?.() ?? false)) return null;
+  const user = smtpUserGetter?.()?.trim() ?? "";
+  return user || null;
+}
+
 // ══════════════════════════════════════════════════════════
 // 工具入口
 // ══════════════════════════════════════════════════════════
 
-async function executeSendEmail(args: Record<string, unknown>): Promise<string> {
+async function executeSendEmail(args: Record<string, unknown>, context?: ToolContext): Promise<string> {
   // 1. 读配置 + 启用检查
   const enabled = emailEnabledGetter?.() ?? false;
   if (!enabled) {
@@ -119,7 +126,12 @@ async function executeSendEmail(args: Record<string, unknown>): Promise<string> 
     { label: "发送", value: "send" },
     { label: "取消", value: "cancel" },
   ];
-  const choice = await requestUserChoice(question, options, "cancel");
+  const choice = await requestUserChoice(question, options, "cancel", {
+    sensitive: true,
+    suppressToast: true,
+    signal: context?.signal,
+    runId: context?.runId,
+  });
   if (choice !== "send") {
     return "[send_email] 用户取消发送";
   }
@@ -147,12 +159,9 @@ async function executeSendEmail(args: Record<string, unknown>): Promise<string> 
       html,
       attachments: attachments.map(p => ({ filename: path.basename(p), path: p })),
     });
-    console.log(LOG_PREFIX, "已发送：", info.messageId);
-    return `[send_email] 已发送：${to.join(", ")} 主题：${subject}`;
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error(LOG_PREFIX, "发送失败：", msg);
-    return `[错误] 发送失败：${msg}`;
+    return "[send_email] 邮件已发送。";
+  } catch {
+    return "[错误] 邮件发送失败，请检查 SMTP 配置或网络后重试。";
   }
 }
 
@@ -182,6 +191,9 @@ export function registerEmailTools(): void {
     risk: "network",
     modes: ["work"],
     effectKind: "external_side_effect" as const,
+    sensitiveArgs: true,
+    sensitiveOutput: true,
+    ledgerPolicy: "bypass",
     inputSchema: {
       type: "object",
       properties: {

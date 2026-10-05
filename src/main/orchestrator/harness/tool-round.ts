@@ -194,13 +194,14 @@ async function commitToolResultMessage(
   input: {
     call: ToolCall;
     message: ChatMessage;
+    modelMessage?: ChatMessage;
     outcome: ToolCallOutcome;
     fullRef?: string;
     roundId: string;
     toolSideEffect?: SideEffectKind;
   },
 ): Promise<void> {
-  run.messages.push(input.message);
+  run.messages.push(input.modelMessage ?? input.message);
   try {
     await run.input.transcriptSink?.appendToolResult({
       assistantEntryId: requireAssistantEntryId(run),
@@ -351,23 +352,30 @@ async function commitToolResult(
   if (result.toolOutputRef && !run.toolOutputs.some((entry) => entry.recordId === result.toolOutputRef?.recordId)) {
     run.toolOutputs.push(result.toolOutputRef);
   }
+  const tool = run.currentTools.find((candidate) => candidate.id === call.name);
+  const sensitiveOutput = tool?.sensitiveOutput === true;
+  const modelMessage = toolResultMessage(call, result);
+  const message = sensitiveOutput ? sensitiveTranscriptToolResult(call, result) : modelMessage;
   input.onEvent?.({
     type: "tool_end",
     toolCallId: call.id,
     outcome: result.outcome,
-    preview: (result.preview ?? result.message).slice(0, 200),
+    preview: (result.activityPreview ?? result.preview ?? result.message).slice(0, 200),
     // Diff Review 卡片证据走独立字段，不受 preview 截断影响
-    changes: extractFileChangesFromOutput(result.output),
+    changes: sensitiveOutput ? undefined : extractFileChangesFromOutput(result.output),
   });
-  const message = toolResultMessage(call, result);
   await commitToolResultMessage(run, {
     call,
     message,
+    ...(sensitiveOutput ? { modelMessage } : {}),
     outcome: result.outcome,
-    ...(result.fullOutputRef ? { fullRef: result.fullOutputRef } : {}),
+    ...(!sensitiveOutput && result.fullOutputRef ? { fullRef: result.fullOutputRef } : {}),
     roundId: `round-${run.rounds}`,
     toolSideEffect,
   });
+  if (result.presentation?.type === "mail_draft_card") {
+    input.onEvent?.({ type: "mail_draft_card", toolCallId: call.id, data: result.presentation.data });
+  }
   input.onToolLifecycle?.({
     toolCallId: call.id,
     toolName: call.name,
@@ -396,6 +404,20 @@ async function commitToolResult(
     return "halt";
   }
   return result.category === "fatal" ? "halt" : "continue";
+}
+
+function sensitiveTranscriptToolResult(call: ToolCall, result: ToolDispatchResult): ChatMessage {
+  const message = result.outcome === "success"
+    ? "邮件工具已运行；邮件内容未写入会话轨迹。"
+    : result.outcome === "unknown"
+      ? "邮件操作结果未知；请先在 Gmail 中核对，再决定是否重试。"
+      : "邮件操作未完成；详细内容未写入会话轨迹。";
+  return {
+    role: "tool",
+    toolCallId: call.id,
+    name: call.name,
+    content: JSON.stringify({ outcome: result.outcome, tool: call.name, message }),
+  };
 }
 
 // ── 内部工具 ─────────────────────────────────────────────

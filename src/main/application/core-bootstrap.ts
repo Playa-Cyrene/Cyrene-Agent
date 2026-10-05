@@ -20,6 +20,8 @@ import type { TtsSessionService } from "../tts/tts-session-service";
 import type { ProactiveLifecycle } from "../proactive/proactive-lifecycle";
 import type { GitService } from "../code-git/git-service";
 import type { LspManager } from "../lsp/manager";
+import type { GmailAuthService } from "../email/gmail-auth-service";
+import type { GmailService } from "../email/gmail-service";
 import type { ScreenshotService } from "../screenshot/screenshot-lifecycle";
 import type { MusicBootstrap } from "../music/bootstrap";
 import type { AppUpdateService } from "../updater/app-update-service";
@@ -43,6 +45,8 @@ export interface CoreServices {
   proactive: ProactiveLifecycle;
   git: GitService;
   lsp: LspManager;
+  gmailAuth: GmailAuthService;
+  gmail: GmailService;
   screenshot: ScreenshotService;
   music: MusicBootstrap;
   update: AppUpdateService;
