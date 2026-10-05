@@ -34,6 +34,9 @@ await build({
   format: "cjs",
   sourcemap: true,
   tsconfig: configPath,
+  ...(target === "main"
+    ? { define: { __CYRENE_GMAIL_CLIENT_ID__: JSON.stringify(process.env.CYRENE_GMAIL_CLIENT_ID ?? "") } }
+    : {}),
   logLevel: "warning",
 });
 
