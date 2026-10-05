@@ -7,6 +7,7 @@
  */
 
 import { createHash } from "node:crypto";
+import { normalizeMailDraftCardData } from "../../shared/mail-draft-card";
 import type { PendingChatAttachment } from "../../shared/chat-types";
 import type { ChatMessageChannel } from "../../shared/chat-types";
 import {
@@ -540,10 +541,11 @@ function isProjectionMessage(message: unknown): boolean {
     return false;
   }
   for (const key of [
-    "reasoningBlocks", "processMessages", "agentRounds", "taskDelegations", "toolExecutions",
+    "reasoningBlocks", "processMessages", "agentRounds", "taskDelegations", "toolExecutions", "emailDraftCards",
   ]) {
     if (candidate[key] !== undefined && !Array.isArray(candidate[key])) return false;
   }
+  if (candidate.emailDraftCards !== undefined && !(candidate.emailDraftCards as unknown[]).every((card) => normalizeMailDraftCardData(card) !== null)) return false;
   for (const key of ["reasoning", "ttsCacheKey", "ttsCacheVersion"]) {
     if (candidate[key] !== undefined && typeof candidate[key] !== "string") return false;
   }

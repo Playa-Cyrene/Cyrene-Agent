@@ -7,6 +7,7 @@ import { useCyreneAvatar } from "../../../hooks/useCyreneAvatar";
 import type { AgentRoundRecord, ChatMessage, ChatMessageChannelSource, ConversationMode, ProcessMessageRecord, ReasoningBlock, RunActivityRecord, TaskDelegationDisplayRecord, ToolExecutionRecord, ToolFileChange } from "../../../../../shared/chat-types";
 import type { ContextUsageSnapshot } from "../../../../../shared/context-usage";
 import type { GeneratedImageAttachment } from "../../../../../shared/generated-image";
+import type { MailDraftCardData } from "../../../../../shared/mail-draft-card";
 import type { ModelRetryStatus } from "../../../../../shared/model-retry";
 import thinkingMoodUrl from "../../../assets/status-moods/思考中.png?url";
 import completedThinkingMoodUrl from "../../../assets/status-moods/提醒.png?url";
@@ -45,6 +46,7 @@ import { Marker, MarkerContent, MarkerIcon } from "../../../components/ui/marker
 import { VirtualChatMessageList } from "./VirtualChatMessageList";
 import { AttachmentImage } from "./AttachmentImage";
 import { GeneratedImageAttachments } from "./GeneratedImageAttachments";
+import { MailDraftCard } from "./MailDraftCard";
 
 export interface ChatMessageItem {
   id: string;
@@ -57,6 +59,7 @@ export interface ChatMessageItem {
   processMessages?: ProcessMessageRecord[];
   agentRounds?: AgentRoundRecord[];
   taskDelegations?: TaskDelegationDisplayRecord[];
+  emailDraftCards?: MailDraftCardData[];
   reasoningStreaming?: boolean;
   responseStarted?: boolean;
   streaming?: boolean;
@@ -132,6 +135,7 @@ interface ChatMessageListProps {
   onOpenFileLink?: (relPath: string, line?: number) => void;
   /** 点击助手消息网页链接 → 在 Cyrene 右侧浏览器打开，或从右键菜单选择外部浏览器。 */
   onOpenWebLink?: (url: string, destination: "cyrene" | "external") => void | Promise<void>;
+  onMailDraftChange?: (messageId: string, card: MailDraftCardData) => void;
 }
 
 type CharacterMoodRenderContext = {
@@ -1018,6 +1022,7 @@ function createRoles(
   onTtsCacheKey?: (messageId: string, cacheKey: string, converterVersion: string) => void,
   onOpenReviewInspector?: (runId: string, fileIndex: number, filePath: string) => void,
   onOpenTaskInspector?: (delegation: TaskDelegationDisplayRecord) => void,
+  onMailDraftChange?: (messageId: string, card: MailDraftCardData) => void,
 ) {
   return {
   user: {
@@ -1081,6 +1086,18 @@ function createRoles(
         onRegenerateLastResponse={onRegenerateLastResponse}
       />
     ),
+  },
+  mail_draft: {
+    placement: "start" as const,
+    variant: "borderless" as const,
+    avatar: null,
+    rootClassName: "cy-message cy-message--mail-draft",
+    contentRender: (_content: string, info: { extraInfo?: { card?: MailDraftCardData; messageId?: string } }) => {
+      const card = info.extraInfo?.card;
+      return card
+        ? <MailDraftCard card={card} conversationId={conversationId} messageId={info.extraInfo?.messageId ?? ""} onChange={onMailDraftChange} />
+        : null;
+    },
   },
   reasoning: {
     placement: "start" as const,
@@ -1305,6 +1322,15 @@ function convertMessage(message: ChatMessageItem, enabledStickers: readonly Enab
       },
     });
   }
+  for (const card of message.emailDraftCards ?? []) {
+    assistantItems.push({
+      key: `${message.id}-mail-draft-${card.id}`,
+      role: "mail_draft",
+      content: "",
+      avatar: null,
+      extraInfo: { card, messageId: message.id },
+    });
+  }
   // Review 面板：Run 结束后（非 streaming/loading）且有 runId 时显示
   if (message.runId && !message.streaming && !message.loading) {
     assistantItems.push({
@@ -1375,6 +1401,7 @@ export function ChatMessageList({
   onRegisterScrollToBottom,
   onOpenReviewInspector,
   onOpenTaskInspector,
+  onMailDraftChange,
   workspaceRoot,
   onOpenFileLink,
   onOpenWebLink,
@@ -1470,8 +1497,9 @@ export function ChatMessageList({
       onTtsCacheKey,
       onOpenReviewInspector,
       onOpenTaskInspector,
+      onMailDraftChange,
     ),
-    [beginEdit, cancelEdit, conversationId, editDraft, editingMessageId, mode, onOpenReviewInspector, onOpenTaskInspector, onReasoningExpand, onRegenerateLastResponse, onTtsCacheKey, preferredAddress, reasoningExpanded, revisionBusy, submitEdit, userAvatar, userAvatarUrl],
+    [beginEdit, cancelEdit, conversationId, editDraft, editingMessageId, mode, onMailDraftChange, onOpenReviewInspector, onOpenTaskInspector, onReasoningExpand, onRegenerateLastResponse, onTtsCacheKey, preferredAddress, reasoningExpanded, revisionBusy, submitEdit, userAvatar, userAvatarUrl],
   );
 
   useEffect(() => {

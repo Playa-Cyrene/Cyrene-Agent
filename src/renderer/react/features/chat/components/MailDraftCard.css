@@ -1,0 +1,40 @@
+.cy-mail-draft {
+  margin: 14px 0 4px;
+  padding: 14px 16px;
+  max-width: min(760px, 100%);
+  border: 1px solid var(--rb-border-default);
+  border-radius: 16px;
+  background: var(--rb-surface-raised, var(--rb-surface-default));
+  color: var(--rb-text-primary);
+}
+
+.cy-mail-draft__header,
+.cy-mail-draft__identity,
+.cy-mail-draft__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cy-mail-draft__header { margin-bottom: 10px; }
+.cy-mail-draft__header > strong { flex: 1; }
+.cy-mail-draft__status { border-radius: 999px; padding: 2px 8px; background: var(--rb-surface-secondary); font-size: 12px; }
+.cy-mail-draft__status.is-sent { color: var(--rb-color-success, #219653); }
+.cy-mail-draft__status.is-unknown { color: var(--rb-color-warning, #b7791f); }
+.cy-mail-draft__status.is-reconnect_required { color: var(--rb-color-danger, #cf3f58); }
+.cy-mail-draft__identity { padding: 7px 2px; color: var(--rb-text-secondary); font-size: 13px; }
+.cy-mail-draft__identity span:first-child { width: 58px; flex: none; }
+.cy-mail-draft__field { display: grid; grid-template-columns: 58px minmax(0, 1fr); align-items: center; gap: 8px; padding: 5px 2px; }
+.cy-mail-draft__field > span { color: var(--rb-text-secondary); font-size: 13px; }
+.cy-mail-draft__field .ant-input { background: transparent; }
+.cy-mail-draft__body { margin-top: 10px; resize: vertical; }
+.cy-mail-draft__attachments { margin: 10px 0 0; padding: 0; list-style: none; }
+.cy-mail-draft__attachments li { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 8px; padding: 4px 0; color: var(--rb-text-secondary); font-size: 12px; }
+.cy-mail-draft__attachments li > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cy-mail-draft__actions { justify-content: flex-end; flex-wrap: wrap; margin-top: 10px; }
+.cy-mail-draft__hint { margin-right: auto; color: var(--rb-text-secondary); font-size: 12px; }
+
+@media (max-width: 640px) {
+  .cy-mail-draft { padding: 12px; }
+  .cy-mail-draft__field { grid-template-columns: 48px minmax(0, 1fr); }
+}

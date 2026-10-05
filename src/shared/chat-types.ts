@@ -11,6 +11,7 @@ import type { TaskDelegationPresentation } from "./task-session";
 import type { ContextUsageSnapshot } from "./context-usage";
 import type { BrowserElementSelection } from "./browser-panel-types";
 import type { GeneratedImageAttachment } from "./generated-image";
+import type { MailDraftCardData } from "./mail-draft-card";
 
 // - schemaVersion 用于以后改 schema 时的迁移判断；当前固定 1。
 
@@ -182,6 +183,8 @@ export interface ChatMessage {
   ttsCacheVersion?: string;
   /** 已实际展示的音乐候选卡片；持久化展示不延长 Skill 候选状态 TTL。 */
   musicCard?: MusicCardData;
+  /** 用户确认发送或由 Agent 创建的邮件卡片；不含收件邮件正文或本地文件路径。 */
+  emailDraftCards?: MailDraftCardData[];
   /** 上下文容量快照（run 终态落盘）；运行中被每轮 preRequest 快照实时覆盖（纯内存）。 */
   contextUsage?: ContextUsageSnapshot;
 }
@@ -204,7 +207,7 @@ export interface ChatPresentationDelta {
 export type ChatPresentationCheckpointPatch = Partial<Pick<ChatMessage,
   "content" | "reasoning" | "reasoningBlocks" | "processMessages" | "agentRounds" |
   "taskDelegations" | "channelSource" | "sticker" | "toolExecutions" | "runActivity" |
-  "runSnapshot" | "ttsCacheKey" | "ttsCacheVersion" | "musicCard" | "contextUsage"
+  "runSnapshot" | "ttsCacheKey" | "ttsCacheVersion" | "musicCard" | "emailDraftCards" | "contextUsage"
 >> & { delta?: ChatPresentationDelta };
 
 export type MessageAttachment = ImageMessageAttachment | GeneratedImageAttachment | DocumentMessageAttachment | WebElementMessageAttachment;

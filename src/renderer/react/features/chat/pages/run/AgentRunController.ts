@@ -14,6 +14,7 @@ import type {
 import type { GeneratedImageAttachment } from "../../../../../../shared/generated-image";
 import { isContextUsageSnapshot, type ContextUsageSnapshot } from "../../../../../../shared/context-usage";
 import type { TodoItem } from "../../../../../../shared/todo-types";
+import { normalizeMailDraftCardData, type MailDraftCardData } from "../../../../../../shared/mail-draft-card";
 import { isModelFailureInfo, type ModelFailureInfo } from "../../../../../../shared/model-error";
 import type { ModelRetryStatus } from "../../../../../../shared/model-retry";
 import type { ChatMessageItem } from "../../components/ChatMessageList";
@@ -177,6 +178,7 @@ function buildPresentationCheckpointPatch(
   if (current.runActivity && !sameJson(previous?.runActivity, current.runActivity)) patch.runActivity = current.runActivity;
   if (current.contextUsage && !sameJson(previous?.contextUsage, current.contextUsage)) patch.contextUsage = current.contextUsage;
   if (current.sticker !== undefined && current.sticker !== previous?.sticker) patch.sticker = current.sticker;
+  if (current.emailDraftCards && !sameJson(previous?.emailDraftCards ?? [], current.emailDraftCards)) patch.emailDraftCards = current.emailDraftCards;
   return Object.keys(patch).length ? patch : undefined;
 }
 
@@ -287,6 +289,7 @@ export class AgentRunController {
   private pendingCandidateClassification: { processId: string; content: string } | undefined;
   private sticker: string | null = null;
   private toolExecutions: ToolExecutionRecord[] = [];
+  private emailDraftCards: MailDraftCardData[] = [];
   private runStarted = false;
   /** run 已被主进程接受（ack 成功）：false 时 onRunFinished 携带 queuePaused 暂停队列消费。 */
   private runAccepted = false;
@@ -625,6 +628,7 @@ export class AgentRunController {
       at: this.assistantAt,
       sticker: this.sticker,
       toolExecutions: this.toolExecutions,
+      emailDraftCards: this.emailDraftCards,
       contextUsage: this.contextUsage,
       runSnapshot: {
         ...(this.deps.registries.activeRuns.current[this.input.sessionId]?.runId
@@ -974,7 +978,17 @@ export class AgentRunController {
 
   /** AG-UI 事件归约：流式内容、推理、工具、交互卡与终态全部在此处理。 */
   private handleEvent(event: AguiEvent) {
-    if (event.type === "CUSTOM" && event.name === "cyrene.image_attachments") {
+    if (event.type === "CUSTOM" && event.name === "cyrene.mail_draft_card") {
+      const card = normalizeMailDraftCardData((event.value as { card?: unknown } | null | undefined)?.card);
+      if (!card) return;
+      const existing = this.emailDraftCards.findIndex((item) => item.id === card.id);
+      this.emailDraftCards = existing < 0
+        ? [...this.emailDraftCards, card]
+        : this.emailDraftCards.map((item, index) => index === existing ? card : item);
+      this.deps.host.patchMessage(this.input.sessionId, this.input.assistantId, { emailDraftCards: this.emailDraftCards });
+      void this.checkpointRun("running", true);
+      return;
+    } else if (event.type === "CUSTOM" && event.name === "cyrene.image_attachments") {
       const value = event.value as { messageId?: unknown; attachments?: unknown } | null | undefined;
       if (value?.messageId !== this.input.assistantId || !Array.isArray(value.attachments)) return;
       const attachments = value.attachments.filter(isGeneratedImageAttachment);

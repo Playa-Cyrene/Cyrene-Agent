@@ -10,6 +10,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import nodemailer from "nodemailer";
+import { htmlToPlainText, markdownToEmailHtml } from "../../email/gmail-html";
 import { toolRegistry } from "./registry/tool-registry";
 import { requestUserChoice, type ChoiceOption } from "../../user-choice";
 import { logger, LogTag } from "../../logger";
@@ -55,6 +56,59 @@ export function getSmtpSenderIdentity(): string | null {
   return user || null;
 }
 
+export async function sendSmtpMail(input: {
+  to: string[];
+  cc?: string[];
+  bcc?: string[];
+  subject: string;
+  body: string;
+  html?: string;
+  attachmentPaths?: string[];
+  attachments?: Array<{ filename: string; contentType: string; content: Buffer }>;
+  bodyIsMarkdown?: boolean;
+}): Promise<{ status: "sent" | "unknown" | "failed" }> {
+  if (!(emailEnabledGetter?.() ?? false) || !smtpHostGetter?.() || !smtpUserGetter?.() || !smtpPassGetter?.()) {
+    return { status: "failed" };
+  }
+  const host = smtpHostGetter();
+  const user = smtpUserGetter();
+  const pass = smtpPassGetter();
+  const port = smtpPortGetter?.() ?? 465;
+  const secure = smtpSecureGetter?.() ?? port === 465;
+  const fromName = fromNameGetter?.() ?? "";
+  let transport: nodemailer.Transporter | undefined;
+  try {
+    const html = input.html ?? (input.bodyIsMarkdown ? await markdownToEmailHtml(input.body) : undefined);
+    const text = input.bodyIsMarkdown && html ? htmlToPlainText(html) || input.body : input.body;
+    transport = nodemailer.createTransport({ host, port, secure, auth: { user, pass } });
+    const safeName = fromName.replace(/[\r\n\0]/g, " ").replace(/"/g, '\\"');
+    const from = safeName ? `"${safeName}" <${user}>` : user;
+    const info = await transport.sendMail({
+      from,
+      to: input.to,
+      cc: input.cc?.length ? input.cc : undefined,
+      bcc: input.bcc?.length ? input.bcc : undefined,
+      subject: input.subject,
+      text,
+      html,
+      attachments: [
+        ...(input.attachmentPaths ?? []).map((filePath) => ({ filename: path.basename(filePath), path: filePath })),
+        ...(input.attachments ?? []).map((attachment) => ({
+          filename: attachment.filename,
+          contentType: attachment.contentType,
+          content: attachment.content,
+        })),
+      ],
+    });
+    return info.accepted?.length ? { status: "sent" } : { status: "unknown" };
+  } catch {
+    // SMTP 接受 DATA 后连接中断时无法判定是否投递；不让卡片自动重发。
+    return { status: "unknown" };
+  } finally {
+    transport?.close();
+  }
+}
+
 // ══════════════════════════════════════════════════════════
 // 工具入口
 // ══════════════════════════════════════════════════════════
@@ -65,15 +119,11 @@ async function executeSendEmail(args: Record<string, unknown>, context?: ToolCon
   if (!enabled) {
     return "[错误] 邮件功能未启用，请在设置里开启";
   }
-  const host = smtpHostGetter?.() ?? "";
   const user = smtpUserGetter?.() ?? "";
   const pass = smtpPassGetter?.() ?? "";
-  if (!host || !user || !pass) {
+  if (!smtpHostGetter?.() || !user || !pass) {
     return "[错误] SMTP 配置不完整：缺少 主机/用户名/授权码";
   }
-  const port = smtpPortGetter?.() ?? 465;
-  const secure = smtpSecureGetter?.() ?? (port === 465);
-  const fromName = fromNameGetter?.() ?? "";
 
   // 2. 校验收件人
   const to = (args.to as unknown[] ?? []).map(String).map(s => s.trim()).filter(Boolean);
@@ -137,32 +187,10 @@ async function executeSendEmail(args: Record<string, unknown>, context?: ToolCon
   }
 
   // 6. 发送（实现注意点 12.2：fromName 转义；12.3：cc 空数组传 undefined；12.5：每次新建 transport）
-  try {
-    // 实现注意点 12.5：每次 execute 新建 transport，不缓存模块级实例
-    const transport = nodemailer.createTransport({
-      host,
-      port,
-      secure,
-      auth: { user, pass },
-    });
-    // 实现注意点 12.2：fromName 双引号转义（RFC 5322）
-    const safeName = fromName.replace(/"/g, '\\"');
-    const from = fromName ? `"${safeName}" <${user}>` : user;
-    // 实现注意点 12.3：cc 为空数组时传 undefined，避免空 CC 头
-    const ccField = cc.length > 0 ? cc.join(", ") : undefined;
-    const info = await transport.sendMail({
-      from,
-      to: to.join(", "),
-      cc: ccField,
-      subject,
-      text: body,
-      html,
-      attachments: attachments.map(p => ({ filename: path.basename(p), path: p })),
-    });
-    return "[send_email] 邮件已发送。";
-  } catch {
-    return "[错误] 邮件发送失败，请检查 SMTP 配置或网络后重试。";
-  }
+  const result = await sendSmtpMail({ to, cc, subject, body, html, attachmentPaths: attachments });
+  if (result.status === "sent") return "[send_email] 邮件已发送。";
+  if (result.status === "failed") return "[错误] SMTP 配置不可用或邮件未发送。";
+  return "[错误] SMTP 发送结果未知。先查看已发送邮件，不要立即重发。";
 }
 
 // ══════════════════════════════════════════════════════════

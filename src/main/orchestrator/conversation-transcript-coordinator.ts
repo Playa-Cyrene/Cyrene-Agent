@@ -68,7 +68,7 @@ export function buildLegacyBackfillDrafts(
   const patchKeys: Array<Exclude<keyof TranscriptPresentationPatch, "delta">> = [
     "content", "reasoning", "reasoningBlocks", "processMessages", "agentRounds",
     "taskDelegations", "channelSource", "sticker", "toolExecutions", "runActivity",
-    "runSnapshot", "ttsCacheKey", "ttsCacheVersion", "musicCard", "contextUsage",
+    "runSnapshot", "ttsCacheKey", "ttsCacheVersion", "musicCard", "emailDraftCards", "contextUsage",
   ];
   return messages
     .filter((message) => (message.role === "user" || message.role === "model")

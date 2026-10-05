@@ -92,6 +92,7 @@ export function toUiMessages(session: ChatSession): ChatMessageItem[] {
       responseStarted: message.role === "model" && Boolean(message.content.trim() || message.sticker),
       sticker: message.sticker,
       toolExecutions: message.toolExecutions,
+      emailDraftCards: message.emailDraftCards?.map((card) => card.status === "sending" ? { ...card, status: "unknown" } : card),
       attachments: message.attachments,
       contextUsage: message.contextUsage,
       runId: message.runSnapshot?.runId,

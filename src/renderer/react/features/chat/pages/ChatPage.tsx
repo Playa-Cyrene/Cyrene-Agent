@@ -2003,6 +2003,18 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
             onEditLastUserMessage={mode === "chat" ? editLastChatUserMessage : undefined}
             onRegenerateLastResponse={mode === "chat" ? regenerateLastChatResponse : undefined}
             onTtsCacheKey={activeSessionId ? handleTtsCacheKeyForActiveSession : undefined}
+            onMailDraftChange={activeSessionId ? (messageId, card) => {
+              const current = messagesBySession[activeSessionId]?.find((message) => message.id === messageId);
+              if (!current) return;
+              const cards = current.emailDraftCards ?? [];
+              const index = cards.findIndex((item) => item.id === card.id);
+              const nextCards = index < 0 ? [...cards, card] : cards.map((item, itemIndex) => itemIndex === index ? card : item);
+              updateMessage(activeSessionId, messageId, { emailDraftCards: nextCards });
+              const mutationKey = `mail-card:${messageId}:${card.id}:${card.status}:${crypto.randomUUID()}`;
+              void chatStore()?.checkpointPresentation(activeSessionId, messageId, mutationKey, { emailDraftCards: nextCards })
+                .then((result) => { if (!result.ok) throw new Error(result.error); })
+                .catch((error) => console.error("[ChatPage] mail card checkpoint failed", error));
+            } : undefined}
             onScrollToBottomVisibilityChange={setScrollToBottomVisible}
             onRegisterScrollToBottom={registerScrollToBottom}
             onOpenReviewInspector={openDiffTab}
