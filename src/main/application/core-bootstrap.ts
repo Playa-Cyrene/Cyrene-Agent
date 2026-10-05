@@ -22,6 +22,7 @@ import type { GitService } from "../code-git/git-service";
 import type { LspManager } from "../lsp/manager";
 import type { GmailAuthService } from "../email/gmail-auth-service";
 import type { GmailService } from "../email/gmail-service";
+import type { MailAttachmentStore } from "../email/mail-attachment-store";
 import type { ScreenshotService } from "../screenshot/screenshot-lifecycle";
 import type { MusicBootstrap } from "../music/bootstrap";
 import type { AppUpdateService } from "../updater/app-update-service";
@@ -47,6 +48,7 @@ export interface CoreServices {
   lsp: LspManager;
   gmailAuth: GmailAuthService;
   gmail: GmailService;
+  mailAttachmentStore: MailAttachmentStore;
   screenshot: ScreenshotService;
   music: MusicBootstrap;
   update: AppUpdateService;
@@ -228,6 +230,16 @@ export async function startCore(deps: CoreDependencies): Promise<CoreResult> {
     id: "music",
     phase: "stopLocalResources",
     dispose: async () => { await services.music.shutdown(); },
+  });
+  shutdown.register({
+    id: "gmail-auth",
+    phase: "stopLocalResources",
+    dispose: async () => { await services.gmailAuth.shutdown(); },
+  });
+  shutdown.register({
+    id: "mail-attachments",
+    phase: "stopLocalResources",
+    dispose: async () => { services.mailAttachmentStore.clear(); },
   });
 
   readiness.transition("core-ready");

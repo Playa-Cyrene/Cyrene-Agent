@@ -185,6 +185,13 @@ export class GmailAuthService {
     }
   }
 
+  async shutdown(): Promise<void> {
+    await Promise.all([...this.pending.values()].map(async (flow) => {
+      if (!flow.finished) await this.finishFlow(flow, { state: "disconnected" });
+    }));
+    this.pending.clear();
+  }
+
   async getAuthorizedClient(): Promise<OAuth2Client> {
     const clientId = this.getClientId();
     if (!clientId) throw new Error("GMAIL_NOT_CONFIGURED");

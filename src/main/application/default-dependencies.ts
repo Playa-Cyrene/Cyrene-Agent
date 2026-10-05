@@ -152,6 +152,8 @@ import { registerLearnExamPageIpc } from "../learn/exam-page-ipc";
 import { registerLearnExamTools } from "../orchestrator/learn-exam-tools";
 import { GmailAuthService } from "../email/gmail-auth-service";
 import { GmailService } from "../email/gmail-service";
+import { registerGmailIpc } from "../email/gmail-ipc";
+import { MailAttachmentStore } from "../email/mail-attachment-store";
 
 import { createIpcScope } from "./ipc-scope";
 import { createShutdownCoordinator } from "./shutdown";
@@ -454,7 +456,8 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
 
         // Gmail clients are lazy: service construction reads no mailbox data and starts no network request.
         const gmailAuth = new GmailAuthService();
-        const gmail = new GmailService(gmailAuth);
+        const mailAttachmentStore = new MailAttachmentStore();
+        const gmail = new GmailService(gmailAuth, { resolveAttachment: (reference) => mailAttachmentStore.resolve(reference) });
 
         // 截图：原生 helper IPC、全局热键。预热在 background 阶段执行。
         const initialSettings = loadGeneralSettings();
@@ -487,6 +490,7 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
           lsp,
           gmailAuth,
           gmail,
+          mailAttachmentStore,
           screenshot,
           music,
           update,
@@ -682,6 +686,7 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
           syncPlaywrightMcp,
           syncFilesystemMcp,
         });
+        registerGmailIpc({ ipc, auth: services.gmailAuth, service: services.gmail, attachmentStore: services.mailAttachmentStore });
 
         // 项目公告：渲染端首次打开时拉一次，之后主进程每 6 小时对一次版本
         registerNewsIpc(ipc);
