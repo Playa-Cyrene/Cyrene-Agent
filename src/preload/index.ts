@@ -21,6 +21,8 @@ import { exposeMusicApi } from "./music";
 import type { AppUpdateApi, AppUpdateState } from "../shared/app-update";
 import type { ConversationMode } from "../shared/chat-types";
 import type { SkillSuggestionItem, SkillSuggestionMode } from "../shared/skill-suggestions";
+import type { GmailAccountStatus } from "../shared/gmail-types";
+import type { MailAttachmentRef, MailDraftCardData } from "../shared/mail-draft-card";
 import type { SidebarOrganizationDraft, SidebarOrganizationResult, SidebarOrganizationSnapshot } from "../shared/sidebar-organization";
 import type { ToastItem, ToastPushPayload } from "../shared/toast-types";
 import type { BrowserElementSelection, BrowserPanelBounds, BrowserPanelResult, BrowserPanelState } from "../shared/browser-panel-types";
@@ -519,6 +521,21 @@ const settingsApi = {
 };
 
 contextBridge.exposeInMainWorld("settings", settingsApi);
+
+contextBridge.exposeInMainWorld("gmail", {
+  getStatus: () => ipcRenderer.invoke(IPC.GMAIL_GET_STATUS) as Promise<GmailAccountStatus>,
+  beginAuthorization: () => ipcRenderer.invoke(IPC.GMAIL_BEGIN_AUTHORIZATION) as Promise<{ flowId: string }>,
+  waitForAuthorization: (flowId: string) => ipcRenderer.invoke(IPC.GMAIL_WAIT_AUTHORIZATION, flowId) as Promise<GmailAccountStatus>,
+  cancelAuthorization: (flowId: string) => ipcRenderer.invoke(IPC.GMAIL_CANCEL_AUTHORIZATION, flowId) as Promise<GmailAccountStatus>,
+  disconnect: () => ipcRenderer.invoke(IPC.GMAIL_DISCONNECT) as Promise<GmailAccountStatus>,
+});
+
+contextBridge.exposeInMainWorld("mailDrafts", {
+  update: (card: MailDraftCardData) => ipcRenderer.invoke(IPC.MAIL_DRAFT_UPDATE, card) as Promise<{ ok: boolean; card?: MailDraftCardData; error?: string }>,
+  delete: (card: MailDraftCardData) => ipcRenderer.invoke(IPC.MAIL_DRAFT_DELETE, card) as Promise<{ ok: boolean; status?: "deleted"; error?: string }>,
+  send: (card: MailDraftCardData) => ipcRenderer.invoke(IPC.MAIL_DRAFT_SEND, card) as Promise<{ ok: boolean; status?: MailDraftCardData["status"]; error?: string }>,
+  pickAttachments: () => ipcRenderer.invoke(IPC.GMAIL_PICK_ATTACHMENTS) as Promise<{ ok: boolean; attachments: MailAttachmentRef[] }>,
+});
 
 const pluginsApi = {
   list: () => ipcRenderer.invoke(IPC.PLUGINS_LIST),

@@ -28,6 +28,7 @@ const SECTION_MAP: Record<string, SettingsSection> = {
   channels: "channels",
   disclaimer: "disclaimer",
   browser: "browser",
+  email: "email",
 };
 
 export function resolveSettingsDestination(section?: string): SettingsDestination {

@@ -154,6 +154,16 @@ export const IPC = {
   SETTINGS_PREVIEW_RUNTIME_SYNC: "settings:preview-runtime-sync",
   SETTINGS_OPEN_STICKER_MANAGER: "settings:open-sticker-manager",
   SETTINGS_OPEN_CUSTOM_STYLE_PROMPT: "settings:open-custom-style-prompt",
+  GMAIL_GET_STATUS: "gmail:get-status",
+  GMAIL_BEGIN_AUTHORIZATION: "gmail:begin-authorization",
+  GMAIL_WAIT_AUTHORIZATION: "gmail:wait-authorization",
+  GMAIL_CANCEL_AUTHORIZATION: "gmail:cancel-authorization",
+  GMAIL_DISCONNECT: "gmail:disconnect",
+  GMAIL_PICK_ATTACHMENTS: "gmail:pick-attachments",
+  MAIL_DRAFT_UPDATE: "mail-draft:update",
+  MAIL_DRAFT_DELETE: "mail-draft:delete",
+  MAIL_DRAFT_SEND: "mail-draft:send",
+  MAIL_ATTACHMENT_SAVE: "mail-attachment:save",
 
   // chat sessions (multi-conversation history, persisted to userData/cyrene-chats/)
   CHATS_LIST: "chats:list",

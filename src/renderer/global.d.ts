@@ -148,6 +148,21 @@ interface SettingsWindowApi {
   saveTimeoutSettings: (config: Partial<import("../shared/timeout-types").TimeoutSettings>) => Promise<import("../shared/timeout-types").TimeoutSettings>;
 }
 
+interface GmailWindowApi {
+  getStatus: () => Promise<import("../shared/gmail-types").GmailAccountStatus>;
+  beginAuthorization: () => Promise<{ flowId: string }>;
+  waitForAuthorization: (flowId: string) => Promise<import("../shared/gmail-types").GmailAccountStatus>;
+  cancelAuthorization: (flowId: string) => Promise<import("../shared/gmail-types").GmailAccountStatus>;
+  disconnect: () => Promise<import("../shared/gmail-types").GmailAccountStatus>;
+}
+
+interface MailDraftWindowApi {
+  update: (card: import("../shared/mail-draft-card").MailDraftCardData) => Promise<{ ok: boolean; card?: import("../shared/mail-draft-card").MailDraftCardData; error?: string }>;
+  delete: (card: import("../shared/mail-draft-card").MailDraftCardData) => Promise<{ ok: boolean; status?: "deleted"; error?: string }>;
+  send: (card: import("../shared/mail-draft-card").MailDraftCardData) => Promise<{ ok: boolean; status?: import("../shared/mail-draft-card").MailDraftStatus; error?: string }>;
+  pickAttachments: () => Promise<{ ok: boolean; attachments: import("../shared/mail-draft-card").MailAttachmentRef[] }>;
+}
+
 interface BrowserPanelApi {
   getState: () => Promise<import("../shared/browser-panel-types").BrowserPanelState | null>;
   setBounds: (bounds: import("../shared/browser-panel-types").BrowserPanelBounds | null) => Promise<boolean>;
@@ -192,6 +207,8 @@ declare global {
     toast?: ToastRendererApi;
     chat?: ChatWindowApi;
     settings?: SettingsWindowApi;
+    gmail?: GmailWindowApi;
+    mailDrafts?: MailDraftWindowApi;
     browserPanel?: BrowserPanelApi;
     learnExamPage: import("../../shared/learn-exam").LearnExamPageApi;
     memoryPanel?: import("./settings/shared/types").MemoryPanelApi;
