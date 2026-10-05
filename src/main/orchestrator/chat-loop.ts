@@ -28,6 +28,7 @@ import { buildContextUsageSnapshot } from "./context-usage";
 import { isExplicitStreamUnsupported } from "./vendors/stream-support";
 import { composePromptLayers } from "./prompt-layers";
 import type { TranscriptSink } from "./transcript-sink";
+import { persistGeneratedImages, type GeneratedImageStore } from "../chats/generated-image-store";
 
 export interface ChatLoopOptions {
   settings: AgentLoopSettings;
@@ -51,6 +52,9 @@ export interface ChatLoopOptions {
   mode?: string;
   /** 权威轨迹提交端：canonical assistant 落盘（CTA Phase 1）。 */
   transcriptSink?: TranscriptSink;
+  conversationId?: string;
+  assistantTurnId?: string;
+  generatedImageStore?: GeneratedImageStore;
 }
 
 class StreamUnavailableError extends Error {
@@ -153,6 +157,7 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<AgentLoopRe
     explicitTransport: options.settings.explicitTransport,
     reasoning: options.settings.reasoning,
     manualReasoning: options.settings.manualReasoning,
+    imageGeneration: options.settings.imageGeneration,
   };
 
   const buildRequest = (reqMessages: ChatMessage[], stream: boolean): ChatRequest => ({
@@ -163,6 +168,7 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<AgentLoopRe
       mode: options.mode,
     }, reqMessages),
     stream,
+    ...(options.settings.imageGeneration?.enabled ? { imageGeneration: options.settings.imageGeneration } : {}),
     ...(options.soulSampling ?? {}),
   });
 
@@ -177,7 +183,7 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<AgentLoopRe
     });
   };
 
-  const messageId = `msg-${Date.now()}`;
+  const messageId = options.assistantTurnId ?? `msg-${Date.now()}`;
   const reasoningMessageId = `${messageId}-reasoning`;
   let emittedStreamContent = false;
   let reasoningStarted = false;
@@ -249,7 +255,7 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<AgentLoopRe
         onDelta,
       });
       emitTextDelta(timePrefixFilter.finish());
-      if (!text.trim()) {
+      if (!text.trim() && !response.generatedImages?.length) {
         if (response.text.trim()) return { response, needsReveal: true };
         throw new AgentRuntimeError("E_MODEL_RESPONSE_PARSE_FAILED", "模型流式响应没有返回可见文本");
       }
@@ -340,27 +346,59 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<AgentLoopRe
     if (response.usage) {
       usageRecorder(response.usage.input, response.usage.output, 1, response.usage.cachedInput, response.usage.cacheCreation);
     }
-    const reply = stripLeakedChatTimeContext(stripToolProtocol(response.text))
-      || "刚才没有生成正常回复，请再试一次。";
+    const persistedImages = await persistGeneratedImages(
+      options.generatedImageStore,
+      options.conversationId ?? "default",
+      response.generatedImages,
+    );
+    const visibleResponseText = stripLeakedChatTimeContext(stripToolProtocol(response.text));
+    const imageSaveNotice = persistedImages.failedCount > 0
+      ? persistedImages.attachments.length > 0
+        ? "部分生成图片保存失败。"
+        : "图片生成失败，图片未能保存，请重试。"
+      : "";
+    let reply = [visibleResponseText, imageSaveNotice].filter(Boolean).join("\n\n");
+    if (!reply && persistedImages.attachments.length === 0) {
+      reply = "刚才没有生成正常回复，请再试一次。";
+    }
     // 权威轨迹：归一化后的可见回复作为 canonical assistant 提交。
     // 不从流式展示文本重建 rawAssistant / thinking / 厂商原始块，原样保留。
     const canonicalAssistant: ChatMessage = {
       ...response.assistantMessage,
       role: "assistant",
       content: reply,
+      ...(persistedImages.attachments.length ? { attachments: persistedImages.attachments } : {}),
     };
     await options.transcriptSink?.appendAssistant({ message: canonicalAssistant });
+    if (persistedImages.attachments.length > 0) {
+      options.onEvent?.({
+        type: "image_attachments",
+        messageId,
+        attachments: persistedImages.attachments,
+      });
+    }
     // 终态快照：把最终回复并入历史口径（与下一轮进入历史的文本一致）。
     emitContextUsage("terminal", reply);
-    if (result.needsReveal) {
-      startText();
+    if (imageSaveNotice && textStarted) {
+      const delta = `${visibleResponseText ? "\n\n" : ""}${imageSaveNotice}`;
       await emitFallbackText(
         options.onEvent,
         messageId,
-        reply,
+        delta,
         options.fallbackRevealIntervalMs ?? 20,
         options.signal,
       );
+    } else if (result.needsReveal || (!textStarted && reply.length > 0)) {
+      startText();
+      if (reply) {
+        await emitFallbackText(
+          options.onEvent,
+          messageId,
+          reply,
+          options.fallbackRevealIntervalMs ?? 20,
+          options.signal,
+        );
+      }
     }
     endText();
     return {

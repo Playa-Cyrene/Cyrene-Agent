@@ -10,6 +10,8 @@ import type { ChatRequest, ChatResponse, ChatVendorAdapter, VendorConfig } from 
 import { CyreneStreamAccumulator } from "./sdk-stream/accumulator";
 import { ResponsesOutputTracker } from "./sdk-stream/responses-output";
 import type { StreamDiagnostic, UnifiedStreamDelta } from "./sdk-stream/types";
+import { collectGeneratedImages, sanitizeGeneratedImageRaw, stripGeneratedImageReplay } from "./generated-image-output";
+import type { GeneratedImageOutput } from "../../../shared/generated-image";
 
 export interface ModelRunInput {
   adapter: ChatVendorAdapter;
@@ -70,6 +72,7 @@ async function runModel(input: ModelRunInput, streaming: boolean): Promise<ChatR
     let responseMessages: ModelMessage[];
     let raw: unknown;
     let aliasReasoning = "";
+    let generatedImages: GeneratedImageOutput[] = [];
     let responsesTerminal: Record<string, unknown> | undefined;
     if (streaming) {
       const result = streamText({ ...common, streamRetries: 0, includeRawChunks: true });
@@ -107,12 +110,16 @@ async function runModel(input: ModelRunInput, streaming: boolean): Promise<ChatR
           case "tool-input-start": flush(); commit({ type: "tool_call_start", index: toolIndex(part.id), id: part.id, nameDelta: part.toolName }); break;
           case "tool-input-delta": commit({ type: "tool_call_arguments_delta", index: toolIndex(part.id), id: part.id, delta: part.delta }); break;
           case "tool-call": {
+            if (isGeneratedImageTool(part.toolName)) break;
             const argumentsJson = toolArguments(part);
             flush();
             commit({ type: "tool_call_end", index: toolIndex(part.toolCallId), id: part.toolCallId,
               terminalSnapshot: true, name: part.toolName, arguments: argumentsJson });
             break;
           }
+          case "tool-result":
+            generatedImages = collectGeneratedImages([part], generatedImages);
+            break;
           case "error": throw part.error;
           case "abort": throw controller.signal.reason ?? new DOMException("模型请求已取消", "AbortError");
           case "finish":
@@ -124,6 +131,7 @@ async function runModel(input: ModelRunInput, streaming: boolean): Promise<ChatR
         }
       }
       if (!finish) throw new AgentRuntimeError("E_MODEL_RESPONSE_PARSE_FAILED", "模型流没有完成");
+      generatedImages = collectGeneratedImages(await result.staticToolResults, generatedImages);
       if (input.adapter.transport === "responses") {
         if (!responsesTerminal || !Array.isArray(responsesTerminal.output)) {
           throw new AgentRuntimeError("E_MODEL_RESPONSE_PARSE_FAILED", "Responses 终态缺少完整输出");
@@ -138,6 +146,7 @@ async function runModel(input: ModelRunInput, streaming: boolean): Promise<ChatR
         }
         const terminalMessage = recoverPortableMessage({ role: "assistant", rawAssistant: responsesTerminal.output });
         for (const call of terminalMessage.toolCalls ?? []) {
+          if (isGeneratedImageTool(call.name)) continue;
           const argumentsJson = toolArguments({ input: JSON.parse(call.arguments) });
           commit({ type: "tool_call_end", index: toolIndex(call.id), id: call.id, terminalSnapshot: true,
             name: call.name, arguments: argumentsJson });
@@ -162,10 +171,12 @@ async function runModel(input: ModelRunInput, streaming: boolean): Promise<ChatR
         }
       }
       result.toolCalls.forEach((call, index) => {
+        if (isGeneratedImageTool(call.toolName)) return;
         const argumentsJson = toolArguments(call);
         commit({ type: "tool_call_end", index, id: call.toolCallId, terminalSnapshot: true,
           name: call.toolName, arguments: argumentsJson });
       });
+      generatedImages = collectGeneratedImages(result.staticToolResults);
       flush();
       commit(usageDelta(result.usage));
       commit({ type: "finish", reason: result.finishReason === "tool-calls" ? "tool_calls" : result.finishReason });
@@ -179,9 +190,15 @@ async function runModel(input: ModelRunInput, streaming: boolean): Promise<ChatR
       ? typeof message.content === "string" ? [{ type: "text" as const, text: message.content }] : message.content : []);
     if (responsesTerminal) content = reconcileResponsesReplay(content, responsesTerminal);
     if (aliasReasoning) content.unshift({ type: "reasoning", text: aliasReasoning });
-    const response: ChatResponse = { ...finalized, assistantMessage: { ...finalized.assistantMessage,
-      providerReplay: { version: 1, origin, content: JSON.parse(JSON.stringify(content)) as typeof content } } };
-    dumpResponse(traceId, { transport: input.adapter.transport, ok: true, ...response });
+    const replayContent = stripGeneratedImageReplay(content);
+    const response: ChatResponse = { ...finalized, raw: sanitizeGeneratedImageRaw(finalized.raw),
+      ...(generatedImages.length ? { generatedImages } : {}),
+      assistantMessage: { ...finalized.assistantMessage,
+        providerReplay: { version: 1, origin, content: JSON.parse(JSON.stringify(replayContent)) as typeof content } } };
+    dumpResponse(traceId, { transport: input.adapter.transport, ok: true, ...response,
+      generatedImages: generatedImages.map(image => ({ id: image.id, mime: image.mime,
+        byteLength: Math.max(0, Math.floor(image.base64.length * 3 / 4)
+          - (image.base64.endsWith("==") ? 2 : image.base64.endsWith("=") ? 1 : 0)) })) });
     return response;
   } catch (error) {
     if (traceId) dumpResponse(traceId, { transport: input.adapter.transport, ok: false, raw: null,
@@ -202,6 +219,10 @@ async function runModel(input: ModelRunInput, streaming: boolean): Promise<ChatR
 
 function reportWarnings(warnings: ReadonlyArray<{ type: string }> | undefined): void {
   if (warnings?.length) console.warn("[model-sdk]", { code: "MODEL_PROVIDER_WARNINGS", types: warnings.map(warning => warning.type) });
+}
+
+function isGeneratedImageTool(name: string): boolean {
+  return name === "image_generation" || name.endsWith(".image_generation");
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {

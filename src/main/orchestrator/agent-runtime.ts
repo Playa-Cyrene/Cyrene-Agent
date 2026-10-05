@@ -1,4 +1,5 @@
 import { app } from "electron";
+import path from "node:path";
 import { loadPromptFile } from "../prompts/prompt-loader";
 import type { AguiRunInput } from "../agui-bridge";
 import type { ScheduledTask } from "../scheduler/types";
@@ -46,6 +47,7 @@ import {
 } from "./build-options";
 import { buildModelContext } from "./conversation-transcript-context";
 import { getConversationTranscriptStore } from "./conversation-transcript-store";
+import { createGeneratedImageStore } from "../chats/generated-image-store";
 import { getHarnessRunStore } from "./harness/run-store";
 import { ConversationTranscriptCompactor } from "./conversation-transcript-compactor";
 import { type CyreneRunResult, type CyreneRunOptions } from "./cyrene-agent";
@@ -125,6 +127,9 @@ export interface AgentRuntime {
 export function createAgentRuntime(rawDeps: AgentRuntimeDeps): AgentRuntime {
   const runtimeStateService = rawDeps.runtimeStateService;
   const transcriptStore = getConversationTranscriptStore(app.getPath("userData"));
+  const generatedImageStore = createGeneratedImageStore({
+    rootDirectory: path.join(app.getPath("userData"), "chat-media", "generated-images"),
+  });
   const transcriptRunStore = getHarnessRunStore(app.getPath("userData"));
   // Production composition owns the singleton; unit/fallback callers retain
   // the same service contract but fail closed until one is injected.
@@ -296,7 +301,15 @@ export function createAgentRuntime(rawDeps: AgentRuntimeDeps): AgentRuntime {
     buildOptions: async (input) => {
       const buildOptionsDeps = buildBuildOptionsDeps();
       const { options, latestUserText } = await buildAgentRunOptions(input, buildOptionsDeps);
-      return { options: { ...options, onToolFinished }, latestUserText };
+      return {
+        options: {
+          ...options,
+          onToolFinished,
+          assistantTurnId: input.assistantTurnId,
+          generatedImageStore,
+        },
+        latestUserText,
+      };
     },
 
     onRunFinished: async (result, latestUserText, context) => {

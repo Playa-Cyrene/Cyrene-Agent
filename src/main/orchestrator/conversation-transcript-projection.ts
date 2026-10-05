@@ -604,6 +604,7 @@ function makeUiMessage(node: ActiveNode): CanonicalUiMessage | null {
       role: "model",
       content: contentToText(node.entry.payload.content),
       at: node.entry.at,
+      ...(node.entry.payload.attachments?.length ? { attachments: node.entry.payload.attachments } : {}),
     },
     aliases: new Set([node.entry.id, groupId]),
   };
@@ -711,6 +712,14 @@ function mergeItemsById<T>(current: T[], updates: T[], getId: (item: T) => strin
     }
   }
   return merged;
+}
+
+function attachmentMergeKey(attachment: NonNullable<UiChatMessage["attachments"]>[number]): string {
+  if ("id" in attachment && typeof attachment.id === "string") return `id:${attachment.id}`;
+  if ("filePath" in attachment && typeof attachment.filePath === "string") {
+    return `path:${attachment.kind}:${attachment.filePath}`;
+  }
+  return `name:${attachment.kind}:${attachment.name}`;
 }
 
 function nodeStateFromActive(node: ActiveNode): ConversationProjectionNodeState {
@@ -846,11 +855,22 @@ function projectSeedDelta(
         if (existing && existing.message.role === "model") {
           existing.message.content = contentToText(entry.payload.content);
           existing.message.at = entry.at;
+          if (entry.payload.attachments?.length) {
+            existing.message.attachments = mergeItemsById(
+            existing.message.attachments ?? [], entry.payload.attachments, attachmentMergeKey,
+            );
+          }
           existing.aliases.add(entry.id);
           byAlias.set(entry.id, existing);
         } else {
           const item: CanonicalUiMessage = {
-            message: { id: messageId, role: "model", content: contentToText(entry.payload.content), at: entry.at },
+            message: {
+              id: messageId,
+              role: "model",
+              content: contentToText(entry.payload.content),
+              at: entry.at,
+              ...(entry.payload.attachments?.length ? { attachments: entry.payload.attachments } : {}),
+            },
             aliases: new Set([entry.id, messageId]),
           };
           messages.push(item);
@@ -980,6 +1000,11 @@ function projectionFromActive(
       // latest state for this single UI message.
       existing.message.content = canonical.message.content;
       existing.message.at = canonical.message.at;
+      if (canonical.message.attachments?.length) {
+        existing.message.attachments = mergeItemsById(
+          existing.message.attachments ?? [], canonical.message.attachments, attachmentMergeKey,
+        );
+      }
       existing.aliases.forEach((alias) => byAlias.set(alias, existing));
       byAlias.set(node.entry.id, existing);
       continue;

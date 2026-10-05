@@ -52,7 +52,7 @@ export async function prepareHarnessRun(
   options: CyreneRunOptions,
   signal: AbortSignal,
 ): Promise<PreparedHarnessRun> {
-  const messageId = `msg-${Date.now()}`;
+  const messageId = options.assistantTurnId ?? `msg-${Date.now()}`;
   const runId = options.runId;
   // 先校验 runId，避免产生无法关联到 RUN_FINISHED/恢复记录的孤儿执行。
   if (!runId) {
@@ -76,6 +76,7 @@ export async function prepareHarnessRun(
     explicitTransport: options.settings.explicitTransport,
     reasoning: options.settings.reasoning,
     manualReasoning: options.settings.manualReasoning,
+    imageGeneration: options.settings.imageGeneration,
   };
 
   const tools = [...(options.capabilities?.tools ?? options.tools ?? toolRegistry.getEnabledTools())];

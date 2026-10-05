@@ -10,6 +10,7 @@ import type { TodoItem } from "./todo-types";
 import type { TaskDelegationPresentation } from "./task-session";
 import type { ContextUsageSnapshot } from "./context-usage";
 import type { BrowserElementSelection } from "./browser-panel-types";
+import type { GeneratedImageAttachment } from "./generated-image";
 
 // - schemaVersion 用于以后改 schema 时的迁移判断；当前固定 1。
 
@@ -206,7 +207,7 @@ export type ChatPresentationCheckpointPatch = Partial<Pick<ChatMessage,
   "runSnapshot" | "ttsCacheKey" | "ttsCacheVersion" | "musicCard" | "contextUsage"
 >> & { delta?: ChatPresentationDelta };
 
-export type MessageAttachment = ImageMessageAttachment | DocumentMessageAttachment | WebElementMessageAttachment;
+export type MessageAttachment = ImageMessageAttachment | GeneratedImageAttachment | DocumentMessageAttachment | WebElementMessageAttachment;
 
 export interface ImageMessageAttachment {
   kind: "image";

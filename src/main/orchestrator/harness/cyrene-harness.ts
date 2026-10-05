@@ -56,6 +56,7 @@ import {
   type PromptLayers,
 } from "../prompt-layers";
 import { buildToolCatalog } from "../tools/registry/tool-catalog";
+import { persistGeneratedImages } from "../../chats/generated-image-store";
 
 const LOG_PREFIX = "[CyreneHarness]";
 
@@ -190,7 +191,22 @@ export async function runCyreneHarness(input: HarnessInput): Promise<HarnessResu
     }
 
     // ── Assistant response 必须写回 transcript（否则模型下一轮看不到自己上一轮的回复）──
-    const assistantMessage = toAssistantMessage(response);
+    const persistedImages = await persistGeneratedImages(
+      input.generatedImageStore,
+      input.toolContext?.conversationId ?? "default",
+      response.generatedImages,
+    );
+    const imageSaveNotice = persistedImages.failedCount > 0
+      ? persistedImages.attachments.length > 0
+        ? "部分生成图片保存失败。"
+        : "图片生成失败，图片未能保存，请重试。"
+      : "";
+    const replyText = [response.text, imageSaveNotice].filter(Boolean).join("\n\n");
+    const assistantMessage = {
+      ...toAssistantMessage({ ...response, text: replyText }),
+      content: replyText,
+      ...(persistedImages.attachments.length ? { attachments: persistedImages.attachments } : {}),
+    };
     run.messages.push(assistantMessage);
     try {
       // canonical assistant 先于任何工具 dispatch 落盘（fail-closed）：
@@ -202,8 +218,16 @@ export async function runCyreneHarness(input: HarnessInput): Promise<HarnessResu
     } catch (error) {
       return finishRun(run, `会话轨迹保存失败：${errorMessage(error)}`, true, "error");
     }
-    if (response.text) {
-      run.streamController.bufferProgressContent(response.text);
+    if (persistedImages.attachments.length > 0) {
+      input.onEvent?.({
+        type: "image_attachments",
+        messageId: input.assistantTurnId ?? `msg-${input.runId}`,
+        roundId,
+        attachments: persistedImages.attachments,
+      });
+    }
+    if (typeof assistantMessage.content === "string" && assistantMessage.content) {
+      run.streamController.bufferProgressContent(assistantMessage.content);
     }
 
     // ── 截断可见化：finishReason=length 表示命中输出上限 ──

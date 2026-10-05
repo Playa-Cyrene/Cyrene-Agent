@@ -942,8 +942,24 @@ function isValidCanonicalChatMessage(value: unknown, expectedRole?: CanonicalCha
   if (value.toolCallId !== undefined && typeof value.toolCallId !== "string") return false;
   if (value.name !== undefined && typeof value.name !== "string") return false;
   if (value.thinking !== undefined && typeof value.thinking !== "string") return false;
+  if (value.attachments !== undefined && (
+    value.role !== "assistant" || !Array.isArray(value.attachments) || !value.attachments.every(isValidGeneratedImageAttachment)
+  )) return false;
   if (value.visibility !== undefined && !["user", "internal"].includes(value.visibility as string)) return false;
   return true;
+}
+
+function isValidGeneratedImageAttachment(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  const allowed = new Set(["id", "kind", "name", "filePath", "mime", "source", "byteLength", "status"]);
+  return Object.keys(value).every((key) => allowed.has(key)) &&
+    typeof value.id === "string" && value.id.length > 0 && value.id.length <= 256 &&
+    value.kind === "image" && typeof value.name === "string" && value.name.length > 0 &&
+    typeof value.filePath === "string" && path.isAbsolute(value.filePath) &&
+    path.extname(value.filePath).toLowerCase() === ".png" &&
+    value.mime === "image/png" && value.source === "model" &&
+    typeof value.byteLength === "number" && Number.isSafeInteger(value.byteLength) &&
+    value.byteLength >= 8 && value.byteLength <= 20 * 1024 * 1024 && value.status === "done";
 }
 
 function isValidChatMessageContent(value: unknown): boolean {

@@ -83,6 +83,16 @@ export function sendHarnessEventAsAgui(
       send({ type: EventType.REASONING_MESSAGE_END, messageId: event.messageId, threadId, runId } as BaseEvent);
       break;
     }
+    case "image_attachments": {
+      send({
+        type: EventType.CUSTOM,
+        name: "cyrene.image_attachments",
+        value: { messageId: event.messageId, roundId: event.roundId, attachments: event.attachments },
+        threadId,
+        runId,
+      } as BaseEvent);
+      break;
+    }
     case "tool_start": {
       send({
         type: EventType.TOOL_CALL_START,

@@ -11,6 +11,7 @@ import type {
   TaskDelegationDisplayRecord,
   ToolExecutionRecord,
 } from "../../../../../../shared/chat-types";
+import type { GeneratedImageAttachment } from "../../../../../../shared/generated-image";
 import { isContextUsageSnapshot, type ContextUsageSnapshot } from "../../../../../../shared/context-usage";
 import type { TodoItem } from "../../../../../../shared/todo-types";
 import { isModelFailureInfo, type ModelFailureInfo } from "../../../../../../shared/model-error";
@@ -292,6 +293,7 @@ export class AgentRunController {
   private runActivity: RunActivityRecord | undefined;
   private currentTodos: TodoItem[] = [];
   private persistedFinalContent = "";
+  private generatedImageAttachments: GeneratedImageAttachment[] = [];
   /** 上下文容量快照：preRequest 每轮实时覆盖（纯内存），terminal 随 checkpoint 落盘。 */
   private contextUsage: ContextUsageSnapshot | undefined;
   private assistantAt = 0;
@@ -972,7 +974,18 @@ export class AgentRunController {
 
   /** AG-UI 事件归约：流式内容、推理、工具、交互卡与终态全部在此处理。 */
   private handleEvent(event: AguiEvent) {
-    if (event.type === "CUSTOM" && event.name === "cyrene.round") {
+    if (event.type === "CUSTOM" && event.name === "cyrene.image_attachments") {
+      const value = event.value as { messageId?: unknown; attachments?: unknown } | null | undefined;
+      if (value?.messageId !== this.input.assistantId || !Array.isArray(value.attachments)) return;
+      const attachments = value.attachments.filter(isGeneratedImageAttachment);
+      if (attachments.length === 0) return;
+      this.generatedImageAttachments = mergeGeneratedImageAttachments(this.generatedImageAttachments, attachments);
+      this.deps.host.patchMessage(this.input.sessionId, this.input.assistantId, {
+        attachments: this.generatedImageAttachments,
+        waitingForFirstEvent: false,
+      });
+      return;
+    } else if (event.type === "CUSTOM" && event.name === "cyrene.round") {
       const value = event.value as { action?: unknown; roundId?: unknown } | null | undefined;
       if ((value?.action === "start" || value?.action === "end") && typeof value.roundId === "string") {
         // 新轮开始：防御性闭合上一轮候选正文（不依赖 progress_text / discard 事件到达）
@@ -1312,4 +1325,22 @@ export class AgentRunController {
       this.resolveTerminal(new Error(event.message ?? event.error ?? event.content ?? t("chatPage.errorModelRequestFailed")));
     }
   }
+}
+
+function isGeneratedImageAttachment(value: unknown): value is GeneratedImageAttachment {
+  if (!value || typeof value !== "object") return false;
+  const attachment = value as Partial<GeneratedImageAttachment>;
+  return typeof attachment.id === "string" && attachment.kind === "image"
+    && typeof attachment.name === "string" && typeof attachment.filePath === "string"
+    && attachment.mime === "image/png" && attachment.source === "model"
+    && typeof attachment.byteLength === "number" && attachment.status === "done";
+}
+
+function mergeGeneratedImageAttachments(
+  current: GeneratedImageAttachment[],
+  incoming: GeneratedImageAttachment[],
+): GeneratedImageAttachment[] {
+  const byId = new Map(current.map((item) => [item.id, item]));
+  for (const attachment of incoming) byId.set(attachment.id, attachment);
+  return [...byId.values()];
 }

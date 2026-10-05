@@ -745,6 +745,117 @@ describe("runChatLoop", () => {
     });
   });
 
+  it("commits a pure generated image before emitting its attachment event", async () => {
+    const adapter = new FakeAdapter();
+    const attachment = {
+      id: "image-1", kind: "image" as const, name: "generated-image.png", filePath: "managed/generated-image.png",
+      mime: "image/png", source: "model" as const, byteLength: 20, status: "done" as const,
+    };
+    const order: string[] = [];
+    const sink = fakeSink({ appendAssistant: async () => { order.push("persist"); return "assistant-entry"; } });
+    const generatedImageStore = {
+      save: vi.fn(async () => attachment),
+      deleteConversation: vi.fn(async () => undefined),
+      readManagedPng: vi.fn(async () => Buffer.alloc(0)),
+    };
+
+    const result = await runChatLoop({
+      settings: { provider: "test", baseUrl: "https://test", model: "m", apiKey: "k", contextWindowTokens: 256000 },
+      adapter,
+      messages: [{ role: "user", content: "画一只猫" }],
+      soulSystemBaseContent: "SOUL_SYSTEM",
+      timeoutMs: 30_000,
+      recordUsage: vi.fn(),
+      conversationId: "conversation-1",
+      assistantTurnId: "assistant-1",
+      generatedImageStore,
+      transcriptSink: sink,
+      onEvent: (event) => { if (event.type === "image_attachments") order.push("image-event"); },
+      streamChat: async () => ({
+        assistantMessage: { role: "assistant" as const, content: "" },
+        text: "",
+        toolCalls: [],
+        finishReason: "stop" as const,
+        raw: {},
+        generatedImages: [{ id: "image-1", toolCallId: "tool-1", base64: "AA==", mime: "image/png" as const }],
+      }),
+    });
+
+    expect(result.reply).toBe("");
+    expect(generatedImageStore.save).toHaveBeenCalledWith({
+      conversationId: "conversation-1",
+      image: expect.objectContaining({ id: "image-1", toolCallId: "tool-1" }),
+    });
+    expect(sink.appendAssistant).toHaveBeenCalledWith({
+      message: expect.objectContaining({ content: "", attachments: [attachment] }),
+    });
+    expect(order).toEqual(["persist", "image-event"]);
+  });
+
+  it("shows a save error instead of an image attachment when generated image persistence fails", async () => {
+    const events: string[] = [];
+    const result = await runChatLoop({
+      settings: { provider: "test", baseUrl: "https://test", model: "m", apiKey: "k", contextWindowTokens: 256000 },
+      adapter: new FakeAdapter(),
+      messages: [{ role: "user", content: "画一只猫" }],
+      soulSystemBaseContent: "SOUL_SYSTEM",
+      timeoutMs: 30_000,
+      recordUsage: vi.fn(),
+      generatedImageStore: {
+        save: vi.fn(async () => { throw new Error("disk full"); }),
+        deleteConversation: vi.fn(async () => undefined),
+        readManagedPng: vi.fn(async () => Buffer.alloc(0)),
+      },
+      onEvent: (event) => events.push(event.type),
+      streamChat: async () => ({
+        assistantMessage: { role: "assistant" as const, content: "" },
+        text: "",
+        toolCalls: [],
+        finishReason: "stop" as const,
+        raw: {},
+        generatedImages: [{ id: "image-1", toolCallId: "tool-1", base64: "AA==", mime: "image/png" as const }],
+      }),
+    });
+
+    expect(result.reply).toContain("图片生成失败，图片未能保存");
+    expect(events).not.toContain("image_attachments");
+  });
+
+  it("appends an image save error after streamed assistant text", async () => {
+    const deltas: string[] = [];
+    const streamChat: NonNullable<ChatLoopOptions["streamChat"]> = async (input) => {
+      input.onDelta?.({ type: "text_delta", delta: "图片已经生成。" });
+      return {
+        assistantMessage: { role: "assistant" as const, content: "图片已经生成。" },
+        text: "图片已经生成。",
+        toolCalls: [],
+        finishReason: "stop" as const,
+        raw: {},
+        generatedImages: [{ id: "image-1", toolCallId: "tool-1", base64: "AA==", mime: "image/png" as const }],
+      };
+    };
+
+    const result = await runChatLoop({
+      settings: { provider: "test", baseUrl: "https://test", model: "m", apiKey: "k", contextWindowTokens: 256000 },
+      adapter: new FakeAdapter(),
+      messages: [{ role: "user", content: "画一只猫" }],
+      soulSystemBaseContent: "SOUL_SYSTEM",
+      timeoutMs: 30_000,
+      fallbackRevealIntervalMs: 0,
+      recordUsage: vi.fn(),
+      generatedImageStore: {
+        save: vi.fn(async () => { throw new Error("disk full"); }),
+        deleteConversation: vi.fn(async () => undefined),
+        readManagedPng: vi.fn(async () => Buffer.alloc(0)),
+      },
+      onEvent: (event) => { if (event.type === "text_message_content") deltas.push(event.delta); },
+      streamChat,
+    });
+
+    expect(result.reply).toBe("图片已经生成。\n\n图片生成失败，图片未能保存，请重试。");
+    expect(deltas.join("")).toBe(result.reply);
+  });
+
   it("rejects the turn when ChatLoop assistant persistence fails", async () => {
     const adapter = new FakeAdapter();
 

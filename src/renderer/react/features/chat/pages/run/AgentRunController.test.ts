@@ -180,6 +180,27 @@ afterEach(() => {
 });
 
 describe("AgentRunController", () => {
+  it("accumulates generated image attachments from multiple events on the assistant message", async () => {
+    const api = createFakeApi({ success: true, runId: "run-1" });
+    const store = createFakeStore();
+    const { host } = createRecordingHost();
+    const { promise } = launch(createInput(), { api, store, host, registries: createRegistries() });
+    await flush();
+    api.emit(RUN_STARTED_EVENT);
+
+    const first = { id: "image-1", kind: "image", name: "first.png", filePath: "managed/first.png", mime: "image/png", source: "model", byteLength: 20, status: "done" };
+    const second = { id: "image-2", kind: "image", name: "second.png", filePath: "managed/second.png", mime: "image/png", source: "model", byteLength: 24, status: "done" };
+    api.emit({ type: "CUSTOM", name: "cyrene.image_attachments", runId: "run-1", value: { messageId: "assistant-1", attachments: [first] } });
+    api.emit({ type: "CUSTOM", name: "cyrene.image_attachments", runId: "run-1", value: { messageId: "assistant-1", attachments: [second, first] } });
+
+    expect(host.patchMessage).toHaveBeenLastCalledWith("session-1", "assistant-1", {
+      attachments: [first, second],
+      waitingForFirstEvent: false,
+    });
+    api.emit({ type: "RUN_FINISHED", runId: "run-1", result: { status: "success" } });
+    await promise;
+  });
+
   it("shows retry progress in the live message and clears it at run completion", async () => {
     const api = createFakeApi({ success: true, runId: "run-1" });
     const store = createFakeStore();

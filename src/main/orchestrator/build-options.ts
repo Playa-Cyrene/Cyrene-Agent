@@ -236,6 +236,7 @@ export interface ModelSettingsLite {
   model: string;
   apiKey: string;
   explicitTransport?: "openai" | "anthropic" | "responses" | "auto";
+  imageGeneration?: { enabled: boolean; model: string };
   /** 顶层 reasoning 镜像（来自 perProvider[currentProvider].reasoning）。adapter 直接读。 */
   reasoning?: import("../../shared/reasoning").ReasoningPreference;
   manualReasoning?: import("../../shared/manual-reasoning").ManualReasoningConfig;
@@ -1074,6 +1075,7 @@ export async function buildAgentRunOptions(
         model: settings.model,
         apiKey: settings.apiKey,
         explicitTransport: settings.explicitTransport,
+        imageGeneration: settings.imageGeneration,
         reasoning: settings.reasoning,
         manualReasoning: settings.manualReasoning,
         contextWindowTokens: settings.contextWindowTokens ?? 256000,
@@ -1085,6 +1087,7 @@ export async function buildAgentRunOptions(
       messages: fcMessages,
       cleanMessages: cleanFcMessages,
       conversationId,
+      assistantTurnId: input.assistantTurnId,
       executionMode,
       originalQuery: latestUserText,
       contextualizedQuery,

@@ -96,6 +96,24 @@ describe("conversation transcript projection", () => {
     expect(buildFullModelContext(entries, noRuns).messages[0].content).toBe("hello");
   });
 
+  it("把 canonical 助手图片附件投影到 UI，并在同一轮合并后续附件", () => {
+    nextSeq = 0;
+    const first = assistant("a1", "", undefined);
+    const second = assistant("a1", "caption");
+    if (first.kind !== "assistant" || second.kind !== "assistant") throw new Error("fixture must be assistant");
+    first.payload = { ...first.payload, attachments: [{
+      id: "image-1", kind: "image", name: "generated-1.png", filePath: "C:/safe/1.png", mime: "image/png",
+      source: "model", byteLength: 8, status: "done",
+    }] };
+    second.payload = { ...second.payload, attachments: [{
+      id: "image-2", kind: "image", name: "generated-2.png", filePath: "C:/safe/2.png", mime: "image/png",
+      source: "model", byteLength: 8, status: "done",
+    }] };
+
+    expect(reduceTranscriptProjection([first, second]).messages[0].attachments?.map((item) => item.name))
+      .toEqual(["generated-1.png", "generated-2.png"]);
+  });
+
   it("最新压缩点替换模型前缀但 UI 仍保留完整历史并插入压缩标记", () => {
     nextSeq = 0;
     const entries = compactedFixture();

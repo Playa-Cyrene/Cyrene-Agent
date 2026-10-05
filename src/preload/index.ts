@@ -95,6 +95,8 @@ const chatApi = {
     ipcRenderer.invoke(IPC.CHAT_CAPTION_IMAGE, { filePath, hasAnnotations }),
   getImagePreview: (filePath: string) =>
     ipcRenderer.invoke(IPC.CHAT_GET_IMAGE_PREVIEW, { filePath }),
+  saveGeneratedImage: (filePath: string, name: string) =>
+    ipcRenderer.invoke(IPC.CHAT_SAVE_GENERATED_IMAGE, { filePath, name }),
   getImageSendStrategy: (sessionId?: string) =>
     ipcRenderer.invoke(IPC.CHAT_GET_IMAGE_SEND_STRATEGY, sessionId ? { sessionId } : undefined),
   getGeneralSettings: () => ipcRenderer.invoke(IPC.SETTINGS_GET_GENERAL),

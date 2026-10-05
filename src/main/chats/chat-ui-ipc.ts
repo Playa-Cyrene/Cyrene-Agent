@@ -1,5 +1,6 @@
-import { BrowserWindow, clipboard } from "electron";
-import { stat } from "node:fs/promises";
+import { app, BrowserWindow, clipboard, dialog } from "electron";
+import { stat, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { IPC } from "../../shared/ipc-channels";
 import { createIpcScope, type IpcScope } from "../application/ipc-scope";
@@ -29,6 +30,7 @@ import {
 } from "../plugin-host/active-chat-target";
 import { activeConversationRegistry } from "./active-conversation-registry";
 import { flushSummaryMemory } from "../memory/summary-memory-scheduler";
+import { createGeneratedImageStore } from "./generated-image-store";
 
 export interface ChatUiIpcDependencies {
   live2dWindowLifecycle: { getDiagnostics(): unknown };
@@ -236,6 +238,36 @@ export function registerChatUiIpc(deps: ChatUiIpcDependencies): void {
       ok: true,
       dataUrl: `data:${validated.mime};base64,${validated.buffer.toString("base64")}`,
     };
+  });
+
+  ipc.handle(IPC.CHAT_SAVE_GENERATED_IMAGE, async (event, payload: unknown) => {
+    const raw = payload && typeof payload === "object"
+      ? payload as { filePath?: unknown; name?: unknown }
+      : {};
+    if (typeof raw.filePath !== "string") return { ok: false, error: "图片路径无效" };
+    const safeName = typeof raw.name === "string" ? path.basename(raw.name) : "generated-image.png";
+    const name = safeName.toLowerCase().endsWith(".png") ? safeName : `${safeName}.png`;
+    let bytes: Buffer;
+    try {
+      bytes = await createGeneratedImageStore({
+        rootDirectory: path.join(app.getPath("userData"), "chat-media", "generated-images"),
+      }).readManagedPng(raw.filePath);
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : "图片不可用" };
+    }
+
+    const options = { defaultPath: name, filters: [{ name: "PNG 图片", extensions: ["png"] }] };
+    const owner = BrowserWindow.fromWebContents(event.sender);
+    const result = owner
+      ? await dialog.showSaveDialog(owner, options)
+      : await dialog.showSaveDialog(options);
+    if (result.canceled || !result.filePath) return { ok: false, cancelled: true };
+    try {
+      await writeFile(result.filePath, bytes);
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : "图片保存失败" };
+    }
   });
 
   ipc.handle(IPC.CHAT_GET_IMAGE_SEND_STRATEGY, (_event, payload: unknown) => {

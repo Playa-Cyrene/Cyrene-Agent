@@ -49,6 +49,7 @@ import { cancelSummaryMemorySession, releaseSummaryMemorySessionCancellation } f
 import { cancelWikiMemorySession, getWikiMemoryStore, releaseWikiMemorySessionCancellation } from "../memory/wiki-memory-scheduler";
 import { resolveSummaryMemoryPaths } from "../memory/summary-memory-paths";
 import { deleteSummaryFile } from "../memory/summary-memory-store";
+import { createGeneratedImageStore } from "./generated-image-store";
 import type { LlmClient } from "../services/llm/llm-client";
 import { enqueueLLMTask } from "../llm-queue";
 import { assertValidPresentationPatch, type TranscriptPresentationPatch } from "../orchestrator/conversation-transcript-types";
@@ -447,6 +448,13 @@ export function registerChatsIpc(
       } catch (error) {
         // 会话已删除；权威轨迹清理失败只记日志，不得把 UI 回滚成"删除失败"
         console.error("[ChatsIpc] failed to delete conversation transcript", error);
+      }
+      try {
+        await createGeneratedImageStore({
+          rootDirectory: path.join(app.getPath("userData"), "chat-media", "generated-images"),
+        }).deleteConversation(id);
+      } catch (error) {
+        console.error("[ChatsIpc] failed to delete generated images", error);
       }
       broadcastChanged(event.sender);
     }

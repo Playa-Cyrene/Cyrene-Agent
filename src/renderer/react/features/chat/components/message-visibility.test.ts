@@ -48,6 +48,14 @@ describe("assistantRenderStages", () => {
     })).toEqual(["assistant"]);
   });
 
+  it("shows the assistant slot when a generated image has no accompanying text", () => {
+    expect(assistantRenderStages({
+      content: "",
+      responseStarted: false,
+      hasAttachments: true,
+    })).toEqual(["assistant"]);
+  });
+
   it("keeps a user's collapsed choice while streaming content rerenders", () => {
     const collapsed = updateReasoningExpanded({}, "assistant-1", false);
     expect(resolveReasoningExpanded(collapsed, "assistant-1")).toBe(false);

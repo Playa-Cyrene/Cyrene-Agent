@@ -1590,6 +1590,44 @@ describe("CyreneHarness transcript sink", () => {
     vi.unstubAllGlobals();
   });
 
+  it("persists a pure generated image before publishing the assistant attachment event", async () => {
+    const attachment = {
+      id: "image-1", kind: "image" as const, name: "generated-image.png", filePath: "managed/generated-image.png",
+      mime: "image/png", source: "model" as const, byteLength: 20, status: "done" as const,
+    };
+    const order: string[] = [];
+    const sink = fakeSink({ appendAssistant: async () => { order.push("persist"); return "assistant-entry"; } });
+    const generatedImageStore = {
+      save: vi.fn(async () => attachment),
+      deleteConversation: vi.fn(async () => undefined),
+      readManagedPng: vi.fn(async () => Buffer.alloc(0)),
+    };
+    const response: ChatResponse = {
+      ...assistantResponse({ text: "" }),
+      generatedImages: [{ id: "image-1", toolCallId: "tool-1", base64: "AA==", mime: "image/png" }],
+    };
+    const { fn: modelFetch } = fakeFetchSequencer([response]);
+    vi.stubGlobal("fetch", modelFetch);
+
+    const result = await runCyreneHarness(harnessInput({
+      runId: "run-1",
+      assistantTurnId: "assistant-1",
+      generatedImageStore,
+      transcriptSink: sink,
+      onEvent: (event) => { if (event.type === "image_attachments") order.push("image-event"); },
+    }));
+
+    expect(result.finalAnswer).toBe("");
+    expect(sink.appendAssistant).toHaveBeenCalledWith(expect.objectContaining({
+      message: expect.objectContaining({ content: "", attachments: [attachment] }),
+    }));
+    expect(order).toEqual(["persist", "image-event"]);
+    expect(generatedImageStore.save).toHaveBeenCalledWith({
+      conversationId: "default",
+      image: expect.objectContaining({ id: "image-1", toolCallId: "tool-1" }),
+    });
+  });
+
   it("awaits assistant persistence before dispatching any tool", async () => {
     const { fn: modelFetch } = fakeFetchSequencer([
       assistantResponse({ toolCalls: [mutationToolCall("call-1")] }),

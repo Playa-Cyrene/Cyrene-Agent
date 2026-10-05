@@ -71,6 +71,7 @@ export async function callLLM(
     stream: true,
     ...(requestMaxTokens !== undefined ? { maxTokens: requestMaxTokens } : {}),
     promptLayers: composed.metadata,
+    ...(vendorConfig.imageGeneration?.enabled ? { imageGeneration: vendorConfig.imageGeneration } : {}),
   };
   // 缓存路由 hints（Kimi prompt_cache_key 等）：此前只有 ChatLoop / 压缩摘要链路注入，
   // Harness 工具循环整条链漏发；在这里统一补上，下方流式与非流式兜底共用同一份 hints。

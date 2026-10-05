@@ -26,6 +26,8 @@ export interface SessionModelProfileView {
   models?: string[];
   /** 模型专属能力；旧档案没有此字段时沿用档案级兼容值。 */
   modelOptions?: Record<string, { multimodal?: boolean; contextWindowTokens?: number; manualReasoning?: ManualReasoningConfig }>;
+  /** Responses 主会话的图片生成工具设置。 */
+  imageGeneration?: { enabled: boolean; model: string };
   contextWindowTokens?: number;
   multimodal?: boolean;
 }

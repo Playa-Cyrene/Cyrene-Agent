@@ -6,7 +6,7 @@ import { ConversationTranscriptStore } from "../conversation-transcript-store";
 import { getAdapterForConfig, PROVIDER_CAPABILITIES } from "./index";
 import { streamChatWithSdk } from "./sdk-stream/runtime";
 import type { ChatMessage, VendorConfig } from "./types";
-import { generateChatWithAiSdk } from "./model-runtime";
+import { generateChatWithAiSdk, streamChatWithAiSdk } from "./model-runtime";
 import { modelMessageOrigin } from "./model-factory";
 import { projectModelHistory } from "./model-history";
 import { jsonResponse, responseBody, sseResponse, streamEvents, weatherTool } from "./sdk-stream/model-fixtures";
@@ -243,5 +243,65 @@ describe("#167 模型执行历史互通", () => {
     });
     expect(response.assistantMessage.rawAssistant).toBeUndefined();
     expect(JSON.stringify(response.assistantMessage)).not.toContain("test-key");
+  });
+
+  it("非流式纯图片响应返回图片且不把原生调用交给本地调度器", async () => {
+    const source = configs[1];
+    const base64 = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]).toString("base64");
+    const body = { id: "resp_image", model: source.model, created_at: 1, status: "completed",
+      output: [{ id: "image_call_1", type: "image_generation_call", result: base64 }],
+      usage: { input_tokens: 3, output_tokens: 2 } };
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(body)));
+
+    const response = await generateChatWithAiSdk({ adapter: getAdapterForConfig(source), config: source, timeoutMs: 2000,
+      request: { model: source.model, messages: [{ role: "user", content: "画一朵花" }],
+        imageGeneration: { enabled: true, model: "gpt-image-2.5-flare" } } });
+
+    expect(response.text).toBe("");
+    expect(response.generatedImages).toEqual([{ id: "image_call_1", toolCallId: "image_call_1", base64, mime: "image/png" }]);
+    expect(response.toolCalls).toEqual([]);
+    expect(JSON.stringify(response.assistantMessage.providerReplay)).not.toContain(base64);
+    expect(JSON.stringify(response.assistantMessage.providerReplay)).not.toContain("image_generation");
+    expect(JSON.stringify(response.raw)).not.toContain(base64);
+  });
+
+  it("流式和非流式 Responses 输出得到相同的多图片列表", async () => {
+    const source = configs[1];
+    const base64 = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x01]).toString("base64");
+    const output = ["image_call_1", "image_call_2"].map(id => ({ id, type: "image_generation_call", result: base64 }));
+    const body = { id: "resp_image", model: source.model, created_at: 1, status: "completed", output,
+      usage: { input_tokens: 3, output_tokens: 2 } };
+    const events = [
+      { type: "response.created", response: { id: body.id, model: body.model, created_at: 1, status: "in_progress" } },
+      ...output.flatMap((item, output_index) => [
+        { type: "response.output_item.added", output_index, item: { id: item.id, type: item.type } },
+        { type: "response.output_item.done", output_index, item },
+      ]),
+      { type: "response.completed", response: body },
+    ];
+    const request = { model: source.model, messages: [{ role: "user" as const, content: "画两朵花" }],
+      imageGeneration: { enabled: true, model: "gpt-image-2.5-flare" } };
+    const onDelta = vi.fn();
+
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(body)));
+    const generated = await generateChatWithAiSdk({ adapter: getAdapterForConfig(source), config: source, timeoutMs: 2000, request });
+    vi.stubGlobal("fetch", vi.fn(async () => sseResponse(events)));
+    const streamed = await streamChatWithAiSdk({ adapter: getAdapterForConfig(source), config: source, timeoutMs: 2000, request, onDelta });
+
+    expect(streamed.generatedImages).toEqual(generated.generatedImages);
+    expect(streamed.toolCalls).toEqual([]);
+    expect(onDelta.mock.calls.flat().some(value => (value as any)?.name === "image_generation")).toBe(false);
+  });
+
+  it("同来源历史只向模型说明已生成图片，不发送本地文件路径", () => {
+    const source = configs[1];
+    const origin = modelMessageOrigin(getAdapterForConfig(source), source);
+    const projected = projectModelHistory([{ role: "assistant", content: "好了", attachments: [{
+      id: "generated-1", kind: "image", name: "generated-1.png", filePath: "C:/private/generated-1.png",
+      mime: "image/png", source: "model", byteLength: 20, status: "done",
+    }] }], origin);
+
+    expect(JSON.stringify(projected)).toContain("已生成图片：generated-1.png");
+    expect(JSON.stringify(projected)).not.toContain("C:/private");
   });
 });

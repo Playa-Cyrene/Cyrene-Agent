@@ -170,6 +170,7 @@ export type HarnessEvent =
   | { type: "reasoning_start"; messageId: string }
   | { type: "reasoning_delta"; messageId: string; delta: string }
   | { type: "reasoning_end"; messageId: string }
+  | { type: "image_attachments"; messageId: string; roundId: string; attachments: import("../../../shared/generated-image").GeneratedImageAttachment[] }
   | { type: "tool_start"; toolCallId: string; toolName: string; args: Record<string, unknown>; displayName?: string }
   | ({ type: "tool_output"; toolCallId: string } & import("../tools/registry/tool-context").ShellOutputUpdate)
   | { type: "tool_end"; toolCallId: string; outcome: ToolCallOutcome; preview: string; changes?: ToolFileChange[] }
@@ -261,6 +262,9 @@ export interface HarnessInput {
   messages: ChatMessage[];
   /** canonical runId；仅用于内部 transcript 元数据，永不进入 Provider 请求。 */
   runId?: string;
+  /** 当前 run 的 UI assistant 消息 ID。 */
+  assistantTurnId?: string;
+  generatedImageStore?: import("../../chats/generated-image-store").GeneratedImageStore;
   /** 首次请求前物化一次的内部事实；后续轮次不得重新注入。 */
   initialInternalContext?: {
     kind: "run_start" | "recovery";

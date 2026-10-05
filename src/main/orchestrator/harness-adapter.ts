@@ -76,6 +76,8 @@ export async function runHarnessWithAdapter(
     usageParts: promptLayers.usageParts,
     messages: runMessages,
     runId,
+    assistantTurnId: options.assistantTurnId,
+    generatedImageStore: options.generatedImageStore,
     tools,
     ...(options.initialHarnessState ? { initialState: options.initialHarnessState } : {}),
     vendorConfig,

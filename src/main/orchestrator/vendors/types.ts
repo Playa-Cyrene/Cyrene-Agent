@@ -7,6 +7,8 @@ import type { ManualReasoningConfig } from "../../../shared/manual-reasoning";
 import type { PromptLayerMetadata } from "../prompt-layers";
 import type { ProviderCapability, Transport } from "../../../shared/vendor-registry/types";
 import type { AssistantContent } from "ai";
+import type { GeneratedImageOutput } from "../../../shared/generated-image";
+import type { GeneratedImageAttachment } from "../../../shared/generated-image";
 
 // 厂商能力系类型已迁入 shared/vendor-registry/types（厂商注册表的类型事实源）；
 // 此处 re-export 保持既有 import 路径（./types）不变，调用方零改动。
@@ -37,6 +39,8 @@ export interface VendorConfig {
   reasoning?: ReasoningPreference;
   /** 当前模型在档案中显式配置的推理规则。 */
   manualReasoning?: ManualReasoningConfig;
+  /** 仅主会话调用使用；摘要等辅助请求不读取此配置。 */
+  imageGeneration?: { enabled: boolean; model: string };
 }
 
 export type OpenAIContentBlock =
@@ -87,6 +91,8 @@ export interface ChatMessage {
   /** 旧历史兼容输入。无来源原始数据不得直接发送给厂商。 */
   rawAssistant?: unknown;
   providerReplay?: ProviderReplay;
+  /** 已落盘的模型生成图片引用；编码数据不得出现在此字段。 */
+  attachments?: GeneratedImageAttachment[];
   /** 仅供本地 transcript / UI 使用；Adapter 序列化时不得发送。 */
   visibility?: "user" | "internal";
   /** 仅供本地持久化和去重使用；Adapter 序列化时不得发送。 */
@@ -149,6 +155,8 @@ export interface ChatRequest {
   extraBody?: Record<string, unknown>;
   /** 仅供本地缓存键与诊断使用，Adapter 不得将该字段直接发给厂商。 */
   promptLayers?: PromptLayerMetadata;
+  /** 仅主会话可设置；摘要、标题等辅助请求保持缺省关闭。 */
+  imageGeneration?: { enabled: boolean; model: string };
 }
 
 /**
@@ -201,6 +209,8 @@ export interface ChatResponse {
   /** API 返回的 token 用量（OpenAI: prompt_tokens/completion_tokens；Anthropic: input_tokens/output_tokens）。
    *  未上报时为 undefined，由调用方兜底。 */
   usage?: { input: number; output: number; cachedInput?: number; cacheCreation?: number };
+  /** 主进程临时数据，提交到权威轨迹前必须先落盘并剥离编码。 */
+  generatedImages?: GeneratedImageOutput[];
 }
 
 export interface HttpRequest {

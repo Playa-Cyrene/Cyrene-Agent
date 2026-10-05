@@ -27,6 +27,16 @@ export function prepareModelCall(input: {
   onRequest?: (traceId: string) => void;
 }) {
   const { adapter, config, request } = input;
+  const imageGeneration = request.imageGeneration?.enabled ? request.imageGeneration : undefined;
+  if (imageGeneration && adapter.transport !== "responses") {
+    throw new AgentRuntimeError("E_MODEL_RESPONSE_PARSE_FAILED", "图片生成当前只支持 Responses 协议");
+  }
+  if (imageGeneration && !imageGeneration.model.trim()) {
+    throw new AgentRuntimeError("E_MODEL_RESPONSE_PARSE_FAILED", "图片生成模型不能为空");
+  }
+  if ((request.tools ?? []).some(spec => spec.name === "image_generation")) {
+    throw new AgentRuntimeError("E_MODEL_RESPONSE_PARSE_FAILED", "本地工具名 image_generation 与原生图片生成工具冲突");
+  }
   for (const key of Object.keys(request.extraBody ?? {})) {
     if (STRUCTURAL_FIELDS.has(key)) throw new AgentRuntimeError("E_MODEL_RESPONSE_PARSE_FAILED", `额外参数不能覆盖会话结构：${key}`);
   }
@@ -51,8 +61,11 @@ export function prepareModelCall(input: {
   const origin = modelMessageOrigin(adapter, { ...config, model: request.model });
   const messages = projectModelHistory(request.messages, origin, input.onHistoryDiagnostic);
   applyAnthropicCache(messages, adapter, request.model);
+  const openai = adapter.transport === "responses"
+    ? createOpenAI({ baseURL, apiKey: config.apiKey, fetch: compatibilityFetch })
+    : undefined;
   const model = adapter.transport === "responses"
-    ? createOpenAI({ baseURL, apiKey: config.apiKey, fetch: compatibilityFetch }).responses(request.model)
+    ? openai!.responses(request.model)
     : adapter.transport === "anthropic"
       ? createAnthropic({ baseURL, fetch: compatibilityFetch,
         ...((adapter.capability.anthropicAuthStyle ?? adapter.capability.authStyle) === "bearer"
@@ -65,6 +78,10 @@ export function prepareModelCall(input: {
     description: spec.description, inputSchema: jsonSchema<Record<string, unknown>>(spec.parameters),
     ...(adapter.transport !== "anthropic" ? { strict: false } : {}),
   })]));
+  if (imageGeneration) {
+    tools.image_generation = openai!.tools.imageGeneration({ model: imageGeneration.model.trim(), outputFormat: "png",
+      size: "auto", quality: "auto", partialImages: 0 });
+  }
   const choice = policy.tool_choice;
   const named = typeof choice === "object" && choice !== null
     ? (choice as { name?: string; function?: { name?: string } }).name ?? (choice as { function?: { name?: string } }).function?.name

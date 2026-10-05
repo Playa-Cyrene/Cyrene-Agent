@@ -44,6 +44,8 @@ interface ChatWindowApi {
   getSkillSuggestions: (mode: SkillSuggestionMode) => Promise<SkillSuggestionItem[]>;
   /** 读取本地图片并转为 dataUrl 预览；失败返回 ok=false + error */
   getImagePreview: (filePath: string) => Promise<{ ok: boolean; dataUrl?: string; error?: string }>;
+  /** 通过系统保存对话框导出模型生成的图片。 */
+  saveGeneratedImage: (filePath: string, name: string) => Promise<{ ok: boolean; cancelled?: boolean; error?: string }>;
   /** 主进程通用设置（只声明渲染端读取的字段） */
   getGeneralSettings: () => Promise<{
     language?: string;
@@ -91,6 +93,7 @@ interface SettingsWindowApi {
     apiKey: string;
     explicitTransport?: import("../shared/api-endpoint").ApiTransport;
     reasoning?: import("../shared/reasoning").ReasoningPreference;
+    imageGeneration?: { enabled: boolean; model: string };
     contextWindowTokens?: number;
     multimodal?: boolean;
     modelOptions?: Record<string, { contextWindowTokens?: number; multimodal?: boolean }>;
@@ -106,6 +109,7 @@ interface SettingsWindowApi {
     apiKey: string;
     explicitTransport?: import("../shared/api-endpoint").ApiTransport;
     reasoning?: import("../shared/reasoning").ReasoningPreference;
+    imageGeneration?: { enabled: boolean; model: string };
     contextWindowTokens?: number;
     multimodal?: boolean;
     modelOptions?: Record<string, { contextWindowTokens?: number; multimodal?: boolean }>;

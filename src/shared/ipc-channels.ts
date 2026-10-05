@@ -58,6 +58,7 @@ export const IPC = {
   CHAT_PASTE_FILES: "chat:paste-files",
   CHAT_CAPTION_IMAGE: "chat:caption-image",
   CHAT_GET_IMAGE_PREVIEW: "chat:get-image-preview",
+  CHAT_SAVE_GENERATED_IMAGE: "chat:save-generated-image",
   CHAT_GET_IMAGE_SEND_STRATEGY: "chat:get-image-send-strategy",
   // 推理下拉（chat 窗口：原子读 + providerKey 写）
   CHAT_GET_REASONING_STATE: "chat:get-reasoning-state",

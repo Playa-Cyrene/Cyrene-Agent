@@ -64,6 +64,8 @@ export interface DumpResponseMeta {
   thinking?: string;
   toolCalls?: unknown[];
   usage?: unknown;
+  /** Generated image metadata only; image bytes are deliberately never dumped. */
+  generatedImages?: Array<{ id: string; mime: string; byteLength: number }>;
   /** 厂商原始返回（SDK finalMessage / OpenAI lastChunk 等） */
   raw: unknown;
   error?: string;
@@ -122,6 +124,7 @@ export function dumpResponse(traceId: string, meta: DumpResponseMeta): void {
     thinking: meta.thinking,
     toolCalls: meta.toolCalls,
     usage: meta.usage,
+    generatedImages: meta.generatedImages,
     raw: meta.raw,
     error: meta.error,
   };

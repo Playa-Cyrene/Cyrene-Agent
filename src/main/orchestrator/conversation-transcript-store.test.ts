@@ -295,6 +295,32 @@ describe("ConversationTranscriptStore", () => {
     await expect(store.read("c1")).rejects.toThrow("TRANSCRIPT_CORRUPT_ROW");
   });
 
+  it("accepts stable generated image references but rejects encoded image bytes", async () => {
+    const { root, store } = createStore();
+    const attachment = {
+      id: "image-1",
+      kind: "image",
+      name: "generated-1.png",
+      filePath: path.join(root, "generated-1.png"),
+      mime: "image/png",
+      source: "model",
+      byteLength: 20,
+      status: "done",
+    };
+    await store.append("c1", {
+      id: "assistant-1", at: 1_000, kind: "assistant",
+      payload: { role: "assistant", content: "", attachments: [attachment] },
+    });
+    expect((await store.read("c1")).entries[0]).toMatchObject({
+      kind: "assistant", payload: { attachments: [attachment] },
+    });
+
+    await expect(store.append("c2", {
+      id: "assistant-2", at: 1_000, kind: "assistant",
+      payload: { role: "assistant", content: "", attachments: [{ ...attachment, base64: "encoded-image" }] as never },
+    })).rejects.toThrow("TRANSCRIPT_CORRUPT_ROW");
+  });
+
   it("rejects malformed canonical tool result rows", async () => {
     const { store, jsonlPath } = createStore();
     await store.append("c1", userDraft("e1", "u1", 1, "one"));

@@ -65,6 +65,8 @@ export interface AgentLoopEvent {
   taskPlan?: unknown;
   /** 上下文容量快照（chat-loop 发射；type 为 "context_usage"）。 */
   contextUsage?: import("../../shared/context-usage").ContextUsageSnapshot;
+  attachments?: import("../../shared/generated-image").GeneratedImageAttachment[];
+  roundId?: string;
 }
 
 import type { SocialAtom } from "../social-context/types";
@@ -87,6 +89,7 @@ export interface AgentLoopSettings {
   explicitTransport?: "openai" | "anthropic" | "responses" | "auto";
   reasoning?: import("../../shared/reasoning").ReasoningPreference;
   manualReasoning?: import("../../shared/manual-reasoning").ManualReasoningConfig;
+  imageGeneration?: { enabled: boolean; model: string };
   /** 用户设置的模型上下文窗口（Token）。用于非 code 模式的对话压缩触发阈值。 */
   contextWindowTokens: number;
   /** 主模型请求的额外重试次数；旧调用回退到 5。 */
@@ -108,6 +111,10 @@ export interface CyreneRunOptions {
    *   不得再各自生成 harness-${Date.now()} 等本地 ID。
    */
   runId?: string;
+  /** UI assistant 占位消息 ID，用于图片事件和文本消息保持同一关联。 */
+  assistantTurnId?: string;
+  /** 写入用户数据目录的生成图片存储。 */
+  generatedImageStore?: import("../chats/generated-image-store").GeneratedImageStore;
   /** 原始消息（不含 system）。system 由 chat-loop / harness-adapter 按 promptLayers 组装，不随消息持久化。 */
   messages: ChatMessage[];
   conversationId?: string;
@@ -328,6 +335,12 @@ export function toAguiEvent(event: AgentLoopEvent): BaseEvent {
         name: "cyrene.context.usage",
         value: event.contextUsage,
       } as BaseEvent;
+    case "image_attachments":
+      return {
+        type: EventType.CUSTOM,
+        name: "cyrene.image_attachments",
+        value: { messageId: event.messageId, roundId: event.roundId, attachments: event.attachments },
+      } as BaseEvent;
     case "model_retry":
       return {
         type: EventType.CUSTOM,
@@ -482,6 +495,9 @@ export class CyreneAgent extends AbstractAgent {
               signal: abortController.signal,
               mode: options.conversationMode,
               transcriptSink: options.transcriptSink,
+              conversationId: options.conversationId,
+              assistantTurnId: options.assistantTurnId,
+              generatedImageStore: options.generatedImageStore,
             }));
           } else {
             const executeTool = (tc: Parameters<typeof executeToolCall>[0], runnableToolIds: Set<string>) => executeToolCall(tc, runnableToolIds, {

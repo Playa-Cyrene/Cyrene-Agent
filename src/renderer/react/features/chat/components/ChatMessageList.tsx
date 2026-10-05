@@ -6,6 +6,7 @@ import { resolveAsset } from "../../../../../shared/renderer-base";
 import { useCyreneAvatar } from "../../../hooks/useCyreneAvatar";
 import type { AgentRoundRecord, ChatMessage, ChatMessageChannelSource, ConversationMode, ProcessMessageRecord, ReasoningBlock, RunActivityRecord, TaskDelegationDisplayRecord, ToolExecutionRecord, ToolFileChange } from "../../../../../shared/chat-types";
 import type { ContextUsageSnapshot } from "../../../../../shared/context-usage";
+import type { GeneratedImageAttachment } from "../../../../../shared/generated-image";
 import type { ModelRetryStatus } from "../../../../../shared/model-retry";
 import thinkingMoodUrl from "../../../assets/status-moods/思考中.png?url";
 import completedThinkingMoodUrl from "../../../assets/status-moods/提醒.png?url";
@@ -42,6 +43,8 @@ import { Archive, ScanLine } from "lucide-react";
 import type { BrowserElementSelection } from "../../../../../shared/browser-panel-types";
 import { Marker, MarkerContent, MarkerIcon } from "../../../components/ui/marker";
 import { VirtualChatMessageList } from "./VirtualChatMessageList";
+import { AttachmentImage } from "./AttachmentImage";
+import { GeneratedImageAttachments } from "./GeneratedImageAttachments";
 
 export interface ChatMessageItem {
   id: string;
@@ -85,6 +88,9 @@ export interface ChatMessageItem {
 }
 
 export interface ChatMessageAttachment {
+  id?: string;
+  source?: string;
+  byteLength?: number;
   name: string;
   kind: string;
   filePath?: string;
@@ -288,19 +294,30 @@ function AssistantContent({
   streaming,
   stickerUrl,
   channelSource,
+  attachments,
 }: {
   content: string;
   streaming: boolean;
   stickerUrl?: string;
   channelSource?: ChatMessageChannelSource;
+  attachments?: ChatMessageAttachment[];
 }) {
+  const generatedImages = (attachments ?? []).filter(isGeneratedImageAttachment);
   return (
     <div className="cy-message__assistant-body">
       {channelSource && <ChannelSourceLabel source={channelSource} direction="outgoing" />}
       {content && <MarkdownContent content={content} streaming={streaming} />}
+      <GeneratedImageAttachments attachments={generatedImages} />
       {stickerUrl && <img className="cy-message__sticker" src={stickerUrl} alt={t("messageList.assistantStickerAlt")} draggable={false} />}
     </div>
   );
+}
+
+function isGeneratedImageAttachment(attachment: ChatMessageAttachment): attachment is ChatMessageAttachment & GeneratedImageAttachment {
+  return attachment.kind === "image" && attachment.source === "model"
+    && typeof attachment.id === "string" && typeof attachment.filePath === "string"
+    && attachment.mime === "image/png" && typeof attachment.byteLength === "number"
+    && attachment.status === "done";
 }
 
 const channelNameKeys: Record<ChatMessageChannelSource["channel"], string> = {
@@ -884,42 +901,6 @@ function UserAttachments({ attachments }: { attachments: ChatMessageAttachment[]
   );
 }
 
-function AttachmentImage({ attachment }: { attachment: ChatMessageAttachment }) {
-  const [src, setSrc] = useState(attachment.previewUrl);
-  // blob: 预览 URL 只在当前页面有效，聊天记录持久化后刷新必失效；只允许一次磁盘重读兜底
-  const diskFallbackTriedRef = useRef(false);
-
-  function readFromDisk(): void {
-    if (!attachment.filePath) return;
-    void window.chat?.getImagePreview?.(attachment.filePath).then((result) => {
-      if (result.ok && result.dataUrl) setSrc(result.dataUrl);
-    });
-  }
-
-  useEffect(() => {
-    setSrc(attachment.previewUrl);
-    diskFallbackTriedRef.current = false;
-    if ((!attachment.previewUrl || attachment.previewUrl.startsWith("file:")) && attachment.filePath) {
-      let active = true;
-      void window.chat?.getImagePreview?.(attachment.filePath).then((result) => {
-        if (active && result.ok && result.dataUrl) setSrc(result.dataUrl);
-      });
-      return () => {
-        active = false;
-      };
-    }
-  }, [attachment.filePath, attachment.previewUrl]);
-
-  // 历史 blob: URL 加载失败时从磁盘重读，修复刷新后的存量裂图
-  function handleImageError(): void {
-    if (diskFallbackTriedRef.current) return;
-    diskFallbackTriedRef.current = true;
-    readFromDisk();
-  }
-
-  return <img src={src} alt={attachment.name} draggable={false} onError={handleImageError} />;
-}
-
 function UserContent({
   content,
   stickerUrl,
@@ -1077,12 +1058,13 @@ function createRoles(
     variant: "filled" as const,
     rootClassName: "cy-message cy-message--assistant",
     avatar: <AssistantMessageAvatar />,
-    contentRender: (content: string, info: { extraInfo?: { streaming?: boolean; stickerUrl?: string; channelSource?: ChatMessageChannelSource } }) => (
+    contentRender: (content: string, info: { extraInfo?: { streaming?: boolean; stickerUrl?: string; channelSource?: ChatMessageChannelSource; attachments?: ChatMessageAttachment[] } }) => (
       <AssistantContent
         content={content}
         streaming={Boolean(info.extraInfo?.streaming)}
         stickerUrl={info.extraInfo?.stickerUrl}
         channelSource={info.extraInfo?.channelSource}
+        attachments={info.extraInfo?.attachments}
       />
     ),
     footer: (content: string, info: { extraInfo?: { messageId?: string; streaming?: boolean; at?: number } }) => (
@@ -1233,7 +1215,7 @@ function convertMessage(message: ChatMessageItem, enabledStickers: readonly Enab
   }
 
   const assistantItems: BubbleItemType[] = [];
-  const stages = assistantRenderStages(message);
+  const stages = assistantRenderStages({ ...message, hasAttachments: Boolean(message.attachments?.length) });
   if (message.waitingForFirstEvent && !message.runActivity) {
     assistantItems.push({
       key: `${message.id}-waiting`,
@@ -1319,6 +1301,7 @@ function convertMessage(message: ChatMessageItem, enabledStickers: readonly Enab
         ttsCacheKey: message.ttsCacheKey,
         stickerUrl: message.sticker ? resolveStickerUrl(message.sticker, enabledStickers) : undefined,
         channelSource: message.channelSource,
+        attachments: message.attachments,
       },
     });
   }

@@ -74,4 +74,50 @@ describe("AI SDK 厂商策略兼容", () => {
     expect(() => prepareModelCall({ adapter: getAdapterForConfig(config), config, stream: false,
       request: { model: config.model, messages: [], extraBody: { input: [] } } })).toThrow("额外参数不能覆盖会话结构");
   });
+
+  it("仅在启用的 Responses 主请求中注册 OpenAI 图片生成工具", async () => {
+    const config: VendorConfig = { provider: "ChatGPT", model: "gpt-test", explicitTransport: "responses",
+      baseUrl: "https://proxy.test/v1", apiKey: "key" };
+    let sent: any;
+    vi.stubGlobal("fetch", vi.fn(async (_url, init) => {
+      sent = JSON.parse(init.body);
+      return jsonResponse(responseBody("responses"));
+    }));
+
+    await generateChatWithAiSdk({ adapter: getAdapterForConfig(config), config, timeoutMs: 2000, request: {
+      model: config.model,
+      messages: [{ role: "user", content: "画一只猫" }],
+      imageGeneration: { enabled: true, model: "gpt-image-2.5-flare" },
+    } });
+
+    const imageTool = sent.tools.find((tool: any) => tool.type === "image_generation");
+    expect(imageTool).toMatchObject({ type: "image_generation", model: "gpt-image-2.5-flare",
+      output_format: "png", size: "auto", quality: "auto", partial_images: 0 });
+  });
+
+  it("不在关闭或辅助请求中注册图片生成工具", async () => {
+    const config: VendorConfig = { provider: "ChatGPT", model: "gpt-test", explicitTransport: "responses",
+      baseUrl: "https://proxy.test/v1", apiKey: "key" };
+    const sent: any[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (_url, init) => {
+      sent.push(JSON.parse(init.body));
+      return jsonResponse(responseBody("responses"));
+    }));
+
+    for (const imageGeneration of [undefined, { enabled: false, model: "gpt-image-2.5-flare" }]) {
+      await generateChatWithAiSdk({ adapter: getAdapterForConfig(config), config, timeoutMs: 2000,
+        request: { model: config.model, messages: [{ role: "user", content: "你好" }], imageGeneration } });
+    }
+
+    expect(sent.every(body => !body.tools?.some((tool: any) => tool.type === "image_generation"))).toBe(true);
+  });
+
+  it("拒绝图片生成工具名与本地工具冲突", () => {
+    const config: VendorConfig = { provider: "ChatGPT", model: "gpt-test", explicitTransport: "responses",
+      baseUrl: "https://proxy.test/v1", apiKey: "key" };
+    expect(() => prepareModelCall({ adapter: getAdapterForConfig(config), config, stream: false, request: {
+      model: config.model, messages: [], imageGeneration: { enabled: true, model: "gpt-image-2.5-flare" },
+      tools: [{ ...weatherTool, name: "image_generation" }],
+    } })).toThrow("image_generation");
+  });
 });
