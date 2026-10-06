@@ -68,22 +68,35 @@ function isRevokedRefreshToken(error: unknown): boolean {
   return root.response?.data?.error === "invalid_grant" || root.code === "invalid_grant";
 }
 
-function safeAuthFailureCode(error: unknown): { code?: string; status?: number } {
+function safeAuthFailureCode(error: unknown): { code?: string; parameterIssue?: string; status?: number } {
   if (!error || typeof error !== "object") return {};
   const root = error as {
     code?: unknown;
     status?: unknown;
-    response?: { status?: unknown; data?: { error?: unknown } };
+    response?: { status?: unknown; data?: { error?: unknown; error_description?: unknown } };
   };
   const candidate = root.response?.data?.error ?? root.code;
   const code = typeof candidate === "string" && /^[A-Za-z0-9_.-]{1,64}$/.test(candidate)
     ? candidate
     : undefined;
+  const description = typeof root.response?.data?.error_description === "string"
+    ? root.response.data.error_description.toLowerCase()
+    : "";
+  const parameter = /\b(code_verifier|redirect_uri|client_id|client_secret|grant_type|code|scope)\b/i.exec(description)?.[1]?.toLowerCase();
+  const problem = /\b(missing|required)\b/i.test(description)
+    ? "missing"
+    : /\b(invalid|malformed|unsupported)\b/i.test(description)
+      ? "invalid"
+      : undefined;
   const rawStatus = root.response?.status ?? root.status;
   const status = typeof rawStatus === "number" && Number.isInteger(rawStatus) && rawStatus >= 100 && rawStatus <= 599
     ? rawStatus
     : undefined;
-  return { ...(code ? { code } : {}), ...(status ? { status } : {}) };
+  return {
+    ...(code ? { code } : {}),
+    ...(problem && parameter ? { parameterIssue: `${problem}_${parameter}` } : {}),
+    ...(status ? { status } : {}),
+  };
 }
 
 function reply(res: import("node:http").ServerResponse, status: number, message: string): void {
@@ -364,7 +377,7 @@ export class GmailAuthService {
         ? "reauthorization_required"
         : "disconnected";
       const detail = safeAuthFailureCode(error);
-      const diagnostic = [failureStage, detail.code, detail.status ? `HTTP_${detail.status}` : undefined]
+      const diagnostic = [failureStage, detail.code, detail.parameterIssue, detail.status ? `HTTP_${detail.status}` : undefined]
         .filter((item): item is string => Boolean(item))
         .join("_");
       reply(res, 400, `Gmail could not be connected (${diagnostic}). Return to the app and try again.`);
