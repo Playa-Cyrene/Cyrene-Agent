@@ -380,7 +380,10 @@ export class GmailAuthService {
       const diagnostic = [failureStage, detail.code, detail.parameterIssue, detail.status ? `HTTP_${detail.status}` : undefined]
         .filter((item): item is string => Boolean(item))
         .join("_");
-      reply(res, 400, `Gmail could not be connected (${diagnostic}). Return to the app and try again.`);
+      const guidance = detail.parameterIssue === "missing_client_secret"
+        ? "Use an OAuth client of type Desktop app, update CYRENE_GMAIL_CLIENT_ID, and restart the app. Do not embed a Web application client secret in the desktop app."
+        : "Return to the app and try again.";
+      reply(res, 400, `Gmail could not be connected (${diagnostic}). ${guidance}`);
       await this.finishFlow(flow, { state });
     }
   }
