@@ -289,7 +289,9 @@ export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
   });
 
   ipc.handle(IPC.OPEN_EXTERNAL, async (_event, url: string) => {
-    if (!url.startsWith("http://") && !url.startsWith("https://")) {
+    // mailto: 用于「报告问题」里的发邮件入口，交给系统默认邮件客户端；其余协议一律拒绝
+    const allowed = url.startsWith("http://") || url.startsWith("https://") || url.startsWith("mailto:");
+    if (!allowed) {
       return { ok: false, error: "Invalid URL" };
     }
     try {
