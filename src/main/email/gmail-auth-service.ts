@@ -4,7 +4,7 @@ import { AddressInfo } from "node:net";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { CodeChallengeMethod, OAuth2Client, type Credentials } from "google-auth-library";
 import type { GmailConnectionState, GmailAccountStatus } from "../../shared/gmail-types";
-import { getGmailClientId } from "./gmail-client-config";
+import { getGmailClientId, getGmailClientSecret } from "./gmail-client-config";
 import { GmailTokenStore, type GmailTokens } from "./gmail-token-store";
 
 export const GMAIL_MODIFY_SCOPE = "https://www.googleapis.com/auth/gmail.modify";
@@ -105,7 +105,8 @@ function reply(res: import("node:http").ServerResponse, status: number, message:
 }
 
 function createOAuthClient(options: { clientId: string; redirectUri?: string }): OAuth2Client {
-  const client = new OAuth2Client(options);
+  const clientSecret = getGmailClientSecret();
+  const client = new OAuth2Client({ ...options, ...(clientSecret ? { clientSecret } : {}) });
   // Use Chromium's networking stack so OAuth and Gmail API calls honor the app's
   // system proxy/PAC configuration, matching other Electron network requests.
   client.transporter.defaults.fetchImplementation = (input, init) =>
@@ -381,7 +382,7 @@ export class GmailAuthService {
         .filter((item): item is string => Boolean(item))
         .join("_");
       const guidance = detail.parameterIssue === "missing_client_secret"
-        ? "Use an OAuth client of type Desktop app, update CYRENE_GMAIL_CLIENT_ID, and restart the app. Do not embed a Web application client secret in the desktop app."
+        ? "Set CYRENE_GMAIL_CLIENT_SECRET to the secret from the same Desktop app OAuth client, then rebuild and restart. Never use a Web application client secret."
         : "Return to the app and try again.";
       reply(res, 400, `Gmail could not be connected (${diagnostic}). ${guidance}`);
       await this.finishFlow(flow, { state });
