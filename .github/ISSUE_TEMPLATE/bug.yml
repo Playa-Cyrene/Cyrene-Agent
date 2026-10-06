@@ -9,7 +9,7 @@ body:
         从源码构建需要 **Node.js 24 LTS** 和 **pnpm 10.33.0**（`pnpm install` / `pnpm run build`）。
         Electron runtime 当前为 **Electron 43**（暂不升级）。
 
-        > 如果是应用运行中的功能异常（不是安装/构建），请返回选择「运行时 Bug 🐛」。
+        > 如果是应用运行中的功能异常（不是安装/构建），请返回选择「运行时 Bug（安装包）🐛」或「运行时 Bug（源码）🐛」。
 
   - type: dropdown
     id: os

@@ -1,5 +1,5 @@
-name: 运行时 Bug（安装包）🐛
-description: 使用预编译安装包时出现的功能异常、偶现问题、崩溃等
+name: 运行时 Bug（源码）🐛
+description: 从仓库源码运行（git clone + pnpm run dev）时出现的功能异常、偶现问题、崩溃等
 labels: ["bug", "needs-triage"]
 body:
   - type: markdown
@@ -9,17 +9,15 @@ body:
         请尽量写清触发条件和复现步骤；偶现问题请注明出现频率（如「上千次出一次」）。
 
         > 如果是 pnpm install / 构建失败，请返回选择「安装/构建问题 🔧」。
-        > 本模板适用于从 GitHub Releases 下载的安装包；如果你是从仓库源码运行（git clone + pnpm run dev），请返回选择「运行时 Bug（源码）🐛」。
-        > 涉及代码实现或根因判断时，请以问题版本对应的仓库源码为依据，并提供源码路径、行号或调用链。
-        > 解包后的 `app.asar`（Electron 应用归档）中的压缩或编译代码、运行日志，可以证明问题在某版本中出现，但不能单独用来反推业务逻辑或确认根因。
-        > 如果暂时找不到源码依据，请先描述可复现的现象，并将根因判断标为假设。仅依据编译产物的推断可能无法核实；维护者可能要求补充源码依据，无法确认时可能关闭问题单。
+        > 本模板适用于从仓库源码运行（git clone + pnpm install / pnpm run dev）；如果你用的是 GitHub Releases 下载的安装包，请返回选择「运行时 Bug（安装包）🐛」。
+        > 请务必填写当前提交号：`package.json` 里的版本号只代表打包时的版本，无法区分不同的代码状态，只有提交号能定位到你实际运行的代码。
 
   - type: input
-    id: app-version
+    id: commit
     attributes:
-      label: 应用版本
-      description: 设置页 / 关于页显示的版本号（如 v1.1.9）
-      placeholder: "v1.x.x"
+      label: 提交号（commit）
+      description: 在仓库目录运行 `git rev-parse --short HEAD` 的输出
+      placeholder: "如 a1b2c3d"
     validations:
       required: true
 
@@ -90,8 +88,8 @@ body:
     attributes:
       label: 源码依据（涉及实现或根因判断时填写）
       description: |
-        请对应到上面填写的应用版本，提供仓库源码的相对路径、行号及相关调用链。
-        还没定位到源码时可填写「尚未定位」；只依据打包产物分析时，请将结论标为假设。
+        请对应到上面填写的提交号，提供仓库源码的相对路径、行号及相关调用链。
+        还没定位到源码时可填写「尚未定位」。
       placeholder: |
         文件与行号：src/main/...:123
         调用链或判断依据：
