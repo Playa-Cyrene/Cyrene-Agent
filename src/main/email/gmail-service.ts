@@ -43,8 +43,18 @@ export interface GmailServiceOptions {
 
 type GmailApi = gmail_v1.Gmail;
 
+export interface GmailServiceDiagnostic {
+  status?: number;
+  apiReason?: string;
+  transportCode?: string;
+}
+
 export class GmailServiceError extends Error {
-  constructor(readonly code: GmailErrorCode, message = messageForCode(code)) {
+  constructor(
+    readonly code: GmailErrorCode,
+    message = messageForCode(code),
+    readonly diagnostic?: GmailServiceDiagnostic,
+  ) {
     super(message);
     this.name = "GmailServiceError";
   }
@@ -73,7 +83,7 @@ function errorStatus(error: unknown): number | undefined {
   if (!error || typeof error !== "object") return undefined;
   const value = error as { status?: unknown; code?: unknown; response?: { status?: unknown } };
   const status = Number(value.response?.status ?? value.status);
-  return Number.isFinite(status) ? status : undefined;
+  return Number.isInteger(status) && status >= 100 && status <= 599 ? status : undefined;
 }
 
 function errorCode(error: unknown): string {
@@ -83,21 +93,84 @@ function errorCode(error: unknown): string {
   return typeof value.message === "string" ? value.message : "";
 }
 
+const SAFE_GMAIL_API_REASONS = new Set([
+  "accessNotConfigured",
+  "authError",
+  "backendError",
+  "badRequest",
+  "dailyLimitExceeded",
+  "domainPolicy",
+  "failedPrecondition",
+  "forbidden",
+  "insufficientPermissions",
+  "invalidArgument",
+  "notFound",
+  "rateLimitExceeded",
+  "userRateLimitExceeded",
+]);
+
+const SAFE_TRANSPORT_CODES = new Set([
+  "CERT_HAS_EXPIRED",
+  "ECONNABORTED",
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "EAI_AGAIN",
+  "ENOTFOUND",
+  "ETIMEDOUT",
+  "ERR_NETWORK",
+  "ESOCKETTIMEDOUT",
+]);
+
+function gmailServiceDiagnostic(error: unknown): GmailServiceDiagnostic | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  const root = error as {
+    code?: unknown;
+    response?: {
+      status?: unknown;
+      data?: {
+        error?: string | {
+          errors?: Array<{ reason?: unknown }>;
+        };
+      };
+    };
+  };
+  const status = errorStatus(error);
+  const apiError = root.response?.data?.error;
+  const candidateReason = typeof apiError === "object" && Array.isArray(apiError.errors)
+    ? apiError.errors.find((item) => typeof item?.reason === "string")?.reason
+    : undefined;
+  const apiReason = typeof candidateReason === "string" && SAFE_GMAIL_API_REASONS.has(candidateReason)
+    ? candidateReason
+    : undefined;
+  const transportCode = typeof root.code === "string" && SAFE_TRANSPORT_CODES.has(root.code)
+    ? root.code
+    : undefined;
+  if (status === undefined && apiReason === undefined && transportCode === undefined) return undefined;
+  return {
+    ...(status !== undefined ? { status } : {}),
+    ...(apiReason ? { apiReason } : {}),
+    ...(transportCode ? { transportCode } : {}),
+  };
+}
+
 function mapGmailError(error: unknown, notFoundCode: "message_not_found" | "draft_not_found" = "message_not_found"): GmailServiceError {
   if (error instanceof GmailServiceError) return error;
   const code = errorCode(error);
-  if (code === "GMAIL_NOT_CONFIGURED") return new GmailServiceError("not_configured");
-  if (code === "GMAIL_SAFE_STORAGE_UNAVAILABLE") return new GmailServiceError("safe_storage_unavailable");
-  if (code === "GMAIL_NOT_CONNECTED") return new GmailServiceError("not_connected");
-  if (code === "GMAIL_REAUTH_REQUIRED") return new GmailServiceError("reauthorization_required");
-  if (code === "GMAIL_REFRESH_TEMPORARY_FAILURE") return new GmailServiceError("network_error");
+  const diagnostic = gmailServiceDiagnostic(error);
+  const mapped = (errorCode: GmailErrorCode) => new GmailServiceError(errorCode, undefined, diagnostic);
+  if (code === "GMAIL_NOT_CONFIGURED") return mapped("not_configured");
+  if (code === "GMAIL_SAFE_STORAGE_UNAVAILABLE") return mapped("safe_storage_unavailable");
+  if (code === "GMAIL_NOT_CONNECTED") return mapped("not_connected");
+  if (code === "GMAIL_REAUTH_REQUIRED") return mapped("reauthorization_required");
+  if (code === "GMAIL_REFRESH_TEMPORARY_FAILURE") return mapped("network_error");
   const status = errorStatus(error);
-  if (status === 404) return new GmailServiceError(notFoundCode);
-  if (status === 401) return new GmailServiceError("reauthorization_required");
-  if (status === 429 || (status === 403 && /rate.?limit|quota/i.test(code))) return new GmailServiceError("rate_limited");
-  if (status === 400 || status === 403) return new GmailServiceError("invalid_request");
-  if (status === undefined || /ECONN|ETIMEDOUT|ENOTFOUND|EAI_AGAIN/i.test(code)) return new GmailServiceError("network_error");
-  return new GmailServiceError("unknown");
+  if (status === 404) return mapped(notFoundCode);
+  if (status === 401) return mapped("reauthorization_required");
+  if (status === 403 && diagnostic?.apiReason === "insufficientPermissions") return mapped("insufficient_scope");
+  if (status === 429 || (status === 403 && /rate.?limit|quota/i.test(code))) return mapped("rate_limited");
+  if (status === 400 || status === 403) return mapped("invalid_request");
+  if (status === undefined || /ECONN|ETIMEDOUT|ENOTFOUND|EAI_AGAIN/i.test(code)) return mapped("network_error");
+  return mapped("unknown");
 }
 
 function validateId(value: string, field = "id"): string {

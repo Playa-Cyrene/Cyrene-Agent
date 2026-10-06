@@ -51,13 +51,14 @@ export function bootstrapConfigGetters(ctx: BootstrapConfigContext): void {
   setUserTimezoneConfig(() => loadUserProfile().timezone);
 
   // 注入用户选择卡片回调：工具调 ask_user_choice 时发 Custom 事件给 react 聊天窗口
-  setChoiceCardSender((cardData) => {
+  setChoiceCardSender((cardData, runId) => {
     const win = getReactChatWindow();
     if (win) {
       win.webContents.send(IPC.AGUI_EVENT, {
         type: "CUSTOM",
         name: "cyrene.choice",
         value: cardData,
+        ...(runId ? { runId } : {}),
       });
     }
   });
@@ -71,6 +72,7 @@ export function bootstrapConfigGetters(ctx: BootstrapConfigContext): void {
         type: "CUSTOM",
         name: "cyrene.choice.dismiss",
         value: settlement,
+        ...(settlement.runId ? { runId: settlement.runId } : {}),
       });
     }
   });

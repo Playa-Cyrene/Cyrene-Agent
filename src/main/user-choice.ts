@@ -83,13 +83,13 @@ const pendingChoices = new Map<string, PendingChoice>();
 let choiceCounter = 0;
 
 /** 注入的卡片回调：由 index.ts 启动时设置，把 ChoiceCardData 包成 CUSTOM 事件发给渲染端。 */
-let choiceCardSender: ((card: ChoiceCardData) => void) | null = null;
+let choiceCardSender: ((card: ChoiceCardData, runId?: string) => void) | null = null;
 
 /** 注入的结算回调：由 index.ts 启动时设置，老版选择卡超时结算时通知渲染端清卡。 */
 let choiceDismissSender: ((settlement: ChoiceSettlement) => void) | null = null;
 
 /** index.ts 启动时调用，注入卡片发送回调。 */
-export function setChoiceCardSender(sender: (card: ChoiceCardData) => void): void {
+export function setChoiceCardSender(sender: (card: ChoiceCardData, runId?: string) => void): void {
   choiceCardSender = sender;
 }
 
@@ -127,9 +127,9 @@ export function requestUserChoice(
       if (requestOptions.sensitive) console.warn(LOG_PREFIX, "敏感选择超时（" + choiceTimeout + "ms）");
       else console.warn(LOG_PREFIX, "选择超时（" + choiceTimeout + "ms），使用默认值:", defaultValue ?? "(空)");
       // 通知渲染端清卡：超时已用默认值结算，卡片再点也只会得到 ok:false
-      choiceDismissSender?.({ id, revision: 1, reason: "timeout" });
+      choiceDismissSender?.({ id, runId: requestOptions.runId, revision: 1, reason: "timeout" });
       // 注意力提醒：超时结算通知 ToastService 清 toast
-      toastEvents.publishChoiceDismiss({ cardId: id, revision: 1, reason: "timeout" });
+      toastEvents.publishChoiceDismiss({ cardId: id, runId: requestOptions.runId, revision: 1, reason: "timeout" });
       resolve(defaultValue ?? "");
     }, choiceTimeout);
 
@@ -143,7 +143,7 @@ export function requestUserChoice(
         cleanup();
         resolve(typeof value === "string" ? value : defaultValue ?? "");
         // 注意力提醒：用户作答即结算，通知 ToastService 清 toast
-        toastEvents.publishChoiceDismiss({ cardId: id, revision: 1, reason: "answered" });
+        toastEvents.publishChoiceDismiss({ cardId: id, runId: requestOptions.runId, revision: 1, reason: "answered" });
         return true;
       },
       timer,
@@ -157,8 +157,8 @@ export function requestUserChoice(
         if (!pending || pending.status !== "open") return;
         cleanup();
         pendingChoices.delete(id);
-        choiceDismissSender?.({ id, revision: 1, reason: "cancelled" });
-        toastEvents.publishChoiceDismiss({ cardId: id, revision: 1, reason: "cancelled" });
+        choiceDismissSender?.({ id, runId: requestOptions.runId, revision: 1, reason: "cancelled" });
+        toastEvents.publishChoiceDismiss({ cardId: id, runId: requestOptions.runId, revision: 1, reason: "cancelled" });
         reject(createAbortError());
       };
       if (requestOptions.signal.aborted) abortHandler();
@@ -172,10 +172,10 @@ export function requestUserChoice(
     else console.log(LOG_PREFIX, "发送选择请求:", id, question);
 
     if (choiceCardSender) {
-      choiceCardSender(payload);
+      choiceCardSender(payload, requestOptions.runId);
       // 注意力提醒：选择卡发布通知 ToastService
       if (!requestOptions.suppressToast) {
-        toastEvents.publishChoiceCard({ ...extractCardIdentity(payload), revision: 1 });
+        toastEvents.publishChoiceCard({ ...extractCardIdentity(payload), runId: requestOptions.runId, revision: 1 });
       }
     } else {
       // 没注入回调（理论上不会发生），直接返回默认值
