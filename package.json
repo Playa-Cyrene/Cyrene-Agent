@@ -151,7 +151,7 @@
     "chokidar": "^4.0.3",
     "cross-spawn": "^7.0.6",
     "diff": "^9.0.0",
-    "docx": "^9.7.1",
+    "docx": "^9.8.1",
     "electron-updater": "^6.8.9",
     "exceljs": "^4.4.0",
     "extract-zip": "^2.0.1",
