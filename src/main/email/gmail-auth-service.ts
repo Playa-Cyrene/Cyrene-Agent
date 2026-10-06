@@ -3,8 +3,9 @@ import { createServer, type Server } from "node:http";
 import { AddressInfo } from "node:net";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { CodeChallengeMethod, OAuth2Client, type Credentials } from "google-auth-library";
-import type { GmailConnectionState, GmailAccountStatus } from "../../shared/gmail-types";
+import type { GmailClientConfigStatus, GmailConnectionState, GmailAccountStatus } from "../../shared/gmail-types";
 import { getGmailClientId, getGmailClientSecret } from "./gmail-client-config";
+import { GmailClientConfigStore, type GmailClientCredentials } from "./gmail-client-config-store";
 import { GmailTokenStore, type GmailTokens } from "./gmail-token-store";
 
 export const GMAIL_MODIFY_SCOPE = "https://www.googleapis.com/auth/gmail.modify";
@@ -104,8 +105,7 @@ function reply(res: import("node:http").ServerResponse, status: number, message:
   res.end(message);
 }
 
-function createOAuthClient(options: { clientId: string; redirectUri?: string }): OAuth2Client {
-  const clientSecret = getGmailClientSecret();
+function createOAuthClient(options: { clientId: string; redirectUri?: string }, clientSecret?: string): OAuth2Client {
   const client = new OAuth2Client({ ...options, ...(clientSecret ? { clientSecret } : {}) });
   // Use Chromium's networking stack so OAuth and Gmail API calls honor the app's
   // system proxy/PAC configuration, matching other Electron network requests.
@@ -123,10 +123,57 @@ export class GmailAuthService {
     private readonly tokenStore = new GmailTokenStore(),
     private readonly getClientId: () => string | null = getGmailClientId,
     private readonly openExternal: (url: string) => Promise<void> = (url) => shell.openExternal(url),
+    private readonly clientConfigStore = new GmailClientConfigStore(),
   ) {}
 
+  async getClientConfigStatus(): Promise<GmailClientConfigStatus> {
+    const config = await this.getEffectiveClientConfig().catch(() => this.getEnvironmentClientConfig());
+    return {
+      clientId: config?.clientId ?? "",
+      clientSecretConfigured: Boolean(config?.clientSecret),
+      secureStorageAvailable: this.clientConfigStore.isSecureStorageAvailable,
+    };
+  }
+
+  async saveClientConfig(clientIdInput: unknown, clientSecretInput: unknown): Promise<GmailClientConfigStatus> {
+    if (typeof clientIdInput !== "string" || typeof clientSecretInput !== "string") {
+      throw new Error("GMAIL_CLIENT_CONFIG_INVALID");
+    }
+    const clientId = clientIdInput.trim();
+    const enteredSecret = clientSecretInput.trim();
+    if (!clientId || clientId.length > 512 || /[\u0000-\u001f]/.test(clientId) || enteredSecret.length > 4096) {
+      throw new Error("GMAIL_CLIENT_CONFIG_INVALID");
+    }
+    if (!this.clientConfigStore.isSecureStorageAvailable) throw new Error("GMAIL_SAFE_STORAGE_UNAVAILABLE");
+
+    const current = await this.getEffectiveClientConfig().catch(() => this.getEnvironmentClientConfig());
+    const clientSecret = enteredSecret || (current?.clientId === clientId ? current.clientSecret : undefined);
+    const changed = current?.clientId !== clientId || (current?.clientSecret ?? "") !== (clientSecret ?? "");
+
+    if (changed) {
+      this.credentialEpoch += 1;
+      for (const flow of this.pending.values()) {
+        if (flow.finished) continue;
+        if (flow.committing) await flow.completion;
+        else await this.finishFlow(flow, { state: "disconnected" });
+      }
+    }
+
+    await this.clientConfigStore.save({ clientId, ...(clientSecret ? { clientSecret } : {}) });
+    if (changed) {
+      await this.serializeTokenWrite(() => this.tokenStore.clear());
+    }
+    return this.getClientConfigStatus();
+  }
+
   async getStatus(): Promise<GmailConnectionState> {
-    if (!this.getClientId()) return "not_configured";
+    let config: GmailClientCredentials | null;
+    try {
+      config = await this.getEffectiveClientConfig();
+    } catch {
+      return "reauthorization_required";
+    }
+    if (!config?.clientId) return "not_configured";
     if ([...this.pending.values()].some((flow) => !flow.finished)) return "authorizing";
     if (!this.tokenStore.isSecureStorageAvailable) return "reauthorization_required";
     try {
@@ -137,8 +184,8 @@ export class GmailAuthService {
   }
 
   async startAuthorization(): Promise<{ flowId: string }> {
-    const clientId = this.getClientId();
-    if (!clientId) throw new Error("GMAIL_NOT_CONFIGURED");
+    const config = await this.getEffectiveClientConfig();
+    if (!config?.clientId) throw new Error("GMAIL_NOT_CONFIGURED");
     if (!this.tokenStore.isSecureStorageAvailable) throw new Error("GMAIL_SAFE_STORAGE_UNAVAILABLE");
     if ([...this.pending.values()].some((flow) => !flow.finished)) throw new Error("GMAIL_AUTH_ALREADY_RUNNING");
 
@@ -155,7 +202,7 @@ export class GmailAuthService {
       const address = server.address();
       if (!address || typeof address === "string") throw new Error("GMAIL_AUTH_CALLBACK_UNAVAILABLE");
       const redirectUri = `http://127.0.0.1:${(address as AddressInfo).port}`;
-      const client = createOAuthClient({ clientId, redirectUri });
+      const client = createOAuthClient({ clientId: config.clientId, redirectUri }, config.clientSecret);
       const verifier = await client.generateCodeVerifierAsync();
       if (!verifier.codeChallenge) throw new Error("GMAIL_PKCE_UNAVAILABLE");
 
@@ -242,9 +289,9 @@ export class GmailAuthService {
       return current;
     });
     if (!tokens?.refresh_token) return;
-    const clientId = this.getClientId();
-    if (!clientId) return;
-    const client = createOAuthClient({ clientId });
+    const config = await this.getEffectiveClientConfig();
+    if (!config?.clientId) return;
+    const client = createOAuthClient({ clientId: config.clientId }, config.clientSecret);
     try {
       await client.revokeToken(tokens.refresh_token);
     } catch {
@@ -263,15 +310,15 @@ export class GmailAuthService {
   }
 
   async getAuthorizedClient(): Promise<OAuth2Client> {
-    const clientId = this.getClientId();
-    if (!clientId) throw new Error("GMAIL_NOT_CONFIGURED");
+    const config = await this.getEffectiveClientConfig();
+    if (!config?.clientId) throw new Error("GMAIL_NOT_CONFIGURED");
     if (!this.tokenStore.isSecureStorageAvailable) throw new Error("GMAIL_SAFE_STORAGE_UNAVAILABLE");
     const credentialEpoch = this.credentialEpoch;
     const tokens = await this.tokenStore.load();
     if (credentialEpoch !== this.credentialEpoch) throw new Error("GMAIL_NOT_CONNECTED");
     if (!tokens) throw new Error("GMAIL_NOT_CONNECTED");
 
-    const client = createOAuthClient({ clientId });
+    const client = createOAuthClient({ clientId: config.clientId }, config.clientSecret);
     client.setCredentials(credentialsFromTokens(tokens));
     client.on("tokens", (updated: Credentials) => {
       void this.persistRefreshedCredentials(updated, tokens, credentialEpoch);
@@ -382,7 +429,7 @@ export class GmailAuthService {
         .filter((item): item is string => Boolean(item))
         .join("_");
       const guidance = detail.parameterIssue === "missing_client_secret"
-        ? "Set CYRENE_GMAIL_CLIENT_SECRET to the secret from the same Desktop app OAuth client, then rebuild and restart. Never use a Web application client secret."
+        ? "Enter the matching Desktop app client ID and secret in Settings > Email, save again, and retry. Never use a Web application client secret."
         : "Return to the app and try again.";
       reply(res, 400, `Gmail could not be connected (${diagnostic}). ${guidance}`);
       await this.finishFlow(flow, { state });
@@ -400,6 +447,29 @@ export class GmailAuthService {
         // Keep token data out of logs. The next API call will surface reauthorization if persistence failed.
       }
     });
+  }
+
+  private async getEffectiveClientConfig(): Promise<GmailClientCredentials | null> {
+    if (this.clientConfigStore.isSecureStorageAvailable) {
+      const stored = await this.clientConfigStore.load();
+      if (stored) {
+        const environmentClientId = this.getClientId();
+        const environmentSecret = stored.clientId === environmentClientId ? getGmailClientSecret() : null;
+        return {
+          ...stored,
+          ...(!stored.clientSecret && environmentSecret ? { clientSecret: environmentSecret } : {}),
+        };
+      }
+    }
+
+    return this.getEnvironmentClientConfig();
+  }
+
+  private getEnvironmentClientConfig(): GmailClientCredentials | null {
+    const clientId = this.getClientId();
+    if (!clientId) return null;
+    const clientSecret = getGmailClientSecret();
+    return { clientId, ...(clientSecret ? { clientSecret } : {}) };
   }
 
   private serializeTokenWrite<T>(operation: () => Promise<T>): Promise<T> {

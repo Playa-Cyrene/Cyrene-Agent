@@ -54,6 +54,9 @@ export function registerGmailIpc(input: {
 }): void {
   const { ipc, auth, service, attachmentStore } = input;
   ipc.handle(IPC.GMAIL_GET_STATUS, () => status(auth, service));
+  ipc.handle(IPC.GMAIL_GET_CLIENT_CONFIG, () => auth.getClientConfigStatus());
+  ipc.handle(IPC.GMAIL_SAVE_CLIENT_CONFIG, (_event, clientId: unknown, clientSecret: unknown) =>
+    auth.saveClientConfig(clientId, clientSecret));
   ipc.handle(IPC.GMAIL_BEGIN_AUTHORIZATION, () => auth.startAuthorization());
   ipc.handle(IPC.GMAIL_WAIT_AUTHORIZATION, async (_event, flowId: unknown) => {
     if (!validFlowId(flowId)) return { state: "disconnected" } satisfies GmailAccountStatus;

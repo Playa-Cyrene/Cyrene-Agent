@@ -21,7 +21,7 @@ import { exposeMusicApi } from "./music";
 import type { AppUpdateApi, AppUpdateState } from "../shared/app-update";
 import type { ConversationMode } from "../shared/chat-types";
 import type { SkillSuggestionItem, SkillSuggestionMode } from "../shared/skill-suggestions";
-import type { GmailAccountStatus } from "../shared/gmail-types";
+import type { GmailAccountStatus, GmailClientConfigStatus } from "../shared/gmail-types";
 import type { MailAttachmentRef, MailDraftCardData } from "../shared/mail-draft-card";
 import type { SidebarOrganizationDraft, SidebarOrganizationResult, SidebarOrganizationSnapshot } from "../shared/sidebar-organization";
 import type { ToastItem, ToastPushPayload } from "../shared/toast-types";
@@ -524,6 +524,8 @@ contextBridge.exposeInMainWorld("settings", settingsApi);
 
 contextBridge.exposeInMainWorld("gmail", {
   getStatus: () => ipcRenderer.invoke(IPC.GMAIL_GET_STATUS) as Promise<GmailAccountStatus>,
+  getClientConfig: () => ipcRenderer.invoke(IPC.GMAIL_GET_CLIENT_CONFIG) as Promise<GmailClientConfigStatus>,
+  saveClientConfig: (clientId: string, clientSecret: string) => ipcRenderer.invoke(IPC.GMAIL_SAVE_CLIENT_CONFIG, clientId, clientSecret) as Promise<GmailClientConfigStatus>,
   beginAuthorization: () => ipcRenderer.invoke(IPC.GMAIL_BEGIN_AUTHORIZATION) as Promise<{ flowId: string }>,
   waitForAuthorization: (flowId: string) => ipcRenderer.invoke(IPC.GMAIL_WAIT_AUTHORIZATION, flowId) as Promise<GmailAccountStatus>,
   cancelAuthorization: (flowId: string) => ipcRenderer.invoke(IPC.GMAIL_CANCEL_AUTHORIZATION, flowId) as Promise<GmailAccountStatus>,

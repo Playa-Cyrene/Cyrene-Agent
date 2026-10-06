@@ -10,6 +10,12 @@ export interface GmailAccountStatus {
   emailAddress?: string;
 }
 
+export interface GmailClientConfigStatus {
+  clientId: string;
+  clientSecretConfigured: boolean;
+  secureStorageAvailable: boolean;
+}
+
 export type GmailErrorCode =
   | "not_configured"
   | "safe_storage_unavailable"

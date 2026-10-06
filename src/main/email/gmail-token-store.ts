@@ -1,6 +1,7 @@
 import { app, safeStorage } from "electron";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { hasGmailSafeStorage, type GmailSafeStoragePort } from "./gmail-safe-storage";
 
 const TOKEN_FILE = "gmail-tokens.enc";
 
@@ -10,24 +11,6 @@ export interface GmailTokens {
   expiry_date?: number;
   scope?: string;
   token_type?: string;
-}
-
-interface StoragePort {
-  isEncryptionAvailable(): boolean;
-  getSelectedStorageBackend(): string;
-  encryptStringAsync(value: string): Promise<Buffer>;
-  decryptStringAsync(value: Buffer): Promise<{ result: string; error?: string }>;
-}
-
-function hasSecureStorage(storage: StoragePort): boolean {
-  if (!storage.isEncryptionAvailable()) return false;
-  if (process.platform !== "linux") return true;
-  try {
-    const backend = storage.getSelectedStorageBackend();
-    return backend !== "basic_text" && backend !== "unknown";
-  } catch {
-    return false;
-  }
 }
 
 function isGmailTokens(value: unknown): value is GmailTokens {
@@ -48,12 +31,12 @@ function isMissingFile(error: unknown): boolean {
 
 export class GmailTokenStore {
   constructor(
-    private readonly storage: StoragePort = safeStorage,
+    private readonly storage: GmailSafeStoragePort = safeStorage,
     private readonly getUserDataPath: () => string = () => app.getPath("userData"),
   ) {}
 
   get isSecureStorageAvailable(): boolean {
-    return hasSecureStorage(this.storage);
+    return hasGmailSafeStorage(this.storage);
   }
 
   private get filePath(): string {

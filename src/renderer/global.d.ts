@@ -150,6 +150,8 @@ interface SettingsWindowApi {
 
 interface GmailWindowApi {
   getStatus: () => Promise<import("../shared/gmail-types").GmailAccountStatus>;
+  getClientConfig: () => Promise<import("../shared/gmail-types").GmailClientConfigStatus>;
+  saveClientConfig: (clientId: string, clientSecret: string) => Promise<import("../shared/gmail-types").GmailClientConfigStatus>;
   beginAuthorization: () => Promise<{ flowId: string }>;
   waitForAuthorization: (flowId: string) => Promise<import("../shared/gmail-types").GmailAccountStatus>;
   cancelAuthorization: (flowId: string) => Promise<import("../shared/gmail-types").GmailAccountStatus>;

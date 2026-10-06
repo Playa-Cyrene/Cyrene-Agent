@@ -155,6 +155,8 @@ export const IPC = {
   SETTINGS_OPEN_STICKER_MANAGER: "settings:open-sticker-manager",
   SETTINGS_OPEN_CUSTOM_STYLE_PROMPT: "settings:open-custom-style-prompt",
   GMAIL_GET_STATUS: "gmail:get-status",
+  GMAIL_GET_CLIENT_CONFIG: "gmail:get-client-config",
+  GMAIL_SAVE_CLIENT_CONFIG: "gmail:save-client-config",
   GMAIL_BEGIN_AUTHORIZATION: "gmail:begin-authorization",
   GMAIL_WAIT_AUTHORIZATION: "gmail:wait-authorization",
   GMAIL_CANCEL_AUTHORIZATION: "gmail:cancel-authorization",

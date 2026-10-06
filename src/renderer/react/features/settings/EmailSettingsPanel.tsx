@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Alert, Button, Spin } from "antd";
 import { Mail } from "lucide-react";
-import type { GmailAccountStatus } from "../../../../shared/gmail-types";
+import type { GmailAccountStatus, GmailClientConfigStatus } from "../../../../shared/gmail-types";
 import { Card } from "../../components/ui/Card";
 import { SettingsInput, SettingsPasswordInput, SettingsSwitch } from "../../components/ui/SettingsControls";
 import { useTranslation } from "../../i18n";
@@ -21,6 +21,12 @@ const defaults: SmtpSettings = {
   emailSmtpSecure: true, emailSmtpUser: "", emailSmtpPass: "", emailFromName: "",
 };
 
+const defaultGmailClientConfig: GmailClientConfigStatus = {
+  clientId: "",
+  clientSecretConfigured: false,
+  secureStorageAvailable: false,
+};
+
 function readSmtp(value: unknown): SmtpSettings {
   const input = value && typeof value === "object" ? value as Record<string, unknown> : {};
   return {
@@ -38,6 +44,9 @@ export function EmailSettingsPanel() {
   const { t } = useTranslation();
   const [smtp, setSmtp] = useState(defaults);
   const [gmail, setGmail] = useState<GmailAccountStatus>({ state: "disconnected" });
+  const [gmailClientConfig, setGmailClientConfig] = useState(defaultGmailClientConfig);
+  const [gmailClientId, setGmailClientId] = useState("");
+  const [gmailClientSecret, setGmailClientSecret] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [authFlowId, setAuthFlowId] = useState<string | null>(null);
@@ -46,11 +55,15 @@ export function EmailSettingsPanel() {
 
   useEffect(() => {
     let disposed = false;
-    void Promise.all([window.settings?.getGeneral(), window.gmail?.getStatus()])
-      .then(([general, connection]) => {
+    void Promise.all([window.settings?.getGeneral(), window.gmail?.getStatus(), window.gmail?.getClientConfig()])
+      .then(([general, connection, clientConfig]) => {
         if (disposed) return;
         setSmtp(readSmtp(general));
         if (connection) setGmail(connection);
+        if (clientConfig) {
+          setGmailClientConfig(clientConfig);
+          setGmailClientId(clientConfig.clientId);
+        }
         setLoading(false);
       })
       .catch(() => { if (!disposed) { setError(t("settingsPage.emailSettings.loadFailed")); setLoading(false); } });
@@ -64,19 +77,37 @@ export function EmailSettingsPanel() {
     return next;
   }
 
-  async function connectGmail() {
+  async function runGmailAuthorization() {
+    if (!window.gmail) throw new Error("Gmail API unavailable");
+    setStatus(t("settingsPage.emailSettings.authorizing"));
+    const { flowId } = await window.gmail.beginAuthorization();
+    setAuthFlowId(flowId);
+    const result = await window.gmail.waitForAuthorization(flowId);
+    setGmail(result);
+    setStatus(result.state === "connected" ? t("settingsPage.emailSettings.connected") : t("settingsPage.emailSettings.notConnected"));
+    setAuthFlowId(null);
+    return result;
+  }
+
+  async function saveAndConnectGmail() {
     if (!window.gmail || busy) return;
-    setBusy(true); setError(""); setStatus(t("settingsPage.emailSettings.authorizing"));
+    setBusy(true); setError(""); setStatus("");
+    let credentialsSaved = false;
     try {
-      const { flowId } = await window.gmail.beginAuthorization();
-      setAuthFlowId(flowId);
-      const result = await window.gmail.waitForAuthorization(flowId);
-      setGmail(result);
-      setStatus(result.state === "connected" ? t("settingsPage.emailSettings.connected") : t("settingsPage.emailSettings.notConnected"));
+      const saved = await window.gmail.saveClientConfig(gmailClientId, gmailClientSecret);
+      credentialsSaved = true;
+      setGmailClientConfig(saved);
+      setGmailClientId(saved.clientId);
+      setGmailClientSecret("");
+      const connection = await window.gmail.getStatus();
+      setGmail(connection);
+      if (connection.state !== "connected") await runGmailAuthorization();
+      else setStatus(t("settingsPage.emailSettings.connected"));
     } catch {
-      setError(t("settingsPage.emailSettings.connectFailed"));
+      setAuthFlowId(null);
+      setError(t(credentialsSaved ? "settingsPage.emailSettings.connectFailed" : "settingsPage.emailSettings.configSaveFailed"));
       await refreshGmail().catch(() => undefined);
-    } finally { setAuthFlowId(null); setBusy(false); }
+    } finally { setBusy(false); }
   }
 
   async function cancelGmailAuthorization() {
@@ -126,10 +157,21 @@ export function EmailSettingsPanel() {
                 ? <Button disabled={!authFlowId} onClick={() => void cancelGmailAuthorization()}>{t("settingsPage.emailSettings.cancelAuthorization")}</Button>
                 : gmail.state === "connected"
                 ? <Button danger disabled={busy} onClick={() => void disconnectGmail()}>{t("settingsPage.emailSettings.disconnect")}</Button>
-                : <Button type="primary" disabled={busy || gmail.state === "not_configured"} loading={busy} onClick={() => void connectGmail()}>{gmail.state === "reauthorization_required" ? t("settingsPage.emailSettings.reconnect") : t("settingsPage.emailSettings.connect")}</Button>}
+                : null}
             </div>
           </div>
-          {gmail.state === "not_configured" && <Alert type="warning" showIcon message={t("settingsPage.emailSettings.notConfigured")} />}
+          {!gmailClientConfig.secureStorageAvailable && <Alert type="warning" showIcon message={t("settingsPage.emailSettings.secureStorageUnavailable")} />}
+          <div className="cy-settings-row">
+            <div className="cy-settings-row__copy"><strong>{t("settingsPage.emailSettings.clientId")}</strong></div>
+            <SettingsInput className="cy-settings-tools__select" autoComplete="off" value={gmailClientId} disabled={busy} placeholder={t("settingsPage.emailSettings.clientIdPlaceholder")} onChange={(event) => setGmailClientId(event.target.value)} />
+          </div>
+          <div className="cy-settings-row">
+            <div className="cy-settings-row__copy"><strong>{t("settingsPage.emailSettings.clientSecret")}</strong><span>{gmailClientConfig.clientSecretConfigured ? t("settingsPage.emailSettings.clientSecretSaved") : t("settingsPage.emailSettings.clientSecretHelp")}</span></div>
+            <SettingsPasswordInput className="cy-settings-tools__select" autoComplete="new-password" value={gmailClientSecret} disabled={busy} placeholder={gmailClientConfig.clientSecretConfigured ? t("settingsPage.emailSettings.clientSecretSavedPlaceholder") : t("settingsPage.emailSettings.clientSecretPlaceholder")} showLabel={t("settingsPage.asr.showSecret")} hideLabel={t("settingsPage.asr.hideSecret")} onChange={(event) => setGmailClientSecret(event.target.value)} />
+          </div>
+          <div className="cy-settings-row cy-settings-tools__actions">
+            <Button type="primary" disabled={busy || !gmailClientConfig.secureStorageAvailable || !gmailClientId.trim()} loading={busy} onClick={() => void saveAndConnectGmail()}>{gmail.state === "reauthorization_required" ? t("settingsPage.emailSettings.saveAndReconnect") : t("settingsPage.emailSettings.saveAndConnect")}</Button>
+          </div>
         </Card>
       </section>
       <section className="cy-settings-section">
