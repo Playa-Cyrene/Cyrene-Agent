@@ -1,4 +1,4 @@
-import { shell } from "electron";
+import { net, shell } from "electron";
 import { createServer, type Server } from "node:http";
 import { AddressInfo } from "node:net";
 import { randomBytes, timingSafeEqual } from "node:crypto";
@@ -68,9 +68,36 @@ function isRevokedRefreshToken(error: unknown): boolean {
   return root.response?.data?.error === "invalid_grant" || root.code === "invalid_grant";
 }
 
+function safeAuthFailureCode(error: unknown): { code?: string; status?: number } {
+  if (!error || typeof error !== "object") return {};
+  const root = error as {
+    code?: unknown;
+    status?: unknown;
+    response?: { status?: unknown; data?: { error?: unknown } };
+  };
+  const candidate = root.response?.data?.error ?? root.code;
+  const code = typeof candidate === "string" && /^[A-Za-z0-9_.-]{1,64}$/.test(candidate)
+    ? candidate
+    : undefined;
+  const rawStatus = root.response?.status ?? root.status;
+  const status = typeof rawStatus === "number" && Number.isInteger(rawStatus) && rawStatus >= 100 && rawStatus <= 599
+    ? rawStatus
+    : undefined;
+  return { ...(code ? { code } : {}), ...(status ? { status } : {}) };
+}
+
 function reply(res: import("node:http").ServerResponse, status: number, message: string): void {
   res.writeHead(status, { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" });
   res.end(message);
+}
+
+function createOAuthClient(options: { clientId: string; redirectUri?: string }): OAuth2Client {
+  const client = new OAuth2Client(options);
+  // Use Chromium's networking stack so OAuth and Gmail API calls honor the app's
+  // system proxy/PAC configuration, matching other Electron network requests.
+  client.transporter.defaults.fetchImplementation = (input, init) =>
+    net.fetch(input instanceof URL ? input.toString() : input, init);
+  return client;
 }
 
 export class GmailAuthService {
@@ -114,7 +141,7 @@ export class GmailAuthService {
       const address = server.address();
       if (!address || typeof address === "string") throw new Error("GMAIL_AUTH_CALLBACK_UNAVAILABLE");
       const redirectUri = `http://127.0.0.1:${(address as AddressInfo).port}`;
-      const client = new OAuth2Client({ clientId, redirectUri });
+      const client = createOAuthClient({ clientId, redirectUri });
       const verifier = await client.generateCodeVerifierAsync();
       if (!verifier.codeChallenge) throw new Error("GMAIL_PKCE_UNAVAILABLE");
 
@@ -203,7 +230,7 @@ export class GmailAuthService {
     if (!tokens?.refresh_token) return;
     const clientId = this.getClientId();
     if (!clientId) return;
-    const client = new OAuth2Client({ clientId });
+    const client = createOAuthClient({ clientId });
     try {
       await client.revokeToken(tokens.refresh_token);
     } catch {
@@ -230,7 +257,7 @@ export class GmailAuthService {
     if (credentialEpoch !== this.credentialEpoch) throw new Error("GMAIL_NOT_CONNECTED");
     if (!tokens) throw new Error("GMAIL_NOT_CONNECTED");
 
-    const client = new OAuth2Client({ clientId });
+    const client = createOAuthClient({ clientId });
     client.setCredentials(credentialsFromTokens(tokens));
     client.on("tokens", (updated: Credentials) => {
       void this.persistRefreshedCredentials(updated, tokens, credentialEpoch);
@@ -303,6 +330,7 @@ export class GmailAuthService {
     }
 
     flow.callbackProcessing = true;
+    let failureStage = "token_exchange";
     try {
       const { tokens } = await flow.client.getToken({ code, codeVerifier: flow.codeVerifier });
       if (flow.finished || flow.credentialEpoch !== this.credentialEpoch) {
@@ -310,6 +338,7 @@ export class GmailAuthService {
         return;
       }
       if (!tokens.access_token) throw new Error("GMAIL_ACCESS_TOKEN_MISSING");
+      failureStage = "scope_verification";
       const tokenInfo = await flow.client.getTokenInfo(tokens.access_token);
       if (flow.finished || flow.credentialEpoch !== this.credentialEpoch) {
         reply(res, 409, "This Gmail authorization was cancelled. Return to the app.");
@@ -320,6 +349,7 @@ export class GmailAuthService {
         await this.finishFlow(flow, { state: "disconnected" });
         return;
       }
+      failureStage = "token_storage";
       const previous = await this.tokenStore.load().catch(() => null);
       const stored = toStoredTokens(tokens, previous ?? undefined);
       flow.committing = true;
@@ -333,7 +363,11 @@ export class GmailAuthService {
       const state: GmailConnectionState = error instanceof Error && error.message === "GMAIL_SAFE_STORAGE_UNAVAILABLE"
         ? "reauthorization_required"
         : "disconnected";
-      reply(res, 400, "Gmail could not be connected. Return to the app and try again.");
+      const detail = safeAuthFailureCode(error);
+      const diagnostic = [failureStage, detail.code, detail.status ? `HTTP_${detail.status}` : undefined]
+        .filter((item): item is string => Boolean(item))
+        .join("_");
+      reply(res, 400, `Gmail could not be connected (${diagnostic}). Return to the app and try again.`);
       await this.finishFlow(flow, { state });
     }
   }
