@@ -11,6 +11,7 @@ import {
 } from "./prompt-builder";
 import { preparePlanRunContext } from "./plan-lifecycle";
 import { app } from "electron";
+import { createPersistentExecutionLedger } from "../../../storage/persistent-execution-ledger";
 
 /**
  * 运行准备阶段：解析线程/运行 ID、计划上下文、恢复快照、提示词层和工具清单，
@@ -101,7 +102,8 @@ export async function prepareHarnessRun(
     ...(promptLayers.mode ? { mode: promptLayers.mode } : {}),
   };
   const systemPrompt = harnessPromptLayers.stablePrefix;
-  runStore.create({
+  options.executionLedger = createPersistentExecutionLedger(app.getPath("userData"), threadId);
+  await runStore.create({
     conversationId: threadId,
     runId,
   });

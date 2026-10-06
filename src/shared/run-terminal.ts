@@ -47,6 +47,9 @@ export interface CyreneRunTerminalResult {
  * 终态仍由事件流承载，ack.success=false 仅表示 run 没能开始（如 sessionId 缺失）。
  */
 export interface AguiRunAck {
+  /** A prior request returns its durable receipt rather than starting again. */
+  duplicate?: boolean;
+  status?: string;
   success: boolean;
   /** Bridge 创建的 canonical runId；与 RUN_STARTED.runId 一致。 */
   runId: string;

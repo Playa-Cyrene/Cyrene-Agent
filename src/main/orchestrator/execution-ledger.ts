@@ -30,9 +30,17 @@ export class LogicalInvocationConflictError extends Error {
   readonly name = "LogicalInvocationConflictError";
 }
 
+export interface ExecutionLedgerPersistence {
+  begin(key: string, fingerprint: string): Promise<{ outcome: ToolExecutionOutcome } | null>;
+  finish(key: string, fingerprint: string, outcome: ToolExecutionOutcome): Promise<void>;
+}
+
 export class ExecutionLedger {
   private readonly requestFingerprints = new Map<string, string>();
   private readonly succeeded = new Map<string, ToolExecutionOutcome>();
+
+  private readonly inFlight = new Map<string, Promise<{ outcome: ToolExecutionOutcome; cached: boolean }>>();
+  constructor(private readonly persistence?: ExecutionLedgerPersistence) {}
 
   async execute(
     input: LogicalInvocationInput,
@@ -49,7 +57,18 @@ export class ExecutionLedger {
     this.requestFingerprints.set(key, fingerprint);
     const existing = this.succeeded.get(key);
     if (existing) return { outcome: existing, cached: true };
-    const outcome = await run();
+    const pending = this.inFlight.get(key);
+    if (pending) { const settled = await pending; return { outcome: settled.outcome, cached: true }; }
+    const operation = (async () => {
+      const receipt = await this.persistence?.begin(key, fingerprint);
+      if (receipt) return { outcome: receipt.outcome, cached: true };
+      let outcome: ToolExecutionOutcome;
+      try { outcome = await run(); }
+      catch (error) {
+        await this.persistence?.finish(key, fingerprint, { output: "", status: "failed", effectState: "unknown", errorCode: "EXECUTION_OUTCOME_UNKNOWN" });
+        throw error;
+      }
+      await this.persistence?.finish(key, fingerprint, outcome);
     // 只缓存终态成功结果：非终态成功结果（terminal=false）不得写入 ExecutionLedger。
     // 原因：非终态结果是中间状态，如果被缓存，后续相同输入会命中缓存返回中间结果，
     // 导致 Agent 认为工具已成功完成而跳过实际执行，形成无限循环。
@@ -57,7 +76,14 @@ export class ExecutionLedger {
     if (outcome.status === "succeeded" && outcome.terminal !== false) {
       this.succeeded.set(key, outcome);
     }
-    return { outcome, cached: false };
+      return { outcome, cached: false };
+    })();
+    this.inFlight.set(key, operation);
+    try { return await operation; }
+    finally {
+      this.inFlight.delete(key);
+      if (this.persistence) { this.requestFingerprints.delete(key); this.succeeded.delete(key); }
+    }
   }
 }
 

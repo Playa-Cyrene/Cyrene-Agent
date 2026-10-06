@@ -16,7 +16,6 @@ import {
   type TranscriptRunReader,
 } from "./conversation-transcript-projection";
 import type { TranscriptEntry } from "./conversation-transcript-types";
-import { reconcileCrashedInterruptionsForConversation } from "./conversation-interruption-reconciliation";
 
 export type { MaterializedTranscript, TranscriptRunReader } from "./conversation-transcript-projection";
 export {
@@ -40,12 +39,7 @@ export async function buildModelContext(input: {
   retainTokens: number;
   runReader: TranscriptRunReader;
 }): Promise<MaterializedTranscript> {
-  if (input.runReader.listInterruptedRuns) {
-    await reconcileCrashedInterruptionsForConversation({
-      runStore: { listInterruptedRuns: (conversationId) => input.runReader.listInterruptedRuns!(conversationId) },
-      transcriptStore: input.store,
-    }, input.conversationId);
-  }
+  await input.runReader.refresh?.();
   // fail-closed 读取前置：先等该会话写队列清空，禁止读到半更新状态
   await input.store.waitForIdle(input.conversationId);
   const snapshot = await input.store.read(input.conversationId);

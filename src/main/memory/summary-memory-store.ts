@@ -88,7 +88,7 @@ export async function writeSummaryFileAtomic(
   content: string,
   maxChars: number,
   allowedRoot: string,
-  shouldCommit?: () => boolean,
+  shouldCommit?: () => boolean | Promise<boolean>,
 ): Promise<void> {
   const normalized = normalizeText(content);
   if (countUnicodeCharacters(normalized) > maxChars) throw new Error("SUMMARY_MEMORY_TOO_LONG");
@@ -110,7 +110,7 @@ export async function writeSummaryFileAtomic(
   const tempPath = path.join(parent, `.${path.basename(absolutePath)}.${randomUUID()}.tmp`);
   try {
     await fs.writeFile(tempPath, normalized, { encoding: "utf8", flag: "wx" });
-    if (shouldCommit && !shouldCommit()) throw new Error("SUMMARY_MEMORY_CANCELLED");
+    if (shouldCommit && !(await shouldCommit())) throw new Error("SUMMARY_MEMORY_CANCELLED");
     await fs.rename(tempPath, absolutePath);
   } catch (error) {
     await fs.rm(tempPath, { force: true }).catch(() => undefined);

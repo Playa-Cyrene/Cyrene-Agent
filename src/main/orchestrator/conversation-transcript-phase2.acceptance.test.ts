@@ -1,3 +1,4 @@
+import { closeConversationDatabases } from "../storage/conversation-database-client";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -16,7 +17,8 @@ import type { IncomingMessage } from "../channels/types";
 
 const roots: string[] = [];
 
-afterEach(() => {
+afterEach(async () => {
+  await closeConversationDatabases();
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 
@@ -118,10 +120,9 @@ async function appendAssistant(
 async function runDesktopMode(mode: "chat" | "work" | "code" | "learn"): Promise<void> {
   const root = makeRoot(`cyrene-cta-phase2-${mode}-`);
   const store = new ConversationTranscriptStore(root);
-  const journal = new ConversationJournalService({
-    store,
-    runReader: { get: (runId) => new HarnessRunStore(root).get(runId) },
-  });
+  let runStore = new HarnessRunStore(root);
+  await runStore.ready;
+  const journal = new ConversationJournalService({ store, runReader: { get: runId => runStore.get(runId), refresh: () => runStore.refresh() } });
   const conversationId = `${mode}-conversation`;
 
   await journal.appendUser(conversationId, { id: "u1", turnId: "u1", text: "first turn\n" + "old details ".repeat(200) });
@@ -135,10 +136,11 @@ async function runDesktopMode(mode: "chat" | "work" | "code" | "learn"): Promise
     anchorUserTurnId: "u1", disposition: "keep_user", runId: "run-regenerate",
   });
 
-  const runStore = new HarnessRunStore(root);
-  runStore.create({ conversationId, runId: "run-regenerate" });
-  const restartedRuns = new HarnessRunStore(root);
-  const interrupted = restartedRuns.get("run-regenerate");
+  await runStore.create({ conversationId, runId: "run-regenerate" });
+  await closeConversationDatabases();
+  runStore = new HarnessRunStore(root);
+  await runStore.ready;
+  const interrupted = runStore.get("run-regenerate");
   expect(interrupted?.status).toBe("interrupted");
 
   await appendAssistant(journal, conversationId, "run-regenerate", "regenerated answer ".repeat(100), true);

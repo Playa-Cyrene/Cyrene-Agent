@@ -522,7 +522,7 @@ export function launchDetachedApp(command: string, args: readonly string[], watc
 
 /** 校验会话工作区：返回 realpath 后的根目录；无绑定/目录不存在回传错误 code */
 async function validatedWorkspaceRoot(sessionId: string): Promise<{ root: string } | { code: string }> {
-  const binding = chatsStore.getWorkspaceBinding(sessionId);
+  const binding = (await chatsStore.getWorkspaceBinding(sessionId));
   if (!binding) return { code: "NO_WORKSPACE" };
   try {
     const root = await realpath(binding.workspaceRoot);

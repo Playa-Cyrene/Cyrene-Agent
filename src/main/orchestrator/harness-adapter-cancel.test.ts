@@ -1,3 +1,4 @@
+import { closeConversationDatabases } from "../storage/conversation-database-client";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -54,7 +55,8 @@ describe("runHarnessWithAdapter cancellation context", () => {
     });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await closeConversationDatabases();
     fs.rmSync(userDataRoot, { recursive: true, force: true });
   });
 

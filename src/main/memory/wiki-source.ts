@@ -51,7 +51,7 @@ export interface WikiChatSourceConversation {
 export interface WikiChatSourceReaderDeps {
   transcriptStore: Pick<ConversationTranscriptStore, "readAuditEntries">;
   /** The session index is authoritative for existence and workspace binding. */
-  listSessions: () => readonly WikiSessionMeta[];
+  listSessions: () => (readonly WikiSessionMeta[]) | Promise<readonly WikiSessionMeta[]>;
   /** Migrate unopened v1 sessions before historical backfill reads their journal. */
   ensureConversationMigrated: (conversationId: string) => Promise<unknown>;
 }
@@ -105,16 +105,16 @@ function entryToMessage(conversationId: string, entry: TranscriptEntry): WikiCha
 export class WikiChatSourceReader {
   constructor(private readonly deps: WikiChatSourceReaderDeps) {}
 
-  listConversationIds(): string[] {
-    return this.deps.listSessions().map((session) => session.id);
+  async listConversationIds(): Promise<string[]> {
+    return (await this.deps.listSessions()).map((session) => session.id);
   }
 
   async readConversation(conversationId: string): Promise<WikiChatSourceConversation | null> {
-    if (!this.sessionMeta(conversationId)) return null;
+    if (!(await this.sessionMeta(conversationId))) return null;
     if (await this.deps.ensureConversationMigrated(conversationId) === null) return null;
     const entries = await this.deps.transcriptStore.readAuditEntries(conversationId);
     // A deletion may race the audit read; do not return data from a removed session.
-    const session = this.sessionMeta(conversationId);
+    const session = await this.sessionMeta(conversationId);
     if (!session) return null;
 
     const projection = reduceTranscriptProjection(entries);
@@ -184,8 +184,8 @@ export class WikiChatSourceReader {
     return conversation?.messages.find((message) => message.sourceId === id) ?? null;
   }
 
-  private sessionMeta(conversationId: string): WikiSessionMeta | undefined {
-    return this.deps.listSessions().find((session) => session.id === conversationId);
+  private async sessionMeta(conversationId: string): Promise<WikiSessionMeta | undefined> {
+    return (await this.deps.listSessions()).find((session) => session.id === conversationId);
   }
 }
 

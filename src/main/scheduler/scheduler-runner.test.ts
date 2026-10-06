@@ -1,3 +1,4 @@
+import { closeConversationDatabases } from "../storage/conversation-database-client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
@@ -244,11 +245,12 @@ describe("createSchedulerRunner lifecycle events", () => {
         }),
       ]));
     } finally {
+      await closeConversationDatabases();
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
 
-  it("closes the journal when scheduler presentation checkpoint fails", async () => {
+  it("continues when scheduler presentation updates fail", async () => {
     const sink = {
       checkpoint: vi.fn(async () => { throw new Error("journal unavailable"); }),
       appendAssistant: vi.fn(async () => "assistant-entry"),
@@ -269,8 +271,10 @@ describe("createSchedulerRunner lifecycle events", () => {
     const runner = createSchedulerRunner(deps as never);
     const result = await runner.runScheduledTask(makeTask(), new Date(), false);
 
-    expect(result.ok).toBe(false);
-    expect(journal.appendPresentationNext).toHaveBeenCalledTimes(2);
+    expect(result.ok).toBe(true);
+    expect(journal.appendPresentationNext).toHaveBeenCalledTimes(4);
+    expect(journal.appendPresentationNext.mock.calls[0]).toEqual(journal.appendPresentationNext.mock.calls[1]);
+    expect(journal.appendPresentationNext.mock.calls[2]).toEqual(journal.appendPresentationNext.mock.calls[3]);
     expect(sink.closeInterruption).not.toHaveBeenCalled();
   });
 
@@ -424,6 +428,7 @@ describe("createSchedulerRunner lifecycle events", () => {
         runSnapshot: reloaded?.runSnapshot,
       });
     } finally {
+      await closeConversationDatabases();
       fs.rmSync(root, { recursive: true, force: true });
     }
   });

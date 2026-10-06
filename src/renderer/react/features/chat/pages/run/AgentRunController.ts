@@ -351,19 +351,6 @@ export class AgentRunController {
         void this.checkpointRun(status, true);
       },
     };
-    try {
-      await this.checkpointRun("running", true, true);
-    } catch (error) {
-      const checkpointCallbacks = { ...this.deps.registries.checkpointTriggers.current };
-      delete checkpointCallbacks[this.input.sessionId];
-      this.deps.registries.checkpointTriggers.current = checkpointCallbacks;
-      const activeRuns = { ...this.deps.registries.activeRuns.current };
-      delete activeRuns[this.input.sessionId];
-      this.deps.registries.activeRuns.current = activeRuns;
-      this.deps.host.setModeBusy(this.input.targetMode, false);
-      this.deps.host.onRunFinished({ mode: this.input.targetMode, sessionId: this.input.sessionId, queuePaused: true });
-      throw error;
-    }
 
     const eventGate = new RunEventGate<AguiEvent>();
     const off = api.onEvent((event) => {
@@ -459,6 +446,14 @@ export class AgentRunController {
           );
         }
       }
+      if (ack.duplicate && ack.status === "completed") {
+        const session = await store.get(this.input.sessionId);
+        const message = session?.messages.find(item => item.id === this.input.assistantId);
+        const { role: _role, ...fields } = message ?? {};
+        this.deps.host.patchMessage(this.input.sessionId, this.input.assistantId, { ...fields, loading: false, streaming: false, waitingForFirstEvent: false });
+        this.earlyTtsQueue?.cancel();
+        return;
+      }
       // 新 run 已被主进程接受：同会话旧的守卫冲突操作卡（若有）不再有效
       this.deps.host.clearTakeover(this.input.sessionId);
       // 立即把 ack.runId 写入注册表，让 cancel 在 RUN_STARTED 事件到达前也能找到正确的 runId。
@@ -473,7 +468,7 @@ export class AgentRunController {
           },
         };
         for (const accepted of eventGate.bind(ack.runId)) this.handleEvent(accepted);
-        await this.checkpointRun("running", true, true);
+        await this.checkpointRun("running", true);
         if (this.deps.registries.cancelRequestedSessions.current.delete(this.input.sessionId)) {
           await api.cancel(ack.runId);
         }
@@ -654,7 +649,7 @@ export class AgentRunController {
   }
 
   /** 把展示差量写入会话轨迹；幂等键短小，串行顺序沿用 run 内事件顺序。 */
-  private writeCheckpoint(status: "running" | "waiting_user" | "terminal", required = false): Promise<boolean> {
+  private writeCheckpoint(status: "running" | "waiting_user" | "terminal"): Promise<boolean> {
     const snapshot = this.buildCheckpoint(status);
     this.checkpointChain = this.checkpointChain
       .catch((error) => {
@@ -680,7 +675,6 @@ export class AgentRunController {
           return true;
         } catch (error) {
           console.error("[AgentRunController] presentation checkpoint failed:", error);
-          if (required || status === "terminal") throw error;
           return false;
         }
       });
@@ -694,13 +688,12 @@ export class AgentRunController {
   private checkpointRun(
     status: "running" | "waiting_user" | "terminal",
     immediate = false,
-    required = false,
   ): Promise<boolean> {
     if (this.checkpointTimer !== undefined) {
       window.clearTimeout(this.checkpointTimer);
       this.checkpointTimer = undefined;
     }
-    if (immediate) return this.writeCheckpoint(status, required);
+    if (immediate) return this.writeCheckpoint(status);
     this.checkpointTimer = window.setTimeout(() => {
       this.checkpointTimer = undefined;
       void this.writeCheckpoint(status);

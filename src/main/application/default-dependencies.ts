@@ -1,3 +1,4 @@
+import { closeConversationDatabases } from "../storage/conversation-database-client";
 /**
  * 默认应用依赖装配（真正的组合根胶水层）：
  * 持有全部业务子系统的导入与工厂闭包，把它们按窄依赖喂给各启动阶段。
@@ -288,6 +289,7 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
   const readiness = createStartupReadiness();
   const activation = createWindowActivationBroker();
   const shutdown = createShutdownCoordinator({ readiness, timeoutMs: SHUTDOWN_TIMEOUT_MS });
+  shutdown.register({ id: "conversation-database", phase: "closePersistence", dispose: closeConversationDatabases });
 
   // 注入应用图标路径 getter（窗口工厂统一读取，避免循环依赖）。
   // 必须在 shell 阶段之前注入：聊天窗口壳与托盘在 shell 阶段创建时就会读取，
@@ -658,7 +660,7 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
           || (pluginManager?.isRunning(task.ownerPluginId) ?? false),
       }),
 
-      registerCoreIpc: ({ ipc, runtime, services }) => {
+      registerCoreIpc: async ({ ipc, runtime, services }) => {
         const transcriptCompactor = getTranscriptCompactor();
         // 设置变更反应：窗口/托盘/截图热键/主动服务联动
         onGeneralSettingsChanged((before, after) =>
@@ -702,7 +704,7 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
         registerTtsIpc({ ipc, ttsSessionService: services.ttsSession });
 
         // 聊天会话存储 IPC（chats-store.initialize 建好 cyrene-chats 目录并加载 index）
-        registerChatsIpc(ipc, {
+        await registerChatsIpc(ipc, {
           llmClient: services.llm,
           isPrimaryModelBusy: hasActiveConversationRun,
           transcriptCompactor,

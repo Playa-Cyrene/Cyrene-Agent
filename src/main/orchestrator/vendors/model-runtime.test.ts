@@ -1,3 +1,4 @@
+import { closeConversationDatabases } from "../../storage/conversation-database-client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
@@ -31,7 +32,8 @@ function anthropicStream(): Response {
 }
 
 const roots: string[] = [];
-afterEach(() => {
+afterEach(async () => {
+  await closeConversationDatabases();
   vi.unstubAllGlobals();
   roots.splice(0).forEach(root => fs.rmSync(root, { recursive: true, force: true }));
 });

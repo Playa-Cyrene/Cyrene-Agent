@@ -3,7 +3,7 @@ import { pluginHostError } from "./errors";
 
 /** 工作区绑定在宿主存储中的最小只读形状。 */
 export interface PluginWorkspaceStoreReader {
-  getWorkspaceBinding(sessionId: string): { workspaceRoot: string; displayName: string } | undefined;
+  getWorkspaceBinding(sessionId: string): ({ workspaceRoot: string; displayName: string } | undefined) | Promise<{ workspaceRoot: string; displayName: string } | undefined>;
 }
 
 export interface PluginWorkspaceServiceOptions {
@@ -27,7 +27,7 @@ export function createPluginWorkspaceService(options: PluginWorkspaceServiceOpti
       if (typeof conversationId !== "string" || !conversationId) {
         throw pluginHostError("E_INVALID_ARGUMENT", `非法会话 id: ${String(conversationId)}`);
       }
-      const binding = reader.getWorkspaceBinding(conversationId);
+      const binding = (await reader.getWorkspaceBinding(conversationId));
       if (!binding) return null;
       // 只投影稳定字段，绑定时间等内部细节不透出。
       const projection: PluginWorkspaceBinding = {

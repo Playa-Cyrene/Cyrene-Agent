@@ -85,14 +85,14 @@ export function registerChatUiIpc(deps: ChatUiIpcDependencies): void {
     return BrowserWindow.fromWebContents(event.sender)?.isMaximized() ?? false;
   });
 
-  ipc.handle(IPC.CHAT_GET_REASONING_STATE, (_event, payload?: { sessionId?: unknown; modelProfileId?: unknown }) => {
+  ipc.handle(IPC.CHAT_GET_REASONING_STATE, async (_event, payload?: { sessionId?: unknown; modelProfileId?: unknown }) => {
     const baseSettings = loadModelSettings();
     const sessionId = typeof payload?.sessionId === "string" ? payload.sessionId : undefined;
     // 会话存在（v1/v2 都读）：统一走会话级解析（binding + effective model，Invariant C），
     // 否则 UI 档位会按档案默认模型计算，与实际发送模型错档。
     // 不能回退顶层镜像：顶层可能是空壳（provider 指向别家、三件套全空），
     // 与 channel bot 不回复是同一病根。
-    const sessionRecord = sessionId ? getSessionRecord(sessionId) : null;
+    const sessionRecord = sessionId ? (await getSessionRecord(sessionId)) : null;
     if (sessionRecord) {
       const settings = resolveSessionModelSettings(baseSettings, sessionRecord);
       const cap = getCapabilityOrOpenAI(settings.provider);
@@ -134,7 +134,7 @@ export function registerChatUiIpc(deps: ChatUiIpcDependencies): void {
     };
   });
 
-  ipc.handle(IPC.CHAT_SET_REASONING, (_event, payload: unknown) => {
+  ipc.handle(IPC.CHAT_SET_REASONING, async (_event, payload: unknown) => {
     if (!payload || typeof payload !== "object") return;
     const p = payload as { sessionId?: unknown; modelProfileId?: unknown; providerKey?: unknown; preference?: unknown };
     if (typeof p.providerKey !== "string" || typeof p.preference !== "object" || !p.preference) return;
@@ -142,7 +142,7 @@ export function registerChatUiIpc(deps: ChatUiIpcDependencies): void {
     if (!normalized) return;
 
     const current = loadModelSettings();
-    const session = typeof p.sessionId === "string" ? getSession(p.sessionId) : undefined;
+    const session = typeof p.sessionId === "string" ? (await getSession(p.sessionId)) : undefined;
     if (session?.modelProfileId) {
       const profile = listSavedModelProfiles(current).find((item) => item.id === session.modelProfileId);
       if (!profile || profile.provider !== p.providerKey) return;
@@ -270,7 +270,7 @@ export function registerChatUiIpc(deps: ChatUiIpcDependencies): void {
     }
   });
 
-  ipc.handle(IPC.CHAT_GET_IMAGE_SEND_STRATEGY, (_event, payload: unknown) => {
+  ipc.handle(IPC.CHAT_GET_IMAGE_SEND_STRATEGY, async (_event, payload: unknown) => {
     // 按会话统一解析（binding + effective model）：会话绑定的档案若声明了 multimodal
     // 则优先于全局值；无 sessionId / 会话不存在 → 回退全局（现行为）。
     const sessionId = payload && typeof payload === "object"
@@ -278,7 +278,7 @@ export function registerChatUiIpc(deps: ChatUiIpcDependencies): void {
       : undefined;
     let settings = loadModelSettings();
     if (typeof sessionId === "string" && sessionId) {
-      const sessionRecord = getSessionRecord(sessionId);
+      const sessionRecord = (await getSessionRecord(sessionId));
       if (sessionRecord) settings = resolveSessionModelSettings(settings, sessionRecord);
     }
     // 图片路由统一收口在 image-router；返回形状保持 { mode: "direct" | "caption" } 不变。

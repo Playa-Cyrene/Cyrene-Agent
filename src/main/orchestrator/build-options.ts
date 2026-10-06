@@ -169,7 +169,7 @@ export interface BuildOptionsDeps {
    * 获取对话的工作区绑定（来自 Conversation Workspace Binding）。
    * 返回 undefined 表示当前对话未绑定工作区。
    */
-  getWorkspaceBinding?: (conversationId: string) => { workspaceRoot: string; displayName: string; boundAt: number } | undefined;
+  getWorkspaceBinding?: (conversationId: string) => ({ workspaceRoot: string; displayName: string; boundAt: number } | undefined) | Promise<{ workspaceRoot: string; displayName: string; boundAt: number } | undefined>;
   /** 构建已启用插件贡献的每轮动态提示词；失败时调用方应降级为空内容。 */
   buildPluginPromptContext?: (input: {
     source: "conversation" | "plugin-agent";
@@ -667,7 +667,7 @@ export async function buildAgentRunOptions(
     ? undefined
     : (input.workspaceBindingSessionId ?? conversationId);
   const workspaceBinding = workspaceBindingSessionId
-    ? deps.getWorkspaceBinding?.(workspaceBindingSessionId)
+    ? (await deps.getWorkspaceBinding?.(workspaceBindingSessionId))
     : undefined;
   const resolvedWorkspaceRoot = workspaceBinding?.workspaceRoot;
   const workspaceMeta = resolvedWorkspaceRoot ? readWorkspaceMeta(resolvedWorkspaceRoot) : undefined;

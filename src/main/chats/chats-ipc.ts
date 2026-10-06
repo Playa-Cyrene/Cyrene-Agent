@@ -75,18 +75,18 @@ function latestContextUsage(session: ChatSession | null): ContextUsageSnapshot |
 /** 压缩（手动/演示）后重算会话的 session 级 context usage 快照：
  *  消息侧按压缩后的 compaction 视图重算；persona、工具、技能三类与压缩无关，
  *  继承旧快照口径，避免环形图出现 systemPrompt 归零的跳变。 */
-function recordCompactionUsage(
+async function recordCompactionUsage(
   sessionId: string,
   compactedMessages: VendorChatMessage[],
   previous?: ContextUsageSnapshot,
-): void {
-  previous ??= chatsStore.getSessionView(sessionId)?.currentContextUsage;
+): Promise<void> {
+  previous ??= (await chatsStore.getSessionView(sessionId))?.currentContextUsage;
   const inheritable = new Map(
     (previous?.categories ?? [])
       .filter((category) => category.key === "systemPrompt" || category.key === "tools" || category.key === "skills")
       .map((category) => [category.key, category.tokens]),
   );
-  const sessionRecord = chatsStore.getSessionView(sessionId);
+  const sessionRecord = (await chatsStore.getSessionView(sessionId));
   const contextWindowTokens = (sessionRecord
     ? resolveSessionModelSettings(loadModelSettings(), sessionRecord).contextWindowTokens
     : undefined) ?? 256000;
@@ -105,7 +105,7 @@ function recordCompactionUsage(
     categories,
     totalTokens: categories.reduce((sum, category) => sum + category.tokens, 0),
   };
-  chatsStore.setSessionContextUsage(sessionId, usage);
+  (await chatsStore.setSessionContextUsage(sessionId, usage));
 }
 
 /** 读出口覆盖：把会话的上下文容量刷新为「按当前模型配置解析」的值。
@@ -119,9 +119,9 @@ function withLiveContextWindow(session: ChatSession): ChatSession {
 
 /** 冷启动回填：按会话最近更新顺序收集已绑定的工作区，去重后截断并落盘。
  *  只在 recentProjects 为空时执行一次；之后由 setWorkspace 绑定继续维护列表。 */
-function backfillRecentProjects(): string[] {
+async function backfillRecentProjects(): Promise<string[]> {
   const projects: string[] = [];
-  for (const session of chatsStore.listSessions()) {
+  for (const session of (await chatsStore.listSessions())) {
     if (!session.workspaceRoot || projects.includes(session.workspaceRoot)) continue;
     projects.push(session.workspaceRoot);
     if (projects.length >= MAX_RECENT_PROJECTS) break;
@@ -162,7 +162,7 @@ function visibleUserText(content: string): string {
   return content.replace(/\[sticker:[^\]]+\]/gi, "").trim();
 }
 
-export function registerChatsIpc(
+export async function registerChatsIpc(
   ipcOption?: IpcScope,
   options: {
     titleService?: ConversationTitleService;
@@ -170,7 +170,7 @@ export function registerChatsIpc(
     isPrimaryModelBusy?: () => boolean;
     transcriptCompactor?: ConversationTranscriptCompactor;
   } = {},
-): void {
+): Promise<void> {
   const ipc = ipcOption ?? createIpcScope();
   const titleService = options.titleService ?? (options.llmClient
     ? createConversationTitleService({
@@ -183,7 +183,7 @@ export function registerChatsIpc(
         onTitleChanged: () => broadcastChanged(),
       })
     : undefined);
-  chatsStore.initialize();
+  (await chatsStore.initialize());
   const transcriptStore = getConversationTranscriptStore(app.getPath("userData"));
   const conversationJournal = new ConversationJournalService({
     store: transcriptStore,
@@ -196,7 +196,7 @@ export function registerChatsIpc(
   });
   const sessionMigration = new ConversationSessionMigration({ journal: conversationJournal, store: transcriptStore });
   // 进程刚启动时没有任何存活运行：磁盘上遗留的插话标记都是陈旧的，清回普通队列
-  chatsStore.clearStalePendingAdjustMarks();
+  (await chatsStore.clearStalePendingAdjustMarks());
   // 撤回对账是启动异步边界；显式吸收错误，且 journal 失败时不删除 pending。
   const pendingWithdrawalReconciliation = conversationJournal.reconcilePendingWithdrawals()
     .catch((error) => {
@@ -205,12 +205,12 @@ export function registerChatsIpc(
 
   ipc.handle(
     IPC.CHATS_LIST,
-    (_event, options?: { mode?: ConversationMode }) => chatsStore.listSessions(options),
+    async (_event, options?: { mode?: ConversationMode }) => (await chatsStore.listSessions(options)),
   );
 
   ipc.handle(IPC.CHATS_SIDEBAR_ORGANIZATION_GET, () => sidebarOrganizationStore.getSnapshot());
-  ipc.handle(IPC.CHATS_SIDEBAR_ORGANIZATION_APPLY, (event, payload: { expectedRevision: number; draft: Parameters<typeof sidebarOrganizationStore.applyDraft>[1] }) => {
-    const result = sidebarOrganizationStore.applyDraft(payload?.expectedRevision, payload?.draft);
+  ipc.handle(IPC.CHATS_SIDEBAR_ORGANIZATION_APPLY, async (event, payload: { expectedRevision: number; draft: Parameters<typeof sidebarOrganizationStore.applyDraft>[1] }) => {
+    const result = await sidebarOrganizationStore.applyDraft(payload?.expectedRevision, payload?.draft);
     if (result.ok) {
       for (const win of BrowserWindow.getAllWindows()) {
         if (win.isDestroyed() || win.webContents === event.sender) continue;
@@ -241,19 +241,19 @@ export function registerChatsIpc(
 
   ipc.handle(
     IPC.CHATS_CREATE,
-    (
+    async (
       event,
       payload?: { title?: string; identityId?: string | null; mode?: ConversationMode },
     ) => {
       // Invariant B：新会话创建即快照默认档案的默认模型（对话自持起点）
       const defaultProfile = getDefaultModelProfile();
-      const session = chatsStore.createSession({
+      const session = (await chatsStore.createSession({
         title: payload?.title,
         identityId: payload?.identityId ?? null,
         mode: payload?.mode,
         modelProfileId: defaultProfile?.id,
         model: defaultProfile?.model || undefined,
-      });
+      }));
       broadcastChanged(event.sender);
       return session;
     },
@@ -312,7 +312,7 @@ export function registerChatsIpc(
           : {}),
       });
       // 压缩只改变消息侧 token；三类无关项继承旧快照，见 recordCompactionUsage。
-      recordCompactionUsage(payload.sessionId, result.compactedMessages, previousUsage);
+      await recordCompactionUsage(payload.sessionId, result.compactedMessages, previousUsage);
       // 压缩是主进程侧的 journal 变更：发起方渲染端没有任何本地乐观更新
       // （且压缩仅在会话空闲时可用，无 transient 思考消息竞态），必须连同发起方
       // 一起广播，聊天页重载投影后压缩分隔条与环形图快照立即生效。
@@ -334,7 +334,7 @@ export function registerChatsIpc(
   if (!app.isPackaged) {
     ipc.handle(IPC.CHATS_SEED_COMPACTION_DEMO, async () => {
       try {
-        const session = chatsStore.createSession({ title: "压缩演示", identityId: null, mode: "chat" });
+        const session = (await chatsStore.createSession({ title: "压缩演示", identityId: null, mode: "chat" }));
         const conversationId = session.id;
         let at = 1;
         // 假历史：两轮带工具调用的任务对话（投影会把同一 turn 的
@@ -355,7 +355,7 @@ export function registerChatsIpc(
           summarize: async () => "演示摘要：用户要求整理项目里的 TODO 注释，工具扫描到 17 处并按模块汇总成清单；随后统计了测试覆盖率（73.2%，未覆盖集中在 plugin-host 与 channels）。此摘要由演示入口本地生成，未调用模型。",
         });
         const result = await demoCompactor.compact({ conversationId, trigger: "automatic", retainTokens: 80 });
-        recordCompactionUsage(conversationId, result.compactedMessages);
+        await recordCompactionUsage(conversationId, result.compactedMessages);
         // 压缩后的一轮新对话：用于观察「压旧留新」的分隔条位置。
         await transcriptStore.append(conversationId, { id: "demo-u4", at: at++, kind: "user", turnId: "demo-4", revision: 1, payload: { text: "现在把刚才的 TODO 清单按优先级排一下" } });
         await transcriptStore.append(conversationId, { id: "demo-a4", at: at++, kind: "assistant", turnId: "demo-4-a", payload: { role: "assistant", content: "好的，从压缩摘要里恢复清单并按优先级排序如下：……" } });
@@ -369,9 +369,9 @@ export function registerChatsIpc(
 
   ipc.handle(
     IPC.CHATS_RENAME,
-    (event, payload: { id: string; title: string }) => {
+    async (event, payload: { id: string; title: string }) => {
       if (!payload || !payload.id) return null;
-      const session = chatsStore.renameSession(payload.id, payload.title ?? "");
+      const session = (await chatsStore.renameSession(payload.id, payload.title ?? ""));
       if (session) broadcastChanged(event.sender);
       return session;
     },
@@ -379,7 +379,7 @@ export function registerChatsIpc(
 
   ipc.handle(IPC.CHATS_DELETE, async (event, id: string) => {
     if (!id) return false;
-    const sessionRecord = chatsStore.getSessionRecord(id);
+    const sessionRecord = (await chatsStore.getSessionRecord(id));
     await cancelSummaryMemorySession(id);
     await cancelWikiMemorySession(id);
     const wikiStore = fs.existsSync(path.join(app.getPath("userData"), "memory", "wiki"))
@@ -406,7 +406,7 @@ export function registerChatsIpc(
     }
     let ok: boolean;
     try {
-      ok = chatsStore.deleteSession(id);
+      ok = (await chatsStore.deleteSession(id));
       if (!ok) await wikiStore?.untombstoneConversation(id);
     } catch (error) {
       await wikiStore?.untombstoneConversation(id).catch((rollbackError) =>
@@ -439,7 +439,7 @@ export function registerChatsIpc(
         console.error("[ChatsIpc] failed to delete persisted tool outputs", error);
       }
       try {
-        getHarnessRunStore(app.getPath("userData")).deleteConversation(id);
+        await getHarnessRunStore(app.getPath("userData")).deleteConversation(id);
       } catch (error) {
         console.error("[ChatsIpc] failed to delete persisted harness runs", error);
       }
@@ -461,9 +461,9 @@ export function registerChatsIpc(
     return ok;
   });
 
-  ipc.handle(IPC.CHATS_SET_PINNED, (event, payload: { id: string; pinned: boolean }) => {
+  ipc.handle(IPC.CHATS_SET_PINNED, async (event, payload: { id: string; pinned: boolean }) => {
     if (!payload || typeof payload.id !== "string") return null;
-    const session = chatsStore.setSessionPinned(payload.id, Boolean(payload.pinned));
+    const session = (await chatsStore.setSessionPinned(payload.id, Boolean(payload.pinned)));
     if (session) broadcastChanged(event.sender);
     return session;
   });
@@ -473,21 +473,21 @@ export function registerChatsIpc(
   // 幂等命中（enqueued=false，同标识同内容重试）不广播：磁盘与队列均未变化。
   ipc.handle(
     IPC.CHATS_PENDING_ENQUEUE,
-    (event, payload: { sessionId?: unknown; entry?: unknown }) => {
+    async (event, payload: { sessionId?: unknown; entry?: unknown }) => {
       const sessionId = typeof payload?.sessionId === "string" ? payload.sessionId : "";
       const entry = payload?.entry as chatsStore.PendingChatMessageInput | undefined;
       if (!sessionId || !entry || typeof entry !== "object") {
         return { ok: false, error: "invalid-payload" };
       }
-      const result = chatsStore.enqueuePendingMessage(sessionId, entry);
+      const result = (await chatsStore.enqueuePendingMessage(sessionId, entry));
       if (result.ok && result.enqueued) broadcastChanged(event.sender);
       return result;
     },
   );
 
-  ipc.handle(IPC.CHATS_PENDING_LIST, (_event, sessionId: unknown) => {
+  ipc.handle(IPC.CHATS_PENDING_LIST, async (_event, sessionId: unknown) => {
     if (typeof sessionId !== "string" || !sessionId) return null;
-    return chatsStore.getPendingMessages(sessionId);
+    return (await chatsStore.getPendingMessages(sessionId));
   });
 
   // 删除按稳定标识处理竞争：条目恰好已被认领/移除时幂等成功（removed=false 不广播）。
@@ -520,7 +520,7 @@ export function registerChatsIpc(
     const result = await sessionMigration.claimPendingMessage(sessionId);
     if (result.ok && result.claimed) {
       broadcastChanged(event.sender);
-      titleService?.schedule({
+      await titleService?.schedule({
         sessionId,
         userMessageId: result.userMessage.id,
         text: result.visibleContent,
@@ -532,11 +532,11 @@ export function registerChatsIpc(
   // 派发确认：run 被主进程接受后清除认领状态；纯簿记，不广播。
   ipc.handle(
     IPC.CHATS_PENDING_COMPLETE_DISPATCH,
-    (event, payload: { sessionId?: unknown; messageId?: unknown }) => {
+    async (event, payload: { sessionId?: unknown; messageId?: unknown }) => {
       const sessionId = typeof payload?.sessionId === "string" ? payload.sessionId : "";
       const messageId = typeof payload?.messageId === "string" ? payload.messageId : "";
       if (!sessionId || !messageId) return { ok: false, error: "invalid-payload" };
-      return chatsStore.completePendingDispatch(sessionId, messageId);
+      return (await chatsStore.completePendingDispatch(sessionId, messageId));
     },
   );
 
@@ -560,11 +560,11 @@ export function registerChatsIpc(
         return { ok: false, error: "invalid-payload" };
       }
       await pendingWithdrawalReconciliation;
-      const result = chatsStore.editPendingMessage(sessionId, messageId, {
+      const result = (await chatsStore.editPendingMessage(sessionId, messageId, {
         rawContent: payload.rawContent,
         visibleContent: typeof payload.visibleContent === "string" ? payload.visibleContent : payload.rawContent,
         ...(typeof payload.userSticker === "string" ? { userSticker: payload.userSticker } : {}),
-      });
+      }));
       if (result.ok) broadcastChanged(event.sender);
       return result;
     },
@@ -574,12 +574,12 @@ export function registerChatsIpc(
   // 新档案默认模型在提交时刻解析（不依赖 handler 同步执行的实现细节）。
   ipc.handle(IPC.CHATS_SET_MODEL_PROFILE, async (event, payload: { id: string; modelProfileId?: string }) => {
     if (!payload || typeof payload.id !== "string") return null;
-    const session = await chatsStore.enqueueSessionModelMutation(payload.id, () => {
+    const session = await chatsStore.enqueueSessionModelMutation(payload.id, async () => {
       const settings = loadModelSettings();
       const target = payload.modelProfileId
         ? listSavedModelProfiles(settings).find((profile) => profile.id === payload.modelProfileId)
         : getDefaultModelProfile(settings);
-      return chatsStore.setSessionModelProfile(payload.id, payload.modelProfileId, target?.model || undefined);
+      return (await chatsStore.setSessionModelProfile(payload.id, payload.modelProfileId, target?.model || undefined));
     });
     if (session) broadcastChanged(event.sender);
     // 返回值带实时容量：发起方窗口不回读 CHATS_GET（来源隔离跳过了自己），
@@ -594,12 +594,12 @@ export function registerChatsIpc(
     const sessionId = typeof payload?.id === "string" ? payload.id : "";
     const model = typeof payload?.model === "string" ? payload.model.trim() : "";
     if (!sessionId || !model) return { ok: false as const, error: "invalid-payload" as const };
-    const result = await chatsStore.enqueueSessionModelMutation(sessionId, (): ChatsSetSessionModelResult => {
-      const record = chatsStore.getSessionRecord(sessionId);
+    const result = await chatsStore.enqueueSessionModelMutation(sessionId, async (): Promise<ChatsSetSessionModelResult> => {
+      const record = (await chatsStore.getSessionRecord(sessionId));
       if (!record) return { ok: false as const, error: "session-not-found" as const };
       const plan = planSessionModelUpdate(loadModelSettings(), record, model);
       if (!plan.ok) return { ok: false as const, error: plan.error };
-      const session = chatsStore.setSessionModel(sessionId, plan.modelProfileId, plan.model);
+      const session = (await chatsStore.setSessionModel(sessionId, plan.modelProfileId, plan.model));
       if (!session) return { ok: false as const, error: "session-not-found" as const };
       return { ok: true as const, session: withLiveContextWindow(session) };
     });
@@ -618,7 +618,7 @@ export function registerChatsIpc(
     }
     try {
       const resolved = validateAndNormalizeWorkspace(workspaceRoot);
-      const isBoundWorkspace = chatsStore.listSessions().some((session) =>
+      const isBoundWorkspace = (await chatsStore.listSessions()).some((session) =>
         session.workspaceRoot === resolved,
       );
       if (!isBoundWorkspace) {
@@ -668,8 +668,8 @@ export function registerChatsIpc(
 
   ipc.handle(
     IPC.CHATS_MIGRATE_LEGACY,
-    (event, messages: ChatMessage[]) => {
-      const session = chatsStore.migrateLegacyMessages(messages);
+    async (event, messages: ChatMessage[]) => {
+      const session = (await chatsStore.migrateLegacyMessages(messages));
       if (session) broadcastChanged(event.sender);
       return session;
     },
@@ -685,7 +685,7 @@ export function registerChatsIpc(
       }
       // v1/v2 双兼容读取：会话一旦被组合读取（CHATS_GET）迁移成 v2 落盘，
       // 只认 v1 的 getSession 会把它误判成 "session not found"
-      const existing = chatsStore.getSessionRecord(payload.sessionId);
+      const existing = (await chatsStore.getSessionRecord(payload.sessionId));
       if (!existing) {
         console.warn(
           "[Workspace] 绑定失败：会话不存在 sessionId=" + String(payload.sessionId).slice(0, 8) + "...",
@@ -708,7 +708,7 @@ export function registerChatsIpc(
           displayName: path.basename(resolved),
           boundAt: Date.now(),
         };
-        const session = chatsStore.setWorkspaceBinding(payload.sessionId, binding);
+        const session = (await chatsStore.setWorkspaceBinding(payload.sessionId, binding));
         if (!session) return { ok: false, error: "session not found" };
         // 绑定成功即记入最近项目列表，供工作文件夹下拉复选
         recordRecentProject(resolved);
@@ -740,10 +740,10 @@ export function registerChatsIpc(
     IPC.CHATS_INIT_LEARN_WORKSPACE,
     async (_event, sessionId: string) => {
       if (!sessionId) return { ok: false, error: "missing sessionId" };
-      const binding = chatsStore.getWorkspaceBinding(sessionId);
+      const binding = (await chatsStore.getWorkspaceBinding(sessionId));
       if (!binding) return { ok: false, error: "no workspace binding" };
       // 同 CHATS_SET_WORKSPACE：用 v1/v2 双兼容读取，v2 会话不得误判
-      const session = chatsStore.getSessionRecord(sessionId);
+      const session = (await chatsStore.getSessionRecord(sessionId));
       if (!session || session.mode !== "learn") {
         return { ok: false, error: "session is not in learn mode" };
       }
@@ -755,17 +755,17 @@ export function registerChatsIpc(
 
   ipc.handle(
     IPC.CHATS_GET_WORKSPACE,
-    (_event, sessionId: string) => {
+    async (_event, sessionId: string) => {
       if (!sessionId) return null;
-      return chatsStore.getWorkspaceBinding(sessionId) ?? null;
+      return (await chatsStore.getWorkspaceBinding(sessionId)) ?? null;
     },
   );
 
   ipc.handle(
     IPC.CHATS_CLEAR_WORKSPACE,
-    (event, sessionId: string) => {
+    async (event, sessionId: string) => {
       if (!sessionId) return { ok: false, error: "missing sessionId" };
-      const session = chatsStore.clearWorkspaceBinding(sessionId);
+      const session = (await chatsStore.clearWorkspaceBinding(sessionId));
       if (!session) return { ok: false, error: "session not found" };
       // 广播工作区变更
       for (const win of BrowserWindow.getAllWindows()) {
@@ -805,12 +805,12 @@ export function registerChatsIpc(
   );
 
   // 最近绑定的项目文件夹：工作文件夹下拉的候选列表，只返回仍存在的目录
-  ipc.handle(IPC.CHATS_RECENT_PROJECTS, () => {
+  ipc.handle(IPC.CHATS_RECENT_PROJECTS, async () => {
     const stored = loadGeneralSettings().recentProjects;
     const listed = stored.length > 0
       ? stored
       // 列表为空说明是升级后的首次使用，用存量会话绑过的工作区回填
-      : backfillRecentProjects();
+      : await backfillRecentProjects();
     return listed.filter((dir) => fs.existsSync(dir));
   });
 
@@ -832,14 +832,16 @@ export function registerChatsIpc(
   // 正常终止的 Run 已在 harness-adapter 主动 finalize；
   // 崩溃恢复（interrupted）的 Run 在此按 "halted" 状态补生成。
   // 仍在运行的 Run（status=running）不生成快照，避免拿到不完整的 diff。
-  ipc.handle(IPC.REVIEW_GET, (_event, runId: string) => {
+  ipc.handle(IPC.REVIEW_GET, async (_event, runId: string) => {
     if (!runId || typeof runId !== "string") return null;
     const tracker = getRunReviewTracker(app.getPath("userData"));
     // 先尝试直接加载（正常终止的 Run 已在 harness-adapter 主动 finalize）
     const existing = tracker.loadReview(runId);
     if (existing) return existing;
     // 检查 Run 状态：只有非 running 的 Run 才补生成快照
-    const session = getHarnessRunStore(app.getPath("userData")).get(runId);
+    const runStore = getHarnessRunStore(app.getPath("userData"));
+    await runStore.refresh();
+    const session = runStore.get(runId);
     if (!session || session.status === "running") return null;
     // 崩溃恢复（interrupted）或异常终止的 Run：按 halted 补生成
     return tracker.finalizeIfPending(runId, session.createdAt, "halted");

@@ -228,13 +228,13 @@ describe("createChannelsSubsystem lifecycle", () => {
     expect(channelMocks.getSession).not.toHaveBeenCalled();
   });
 
-  it("resolves bindings from metadata without reading the full conversation", () => {
+  it("resolves bindings from metadata without reading the full conversation", async () => {
     channelMocks.bindingResolve.mockReturnValue("desktop-1");
     channelMocks.listSessions.mockReturnValue([{ id: "desktop-1" }]);
     createChannelsSubsystem(makeChannelsDeps());
-    expect(channelMocks.resolveBoundConversation?.("channel:qq:a")).toBe("desktop-1");
+    expect(await channelMocks.resolveBoundConversation?.("channel:qq:a")).toBe("desktop-1");
     channelMocks.listSessions.mockReturnValue([]);
-    expect(channelMocks.resolveBoundConversation?.("channel:qq:a")).toBeNull();
+    expect(await channelMocks.resolveBoundConversation?.("channel:qq:a")).toBeNull();
     expect(channelMocks.getSession).not.toHaveBeenCalled();
   });
 

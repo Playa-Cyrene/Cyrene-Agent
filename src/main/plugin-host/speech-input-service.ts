@@ -68,7 +68,7 @@ export interface SpeechInputCommitBridge {
 /** 会话存储的最小只读视图；真实实现是 chats-store，测试注入内存假件。 */
 export interface SpeechInputSessionStore {
   /** 返回会话对象表示存在；null/undefined 表示已删除。 */
-  getSession(sessionId: string): unknown;
+  getSession(sessionId: string): (unknown) | Promise<unknown>;
 }
 
 /** 租约持有者的插件上下文（由宿主服务工厂传入）。 */
@@ -248,7 +248,7 @@ export function createSpeechInputService(options: SpeechInputServiceOptions): Sp
             throw pluginHostError("E_NOT_FOUND", "语音输入租约已释放");
           }
           // 串行执行：前一次 commit（无论成败）结束后才开始本次
-          const run = state.queue.then(() => {
+          const run = state.queue.then(async () => {
             if (state.released) {
               throw pluginHostError("E_NOT_FOUND", "语音输入租约已释放");
             }
@@ -258,7 +258,7 @@ export function createSpeechInputService(options: SpeechInputServiceOptions): Sp
               return;
             }
             // 只看冻结会话是否仍存在；不校验当前 UI 显示的是哪个会话
-            if (sessionStore.getSession(state.frozen.chat.sessionId) == null) {
+            if ((await sessionStore.getSession(state.frozen.chat.sessionId)) == null) {
               throw pluginHostError("E_NOT_FOUND", `会话已删除: ${state.frozen.chat.sessionId}`);
             }
             // rendererTargetId 的迟到响应校验由提交桥负责

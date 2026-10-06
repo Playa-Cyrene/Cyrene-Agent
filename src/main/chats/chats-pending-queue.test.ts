@@ -1,10 +1,13 @@
+import { closeConversationDatabases, getConversationDatabase } from "../storage/conversation-database-client";
+import { withConversationDatabase } from "../../test-utils/conversation-storage";
+import { readSessionFixture, writeSessionFixture } from "../../test-utils/conversation-storage";
 // 会话级待发队列的真实存储测试（临时目录 + mock electron，与 chats-store.test.ts 同模式）。
 // 覆盖阶段二 A 契约：重启恢复、重复标识、跨会话隔离、失败不误报入队成功、
 // 旧会话兼容、入队顺序、待发条目绝不进入正式 messages。
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PendingChatMessageInput } from "./chats-store";
 
 const mocks = vi.hoisted(() => ({
@@ -43,6 +46,15 @@ function entry(overrides: Partial<PendingChatMessageInput> = {}): PendingChatMes
   };
 }
 
+async function finishActiveClaims(): Promise<void> {
+  const db = getConversationDatabase(mocks.userDataDir);
+  const runs = await db.call<any[]>("runs.all");
+  for (const run of runs) if (run.status === "prepared") await db.call("runs.terminal", run.runId, "completed");
+}
+function failSessionWrites(): void { withConversationDatabase(mocks.userDataDir, db => db.exec("CREATE TRIGGER fail_session BEFORE UPDATE ON conversations BEGIN SELECT RAISE(ABORT,'WRITE_FAILED'); END")); }
+function restoreSessionWrites(): void { withConversationDatabase(mocks.userDataDir, db => db.exec("DROP TRIGGER fail_session")); }
+afterEach(async () => { await closeConversationDatabases(); fs.rmSync(mocks.userDataDir, {recursive:true,force:true}); });
+
 describe("chats pending queue store", () => {
   beforeEach(() => {
     vi.resetModules();
@@ -51,17 +63,18 @@ describe("chats pending queue store", () => {
 
   it("入队后重启（重新 initialize）队列完整恢复，含顺序与附件引用", async () => {
     let store = await import("./chats-store");
-    store.initialize();
-    const session = store.createSession({ mode: "work" });
-    store.enqueuePendingMessage(session.id, entry({ id: "q1", rawContent: "先发这个", visibleContent: "先发这个" }));
-    store.enqueuePendingMessage(session.id, entry({ id: "q2", rawContent: "再发这个", visibleContent: "再发这个" }));
+    (await store.initialize());
+    const session = (await store.createSession({ mode: "work" }));
+    (await store.enqueuePendingMessage(session.id, entry({ id: "q1", rawContent: "先发这个", visibleContent: "先发这个" })));
+    (await store.enqueuePendingMessage(session.id, entry({ id: "q2", rawContent: "再发这个", visibleContent: "再发这个" })));
 
     // 模拟进程重启：模块重置 + 重新从磁盘加载
+    await closeConversationDatabases();
     vi.resetModules();
     store = await import("./chats-store");
-    store.initialize();
+    (await store.initialize());
 
-    const restored = store.getPendingMessages(session.id);
+    const restored = (await store.getPendingMessages(session.id));
     expect(restored?.map((item) => item.id)).toEqual(["q1", "q2"]);
     expect(restored?.[0].rawContent).toBe("先发这个");
     expect(typeof restored?.[0].enqueuedAt).toBe("number");
@@ -69,8 +82,8 @@ describe("chats pending queue store", () => {
 
   it("同标识同内容（含附件）重复入队幂等成功，返回现有权威队列且不重复写入", async () => {
     const store = await import("./chats-store");
-    store.initialize();
-    const session = store.createSession({ mode: "work" });
+    (await store.initialize());
+    const session = (await store.createSession({ mode: "work" }));
     const payload = entry({
       id: "dup-1",
       attachments: [
@@ -78,12 +91,12 @@ describe("chats pending queue store", () => {
       ],
     });
 
-    const first = store.enqueuePendingMessage(session.id, payload);
+    const first = (await store.enqueuePendingMessage(session.id, payload));
     expect(first).toEqual(expect.objectContaining({ ok: true, enqueued: true }));
     const firstEnqueuedAt = first.ok ? first.queue[0].enqueuedAt : 0;
 
     // 同标识同内容重试：幂等成功，enqueued=false，队列保持单条
-    const retry = store.enqueuePendingMessage(session.id, payload);
+    const retry = (await store.enqueuePendingMessage(session.id, payload));
     expect(retry).toEqual(expect.objectContaining({ ok: true, enqueued: false }));
     expect(retry.ok && retry.queue).toHaveLength(1);
     // enqueuedAt 保持首次值：证明幂等命中未重写磁盘
@@ -92,97 +105,97 @@ describe("chats pending queue store", () => {
 
   it("同标识但内容不同才返回冲突，队列保持首条不变", async () => {
     const store = await import("./chats-store");
-    store.initialize();
-    const session = store.createSession({ mode: "work" });
+    (await store.initialize());
+    const session = (await store.createSession({ mode: "work" }));
 
-    store.enqueuePendingMessage(session.id, entry({ id: "dup-1" }));
+    (await store.enqueuePendingMessage(session.id, entry({ id: "dup-1" })));
 
-    const conflict = store.enqueuePendingMessage(session.id, entry({
+    const conflict = (await store.enqueuePendingMessage(session.id, entry({
       id: "dup-1",
       rawContent: "同标识不同内容",
       visibleContent: "同标识不同内容",
-    }));
+    })));
     expect(conflict).toEqual({ ok: false, error: "duplicate-id" });
-    expect(store.getPendingMessages(session.id)).toHaveLength(1);
-    expect(store.getPendingMessages(session.id)?.[0].rawContent).toBe("第一条排队消息");
+    expect((await store.getPendingMessages(session.id))).toHaveLength(1);
+    expect((await store.getPendingMessages(session.id))?.[0].rawContent).toBe("第一条排队消息");
 
     // 附件不同同样视为内容不同（冲突）
-    const conflictByAttachment = store.enqueuePendingMessage(session.id, entry({
+    const conflictByAttachment = (await store.enqueuePendingMessage(session.id, entry({
       id: "dup-1",
       attachments: [{ kind: "document", name: "新附件.txt", filePath: "C:/tmp/new.txt" }],
-    }));
+    })));
     expect(conflictByAttachment).toEqual({ ok: false, error: "duplicate-id" });
   });
 
   it("首次成功但回复丢失后重试：同载荷重发得到成功与同一队列，不产生重复条目", async () => {
     const store = await import("./chats-store");
-    store.initialize();
-    const session = store.createSession({ mode: "work" });
+    (await store.initialize());
+    const session = (await store.createSession({ mode: "work" }));
     // 渲染层生成载荷（含稳定标识）；首次入队已在主进程落盘，但 IPC 回复丢失
     const payload = entry({ id: "lost-reply", rawContent: "回复丢失的重试", visibleContent: "回复丢失的重试" });
-    const first = store.enqueuePendingMessage(session.id, payload);
+    const first = (await store.enqueuePendingMessage(session.id, payload));
     expect(first).toEqual(expect.objectContaining({ ok: true, enqueued: true }));
 
     // 渲染层超时后重发同一载荷：应得到成功与现有权威队列，而非冲突或重复
-    const retried = store.enqueuePendingMessage(session.id, payload);
+    const retried = (await store.enqueuePendingMessage(session.id, payload));
     expect(retried).toEqual(expect.objectContaining({ ok: true, enqueued: false }));
     expect(retried.ok && retried.queue.map((item) => item.id)).toEqual(["lost-reply"]);
     // 重启后磁盘上也只有一条（重复写入从未发生）
     vi.resetModules();
     const storeAfterRestart = await import("./chats-store");
-    storeAfterRestart.initialize();
-    const restored = storeAfterRestart.getPendingMessages(session.id);
+    (await storeAfterRestart.initialize());
+    const restored = (await storeAfterRestart.getPendingMessages(session.id));
     expect(restored?.map((item) => item.id)).toEqual(["lost-reply"]);
   });
 
   it("跨会话隔离：各会话只读到自己的队列", async () => {
     const store = await import("./chats-store");
-    store.initialize();
-    const alpha = store.createSession({ mode: "work" });
-    const beta = store.createSession({ mode: "chat" });
+    (await store.initialize());
+    const alpha = (await store.createSession({ mode: "work" }));
+    const beta = (await store.createSession({ mode: "chat" }));
 
-    store.enqueuePendingMessage(alpha.id, entry({ id: "a1", rawContent: "A 会话的", visibleContent: "A 会话的" }));
-    store.enqueuePendingMessage(beta.id, entry({ id: "b1", rawContent: "B 会话的", visibleContent: "B 会话的" }));
+    (await store.enqueuePendingMessage(alpha.id, entry({ id: "a1", rawContent: "A 会话的", visibleContent: "A 会话的" })));
+    (await store.enqueuePendingMessage(beta.id, entry({ id: "b1", rawContent: "B 会话的", visibleContent: "B 会话的" })));
 
-    expect(store.getPendingMessages(alpha.id)?.map((item) => item.id)).toEqual(["a1"]);
-    expect(store.getPendingMessages(beta.id)?.map((item) => item.id)).toEqual(["b1"]);
+    expect((await store.getPendingMessages(alpha.id))?.map((item) => item.id)).toEqual(["a1"]);
+    expect((await store.getPendingMessages(beta.id))?.map((item) => item.id)).toEqual(["b1"]);
     // 删除 A 的条目不影响 B
-    store.removePendingMessage(alpha.id, "a1");
-    expect(store.getPendingMessages(alpha.id)).toEqual([]);
-    expect(store.getPendingMessages(beta.id)).toHaveLength(1);
+    (await store.removePendingMessage(alpha.id, "a1"));
+    expect((await store.getPendingMessages(alpha.id))).toEqual([]);
+    expect((await store.getPendingMessages(beta.id))).toHaveLength(1);
   });
 
   it("失败时不误报入队成功：会话不存在 / 空内容 / 非法附件 / 写盘失败", async () => {
     const store = await import("./chats-store");
-    store.initialize();
-    const session = store.createSession({ mode: "work" });
+    (await store.initialize());
+    const session = (await store.createSession({ mode: "work" }));
 
     // 会话不存在
-    expect(store.enqueuePendingMessage("missing-session", entry())).toEqual({
+    expect((await store.enqueuePendingMessage("missing-session", entry()))).toEqual({
       ok: false,
       error: "session-not-found",
     });
     // 空内容
-    expect(store.enqueuePendingMessage(session.id, entry({ rawContent: "   ", visibleContent: "" }))).toEqual({
+    expect((await store.enqueuePendingMessage(session.id, entry({ rawContent: "   ", visibleContent: "" })))).toEqual({
       ok: false,
       error: "empty-content",
     });
     // 附件缺 filePath（字段不完整整条拒绝）
-    expect(store.enqueuePendingMessage(session.id, entry({
+    expect((await store.enqueuePendingMessage(session.id, entry({
       attachments: [{ kind: "image", name: "坏附件" } as never],
-    }))).toEqual({ ok: false, error: "invalid-attachments" });
+    })))).toEqual({ ok: false, error: "invalid-attachments" });
     // 以上全部失败后队列必须仍为空
-    expect(store.getPendingMessages(session.id)).toEqual([]);
+    expect((await store.getPendingMessages(session.id))).toEqual([]);
 
     // 写盘失败（物理方式：把原子写的 .tmp 路径做成目录，writeFileSync 抛 EISDIR）
     const { getRootDir } = store;
     const tmpPath = path.join(getRootDir(), "sessions", `${session.id}.json.tmp`);
-    fs.mkdirSync(tmpPath, { recursive: true });
-    const failed = store.enqueuePendingMessage(session.id, entry({ id: "q-write" }));
+    failSessionWrites();
+    const failed = (await store.enqueuePendingMessage(session.id, entry({ id: "q-write" })));
     expect(failed).toEqual({ ok: false, error: "write-failed" });
     // 写盘失败后磁盘上确实没有该条目（清掉阻塞目录后重新读）
-    fs.rmdirSync(tmpPath);
-    expect(store.getPendingMessages(session.id)).toEqual([]);
+    restoreSessionWrites();
+    expect((await store.getPendingMessages(session.id))).toEqual([]);
   });
 
   it("旧会话无 pendingMessages 字段视为空队列（向后兼容）", async () => {
@@ -203,57 +216,57 @@ describe("chats pending queue store", () => {
     }));
 
     const store = await import("./chats-store");
-    store.initialize();
+    (await store.initialize());
 
-    expect(store.getPendingMessages("legacy")).toEqual([]);
+    expect((await store.getPendingMessages("legacy"))).toEqual([]);
     // 旧会话直接入队也能工作（字段延迟创建）
-    const result = store.enqueuePendingMessage("legacy", entry({ id: "new-q" }));
+    const result = (await store.enqueuePendingMessage("legacy", entry({ id: "new-q" })));
     expect(result).toEqual(expect.objectContaining({ ok: true }));
-    expect(store.getPendingMessages("legacy")?.map((item) => item.id)).toEqual(["new-q"]);
+    expect((await store.getPendingMessages("legacy"))?.map((item) => item.id)).toEqual(["new-q"]);
   });
 
   it("三条按序入队：数组顺序即入队顺序（派发顺序依据）", async () => {
     const store = await import("./chats-store");
-    store.initialize();
-    const session = store.createSession({ mode: "work" });
+    (await store.initialize());
+    const session = (await store.createSession({ mode: "work" }));
 
     for (const [index, id] of ["q-a", "q-b", "q-c"].entries()) {
-      const result = store.enqueuePendingMessage(session.id, entry({
+      const result = (await store.enqueuePendingMessage(session.id, entry({
         id,
         rawContent: `消息 ${index}`,
         visibleContent: `消息 ${index}`,
-      }));
+      })));
       expect(result).toEqual(expect.objectContaining({ ok: true }));
     }
 
-    expect(store.getPendingMessages(session.id)?.map((item) => item.id)).toEqual(["q-a", "q-b", "q-c"]);
+    expect((await store.getPendingMessages(session.id))?.map((item) => item.id)).toEqual(["q-a", "q-b", "q-c"]);
   });
 
   it("待发条目只写 pendingMessages，绝不进入正式 messages 历史", async () => {
     const store = await import("./chats-store");
-    store.initialize();
-    const session = store.createSession({
+    (await store.initialize());
+    const session = (await store.createSession({
       mode: "work",
       initialMessages: [{ id: "m1", role: "user", content: "已有历史", at: 1 }],
-    });
+    }));
 
-    store.enqueuePendingMessage(session.id, entry({ id: "q1" }));
-    store.enqueuePendingMessage(session.id, entry({ id: "q2", rawContent: "第二条", visibleContent: "第二条" }));
+    (await store.enqueuePendingMessage(session.id, entry({ id: "q1" })));
+    (await store.enqueuePendingMessage(session.id, entry({ id: "q2", rawContent: "第二条", visibleContent: "第二条" })));
 
-    const persisted = store.getSession(session.id);
+    const persisted = (await store.getSession(session.id));
     // 正式历史只有原有消息，队列条目不冒充用户消息
     expect(persisted?.messages.map((message) => message.id)).toEqual(["m1"]);
     expect(persisted?.pendingMessages?.map((item) => item.id)).toEqual(["q1", "q2"]);
     // 会话列表的 messageCount 也不被待发条目污染
-    expect(store.listSessions().find((item) => item.id === session.id)?.messageCount).toBe(1);
+    expect((await store.listSessions()).find((item) => item.id === session.id)?.messageCount).toBe(1);
   });
 
   it("附件引用只保留稳定字段：截图标注标记保留，预览地址与处理状态剥离", async () => {
     const store = await import("./chats-store");
-    store.initialize();
-    const session = store.createSession({ mode: "work" });
+    (await store.initialize());
+    const session = (await store.createSession({ mode: "work" }));
 
-    const result = store.enqueuePendingMessage(session.id, entry({
+    const result = (await store.enqueuePendingMessage(session.id, entry({
       id: "q-att",
       attachments: [
         {
@@ -269,10 +282,10 @@ describe("chats pending queue store", () => {
         } as never,
         { kind: "document", name: "报告.txt", filePath: "C:/tmp/报告.txt" },
       ],
-    }));
+    })));
     expect(result).toEqual(expect.objectContaining({ ok: true }));
 
-    const queue = store.getPendingMessages(session.id);
+    const queue = (await store.getPendingMessages(session.id));
     expect(queue?.[0].attachments).toEqual([
       { kind: "image", name: "截图.png", filePath: "C:/tmp/shot.png", mime: "image/png", hasAnnotations: true },
       { kind: "document", name: "报告.txt", filePath: "C:/tmp/报告.txt" },
@@ -281,20 +294,20 @@ describe("chats pending queue store", () => {
 
   it("恢复后的附件可重新用于派发：标注标记与路径跨重启保留", async () => {
     let store = await import("./chats-store");
-    store.initialize();
-    const session = store.createSession({ mode: "work" });
-    store.enqueuePendingMessage(session.id, entry({
+    (await store.initialize());
+    const session = (await store.createSession({ mode: "work" }));
+    (await store.enqueuePendingMessage(session.id, entry({
       id: "q-restore",
       attachments: [
         { kind: "image", name: "标注截图.png", filePath: "C:/tmp/annotated.png", mime: "image/png", hasAnnotations: true },
       ],
-    }));
+    })));
 
     vi.resetModules();
     store = await import("./chats-store");
-    store.initialize();
+    (await store.initialize());
 
-    const restored = store.getPendingMessages(session.id)?.[0];
+    const restored = (await store.getPendingMessages(session.id))?.[0];
     expect(restored?.attachments?.[0]).toEqual({
       kind: "image",
       name: "标注截图.png",
@@ -306,71 +319,71 @@ describe("chats pending queue store", () => {
 
   it("删除按标识幂等：删不存在的条目成功且不写盘，会话不存在才报错", async () => {
     const store = await import("./chats-store");
-    store.initialize();
-    const session = store.createSession({ mode: "work" });
-    store.enqueuePendingMessage(session.id, entry({ id: "q1" }));
+    (await store.initialize());
+    const session = (await store.createSession({ mode: "work" }));
+    (await store.enqueuePendingMessage(session.id, entry({ id: "q1" })));
 
     // 删存在的条目
-    expect(store.removePendingMessage(session.id, "q1")).toEqual({ ok: true, removed: true });
-    expect(store.getPendingMessages(session.id)).toEqual([]);
+    expect((await store.removePendingMessage(session.id, "q1"))).toEqual({ ok: true, removed: true });
+    expect((await store.getPendingMessages(session.id))).toEqual([]);
     // 再删同一条（幂等）与删从未存在的条目都安全（removed=false）
-    expect(store.removePendingMessage(session.id, "q1")).toEqual({ ok: true, removed: false });
-    expect(store.removePendingMessage(session.id, "never-existed")).toEqual({ ok: true, removed: false });
+    expect((await store.removePendingMessage(session.id, "q1"))).toEqual({ ok: true, removed: false });
+    expect((await store.removePendingMessage(session.id, "never-existed"))).toEqual({ ok: true, removed: false });
     // 会话不存在
-    expect(store.removePendingMessage("missing-session", "q1")).toEqual({ ok: false, error: "session-not-found" });
-    expect(store.getPendingMessages("missing-session")).toBeNull();
+    expect((await store.removePendingMessage("missing-session", "q1"))).toEqual({ ok: false, error: "session-not-found" });
+    expect((await store.getPendingMessages("missing-session"))).toBeNull();
   });
 
   it("删除写盘失败返回失败，条目保留在队列中", async () => {
     const store = await import("./chats-store");
-    store.initialize();
-    const session = store.createSession({ mode: "work" });
-    store.enqueuePendingMessage(session.id, entry({ id: "q-del" }));
+    (await store.initialize());
+    const session = (await store.createSession({ mode: "work" }));
+    (await store.enqueuePendingMessage(session.id, entry({ id: "q-del" })));
 
     // 物理方式制造写盘失败：原子写的 .tmp 路径被目录占用，writeFileSync 抛 EISDIR
     const tmpPath = path.join(store.getRootDir(), "sessions", `${session.id}.json.tmp`);
-    fs.mkdirSync(tmpPath, { recursive: true });
-    expect(store.removePendingMessage(session.id, "q-del")).toEqual({ ok: false, error: "write-failed" });
+    failSessionWrites();
+    expect((await store.removePendingMessage(session.id, "q-del"))).toEqual({ ok: false, error: "write-failed" });
     // 清掉阻塞目录后：删除从未落盘，条目仍在（删除失败不误删）
-    fs.rmdirSync(tmpPath);
-    expect(store.getPendingMessages(session.id)?.map((item) => item.id)).toEqual(["q-del"]);
+    restoreSessionWrites();
+    expect((await store.getPendingMessages(session.id))?.map((item) => item.id)).toEqual(["q-del"]);
   });
 
   it("增删队列不刷新会话排序时间也不写 index.json", async () => {
     const store = await import("./chats-store");
-    store.initialize();
-    const session = store.createSession({ mode: "work" });
+    (await store.initialize());
+    const session = (await store.createSession({ mode: "work" }));
     const indexJsonPath = path.join(store.getRootDir(), "index.json");
-    const indexBefore = fs.readFileSync(indexJsonPath, "utf8");
-    const updatedAtBefore = store.getSession(session.id)?.updatedAt;
+    const indexBefore = JSON.stringify(await store.listSessions());
+    const updatedAtBefore = (await store.getSession(session.id))?.updatedAt;
 
     // 入队：会话文件更新，但排序时间与 index.json 不动
-    store.enqueuePendingMessage(session.id, entry({ id: "q-sort" }));
-    expect(store.getSession(session.id)?.updatedAt).toBe(updatedAtBefore);
-    expect(fs.readFileSync(indexJsonPath, "utf8")).toBe(indexBefore);
+    (await store.enqueuePendingMessage(session.id, entry({ id: "q-sort" })));
+    expect((await store.getSession(session.id))?.updatedAt).toBe(updatedAtBefore);
+    expect(JSON.stringify(await store.listSessions())).toBe(indexBefore);
 
     // 删除：同样不动
-    store.removePendingMessage(session.id, "q-sort");
-    expect(store.getSession(session.id)?.updatedAt).toBe(updatedAtBefore);
-    expect(fs.readFileSync(indexJsonPath, "utf8")).toBe(indexBefore);
+    (await store.removePendingMessage(session.id, "q-sort"));
+    expect((await store.getSession(session.id))?.updatedAt).toBe(updatedAtBefore);
+    expect(JSON.stringify(await store.listSessions())).toBe(indexBefore);
 
     // 会话列表排序依据（updatedAt）未变
-    expect(store.listSessions().find((item) => item.id === session.id)?.updatedAt).toBe(updatedAtBefore);
+    expect((await store.listSessions()).find((item) => item.id === session.id)?.updatedAt).toBe(updatedAtBefore);
   });
 
   it("表情包与原始/展示内容分离保存", async () => {
     const store = await import("./chats-store");
-    store.initialize();
-    const session = store.createSession({ mode: "chat" });
+    (await store.initialize());
+    const session = (await store.createSession({ mode: "chat" }));
 
-    store.enqueuePendingMessage(session.id, {
+    (await store.enqueuePendingMessage(session.id, {
       id: "q-sticker",
       rawContent: "抱抱 [sticker:playful]",
       visibleContent: "抱抱",
       userSticker: "playful",
-    });
+    }));
 
-    const queue = store.getPendingMessages(session.id);
+    const queue = (await store.getPendingMessages(session.id));
     expect(queue?.[0]).toEqual(expect.objectContaining({
       rawContent: "抱抱 [sticker:playful]",
       visibleContent: "抱抱",
@@ -388,13 +401,13 @@ describe("chats pending claim & dispatch", () => {
   /** 建会话并入队三条消息（带序号），返回会话 id。 */
   async function seedThreeMessages() {
     const store = await import("./chats-store");
-    store.initialize();
-    const session = store.createSession({
+    (await store.initialize());
+    const session = (await store.createSession({
       mode: "work",
       initialMessages: [{ id: "m0", role: "user", content: "已有历史", at: 1 }],
-    });
+    }));
     for (const id of ["q-a", "q-b", "q-c"]) {
-      store.enqueuePendingMessage(session.id, entry({ id, rawContent: `消息 ${id}`, visibleContent: `消息 ${id}` }));
+      (await store.enqueuePendingMessage(session.id, entry({ id, rawContent: `消息 ${id}`, visibleContent: `消息 ${id}` })));
     }
     return { store, sessionId: session.id };
   }
@@ -403,7 +416,7 @@ describe("chats pending claim & dispatch", () => {
     const { store, sessionId } = await seedThreeMessages();
 
     for (const expectedId of ["q-a", "q-b", "q-c"]) {
-      const claim = store.claimPendingMessage(sessionId);
+      const claim = (await store.claimPendingMessage(sessionId));
       expect(claim).toEqual(expect.objectContaining({ ok: true, claimed: true }));
       if (!claim.ok || !claim.claimed) throw new Error("unreachable");
       expect(claim.userMessage.id).toBe(expectedId);
@@ -411,21 +424,22 @@ describe("chats pending claim & dispatch", () => {
       // 认领后的会话已含转正消息，剩余队列是权威快照
       expect(claim.session.messages.at(-1)?.id).toBe(expectedId);
       // 页面流程：run ack 成功后才确认派发，随后才能认领下一条
-      expect(store.completePendingDispatch(sessionId, expectedId)).toEqual({ ok: true, cleared: true });
+      expect((await store.completePendingDispatch(sessionId, expectedId))).toEqual({ ok: true, cleared: true });
+    await finishActiveClaims();
     }
     // 三条全部派发完：队列空、messages 追加三条、派发状态已清
-    expect(store.getPendingMessages(sessionId)).toEqual([]);
-    expect(store.getSession(sessionId)?.messages.map((message) => message.id)).toEqual(["m0", "q-a", "q-b", "q-c"]);
-    expect(store.getSession(sessionId)?.pendingDispatch).toBeUndefined();
+    expect((await store.getPendingMessages(sessionId))).toEqual([]);
+    expect((await store.getSession(sessionId))?.messages.map((message) => message.id)).toEqual(["m0", "q-a", "q-b", "q-c"]);
+    expect((await store.getSession(sessionId))?.pendingDispatch).toBeUndefined();
     // 队列空再认领：claimed=false
-    expect(store.claimPendingMessage(sessionId)).toEqual({ ok: true, claimed: false });
+    expect((await store.claimPendingMessage(sessionId))).toEqual({ ok: true, claimed: false });
   });
 
   it("认领把附件快照映射为正式消息附件（图片标注保留，状态重置为 pending）", async () => {
     const store = await import("./chats-store");
-    store.initialize();
-    const session = store.createSession({ mode: "work" });
-    store.enqueuePendingMessage(session.id, entry({
+    (await store.initialize());
+    const session = (await store.createSession({ mode: "work" }));
+    (await store.enqueuePendingMessage(session.id, entry({
       id: "q-att",
       rawContent: "看这张图",
       visibleContent: "看这张图",
@@ -433,9 +447,9 @@ describe("chats pending claim & dispatch", () => {
         { kind: "image", name: "标注截图.png", filePath: "C:/tmp/annotated.png", mime: "image/png", hasAnnotations: true },
         { kind: "document", name: "报告.txt", filePath: "C:/tmp/报告.txt" },
       ],
-    }));
+    })));
 
-    const claim = store.claimPendingMessage(session.id);
+    const claim = (await store.claimPendingMessage(session.id));
     expect(claim).toEqual(expect.objectContaining({ ok: true, claimed: true }));
     if (!claim.ok || !claim.claimed) throw new Error("unreachable");
     expect(claim.userMessage.attachments).toEqual([
@@ -448,43 +462,47 @@ describe("chats pending claim & dispatch", () => {
 
   it("认领写入 pendingDispatch；completePendingDispatch 按 messageId 清除，不匹配幂等", async () => {
     const store = await import("./chats-store");
-    store.initialize();
-    const session = store.createSession({ mode: "work" });
-    store.enqueuePendingMessage(session.id, entry({ id: "q-1", rawContent: "第一条", visibleContent: "第一条" }));
-    store.enqueuePendingMessage(session.id, entry({ id: "q-2", rawContent: "第二条", visibleContent: "第二条" }));
+    (await store.initialize());
+    const session = (await store.createSession({ mode: "work" }));
+    (await store.enqueuePendingMessage(session.id, entry({ id: "q-1", rawContent: "第一条", visibleContent: "第一条" })));
+    (await store.enqueuePendingMessage(session.id, entry({ id: "q-2", rawContent: "第二条", visibleContent: "第二条" })));
 
-    const claim = store.claimPendingMessage(session.id);
+    const claim = (await store.claimPendingMessage(session.id));
     if (!claim.ok || !claim.claimed) throw new Error("unreachable");
-    expect(store.getSession(session.id)?.pendingDispatch).toEqual({
+    expect((await store.getSession(session.id))?.pendingDispatch).toMatchObject({
       messageId: "q-1",
       claimedAt: claim.userMessage.at,
     });
 
     // messageId 不匹配（已被清除/认领了新条目）：幂等成功不写盘
-    expect(store.completePendingDispatch(session.id, "q-2")).toEqual({ ok: true, cleared: false });
-    expect(store.getSession(session.id)?.pendingDispatch?.messageId).toBe("q-1");
+    expect((await store.completePendingDispatch(session.id, "q-2"))).toEqual({ ok: true, cleared: false });
+    await finishActiveClaims();
+    expect((await store.getSession(session.id))?.pendingDispatch?.messageId).toBe("q-1");
 
     // 匹配：清除派发状态
-    expect(store.completePendingDispatch(session.id, "q-1")).toEqual({ ok: true, cleared: true });
-    expect(store.getSession(session.id)?.pendingDispatch).toBeUndefined();
+    expect((await store.completePendingDispatch(session.id, "q-1"))).toEqual({ ok: true, cleared: true });
+    await finishActiveClaims();
+    expect((await store.getSession(session.id))?.pendingDispatch).toBeUndefined();
     // 会话不存在
-    expect(store.completePendingDispatch("missing", "q-1")).toEqual({ ok: false, error: "session-not-found" });
+    expect((await store.completePendingDispatch("missing", "q-1"))).toEqual({ ok: false, error: "session-not-found" });
+    await finishActiveClaims();
   });
 
   it("认领冲突：已有未完成认领时再次认领返回 already-dispatching，队列与历史不动", async () => {
     const { store, sessionId } = await seedThreeMessages();
 
-    const first = store.claimPendingMessage(sessionId);
+    const first = (await store.claimPendingMessage(sessionId));
     expect(first).toEqual(expect.objectContaining({ ok: true, claimed: true }));
 
     // 未 completeDispatch 前再次认领（如另一窗口并发）：拒绝且不改变任何状态
-    expect(store.claimPendingMessage(sessionId)).toEqual({ ok: false, error: "already-dispatching" });
-    expect(store.getSession(sessionId)?.messages.map((message) => message.id)).toEqual(["m0", "q-a"]);
-    expect(store.getPendingMessages(sessionId)?.map((item) => item.id)).toEqual(["q-b", "q-c"]);
+    expect((await store.claimPendingMessage(sessionId))).toEqual({ ok: false, error: "already-dispatching" });
+    expect((await store.getSession(sessionId))?.messages.map((message) => message.id)).toEqual(["m0", "q-a"]);
+    expect((await store.getPendingMessages(sessionId))?.map((item) => item.id)).toEqual(["q-b", "q-c"]);
 
     // 确认派发后可继续认领下一条
-    store.completePendingDispatch(sessionId, "q-a");
-    const second = store.claimPendingMessage(sessionId);
+    (await store.completePendingDispatch(sessionId, "q-a"));
+    await finishActiveClaims();
+    const second = (await store.claimPendingMessage(sessionId));
     expect(second).toEqual(expect.objectContaining({ ok: true, claimed: true }));
     if (!second.ok || !second.claimed) throw new Error("unreachable");
     expect(second.userMessage.id).toBe("q-b");
@@ -495,12 +513,12 @@ describe("chats pending claim & dispatch", () => {
 
     // 物理方式制造写盘失败：原子写 .tmp 路径被目录占用
     const tmpPath = path.join(store.getRootDir(), "sessions", `${sessionId}.json.tmp`);
-    fs.mkdirSync(tmpPath, { recursive: true });
-    expect(store.claimPendingMessage(sessionId)).toEqual({ ok: false, error: "write-failed" });
-    fs.rmdirSync(tmpPath);
+    failSessionWrites();
+    expect((await store.claimPendingMessage(sessionId))).toEqual({ ok: false, error: "write-failed" });
+    restoreSessionWrites();
 
     // 写盘失败后一切如初：队首仍在队列、历史未追加、无 pendingDispatch
-    const persisted = store.getSession(sessionId);
+    const persisted = (await store.getSession(sessionId));
     expect(persisted?.messages.map((message) => message.id)).toEqual(["m0"]);
     expect(persisted?.pendingMessages?.map((item) => item.id)).toEqual(["q-a", "q-b", "q-c"]);
     expect(persisted?.pendingDispatch).toBeUndefined();
@@ -514,7 +532,7 @@ describe("chats pending claim & dispatch", () => {
     fs.mkdirSync(indexTmp, { recursive: true });
     let claim: ReturnType<typeof store.claimPendingMessage>;
     try {
-      claim = store.claimPendingMessage(sessionId);
+      claim = (await store.claimPendingMessage(sessionId));
     } finally {
       fs.rmdirSync(indexTmp);
     }
@@ -525,73 +543,75 @@ describe("chats pending claim & dispatch", () => {
     if (!claim.ok || !claim.claimed) throw new Error("unreachable");
     expect(claim.userMessage.id).toBe("q-a");
     // 磁盘事实：用户消息已入册、派发状态已落盘、队首已移出
-    const persisted = store.getSession(sessionId);
+    const persisted = (await store.getSession(sessionId));
     expect(persisted?.messages.map((message) => message.id)).toEqual(["m0", "q-a"]);
-    expect(persisted?.pendingDispatch).toEqual({ messageId: "q-a", claimedAt: expect.any(Number) });
+    expect(persisted?.pendingDispatch).toMatchObject({ messageId: "q-a", claimedAt: expect.any(Number) });
     expect(persisted?.pendingMessages?.map((item) => item.id)).toEqual(["q-b", "q-c"]);
     // 后续派发确认照常可用（索引阻塞已解除）
-    expect(store.completePendingDispatch(sessionId, "q-a")).toEqual({ ok: true, cleared: true });
+    expect((await store.completePendingDispatch(sessionId, "q-a"))).toEqual({ ok: true, cleared: true });
+    await finishActiveClaims();
   });
 
   it("删除与认领竞争：认领后按同 id 删除幂等成功，认领后的消息不丢", async () => {
     const { store, sessionId } = await seedThreeMessages();
 
-    const claim = store.claimPendingMessage(sessionId);
+    const claim = (await store.claimPendingMessage(sessionId));
     if (!claim.ok || !claim.claimed) throw new Error("unreachable");
     // 用户在另一窗口点了撤回，但该条目已被认领转正：删除幂等成功（removed=false）
-    expect(store.removePendingMessage(sessionId, "q-a")).toEqual({ ok: true, removed: false });
+    expect((await store.removePendingMessage(sessionId, "q-a"))).toEqual({ ok: true, removed: false });
     // 转正的消息保留在历史，剩余队列不受影响
-    expect(store.getSession(sessionId)?.messages.map((message) => message.id)).toEqual(["m0", "q-a"]);
-    expect(store.getPendingMessages(sessionId)?.map((item) => item.id)).toEqual(["q-b", "q-c"]);
+    expect((await store.getSession(sessionId))?.messages.map((message) => message.id)).toEqual(["m0", "q-a"]);
+    expect((await store.getPendingMessages(sessionId))?.map((item) => item.id)).toEqual(["q-b", "q-c"]);
   });
 
   it("刷新/进程重启恢复：认领后重启 → 用户消息在历史、派发状态残留、队列为空", async () => {
     let store = await import("./chats-store");
-    store.initialize();
-    const session = store.createSession({ mode: "work" });
-    store.enqueuePendingMessage(session.id, entry({ id: "q-1", rawContent: "认领后崩溃", visibleContent: "认领后崩溃" }));
+    (await store.initialize());
+    const session = (await store.createSession({ mode: "work" }));
+    (await store.enqueuePendingMessage(session.id, entry({ id: "q-1", rawContent: "认领后崩溃", visibleContent: "认领后崩溃" })));
 
-    const claim = store.claimPendingMessage(session.id);
+    const claim = (await store.claimPendingMessage(session.id));
     expect(claim).toEqual(expect.objectContaining({ ok: true, claimed: true }));
 
     // 模拟进程重启：认领已落盘但 completeDispatch 尚未发生
     vi.resetModules();
     store = await import("./chats-store");
-    store.initialize();
+    (await store.initialize());
 
-    const restored = store.getSession(session.id);
+    const restored = (await store.getSession(session.id));
     // 页面恢复入口需要的全部事实都在磁盘上：消息已入册、认领状态指向它、队列为空
     expect(restored?.messages.map((message) => message.id)).toEqual(["q-1"]);
-    expect(restored?.pendingDispatch).toEqual({ messageId: "q-1", claimedAt: expect.any(Number) });
+    expect(restored?.pendingDispatch).toMatchObject({ messageId: "q-1", claimedAt: expect.any(Number) });
     expect(restored?.pendingMessages ?? []).toEqual([]);
     // 恢复确认派发仍可完成（幂等链路闭环）
-    expect(store.completePendingDispatch(session.id, "q-1")).toEqual({ ok: true, cleared: true });
+    expect((await store.completePendingDispatch(session.id, "q-1"))).toEqual({ ok: true, cleared: true });
+    await finishActiveClaims();
   });
 
   it("认领等于真实历史入册：刷新排序时间并更新列表 messageCount", async () => {
     const { store, sessionId } = await seedThreeMessages();
-    const before = store.getSession(sessionId);
+    const before = (await store.getSession(sessionId));
 
-    const claim = store.claimPendingMessage(sessionId);
+    const claim = (await store.claimPendingMessage(sessionId));
     if (!claim.ok || !claim.claimed) throw new Error("unreachable");
 
-    const after = store.getSession(sessionId);
+    const after = (await store.getSession(sessionId));
     expect(after?.updatedAt).toBeGreaterThanOrEqual(before?.updatedAt ?? 0);
-    expect(store.listSessions().find((item) => item.id === sessionId)?.messageCount).toBe(2);
+    expect((await store.listSessions()).find((item) => item.id === sessionId)?.messageCount).toBe(2);
   });
 
   it("首条用户消息认领后立即派生临时标题，等待异步模型标题时不显示新对话", async () => {
     const store = await import("./chats-store");
-    store.initialize();
-    const session = store.createSession({ mode: "learn" });
-    store.enqueuePendingMessage(session.id, entry({
+    (await store.initialize());
+    const session = (await store.createSession({ mode: "learn" }));
+    (await store.enqueuePendingMessage(session.id, entry({
       id: "first-user",
       rawContent: "请帮我制定机器学习计划",
       visibleContent: "请帮我制定机器学习计划",
-    }));
+    })));
 
-    expect(store.claimPendingMessage(session.id)).toEqual(expect.objectContaining({ ok: true, claimed: true }));
-    expect(store.getSession(session.id)?.title).toBe("请帮我制定机器学习计划");
+    expect((await store.claimPendingMessage(session.id))).toEqual(expect.objectContaining({ ok: true, claimed: true }));
+    expect((await store.getSession(session.id))?.title).toBe("请帮我制定机器学习计划");
   });
 });
 
@@ -604,31 +624,31 @@ describe("chats pending edit & adjust", () => {
   /** 建会话并入队两条消息，返回会话 id 与首条入队时间。 */
   async function seedTwoMessages() {
     const store = await import("./chats-store");
-    store.initialize();
-    const session = store.createSession({
+    (await store.initialize());
+    const session = (await store.createSession({
       mode: "work",
       initialMessages: [{ id: "m0", role: "user", content: "已有历史", at: 1 }],
-    });
-    store.enqueuePendingMessage(session.id, entry({ id: "q-a", rawContent: "消息甲", visibleContent: "消息甲" }));
-    store.enqueuePendingMessage(session.id, entry({ id: "q-b", rawContent: "消息乙", visibleContent: "消息乙" }));
-    const enqueuedAt = store.getPendingMessages(session.id)?.[0].enqueuedAt ?? 0;
+    }));
+    (await store.enqueuePendingMessage(session.id, entry({ id: "q-a", rawContent: "消息甲", visibleContent: "消息甲" })));
+    (await store.enqueuePendingMessage(session.id, entry({ id: "q-b", rawContent: "消息乙", visibleContent: "消息乙" })));
+    const enqueuedAt = (await store.getPendingMessages(session.id))?.[0].enqueuedAt ?? 0;
     return { store, sessionId: session.id, enqueuedAt };
   }
 
   it("编辑成功：三个文字字段更新，标识/入队时间/顺序/附件保持不变", async () => {
     const { store, sessionId, enqueuedAt } = await seedTwoMessages();
-    store.enqueuePendingMessage(sessionId, entry({
+    (await store.enqueuePendingMessage(sessionId, entry({
       id: "q-att",
       rawContent: "带附件的",
       visibleContent: "带附件的",
       attachments: [{ kind: "document", name: "报告.txt", filePath: "C:/tmp/报告.txt" }],
-    }));
+    })));
 
-    const result = store.editPendingMessage(sessionId, "q-a", {
+    const result = (await store.editPendingMessage(sessionId, "q-a", {
       rawContent: "改后的文字 [sticker:shy]",
       visibleContent: "改后的文字",
       userSticker: "shy",
-    });
+    }));
     expect(result).toEqual(expect.objectContaining({ ok: true }));
     const queue = result.ok ? result.queue : [];
     expect(queue.map((item) => item.id)).toEqual(["q-a", "q-b", "q-att"]);
@@ -643,99 +663,99 @@ describe("chats pending edit & adjust", () => {
       { kind: "document", name: "报告.txt", filePath: "C:/tmp/报告.txt" },
     ]);
     // 编辑不把待发条目转成正式消息，也不动列表计数
-    expect(store.getSession(sessionId)?.messages.map((message) => message.id)).toEqual(["m0"]);
-    expect(store.listSessions().find((item) => item.id === sessionId)?.messageCount).toBe(1);
+    expect((await store.getSession(sessionId))?.messages.map((message) => message.id)).toEqual(["m0"]);
+    expect((await store.listSessions()).find((item) => item.id === sessionId)?.messageCount).toBe(1);
   });
 
   it("编辑清空表情标记：未传 userSticker 时移除原标记", async () => {
     const store = await import("./chats-store");
-    store.initialize();
-    const session = store.createSession({ mode: "chat" });
-    store.enqueuePendingMessage(session.id, {
+    (await store.initialize());
+    const session = (await store.createSession({ mode: "chat" }));
+    (await store.enqueuePendingMessage(session.id, {
       id: "q-sticker",
       rawContent: "抱抱 [sticker:playful]",
       visibleContent: "抱抱",
       userSticker: "playful",
-    });
+    }));
 
-    const result = store.editPendingMessage(session.id, "q-sticker", {
+    const result = (await store.editPendingMessage(session.id, "q-sticker", {
       rawContent: "只改文字",
       visibleContent: "只改文字",
-    });
+    }));
     expect(result.ok).toBe(true);
-    expect(store.getPendingMessages(session.id)?.[0]).not.toHaveProperty("userSticker");
-    expect(store.getPendingMessages(session.id)?.[0].rawContent).toBe("只改文字");
+    expect((await store.getPendingMessages(session.id))?.[0]).not.toHaveProperty("userSticker");
+    expect((await store.getPendingMessages(session.id))?.[0].rawContent).toBe("只改文字");
   });
 
   it("空文字拒绝：队列保持原样", async () => {
     const { store, sessionId } = await seedTwoMessages();
 
-    const result = store.editPendingMessage(sessionId, "q-a", { rawContent: "   ", visibleContent: "" });
+    const result = (await store.editPendingMessage(sessionId, "q-a", { rawContent: "   ", visibleContent: "" }));
     expect(result).toEqual(expect.objectContaining({ ok: false, error: "empty-content" }));
-    expect(store.getPendingMessages(sessionId)?.[0].rawContent).toBe("消息甲");
+    expect((await store.getPendingMessages(sessionId))?.[0].rawContent).toBe("消息甲");
   });
 
   it("编辑与认领竞争：条目已被认领转正后编辑被拒，返回 already-claimed 与最新队列", async () => {
     const { store, sessionId } = await seedTwoMessages();
     // 认领队首（q-a 转正式消息并进入派发流程）
-    const claim = store.claimPendingMessage(sessionId);
+    const claim = (await store.claimPendingMessage(sessionId));
     expect(claim).toEqual(expect.objectContaining({ ok: true, claimed: true }));
 
     // 另一窗口此时编辑同一条目：明确拒绝，不覆盖新状态
-    const result = store.editPendingMessage(sessionId, "q-a", {
+    const result = (await store.editPendingMessage(sessionId, "q-a", {
       rawContent: "迟到的编辑",
       visibleContent: "迟到的编辑",
-    });
+    }));
     expect(result).toEqual(expect.objectContaining({ ok: false, error: "already-claimed" }));
     // 附带的最新权威队列反映认领后的世界（q-a 已移出）
     if (!result.ok) {
       expect(result.queue?.map((item) => item.id)).toEqual(["q-b"]);
     }
     // 认领转正的消息内容未被编辑覆盖
-    expect(store.getSession(sessionId)?.messages.at(-1)?.content).toBe("消息甲");
+    expect((await store.getSession(sessionId))?.messages.at(-1)?.content).toBe("消息甲");
     // 队首外的条目（未认领）仍可编辑
-    const editB = store.editPendingMessage(sessionId, "q-b", {
+    const editB = (await store.editPendingMessage(sessionId, "q-b", {
       rawContent: "消息乙改",
       visibleContent: "消息乙改",
-    });
+    }));
     expect(editB.ok).toBe(true);
   });
 
   it("编辑已标记插入当前运行的条目被拒：already-adjusting", async () => {
     const { store, sessionId } = await seedTwoMessages();
-    expect(store.markPendingAdjust(sessionId, "q-a", "run-1")).toEqual(expect.objectContaining({ ok: true }));
+    expect((await store.markPendingAdjust(sessionId, "q-a", "run-1"))).toEqual(expect.objectContaining({ ok: true }));
 
-    const result = store.editPendingMessage(sessionId, "q-a", {
+    const result = (await store.editPendingMessage(sessionId, "q-a", {
       rawContent: "改标记中的条目",
       visibleContent: "改标记中的条目",
-    });
+    }));
     expect(result).toEqual(expect.objectContaining({ ok: false, error: "already-adjusting" }));
-    expect(store.getPendingMessages(sessionId)?.[0].rawContent).toBe("消息甲");
+    expect((await store.getPendingMessages(sessionId))?.[0].rawContent).toBe("消息甲");
   });
 
   it("撤回已标记插入当前运行的条目被拒：already-adjusting，复位后可撤回", async () => {
     const { store, sessionId } = await seedTwoMessages();
-    expect(store.markPendingAdjust(sessionId, "q-a", "run-1")).toEqual(expect.objectContaining({ ok: true }));
+    expect((await store.markPendingAdjust(sessionId, "q-a", "run-1"))).toEqual(expect.objectContaining({ ok: true }));
 
-    const result = store.removePendingMessage(sessionId, "q-a");
+    const result = (await store.removePendingMessage(sessionId, "q-a"));
     expect(result).toEqual(expect.objectContaining({ ok: false, error: "already-adjusting" }));
     // 附带最新权威队列，调用方据此刷新投影、不覆盖新状态
     if (!result.ok) {
       expect(result.queue?.map((item) => item.id)).toEqual(["q-a", "q-b"]);
     }
     // 条目原样保留（标记未被清除）
-    expect(store.getPendingMessages(sessionId)?.[0]).toMatchObject({ id: "q-a", adjustRunId: "run-1" });
+    expect((await store.getPendingMessages(sessionId))?.[0]).toMatchObject({ id: "q-a", adjustRunId: "run-1" });
 
     // 运行终止复位标记后，条目回到普通队列，此时可正常撤回
-    store.resetPendingAdjustByRun(sessionId, "run-1");
-    expect(store.removePendingMessage(sessionId, "q-a")).toEqual({ ok: true, removed: true });
-    expect(store.getPendingMessages(sessionId)?.map((item) => item.id)).toEqual(["q-b"]);
+    (await store.resetPendingAdjustByRun(sessionId, "run-1"));
+    expect((await store.removePendingMessage(sessionId, "q-a"))).toEqual({ ok: true, removed: true });
+    expect((await store.getPendingMessages(sessionId))?.map((item) => item.id)).toEqual(["q-b"]);
   });
 
   it("撤回与插话双写的并发窗口：轨迹写入挂起期间撤回被拒，恢复后双写完成", async () => {
     const { store, sessionId } = await seedTwoMessages();
     const { createRunAdjustmentPoller } = await import("./pending-adjustment");
-    expect(store.markPendingAdjust(sessionId, "q-a", "run-1")).toEqual(expect.objectContaining({ ok: true }));
+    expect((await store.markPendingAdjust(sessionId, "q-a", "run-1"))).toEqual(expect.objectContaining({ ok: true }));
 
     // 挂起的轨迹端口：appendUser 在手动放行前不返回，模拟双写第一步进行中
     let release!: () => void;
@@ -751,119 +771,119 @@ describe("chats pending edit & adjust", () => {
     expect(polling).toBeInstanceOf(Promise);
 
     // 窗口内撤回：already-adjusting 拒绝，条目保留
-    expect(store.removePendingMessage(sessionId, "q-a")).toEqual(
+    expect((await store.removePendingMessage(sessionId, "q-a"))).toEqual(
       expect.objectContaining({ ok: false, error: "already-adjusting" }),
     );
-    expect(store.getPendingMessages(sessionId)?.[0].id).toBe("q-a");
+    expect((await store.getPendingMessages(sessionId))?.[0].id).toBe("q-a");
 
     // 恢复写入：双写完成，条目转正移出队列
     release();
     const injected = await polling;
     expect(injected.map((item) => item.id)).toEqual(["q-a"]);
     expect(appendedTurnIds).toEqual(["q-a"]);
-    expect(store.getPendingMessages(sessionId)?.map((item) => item.id)).toEqual(["q-b"]);
+    expect((await store.getPendingMessages(sessionId))?.map((item) => item.id)).toEqual(["q-b"]);
   });
 
   it("编辑不存在的条目与会话：not-found / session-not-found", async () => {
     const { store, sessionId } = await seedTwoMessages();
 
-    expect(store.editPendingMessage(sessionId, "ghost", {
+    expect((await store.editPendingMessage(sessionId, "ghost", {
       rawContent: "文字",
       visibleContent: "文字",
-    })).toEqual(expect.objectContaining({ ok: false, error: "not-found" }));
-    expect(store.editPendingMessage("missing", "q-a", {
+    }))).toEqual(expect.objectContaining({ ok: false, error: "not-found" }));
+    expect((await store.editPendingMessage("missing", "q-a", {
       rawContent: "文字",
       visibleContent: "文字",
-    })).toEqual({ ok: false, error: "session-not-found" });
+    }))).toEqual({ ok: false, error: "session-not-found" });
   });
 
   it("编辑写盘失败：返回写盘前权威队列，内容未变", async () => {
     const { store, sessionId } = await seedTwoMessages();
     // 物理方式制造写盘失败：原子写 .tmp 路径被目录占用
     const tmpPath = path.join(store.getRootDir(), "sessions", `${sessionId}.json.tmp`);
-    fs.mkdirSync(tmpPath, { recursive: true });
+    failSessionWrites();
 
-    const result = store.editPendingMessage(sessionId, "q-a", {
+    const result = (await store.editPendingMessage(sessionId, "q-a", {
       rawContent: "不会落盘的编辑",
       visibleContent: "不会落盘的编辑",
-    });
+    }));
     expect(result).toEqual(expect.objectContaining({ ok: false, error: "write-failed" }));
     if (!result.ok) {
       expect(result.queue?.[0].rawContent).toBe("消息甲");
     }
-    fs.rmdirSync(tmpPath);
+    restoreSessionWrites();
     // 磁盘事实：编辑从未发生
-    expect(store.getPendingMessages(sessionId)?.[0].rawContent).toBe("消息甲");
+    expect((await store.getPendingMessages(sessionId))?.[0].rawContent).toBe("消息甲");
   });
 
   it("标记调整：绑定 runId 落盘；同 runId 重复幂等；其他 runId 拒绝", async () => {
     const { store, sessionId } = await seedTwoMessages();
 
-    const first = store.markPendingAdjust(sessionId, "q-a", "run-1");
+    const first = (await store.markPendingAdjust(sessionId, "q-a", "run-1"));
     expect(first).toEqual(expect.objectContaining({ ok: true }));
-    expect(store.getPendingMessages(sessionId)?.[0]).toMatchObject({ id: "q-a", adjustRunId: "run-1" });
+    expect((await store.getPendingMessages(sessionId))?.[0]).toMatchObject({ id: "q-a", adjustRunId: "run-1" });
 
     // 同一运行重复请求：幂等成功
-    expect(store.markPendingAdjust(sessionId, "q-a", "run-1")).toEqual(expect.objectContaining({ ok: true }));
+    expect((await store.markPendingAdjust(sessionId, "q-a", "run-1"))).toEqual(expect.objectContaining({ ok: true }));
     // 已标记其他运行（如旧运行复位前的新请求）：拒绝且不覆盖
-    const conflict = store.markPendingAdjust(sessionId, "q-a", "run-2");
+    const conflict = (await store.markPendingAdjust(sessionId, "q-a", "run-2"));
     expect(conflict).toEqual(expect.objectContaining({ ok: false, error: "already-adjusting" }));
-    expect(store.getPendingMessages(sessionId)?.[0].adjustRunId).toBe("run-1");
+    expect((await store.getPendingMessages(sessionId))?.[0].adjustRunId).toBe("run-1");
 
     // 不存在的条目 / 会话
-    expect(store.markPendingAdjust(sessionId, "ghost", "run-1")).toEqual(
+    expect((await store.markPendingAdjust(sessionId, "ghost", "run-1"))).toEqual(
       expect.objectContaining({ ok: false, error: "not-found" }),
     );
-    expect(store.markPendingAdjust("missing", "q-a", "run-1")).toEqual(
+    expect((await store.markPendingAdjust("missing", "q-a", "run-1"))).toEqual(
       { ok: false, error: "session-not-found" },
     );
   });
 
   it("带附件的条目不能标记调整：明确拒绝并留队（绝不能只插文字）", async () => {
     const store = await import("./chats-store");
-    store.initialize();
-    const session = store.createSession({ mode: "work" });
-    store.enqueuePendingMessage(session.id, entry({
+    (await store.initialize());
+    const session = (await store.createSession({ mode: "work" }));
+    (await store.enqueuePendingMessage(session.id, entry({
       id: "q-att",
       rawContent: "看这张图",
       visibleContent: "看这张图",
       attachments: [{ kind: "image", name: "截图.png", filePath: "C:/tmp/shot.png", mime: "image/png" }],
-    }));
+    })));
 
-    const result = store.markPendingAdjust(session.id, "q-att", "run-1");
+    const result = (await store.markPendingAdjust(session.id, "q-att", "run-1"));
     expect(result).toEqual(expect.objectContaining({ ok: false, error: "has-attachments" }));
     // 条目原样留在队列：无标记、附件完整
-    const queue = store.getPendingMessages(session.id);
+    const queue = (await store.getPendingMessages(session.id));
     expect(queue?.[0]).not.toHaveProperty("adjustRunId");
     expect(queue?.[0].attachments).toHaveLength(1);
   });
 
   it("已被认领的条目不能标记调整：already-claimed", async () => {
     const { store, sessionId } = await seedTwoMessages();
-    const claim = store.claimPendingMessage(sessionId);
+    const claim = (await store.claimPendingMessage(sessionId));
     expect(claim).toEqual(expect.objectContaining({ ok: true, claimed: true }));
 
-    const result = store.markPendingAdjust(sessionId, "q-a", "run-1");
+    const result = (await store.markPendingAdjust(sessionId, "q-a", "run-1"));
     expect(result).toEqual(expect.objectContaining({ ok: false, error: "already-claimed" }));
   });
 
   it("提交调整：单次写入完成移出队列与正式消息入册（含表情），不写派发状态", async () => {
     const store = await import("./chats-store");
-    store.initialize();
-    const session = store.createSession({
+    (await store.initialize());
+    const session = (await store.createSession({
       mode: "work",
       initialMessages: [{ id: "m0", role: "user", content: "已有历史", at: 1 }],
-    });
-    store.enqueuePendingMessage(session.id, entry({
+    }));
+    (await store.enqueuePendingMessage(session.id, entry({
       id: "q-adj",
       rawContent: "插话：换个思路 [sticker:playful]",
       visibleContent: "插话：换个思路",
       userSticker: "playful",
-    }));
-    store.enqueuePendingMessage(session.id, entry({ id: "q-next", rawContent: "下一条", visibleContent: "下一条" }));
-    store.markPendingAdjust(session.id, "q-adj", "run-1");
+    })));
+    (await store.enqueuePendingMessage(session.id, entry({ id: "q-next", rawContent: "下一条", visibleContent: "下一条" })));
+    (await store.markPendingAdjust(session.id, "q-adj", "run-1"));
 
-    const commit = store.commitPendingAdjust(session.id, "q-adj", "run-1");
+    const commit = (await store.commitPendingAdjust(session.id, "q-adj", "run-1"));
     expect(commit).toEqual(expect.objectContaining({ ok: true }));
     if (commit.ok) {
       expect(commit.userMessage).toMatchObject({
@@ -875,12 +895,12 @@ describe("chats pending edit & adjust", () => {
       expect(commit.remainingQueue.map((item) => item.id)).toEqual(["q-next"]);
     }
     // 正式历史追加一条；队列少一条；没有派发状态（调整由当前运行直接消费）
-    const persisted = store.getSession(session.id);
+    const persisted = (await store.getSession(session.id));
     expect(persisted?.messages.map((message) => message.id)).toEqual(["m0", "q-adj"]);
     expect(persisted?.pendingMessages?.map((item) => item.id)).toEqual(["q-next"]);
     expect(persisted?.pendingDispatch).toBeUndefined();
     // 认领等于历史入册的口径：列表计数刷新
-    expect(store.listSessions().find((item) => item.id === session.id)?.messageCount).toBe(2);
+    expect((await store.listSessions()).find((item) => item.id === session.id)?.messageCount).toBe(2);
   });
 
   it("v2 调整轮询先写 user:v1 轨迹再 commit，恢复后只保留一条 user 且磁盘无 messages", async () => {
@@ -888,16 +908,16 @@ describe("chats pending edit & adjust", () => {
     const { ConversationTranscriptStore } = await import("../orchestrator/conversation-transcript-store");
     const { ConversationJournalService } = await import("../orchestrator/conversation-journal-service");
     const { createRunAdjustmentPoller } = await import("./pending-adjustment");
-    store.initialize();
-    const session = store.createSession({ mode: "work" });
+    (await store.initialize());
+    const session = (await store.createSession({ mode: "work" }));
     const file = path.join(store.getRootDir(), "sessions", `${session.id}.json`);
-    const persisted = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
+    const persisted = JSON.parse(readSessionFixture(file)) as Record<string, unknown>;
     delete persisted.messages;
     persisted.schemaVersion = 2;
     persisted.messageCount = 0;
-    fs.writeFileSync(file, JSON.stringify(persisted));
-    store.enqueuePendingMessage(session.id, entry({ id: "adjust-v2", rawContent: "插话内容" }));
-    expect(store.markPendingAdjust(session.id, "adjust-v2", "run-v2")).toEqual(expect.objectContaining({ ok: true }));
+    writeSessionFixture(file, JSON.stringify(persisted));
+    (await store.enqueuePendingMessage(session.id, entry({ id: "adjust-v2", rawContent: "插话内容" })));
+    expect((await store.markPendingAdjust(session.id, "adjust-v2", "run-v2"))).toEqual(expect.objectContaining({ ok: true }));
 
     const transcriptStore = new ConversationTranscriptStore(mocks.userDataDir);
     const journal = new ConversationJournalService(transcriptStore);
@@ -917,96 +937,96 @@ describe("chats pending edit & adjust", () => {
     const projection = await journal.readProjection(session.id);
     expect(projection.messages.filter((message) => message.role === "user")).toHaveLength(1);
     expect(projection.messages[0]).toEqual(expect.objectContaining({ id: "user:v1:adjust-v2:r1" }));
-    const disk = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
+    const disk = JSON.parse(readSessionFixture(file)) as Record<string, unknown>;
     expect(disk.schemaVersion).toBe(2);
     expect(disk).not.toHaveProperty("messages");
   });
 
   it("提交调整的运行匹配与防重复：run-mismatch 拒绝；再提交已移出的条目 not-found", async () => {
     const { store, sessionId } = await seedTwoMessages();
-    store.markPendingAdjust(sessionId, "q-a", "run-1");
+    (await store.markPendingAdjust(sessionId, "q-a", "run-1"));
 
     // 其他运行无权提交本运行标记的条目
-    expect(store.commitPendingAdjust(sessionId, "q-a", "run-other")).toEqual(
+    expect((await store.commitPendingAdjust(sessionId, "q-a", "run-other"))).toEqual(
       expect.objectContaining({ ok: false, error: "run-mismatch" }),
     );
     // 本运行提交成功后条目已移出：再次提交（如重复轮询竞态）not-found，绝不重复注入
-    expect(store.commitPendingAdjust(sessionId, "q-a", "run-1")).toEqual(
+    expect((await store.commitPendingAdjust(sessionId, "q-a", "run-1"))).toEqual(
       expect.objectContaining({ ok: true }),
     );
-    expect(store.commitPendingAdjust(sessionId, "q-a", "run-1")).toEqual(
+    expect((await store.commitPendingAdjust(sessionId, "q-a", "run-1"))).toEqual(
       expect.objectContaining({ ok: false, error: "not-found" }),
     );
-    expect(store.getSession(sessionId)?.messages.filter((message) => message.id === "q-a")).toHaveLength(1);
+    expect((await store.getSession(sessionId))?.messages.filter((message) => message.id === "q-a")).toHaveLength(1);
   });
 
   it("提交调整写盘失败：条目保留标记在队列、历史不追加（绝不丢消息）", async () => {
     const { store, sessionId } = await seedTwoMessages();
-    store.markPendingAdjust(sessionId, "q-a", "run-1");
+    (await store.markPendingAdjust(sessionId, "q-a", "run-1"));
 
     const tmpPath = path.join(store.getRootDir(), "sessions", `${sessionId}.json.tmp`);
-    fs.mkdirSync(tmpPath, { recursive: true });
-    const commit = store.commitPendingAdjust(sessionId, "q-a", "run-1");
+    failSessionWrites();
+    const commit = (await store.commitPendingAdjust(sessionId, "q-a", "run-1"));
     expect(commit).toEqual({ ok: false, error: "write-failed" });
-    fs.rmdirSync(tmpPath);
+    restoreSessionWrites();
 
     // 磁盘事实：条目仍在队列（保留标记，等下个边界重试）、历史未追加
-    const persisted = store.getSession(sessionId);
+    const persisted = (await store.getSession(sessionId));
     expect(persisted?.messages.map((message) => message.id)).toEqual(["m0"]);
     expect(persisted?.pendingMessages?.[0]).toMatchObject({ id: "q-a", adjustRunId: "run-1" });
   });
 
   it("运行终态复位：清掉本运行标记回普通队列（顺序内容不变），其他运行标记不动", async () => {
     const { store, sessionId } = await seedTwoMessages();
-    store.markPendingAdjust(sessionId, "q-a", "run-1");
-    store.markPendingAdjust(sessionId, "q-b", "run-2");
+    (await store.markPendingAdjust(sessionId, "q-a", "run-1"));
+    (await store.markPendingAdjust(sessionId, "q-b", "run-2"));
 
-    const reset = store.resetPendingAdjustByRun(sessionId, "run-1");
+    const reset = (await store.resetPendingAdjustByRun(sessionId, "run-1"));
     expect(reset).toEqual({ ok: true, reset: 1 });
-    const queue = store.getPendingMessages(sessionId);
+    const queue = (await store.getPendingMessages(sessionId));
     // q-a 清标记回普通队列，q-b 的其他运行标记不受影响
     expect(queue?.[0]).not.toHaveProperty("adjustRunId");
     expect(queue?.[1]).toMatchObject({ id: "q-b", adjustRunId: "run-2" });
     // 复位后的条目可被编辑、可再次标记、可正常认领
-    expect(store.editPendingMessage(sessionId, "q-a", {
+    expect((await store.editPendingMessage(sessionId, "q-a", {
       rawContent: "复位后编辑",
       visibleContent: "复位后编辑",
-    }).ok).toBe(true);
-    const claim = store.claimPendingMessage(sessionId);
+    })).ok).toBe(true);
+    const claim = (await store.claimPendingMessage(sessionId));
     expect(claim).toEqual(expect.objectContaining({ ok: true, claimed: true }));
     if (claim.ok && claim.claimed) expect(claim.userMessage.content).toBe("复位后编辑");
     // 无匹配标记时不写盘（reset=0）
-    expect(store.resetPendingAdjustByRun(sessionId, "run-none")).toEqual({ ok: true, reset: 0 });
+    expect((await store.resetPendingAdjustByRun(sessionId, "run-none"))).toEqual({ ok: true, reset: 0 });
   });
 
   it("刷新/进程重启恢复：标记已落盘，重启后由启动清扫统一清回普通队列", async () => {
     let store = await import("./chats-store");
-    store.initialize();
-    const session = store.createSession({ mode: "work" });
-    store.enqueuePendingMessage(session.id, entry({ id: "q-1", rawContent: "插话一", visibleContent: "插话一" }));
-    store.enqueuePendingMessage(session.id, entry({ id: "q-2", rawContent: "插话二", visibleContent: "插话二" }));
-    store.markPendingAdjust(session.id, "q-1", "run-old");
-    store.markPendingAdjust(session.id, "q-2", "run-old");
-    expect(store.getPendingMessages(session.id)?.every((item) => item.adjustRunId === "run-old")).toBe(true);
+    (await store.initialize());
+    const session = (await store.createSession({ mode: "work" }));
+    (await store.enqueuePendingMessage(session.id, entry({ id: "q-1", rawContent: "插话一", visibleContent: "插话一" })));
+    (await store.enqueuePendingMessage(session.id, entry({ id: "q-2", rawContent: "插话二", visibleContent: "插话二" })));
+    (await store.markPendingAdjust(session.id, "q-1", "run-old"));
+    (await store.markPendingAdjust(session.id, "q-2", "run-old"));
+    expect((await store.getPendingMessages(session.id))?.every((item) => item.adjustRunId === "run-old")).toBe(true);
 
     // 模拟进程重启（运行全部不复存在）：重新加载后调用启动清扫
     vi.resetModules();
     store = await import("./chats-store");
-    store.initialize();
-    store.clearStalePendingAdjustMarks();
+    (await store.initialize());
+    (await store.clearStalePendingAdjustMarks());
 
-    const restored = store.getPendingMessages(session.id);
+    const restored = (await store.getPendingMessages(session.id));
     expect(restored?.map((item) => item.id)).toEqual(["q-1", "q-2"]);
     expect(restored?.every((item) => !item.adjustRunId)).toBe(true);
     // 清扫后条目可正常认领派发（消息不丢）
-    const claim = store.claimPendingMessage(session.id);
+    const claim = (await store.claimPendingMessage(session.id));
     expect(claim).toEqual(expect.objectContaining({ ok: true, claimed: true }));
   });
 
   it("编辑 IPC handler：载荷校验 + 透传冲突结果（already-claimed 附最新队列）", async () => {
     const { registerChatsIpc } = await import("./chats-ipc");
     const { IPC } = await import("../../shared/ipc-channels");
-    registerChatsIpc();
+    (await registerChatsIpc());
 
     const create = mocks.handlers.get(IPC.CHATS_CREATE);
     const enqueue = mocks.handlers.get(IPC.CHATS_PENDING_ENQUEUE);
@@ -1062,7 +1082,7 @@ describe("chats pending queue IPC", () => {
   it("入队/读取/删除三个 handler 透传结果且校验载荷", async () => {
     const { registerChatsIpc } = await import("./chats-ipc");
     const { IPC } = await import("../../shared/ipc-channels");
-    registerChatsIpc();
+    (await registerChatsIpc());
 
     const create = mocks.handlers.get(IPC.CHATS_CREATE);
     const enqueue = mocks.handlers.get(IPC.CHATS_PENDING_ENQUEUE);
@@ -1107,7 +1127,7 @@ describe("chats pending queue IPC", () => {
   it("认领/派发确认 handler 透传结果且校验载荷", async () => {
     const { registerChatsIpc } = await import("./chats-ipc");
     const { IPC } = await import("../../shared/ipc-channels");
-    registerChatsIpc();
+    (await registerChatsIpc());
 
     const create = mocks.handlers.get(IPC.CHATS_CREATE);
     const enqueue = mocks.handlers.get(IPC.CHATS_PENDING_ENQUEUE);
@@ -1140,6 +1160,7 @@ describe("chats pending queue IPC", () => {
     // 派发确认：匹配清除 + 不匹配幂等
     expect(await complete(event, { sessionId: session.id, messageId: "ipc-claim" })).toEqual({ ok: true, cleared: true });
     expect(await complete(event, { sessionId: session.id, messageId: "ipc-claim" })).toEqual({ ok: true, cleared: false });
+    await finishActiveClaims();
     // 确认后队列空认领
     expect(await claim(event, session.id)).toEqual({ ok: true, claimed: false });
     // 会话不存在
@@ -1151,7 +1172,7 @@ describe("chats pending queue IPC", () => {
     const { IPC } = await import("../../shared/ipc-channels");
     const chatsStore = await import("./chats-store");
     const { ConversationTranscriptStore } = await import("../orchestrator/conversation-transcript-store");
-    registerChatsIpc();
+    (await registerChatsIpc());
 
     const create = mocks.handlers.get(IPC.CHATS_CREATE);
     const enqueue = mocks.handlers.get(IPC.CHATS_PENDING_ENQUEUE);
@@ -1162,49 +1183,36 @@ describe("chats pending queue IPC", () => {
     const event = { sender: {} };
     const session = await create(event, { mode: "chat" }) as { id: string };
     const file = path.join(chatsStore.getRootDir(), "sessions", `${session.id}.json`);
-    const persisted = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
+    const persisted = JSON.parse(readSessionFixture(file)) as Record<string, unknown>;
     delete persisted.messages;
     persisted.schemaVersion = 2;
     persisted.messageCount = 0;
-    fs.writeFileSync(file, JSON.stringify(persisted));
+    writeSessionFixture(file, JSON.stringify(persisted));
     await enqueue(event, {
       sessionId: session.id,
       entry: entry({ id: "v2-ipc-claim", rawContent: "耐久消息", visibleContent: "耐久消息" }),
     });
 
-    const append = vi.spyOn(ConversationTranscriptStore.prototype, "append")
-      .mockRejectedValueOnce(new Error("journal unavailable"));
-    expect(await claim(event, session.id)).toEqual({
-      ok: false,
-      error: "transcript-write-failed",
-    });
-    const failedDisk = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, any>;
-    expect(failedDisk.pendingDispatch?.userMessage?.text).toBe("耐久消息");
+    withConversationDatabase(mocks.userDataDir, db => db.exec("CREATE TRIGGER fail_user BEFORE INSERT ON transcript_entries WHEN NEW.kind='user' BEGIN SELECT RAISE(ABORT,'INJECTED'); END"));
+    expect(await claim(event, session.id)).toEqual({ ok: false, error: "write-failed" });
+    const failedDisk = JSON.parse(readSessionFixture(file));
+    expect(failedDisk.pendingDispatch).toBeUndefined();
+    expect(failedDisk.pendingMessages.map(item => item.id)).toEqual(["v2-ipc-claim"]);
     expect(failedDisk).not.toHaveProperty("messages");
-
-    append.mockRestore();
-    // 重试：残留认领被幂等 reconcile 进轨迹并清账；队列已空 → claimed:false。
-    // 不再把旧消息当新认领返回——那等于替用户自动补发
-    expect(await claim(event, session.id)).toEqual({ ok: true, claimed: false });
-    // 旧消息已持久化在轨迹里（用户意图不丢失），以「已发送未回答」等用户下一条消息
-    const composed = await get(event, session.id) as { messages: Array<{ id: string; role: string }> };
+    withConversationDatabase(mocks.userDataDir, db => db.exec('DROP TRIGGER fail_user'));
+    expect(await claim(event, session.id)).toMatchObject({ ok: true, claimed: true });
+    const composed = await get(event, session.id);
     expect(composed.messages).toEqual([expect.objectContaining({ id: "v2-ipc-claim", role: "user" })]);
-    // complete 幂等：重试认领时已清账，这里 cleared=false
-    expect(await complete(event, { sessionId: session.id, messageId: "v2-ipc-claim" })).toEqual({
-      ok: true,
-      cleared: false,
-    });
-    const completedDisk = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
-    expect(completedDisk.schemaVersion).toBe(2);
-    expect(completedDisk.pendingDispatch).toBeUndefined();
-    expect(completedDisk).not.toHaveProperty("messages");
+    await closeConversationDatabases();
+    expect(await claim(event, session.id)).toEqual({ ok: true, claimed: false });
+    expect(await complete(event, { sessionId: session.id, messageId: "v2-ipc-claim" })).toEqual({ ok: true, cleared: false });
   });
 
   it("v2 残留认领未确认时再认领：旧消息幂等落轨迹并清账，返回下一条而非自动补发", async () => {
     const { registerChatsIpc } = await import("./chats-ipc");
     const { IPC } = await import("../../shared/ipc-channels");
     const chatsStore = await import("./chats-store");
-    registerChatsIpc();
+    (await registerChatsIpc());
 
     const create = mocks.handlers.get(IPC.CHATS_CREATE);
     const enqueue = mocks.handlers.get(IPC.CHATS_PENDING_ENQUEUE);
@@ -1215,11 +1223,11 @@ describe("chats pending queue IPC", () => {
     const event = { sender: {} };
     const session = await create(event, { mode: "chat" }) as { id: string };
     const file = path.join(chatsStore.getRootDir(), "sessions", `${session.id}.json`);
-    const persisted = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
+    const persisted = JSON.parse(readSessionFixture(file)) as Record<string, unknown>;
     delete persisted.messages;
     persisted.schemaVersion = 2;
     persisted.messageCount = 0;
-    fs.writeFileSync(file, JSON.stringify(persisted));
+    writeSessionFixture(file, JSON.stringify(persisted));
     await enqueue(event, { sessionId: session.id, entry: entry({ id: "m-old", rawContent: "旧意图", visibleContent: "旧意图" }) });
     await enqueue(event, { sessionId: session.id, entry: entry({ id: "m-next", rawContent: "新意图", visibleContent: "新意图" }) });
 
@@ -1230,6 +1238,7 @@ describe("chats pending queue IPC", () => {
 
     // 残留下再认领：不再把 m-old 当新认领返回（那是自动补发），
     // 而是幂等落轨迹、清残留账，照常认领下一条 m-next
+    await closeConversationDatabases(); // 真正重启，prepared 运行变为 interrupted
     const second = await claim(event, session.id) as Record<string, any>;
     expect(second).toEqual(expect.objectContaining({ ok: true, claimed: true }));
     expect(second.userMessage).toEqual(expect.objectContaining({ id: "m-next" }));
@@ -1239,7 +1248,7 @@ describe("chats pending queue IPC", () => {
     expect(composed.messages.map((message) => message.id)).toEqual(["m-old", "m-next"]);
 
     expect(await complete(event, { sessionId: session.id, messageId: "m-next" })).toEqual({ ok: true, cleared: true });
-    const disk = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
+    const disk = JSON.parse(readSessionFixture(file)) as Record<string, unknown>;
     expect(disk.pendingDispatch).toBeUndefined();
   });
 });

@@ -1,3 +1,4 @@
+import { closeConversationDatabases } from "../../../../../../main/storage/conversation-database-client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
@@ -11,6 +12,7 @@ import {
 } from "./AgentRunController";
 import type { AguiApi, AguiEvent, ChatStoreApi } from "../chat-page-bridge";
 import type { ChatSession } from "../../../../../../shared/chat-types";
+import type { AguiRunAck } from "../../../../../../shared/run-terminal";
 import type { TodoStateBySession } from "../session-runtime-state";
 import type { EarlyTtsPlaybackQueue } from "../../tts/early-tts-queue";
 import { ConversationTranscriptStore } from "../../../../../../main/orchestrator/conversation-transcript-store";
@@ -26,7 +28,7 @@ interface FakeApi extends AguiApi {
 }
 
 /** 假桥：onEvent 注册监听器，run 返回测试控制的 ack，emit 广播事件。 */
-function createFakeApi(ack: { success: boolean; runId: string; error?: string }): FakeApi {
+function createFakeApi(ack: AguiRunAck): FakeApi {
   const listeners = new Set<(event: AguiEvent) => void>();
   return {
     run: vi.fn(async () => ack),
@@ -180,6 +182,18 @@ afterEach(() => {
 });
 
 describe("AgentRunController", () => {
+  it.each([true, false])("completed duplicate settles without awaiting events or writing checkpoints (message=%s)", async hasMessage => {
+    const api = createFakeApi({ success: true, runId: "existing", duplicate: true, status: "completed" });
+    const store = createFakeStore();
+    store.get = vi.fn(async () => ({ id: "session-1", messages: hasMessage ? [{ id: "assistant-1", role: "model", content: "saved reply", at: 1 }] : [] } as ChatSession));
+    const { host, earlyTtsQueue } = createRecordingHost();
+    const { promise } = launch(createInput(), { api, store, host, registries: createRegistries() });
+    await promise;
+    expect(host.patchMessage).toHaveBeenCalledWith("session-1", "assistant-1", expect.objectContaining({ loading: false, streaming: false, waitingForFirstEvent: false, ...(hasMessage ? { content: "saved reply" } : {}) }));
+    expect(store.checkpointPresentation).not.toHaveBeenCalled();
+    expect(earlyTtsQueue.cancel).toHaveBeenCalled();
+    expect(host.onRunFinished).toHaveBeenCalledWith(expect.objectContaining({ queuePaused: false }));
+  });
   it("accumulates generated image attachments from multiple events on the assistant message", async () => {
     const api = createFakeApi({ success: true, runId: "run-1" });
     const store = createFakeStore();
@@ -333,28 +347,32 @@ describe("AgentRunController", () => {
     api.emit({ type: "TEXT_MESSAGE_END", runId: "run-1" });
     api.emit({ type: "RUN_FINISHED", runId: "run-1", result: { status: "success" } });
 
-    await expect(promise).rejects.toThrow("journal unavailable");
+    await expect(promise).resolves.toBeUndefined();
+    expect(host.patchMessage).toHaveBeenCalledWith("session-1", "assistant-1", expect.objectContaining({ content: "完成", loading: false }));
     expect(api.reportRunPersisted).not.toHaveBeenCalled();
   });
 
-  it("does not start a run when its initial presentation checkpoint fails", async () => {
+  it("starts and settles the run when presentation checkpoints fail", async () => {
     const api = createFakeApi({ success: true, runId: "run-1" });
     const store = createFakeStore();
     const { host } = createRecordingHost();
     const registries = createRegistries();
     store.checkpointPresentation.mockRejectedValue(new Error("journal unavailable"));
 
-    await expect(launch(createInput(), { api, store, host, registries }).promise)
-      .rejects.toThrow("journal unavailable");
-    expect(api.run).not.toHaveBeenCalled();
+    const { promise } = launch(createInput(), { api, store, host, registries });
+    await flush();
+    expect(api.run).toHaveBeenCalledOnce();
+    api.emit(RUN_STARTED_EVENT);
+    api.emit({ type: "RUN_FINISHED", runId: "run-1", result: { status: "success" } });
+    await expect(promise).resolves.toBeUndefined();
     expect(registries.activeRuns.current["session-1"]).toBeUndefined();
     expect(registries.checkpointTriggers.current["session-1"]).toBeUndefined();
     expect(host.onRunFinished).toHaveBeenCalledWith({
-      mode: "chat", sessionId: "session-1", queuePaused: true,
+      mode: "chat", sessionId: "session-1", queuePaused: false,
     });
   });
 
-  it("writes the first running checkpoint to the real journal before invoking api.run", async () => {
+  it("writes the first running checkpoint after admission to the real journal", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "cta-controller-journal-"));
     try {
       const transcript = new ConversationTranscriptStore(root, { now: () => 1_000 });
@@ -362,7 +380,7 @@ describe("AgentRunController", () => {
       const api = createFakeApi({ success: true, runId: "run-real" });
       (api.run as ReturnType<typeof vi.fn>).mockImplementation(async () => {
         const snapshot = await journal.readProjection("session-1");
-        expect(snapshot.messages.find((message) => message.id === "assistant-1")?.runSnapshot?.status).toBe("running");
+        expect(snapshot.messages.find((message) => message.id === "assistant-1")).toBeUndefined();
         return { success: true, runId: "run-real" };
       });
       const realStore = {
@@ -376,12 +394,13 @@ describe("AgentRunController", () => {
       const { promise } = launch(createInput(), { api, store: realStore, host, registries: createRegistries() });
       await flush();
       await vi.waitFor(() => expect(api.run).toHaveBeenCalledTimes(1));
-      api.emit(RUN_STARTED_EVENT);
+      api.emit({ type: "RUN_STARTED", runId: "run-real" });
       api.emit({ type: "RUN_FINISHED", runId: "run-real", result: { status: "success" } });
       await promise;
       expect(api.run).toHaveBeenCalledTimes(1);
       expect((await transcript.read("session-1")).entries.filter((entry) => entry.kind === "presentation_patch").length).toBeGreaterThan(0);
     } finally {
+      await closeConversationDatabases();
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
@@ -424,6 +443,7 @@ describe("AgentRunController", () => {
       expect(message?.taskDelegations).toEqual([expect.objectContaining({ invocationId: "inv-1", status: "completed" })]);
       expect(Object.prototype.hasOwnProperty.call(message?.taskDelegations?.[0] ?? {}, "roundId")).toBe(false);
     } finally {
+      await closeConversationDatabases();
       fs.rmSync(root, { recursive: true, force: true });
     }
   });

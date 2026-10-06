@@ -100,7 +100,7 @@ export async function assertSafeWikiFile(root: string, relative: string, allowMi
   return target;
 }
 
-export async function writeWikiFileAtomic(root: string, relative: string, content: string, shouldCommit?: () => boolean): Promise<void> {
+export async function writeWikiFileAtomic(root: string, relative: string, content: string, shouldCommit?: () => boolean | Promise<boolean>): Promise<void> {
   const target = safeWikiPath(root, relative);
   const parentRelative = path.dirname(path.relative(path.resolve(root), target));
   const parent = await ensureWikiDirectories(root, parentRelative === "." ? "" : parentRelative);
@@ -119,7 +119,7 @@ export async function writeWikiFileAtomic(root: string, relative: string, conten
     } finally {
       await handle.close();
     }
-    if (shouldCommit && !shouldCommit()) throw new Error("WIKI_WRITE_CANCELLED");
+    if (shouldCommit && !(await shouldCommit())) throw new Error("WIKI_WRITE_CANCELLED");
     await fs.rename(temp, target);
   } catch (error) {
     await fs.rm(temp, { force: true }).catch(() => undefined);

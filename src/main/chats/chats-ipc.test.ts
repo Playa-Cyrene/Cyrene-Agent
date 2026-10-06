@@ -60,7 +60,7 @@ describe("chats IPC mode filtering", () => {
 
   it("returns only Code sessions for CHATS_LIST({ mode: \"code\" })", async () => {
     const { registerChatsIpc } = await import("./chats-ipc");
-    registerChatsIpc();
+    (await registerChatsIpc());
 
     const create = mocks.handlers.get(IPC.CHATS_CREATE);
     const list = mocks.handlers.get(IPC.CHATS_LIST);
@@ -79,7 +79,7 @@ describe("chats IPC mode filtering", () => {
   it("writes a presentation checkpoint to the conversation journal", async () => {
     const { registerChatsIpc } = await import("./chats-ipc");
     const { getConversationTranscriptStore } = await import("../orchestrator/conversation-transcript-store");
-    registerChatsIpc();
+    (await registerChatsIpc());
     const create = mocks.handlers.get(IPC.CHATS_CREATE);
     const checkpoint = mocks.handlers.get(IPC.CTA_PRESENTATION_CHECKPOINT);
     if (!create || !checkpoint) throw new Error("presentation checkpoint IPC handler was not registered");
@@ -117,7 +117,7 @@ describe("chats IPC mode filtering", () => {
       store,
       summarize: async () => "会话摘要",
     });
-    registerChatsIpc(undefined, { transcriptCompactor: compactor });
+    (await registerChatsIpc(undefined, { transcriptCompactor: compactor }));
     const create = mocks.handlers.get(IPC.CHATS_CREATE);
     const compact = mocks.handlers.get(IPC.CHATS_COMPACT);
     if (!create || !compact) throw new Error("compaction IPC handlers were not registered");
@@ -142,7 +142,7 @@ describe("chats IPC mode filtering", () => {
 
     // 压缩完成后：session 级 usage 快照落盘（环形图重载即显示压缩后占用）
     const { getSessionView } = await import("./chats-store");
-    const afterCompact = getSessionView(session.id);
+    const afterCompact = (await getSessionView(session.id));
     expect(afterCompact?.currentContextUsage?.phase).toBe("preRequest");
     expect(afterCompact?.currentContextUsage?.totalTokens).toBeGreaterThan(0);
   });
@@ -154,9 +154,9 @@ describe("chats IPC mode filtering", () => {
     const { ConversationTranscriptCompactor } = await import("../orchestrator/conversation-transcript-compactor");
     const store = getConversationTranscriptStore(mocks.userDataDir);
     const journal = new ConversationJournalService(store);
-    registerChatsIpc(undefined, {
+    (await registerChatsIpc(undefined, {
       transcriptCompactor: new ConversationTranscriptCompactor({ store, summarize: async () => "简短摘要" }),
-    });
+    }));
     const create = mocks.handlers.get(IPC.CHATS_CREATE);
     const compact = mocks.handlers.get(IPC.CHATS_COMPACT);
     const get = mocks.handlers.get(IPC.CHATS_GET);
@@ -190,11 +190,11 @@ describe("chats IPC mode filtering", () => {
       payload: { text: "最新问题" },
     });
     const { setSessionContextUsage } = await import("./chats-store");
-    setSessionContextUsage(session.id, {
+    (await setSessionContextUsage(session.id, {
       phase: "preRequest", contextWindowTokens: 256000, totalTokens: 1,
       messageCount: 0, updatedAt: 1,
       categories: [{ key: "systemPrompt", tokens: 1 }],
-    });
+    }));
 
     expect((await journal.readProjection(session.id)).messages.some((message) => message.contextUsage?.phase === "terminal")).toBe(true);
     await expect(compact(event, { sessionId: session.id, retainTokens: 1 })).resolves.toEqual(
@@ -209,9 +209,9 @@ describe("chats IPC mode filtering", () => {
 
   it("normalizes a manual summarizer failure to TRANSCRIPT_COMPACTION_REQUIRED", async () => {
     const { registerChatsIpc } = await import("./chats-ipc");
-    registerChatsIpc(undefined, {
+    (await registerChatsIpc(undefined, {
       transcriptCompactor: { compact: vi.fn(async () => { throw new Error("provider down"); }) } as any,
-    });
+    }));
     const compact = mocks.handlers.get(IPC.CHATS_COMPACT);
     if (!compact) throw new Error("compaction IPC handler was not registered");
     await expect(compact({ sender: {} }, { sessionId: "c1" })).resolves.toEqual({
@@ -221,10 +221,10 @@ describe("chats IPC mode filtering", () => {
 
   it("dev 演示入口生成独立会话并走真实自动压缩链路", async () => {
     const { registerChatsIpc } = await import("./chats-ipc");
-    registerChatsIpc(undefined, {
+    (await registerChatsIpc(undefined, {
       // demo 入口内部自建假摘要 compactor，不走全局注入
       transcriptCompactor: { compact: vi.fn() } as any,
-    });
+    }));
     const demo = mocks.handlers.get(IPC.CHATS_SEED_COMPACTION_DEMO);
     if (!demo) throw new Error("demo IPC handler was not registered");
     const result = await demo({ sender: {} }) as { ok: boolean; sessionId?: string };
@@ -244,14 +244,15 @@ describe("chats IPC mode filtering", () => {
 
     // session 级 usage 快照已写入（环形图数据源）
     const { getSessionView } = await import("./chats-store");
-    expect(getSessionView(result.sessionId!)?.currentContextUsage?.totalTokens).toBeGreaterThan(0);
+    expect((await getSessionView(result.sessionId!))?.currentContextUsage?.totalTokens).toBeGreaterThan(0);
   });
 
-  it("runs the controller through the real bridge handler before api.run and fails closed for a deep patch", async () => {
+  it("admits the controller before presentation writes and isolates invalid patches through the real bridge", async () => {
     const { registerChatsIpc } = await import("./chats-ipc");
     const { getConversationTranscriptStore } = await import("../orchestrator/conversation-transcript-store");
+    const { ConversationJournalService } = await import("../orchestrator/conversation-journal-service");
     const { AgentRunController } = await import("../../renderer/react/features/chat/pages/run/AgentRunController");
-    registerChatsIpc();
+    (await registerChatsIpc());
     const create = mocks.handlers.get(IPC.CHATS_CREATE);
     const checkpoint = mocks.handlers.get(IPC.CTA_PRESENTATION_CHECKPOINT);
     if (!create || !checkpoint) throw new Error("controller bridge handlers were not registered");
@@ -259,6 +260,7 @@ describe("chats IPC mode filtering", () => {
     const event = { sender: {} };
     const session = await create(event, { mode: "chat" }) as { id: string };
     const transcript = getConversationTranscriptStore(mocks.userDataDir);
+    const journal = new ConversationJournalService(transcript);
     await transcript.append(session.id, {
       id: "assistant-controller",
       at: 1,
@@ -268,8 +270,8 @@ describe("chats IPC mode filtering", () => {
     const listeners = new Set<(value: { type: string; runId: string; result?: { status: string } }) => void>();
     const api = {
       run: vi.fn(async () => {
-        expect((await transcript.readProjection(session.id)).messages.find((message) => message.id === "assistant-controller")?.runSnapshot?.status)
-          .toBe("running");
+        expect((await journal.readProjection(session.id)).messages.find((message) => message.id === "assistant-controller")?.runSnapshot?.status)
+          .toBeUndefined();
         setTimeout(() => {
           const started = { type: "RUN_STARTED", runId: "run-controller" };
           const finished = { type: "RUN_FINISHED", runId: "run-controller", result: { status: "success" } };
@@ -310,7 +312,14 @@ describe("chats IPC mode filtering", () => {
     await new AgentRunController(input, makeDeps(validStore, api.run) as any).start();
     expect(api.run).toHaveBeenCalledTimes(1);
 
-    const invalidRun = vi.fn(async () => ({ success: true, runId: "never-started" }));
+    const invalidRun = vi.fn(async () => {
+      expect(firstCheckpoint).toBe(true);
+      setTimeout(() => {
+        for (const listener of listeners) listener({ type: "RUN_STARTED", runId: "run-invalid" });
+        for (const listener of listeners) listener({ type: "RUN_FINISHED", runId: "run-invalid", result: { status: "success" } });
+      }, 0);
+      return { success: true, runId: "run-invalid" };
+    });
     await transcript.append(session.id, {
       id: "assistant-invalid",
       at: 1,
@@ -318,19 +327,27 @@ describe("chats IPC mode filtering", () => {
       payload: { role: "assistant", content: "" },
     });
     let firstCheckpoint = true;
-    const failClosedStore = { checkpointPresentation: async (...args: any[]) => checkpoint(event, {
-      sessionId: args[0], messageId: args[1], mutationKey: args[2],
-      patch: firstCheckpoint ? (firstCheckpoint = false, { runSnapshot: {} }) : args[3],
-    }) };
-    const invalidController = new AgentRunController({ ...input, assistantId: "assistant-invalid" }, makeDeps(failClosedStore, invalidRun) as any);
-    await expect(invalidController.start()).rejects.toThrow("invalid-presentation-patch");
-    expect(invalidRun).not.toHaveBeenCalled();
+    const checkpointResults: unknown[] = [];
+    const invalidStore = { checkpointPresentation: async (...args: any[]) => {
+      const result = await checkpoint(event, {
+        sessionId: args[0], messageId: args[1], mutationKey: args[2],
+        patch: firstCheckpoint ? (firstCheckpoint = false, { runSnapshot: {} }) : args[3],
+      });
+      checkpointResults.push(result);
+      return result;
+    } };
+    const invalidController = new AgentRunController({ ...input, assistantId: "assistant-invalid" }, makeDeps(invalidStore, invalidRun) as any);
+    await expect(invalidController.start()).resolves.toBeUndefined();
+    expect(invalidRun).toHaveBeenCalledTimes(1);
+    expect(checkpointResults[0]).toEqual({ ok: false, error: "invalid-presentation-patch" });
+    expect((await journal.readProjection(session.id)).messages.find((message) => message.id === "assistant-invalid")?.runSnapshot?.status)
+      .toBe("terminal");
   });
 
   it("accepts a TTS cache update as a presentation-only patch", async () => {
     const { registerChatsIpc } = await import("./chats-ipc");
     const { getConversationTranscriptStore } = await import("../orchestrator/conversation-transcript-store");
-    registerChatsIpc();
+    (await registerChatsIpc());
     const create = mocks.handlers.get(IPC.CHATS_CREATE);
     const checkpoint = mocks.handlers.get(IPC.CTA_PRESENTATION_CHECKPOINT);
     if (!create || !checkpoint) throw new Error("presentation checkpoint IPC handler was not registered");
@@ -360,7 +377,7 @@ describe("chats IPC mode filtering", () => {
   it("fails closed for unknown or empty presentation fields without touching disk", async () => {
     const { registerChatsIpc } = await import("./chats-ipc");
     const { getConversationTranscriptStore } = await import("../orchestrator/conversation-transcript-store");
-    registerChatsIpc();
+    (await registerChatsIpc());
     const create = mocks.handlers.get(IPC.CHATS_CREATE);
     const checkpoint = mocks.handlers.get(IPC.CTA_PRESENTATION_CHECKPOINT);
     if (!create || !checkpoint) throw new Error("presentation checkpoint IPC handler was not registered");
@@ -379,7 +396,7 @@ describe("chats IPC mode filtering", () => {
 
   it("先迁移再从轨迹 projection 组合 CHATS_GET 与 CHATS_GET_PAGE", async () => {
     const { registerChatsIpc } = await import("./chats-ipc");
-    registerChatsIpc();
+    (await registerChatsIpc());
     const create = mocks.handlers.get(IPC.CHATS_CREATE);
     const get = mocks.handlers.get(IPC.CHATS_GET);
     const getPage = mocks.handlers.get(IPC.CHATS_GET_PAGE);
@@ -418,14 +435,14 @@ describe("chats IPC mode filtering", () => {
   it("schedules first-message title generation for every conversation mode with visible text only", async () => {
     const { registerChatsIpc } = await import("./chats-ipc");
     const scheduled: Array<{ sessionId: string; userMessageId: string; text: string }> = [];
-    registerChatsIpc(undefined, {
+    (await registerChatsIpc(undefined, {
       titleService: {
         schedule: (input) => {
           scheduled.push(input);
           return true;
         },
       },
-    });
+    }));
 
     const create = mocks.handlers.get(IPC.CHATS_CREATE);
     const enqueue = mocks.handlers.get(IPC.CHATS_PENDING_ENQUEUE);
@@ -459,7 +476,7 @@ describe("chats IPC mode filtering", () => {
   it("pending remove 先写 journal 墓碑，不能绕过轨迹直接删除", async () => {
     const { registerChatsIpc } = await import("./chats-ipc");
     const { getConversationTranscriptStore } = await import("../orchestrator/conversation-transcript-store");
-    registerChatsIpc();
+    (await registerChatsIpc());
     const create = mocks.handlers.get(IPC.CHATS_CREATE);
     const enqueue = mocks.handlers.get(IPC.CHATS_PENDING_ENQUEUE);
     const remove = mocks.handlers.get(IPC.CHATS_PENDING_REMOVE);
@@ -493,7 +510,7 @@ describe("chats IPC mode filtering", () => {
 
   it("does not register the removed Cline plan/act IPC", async () => {
     const { registerChatsIpc } = await import("./chats-ipc");
-    registerChatsIpc();
+    (await registerChatsIpc());
 
     const setCodeMode = mocks.handlers.get("chats:set-code-mode");
     expect(setCodeMode).toBeUndefined();
@@ -502,7 +519,7 @@ describe("chats IPC mode filtering", () => {
   it("removes only the deleted conversation's persisted tool results", async () => {
     const { registerChatsIpc } = await import("./chats-ipc");
     const { FileToolOutputStore } = await import("../orchestrator/harness/tool-output/file-tool-output-store");
-    registerChatsIpc();
+    (await registerChatsIpc());
     const create = mocks.handlers.get(IPC.CHATS_CREATE);
     const remove = mocks.handlers.get(IPC.CHATS_DELETE);
     if (!create || !remove) throw new Error("chat delete IPC handler was not registered");
@@ -529,7 +546,7 @@ describe("chats IPC mode filtering", () => {
   it("removes only the deleted conversation's transcript directory", async () => {
     const { registerChatsIpc } = await import("./chats-ipc");
     const { getConversationTranscriptStore } = await import("../orchestrator/conversation-transcript-store");
-    registerChatsIpc();
+    (await registerChatsIpc());
     const create = mocks.handlers.get(IPC.CHATS_CREATE);
     const remove = mocks.handlers.get(IPC.CHATS_DELETE);
     if (!create || !remove) throw new Error("chat delete IPC handler was not registered");
@@ -558,7 +575,7 @@ describe("chats IPC mode filtering", () => {
 
   it("opens only a workspace already bound to a project conversation", async () => {
     const { registerChatsIpc } = await import("./chats-ipc");
-    registerChatsIpc();
+    (await registerChatsIpc());
 
     const create = mocks.handlers.get(IPC.CHATS_CREATE);
     const setWorkspace = mocks.handlers.get(IPC.CHATS_SET_WORKSPACE);
@@ -586,7 +603,7 @@ describe("chats IPC mode filtering", () => {
 
   it("CHATS_SET_WORKSPACE：最近项目记录的目录已不存在时绑定被拒绝且不落库", async () => {
     const { registerChatsIpc } = await import("./chats-ipc");
-    registerChatsIpc();
+    (await registerChatsIpc());
 
     const create = mocks.handlers.get(IPC.CHATS_CREATE);
     const setWorkspace = mocks.handlers.get(IPC.CHATS_SET_WORKSPACE);
@@ -612,7 +629,7 @@ describe("chats IPC mode filtering", () => {
 
   it("CHATS_SET_WORKSPACE：组合读取迁移成 v2 的会话仍可绑定（session not found 回归）", async () => {
     const { registerChatsIpc } = await import("./chats-ipc");
-    registerChatsIpc();
+    (await registerChatsIpc());
 
     const create = mocks.handlers.get(IPC.CHATS_CREATE);
     const getSession = mocks.handlers.get(IPC.CHATS_GET);
@@ -632,7 +649,7 @@ describe("chats IPC mode filtering", () => {
     // 消息照发后被派发守卫拒绝——即"选了工作区却提示未绑定"的原始 bug
     expect(await getSession(event, session.id)).not.toBeNull();
     const { getSessionRecord } = await import("./chats-store");
-    expect(getSessionRecord(session.id)?.schemaVersion).toBe(2);
+    expect((await getSessionRecord(session.id))?.schemaVersion).toBe(2);
 
     // v2 会话绑定必须成功且落库
     const result = await setWorkspace(event, { sessionId: session.id, workspaceRoot });
@@ -644,7 +661,7 @@ describe("chats IPC mode filtering", () => {
 
   it("CHATS_VALIDATE_WORKSPACE：目录存在返回规范化路径，失效目录带出可读错误", async () => {
     const { registerChatsIpc } = await import("./chats-ipc");
-    registerChatsIpc();
+    (await registerChatsIpc());
 
     const validate = mocks.handlers.get(IPC.CHATS_VALIDATE_WORKSPACE);
     if (!validate) throw new Error("workspace validation IPC handler was not registered");
@@ -669,7 +686,7 @@ describe("chats IPC mode filtering", () => {
 
   it("CHATS_SHELL_FILE：打开/定位工作区内文件；未绑定、非法参数、越界、缺失文件各自拒绝", async () => {
     const { registerChatsIpc } = await import("./chats-ipc");
-    registerChatsIpc();
+    (await registerChatsIpc());
 
     const create = mocks.handlers.get(IPC.CHATS_CREATE);
     const setWorkspace = mocks.handlers.get(IPC.CHATS_SET_WORKSPACE);
@@ -718,7 +735,7 @@ describe("chats IPC mode filtering", () => {
 
   it("CHATS_SHELL_FILE：绝对路径模式（正文文件链接）支持工作区外文件，不存在则拒绝", async () => {
     const { registerChatsIpc } = await import("./chats-ipc");
-    registerChatsIpc();
+    (await registerChatsIpc());
 
     const create = mocks.handlers.get(IPC.CHATS_CREATE);
     const shellFile = mocks.handlers.get(IPC.CHATS_SHELL_FILE);
@@ -789,7 +806,7 @@ describe("chats IPC mode filtering", () => {
   it("#16 CHATS_CREATE 创建即快照默认模型；CHATS_SET_MODEL_PROFILE 原子重置为新档案默认", async () => {
     writeModelSettings([PROFILE_A, PROFILE_B], "p-a");
     const { registerChatsIpc } = await import("./chats-ipc");
-    registerChatsIpc();
+    (await registerChatsIpc());
     const create = mocks.handlers.get(IPC.CHATS_CREATE);
     const setSessionModel = mocks.handlers.get(IPC.CHATS_SET_SESSION_MODEL);
     const setProfile = mocks.handlers.get(IPC.CHATS_SET_MODEL_PROFILE);
@@ -818,7 +835,7 @@ describe("chats IPC mode filtering", () => {
   it("#17 A 与 B 清单含同名模型：切 B 仍取 B 默认，同名不继承", async () => {
     writeModelSettings([PROFILE_A, PROFILE_B], "p-a");
     const { registerChatsIpc } = await import("./chats-ipc");
-    registerChatsIpc();
+    (await registerChatsIpc());
     const create = mocks.handlers.get(IPC.CHATS_CREATE);
     const setProfile = mocks.handlers.get(IPC.CHATS_SET_MODEL_PROFILE);
     if (!create || !setProfile) throw new Error("model state IPC handlers were not registered");
@@ -837,19 +854,19 @@ describe("chats IPC mode filtering", () => {
     writeModelSettings([PROFILE_A, PROFILE_B], "p-a");
     const { registerChatsIpc } = await import("./chats-ipc");
     const chatsStore = await import("./chats-store");
-    registerChatsIpc();
-    chatsStore.initialize();
+    (await registerChatsIpc());
+    (await chatsStore.initialize());
     const setSessionModel = mocks.handlers.get(IPC.CHATS_SET_SESSION_MODEL);
     if (!setSessionModel) throw new Error("session model IPC handler was not registered");
     const event = { sender: {} };
 
     // 直建绑定失效的会话（绑定的档案不存在）；主动选择 = 确认接受回退档案 p-a
-    const session = chatsStore.createSession({ modelProfileId: "p-deleted", model: "glm-a2" });
+    const session = (await chatsStore.createSession({ modelProfileId: "p-deleted", model: "glm-a2" }));
     await expect(setSessionModel(event, { id: session.id, model: "glm-a2" })).resolves.toEqual({
       ok: true,
       session: expect.objectContaining({ modelProfileId: "p-a", model: "glm-a2" }),
     });
-    expect(chatsStore.getSessionRecord(session.id)).toMatchObject({
+    expect((await chatsStore.getSessionRecord(session.id))).toMatchObject({
       modelProfileId: "p-a",
       model: "glm-a2",
     });
@@ -859,19 +876,19 @@ describe("chats IPC mode filtering", () => {
     writeModelSettings([PROFILE_A, PROFILE_B], "p-a");
     const { registerChatsIpc } = await import("./chats-ipc");
     const chatsStore = await import("./chats-store");
-    registerChatsIpc();
-    chatsStore.initialize();
+    (await registerChatsIpc());
+    (await chatsStore.initialize());
     const setSessionModel = mocks.handlers.get(IPC.CHATS_SET_SESSION_MODEL);
     if (!setSessionModel) throw new Error("session model IPC handler was not registered");
     const event = { sender: {} };
 
-    const session = chatsStore.createSession({ modelProfileId: "p-deleted", model: "glm-a2" });
+    const session = (await chatsStore.createSession({ modelProfileId: "p-deleted", model: "glm-a2" }));
     // glm-b1 只存在于非回退档案 B → 拒绝（窄 IPC 不留 free-form 旁门）
     await expect(setSessionModel(event, { id: session.id, model: "glm-b1" })).resolves.toEqual({
       ok: false,
       error: "invalid-model",
     });
-    expect(chatsStore.getSessionRecord(session.id)).toMatchObject({
+    expect((await chatsStore.getSessionRecord(session.id))).toMatchObject({
       modelProfileId: "p-deleted",
       model: "glm-a2",
     });
@@ -880,7 +897,7 @@ describe("chats IPC mode filtering", () => {
   it("CHATS_SET_SESSION_MODEL 入参校验：空模型 → invalid-payload；会话不存在 → session-not-found", async () => {
     writeModelSettings([PROFILE_A], "p-a");
     const { registerChatsIpc } = await import("./chats-ipc");
-    registerChatsIpc();
+    (await registerChatsIpc());
     const setSessionModel = mocks.handlers.get(IPC.CHATS_SET_SESSION_MODEL);
     const create = mocks.handlers.get(IPC.CHATS_CREATE);
     if (!setSessionModel || !create) throw new Error("session model IPC handlers were not registered");

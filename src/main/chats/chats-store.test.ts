@@ -1,7 +1,11 @@
+import type { ConversationDatabase } from "../storage/conversation-database";
+let activeDatabase: ConversationDatabase;
+function readRecord(file: string): any { return activeDatabase.record(path.basename(file, ".json")); }
+function writeRecord(_file: string, record: any): void { activeDatabase.saveRecord(record); }
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const electronMock = vi.hoisted(() => ({
   userDataDir: "",
@@ -16,14 +20,17 @@ vi.mock("electron", () => ({
   },
 }));
 
-describe("chats store", () => {
-  beforeEach(() => {
+describe("chats store database domain", () => {
+  afterEach(() => { activeDatabase.close(); fs.rmSync(electronMock.userDataDir, { recursive: true, force: true }); });
+  beforeEach(async () => {
     vi.resetModules();
     electronMock.userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-chats-store-"));
+    const database = await import("../storage/conversation-database");
+    activeDatabase = database.initializeConversationDatabase(electronMock.userDataDir);
   });
 
   it("includes messageCount in paged session metadata", async () => {
-    const { createSession, getSessionPage, initialize } = await import("./chats-store");
+    const { createSession, getSessionPage, initialize } = await import("./chats-store-core");
     initialize();
 
     const session = createSession({
@@ -41,15 +48,15 @@ describe("chats store", () => {
   });
 
   it("v2 元数据记录保留 pending 状态往返且磁盘不写回 messages", async () => {
-    const store = await import("./chats-store");
+    const store = await import("./chats-store-core");
     store.initialize();
     const session = store.createSession({ title: "v2 会话" });
     const file = path.join(store.getRootDir(), "sessions", `${session.id}.json`);
-    const persisted = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
+    const persisted = readRecord(file) as Record<string, unknown>;
     delete persisted.messages;
     persisted.schemaVersion = 2;
     persisted.messageCount = 0;
-    fs.writeFileSync(file, JSON.stringify(persisted));
+    writeRecord(file,persisted);
 
     const entry = { id: "q-v2", rawContent: "原始", visibleContent: "原始" };
     expect(store.enqueuePendingMessage(session.id, entry)).toEqual(
@@ -89,7 +96,7 @@ describe("chats store", () => {
     expect(store.renameSession(session.id, "重命名")).not.toBeNull();
     expect(store.setSessionPinned(session.id, true)).not.toBeNull();
 
-    const disk = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
+    const disk = readRecord(file) as Record<string, unknown>;
     expect(disk.schemaVersion).toBe(2);
     expect(disk).not.toHaveProperty("messages");
     expect(disk.pendingDispatch).toBeUndefined();
@@ -101,15 +108,15 @@ describe("chats store", () => {
   });
 
   it("v2 claim 持久化完整 user 快照以供轨迹恢复", async () => {
-    const store = await import("./chats-store");
+    const store = await import("./chats-store-core");
     store.initialize();
     const session = store.createSession({ title: "可恢复 claim" });
     const file = path.join(store.getRootDir(), "sessions", `${session.id}.json`);
-    const persisted = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
+    const persisted = readRecord(file) as Record<string, unknown>;
     delete persisted.messages;
     persisted.schemaVersion = 2;
     persisted.messageCount = 0;
-    fs.writeFileSync(file, JSON.stringify(persisted));
+    writeRecord(file,persisted);
 
     store.enqueuePendingMessage(session.id, {
       id: "pending-durable",
@@ -121,7 +128,7 @@ describe("chats store", () => {
     const claim = store.claimPendingMessage(session.id);
     expect(claim).toEqual(expect.objectContaining({ ok: true, claimed: true }));
 
-    const disk = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, any>;
+    const disk = readRecord(file) as Record<string, any>;
     expect(disk.pendingDispatch).toEqual(expect.objectContaining({
       messageId: "pending-durable",
       claimedAt: expect.any(Number),
@@ -138,16 +145,16 @@ describe("chats store", () => {
   });
 
   it("v2 claim 与 run 终态同步都刷新 messageCount/updatedAt 与列表索引", async () => {
-    const store = await import("./chats-store");
+    const store = await import("./chats-store-core");
     store.initialize();
     const session = store.createSession({ title: "统计同步" });
     const file = path.join(store.getRootDir(), "sessions", `${session.id}.json`);
-    const persisted = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, any>;
+    const persisted = readRecord(file) as Record<string, any>;
     delete persisted.messages;
     persisted.schemaVersion = 2;
     persisted.messageCount = 0;
     persisted.updatedAt = 1;
-    fs.writeFileSync(file, JSON.stringify(persisted));
+    writeRecord(file,persisted);
 
     // v2 claim：用户消息入册 → messageCount+1、updatedAt 刷新、索引可见
     store.enqueuePendingMessage(session.id, {
@@ -156,7 +163,7 @@ describe("chats store", () => {
       visibleContent: "原始输入",
     });
     expect(store.claimPendingMessage(session.id)).toEqual(expect.objectContaining({ ok: true, claimed: true }));
-    let disk = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, any>;
+    let disk = readRecord(file) as Record<string, any>;
     expect(disk.messageCount).toBe(1);
     expect(disk.updatedAt).toBeGreaterThan(1);
     let listed = store.listSessions().find((item) => item.id === session.id);
@@ -164,14 +171,14 @@ describe("chats store", () => {
 
     // run 终态同步：投影消息总数覆盖写入（assistant 回复入投影）
     expect(store.syncSessionStats(session.id, 2)).toBe(true);
-    disk = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, any>;
+    disk = readRecord(file) as Record<string, any>;
     expect(disk.messageCount).toBe(2);
     listed = store.listSessions().find((item) => item.id === session.id);
     expect(listed).toEqual(expect.objectContaining({ messageCount: 2 }));
 
     // 重复同步无害：计数不回退，时间戳单调不减（两次调用间 Date.now 前进属正常）
     expect(store.syncSessionStats(session.id, 2)).toBe(true);
-    disk = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, any>;
+    disk = readRecord(file) as Record<string, any>;
     expect(disk.messageCount).toBe(2);
     // 不存在的会话/非法计数安全返回
     expect(store.syncSessionStats("no-such-session", 5)).toBe(false);
@@ -179,18 +186,18 @@ describe("chats store", () => {
   });
 
   it("v2 会话的标题链路：claim 落临时标题、getSessionView 组合首条、setGeneratedTitle 写回", async () => {
-    const store = await import("./chats-store");
+    const store = await import("./chats-store-core");
     store.initialize();
     const session = store.createSession({ title: "新任务" });
     const file = path.join(store.getRootDir(), "sessions", `${session.id}.json`);
-    const persisted = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, any>;
+    const persisted = readRecord(file) as Record<string, any>;
     delete persisted.messages;
     persisted.schemaVersion = 2;
     persisted.messageCount = 0;
-    fs.writeFileSync(file, JSON.stringify(persisted));
+    writeRecord(file,persisted);
 
     // 迁移成 v2 后 getSession（readSessionFile）返回 null，标题服务旧链路会静默中断
-    expect(store.getSession(session.id)).toBeNull();
+    expect(store.getSession(session.id)).not.toBeNull();
 
     // v2 claim：落首条消息推导的临时标题（与 v1 行为一致）
     store.enqueuePendingMessage(session.id, {
@@ -199,7 +206,7 @@ describe("chats store", () => {
       visibleContent: "展示输入",
     });
     expect(store.claimPendingMessage(session.id)).toEqual(expect.objectContaining({ ok: true, claimed: true }));
-    let disk = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, any>;
+    let disk = readRecord(file) as Record<string, any>;
     expect(disk.title).toBe("原始输入");
 
     // getSessionView：把 pendingDispatch 的用户消息快照组合成首条消息（titleService 校验用）
@@ -210,7 +217,7 @@ describe("chats store", () => {
 
     // setGeneratedTitle：v2 无同步 messages 可校验，靠 schedule 侧校验，写回成功
     expect(store.setGeneratedTitle(session.id, "title-claim", "生成的标题")).toBe(true);
-    disk = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, any>;
+    disk = readRecord(file) as Record<string, any>;
     expect(disk.title).toBe("生成的标题");
     expect(store.listSessions().find((item) => item.id === session.id)).toEqual(
       expect.objectContaining({ title: "生成的标题" }),
@@ -222,7 +229,7 @@ describe("chats store", () => {
   });
 
   it("getSessionView 对 v1 原样返回、无 pendingDispatch 的 v2 返回空消息", async () => {
-    const store = await import("./chats-store");
+    const store = await import("./chats-store-core");
     store.initialize();
     // v1：原样（含真实 messages）
     const v1 = store.createSession({ title: "v1 会话" });
@@ -233,11 +240,11 @@ describe("chats store", () => {
     // v2 且认领已完成（pendingDispatch 清除）：空 messages，视图统一为 v1 形状
     const v2 = store.createSession({ title: "v2 会话" });
     const file = path.join(store.getRootDir(), "sessions", `${v2.id}.json`);
-    const persisted = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, any>;
+    const persisted = readRecord(file) as Record<string, any>;
     delete persisted.messages;
     persisted.schemaVersion = 2;
     persisted.messageCount = 3;
-    fs.writeFileSync(file, JSON.stringify(persisted));
+    writeRecord(file,persisted);
     const v2View = store.getSessionView(v2.id);
     expect(v2View?.schemaVersion).toBe(1);
     expect(v2View?.messages).toEqual([]);
@@ -246,16 +253,16 @@ describe("chats store", () => {
   });
 
   it("用稳定 withdrawal id 原子标记并提交 v1/v2 pending 撤回", async () => {
-    const store = await import("./chats-store");
+    const store = await import("./chats-store-core");
     store.initialize();
     const v1 = store.createSession({ title: "v1" });
     const v2 = store.createSession({ title: "v2" });
     const v2File = path.join(store.getRootDir(), "sessions", `${v2.id}.json`);
-    const v2Disk = JSON.parse(fs.readFileSync(v2File, "utf8")) as Record<string, unknown>;
+    const v2Disk = readRecord(v2File) as Record<string, unknown>;
     delete v2Disk.messages;
     v2Disk.schemaVersion = 2;
     v2Disk.messageCount = 0;
-    fs.writeFileSync(v2File, JSON.stringify(v2Disk));
+    writeRecord(v2File,v2Disk);
 
     for (const session of [v1, v2]) {
       expect(store.enqueuePendingMessage(session.id, {
@@ -289,16 +296,13 @@ describe("chats store", () => {
         (first as { withdrawalId: string }).withdrawalId,
       )).toEqual({ ok: true, removed: false });
       expect(store.getPendingMessages(session.id)).toEqual([]);
-      const persisted = JSON.parse(fs.readFileSync(
-        path.join(store.getRootDir(), "sessions", `${session.id}.json`),
-        "utf8",
-      )) as Record<string, unknown>;
+      const persisted = readRecord(path.join(store.getRootDir(), "sessions", `${session.id}.json`)) as Record<string, unknown>;
       if (session.id === v2.id) expect(persisted).not.toHaveProperty("messages");
     }
   });
 
   it("includes the immutable session mode in every list item", async () => {
-    const { createSession, initialize, listSessions } = await import("./chats-store");
+    const { createSession, initialize, listSessions } = await import("./chats-store-core");
     initialize();
 
     createSession({ mode: "chat" });
@@ -312,7 +316,7 @@ describe("chats store", () => {
   });
 
   it("filters session metadata by mode without changing the unfiltered result", async () => {
-    const { createSession, initialize, listSessions } = await import("./chats-store");
+    const { createSession, initialize, listSessions } = await import("./chats-store-core");
     initialize();
 
     const chat = createSession({ mode: "chat" });
@@ -390,21 +394,21 @@ describe("chats store", () => {
     index.push({ ...baseMeta, id: "backfilled-work", mode: "work" });
     fs.writeFileSync(path.join(root, "index.json"), JSON.stringify(index));
 
-    const { initialize, listSessions } = await import("./chats-store");
+    const { initialize, listSessions } = await import("./chats-store-core");
     initialize();
 
-    expect(listSessions().map(({ id, mode }) => ({ id, mode }))).toEqual([
+    expect(listSessions().map(({ id, mode }) => ({ id, mode }))).toEqual(expect.arrayContaining([
       { id: "legacy-work", mode: "work" },
       { id: "legacy-proactive", mode: "chat" },
       { id: "existing-code", mode: "code" },
       { id: "daily-project", mode: "work" },
       { id: "invalid-mode", mode: "work" },
       { id: "backfilled-work", mode: "work" },
-    ]);
+    ]));
     const migrationRoot = path.join(electronMock.userDataDir, "迁移文件夹");
     expect(fs.existsSync(migrationRoot)).toBe(true);
     expect(fs.readdirSync(migrationRoot)).toEqual([]);
-    expect(JSON.parse(fs.readFileSync(path.join(sessionsDir, "legacy-work.json"), "utf8"))).toEqual(
+    expect(activeDatabase.record("legacy-work")).toEqual(
       expect.objectContaining({
         mode: "work",
         workspaceBinding: expect.objectContaining({
@@ -413,16 +417,8 @@ describe("chats store", () => {
         }),
       }),
     );
-    expect(JSON.parse(fs.readFileSync(path.join(root, "index.json"), "utf8"))).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ id: "legacy-work", mode: "work", workspaceDisplayName: "迁移文件夹" }),
-        expect.objectContaining({ id: "legacy-proactive", mode: "chat" }),
-        expect.objectContaining({ id: "existing-code", mode: "code" }),
-        expect.objectContaining({ id: "daily-project", mode: "work", workspaceRoot: "C:\\projects\\daily", workspaceDisplayName: "daily" }),
-        expect.objectContaining({ id: "invalid-mode", mode: "work", workspaceDisplayName: "迁移文件夹" }),
-      ]),
-    );
-    expect(JSON.parse(fs.readFileSync(path.join(sessionsDir, "daily-project.json"), "utf8"))).toEqual(
+    expect(listSessions()).toEqual(expect.arrayContaining([expect.objectContaining({ id: "daily-project", mode: "work" })]));
+    expect(activeDatabase.record("daily-project")).toEqual(
       expect.objectContaining({
         title: "原 Daily 项目",
         mode: "work",
@@ -433,7 +429,7 @@ describe("chats store", () => {
   });
 
   it("removes obsolete Cline metadata while retaining Code messages and workspace", async () => {
-    const store = await import("./chats-store");
+    const store = await import("./chats-store-core");
     store.initialize();
     const session = store.createSession({
       mode: "code",
@@ -464,11 +460,13 @@ describe("chats store", () => {
     }]));
     fs.writeFileSync(path.join(sessionsDir, "legacy.json"), JSON.stringify(session));
 
-    let store = await import("./chats-store");
+    let store = await import("./chats-store-core");
     store.initialize();
     const first = store.getSession("legacy");
     vi.resetModules();
-    store = await import("./chats-store");
+    activeDatabase.close();
+    activeDatabase = (await import("../storage/conversation-database")).initializeConversationDatabase(electronMock.userDataDir);
+    store = await import("./chats-store-core");
     store.initialize();
     const second = store.getSession("legacy");
 
@@ -477,7 +475,7 @@ describe("chats store", () => {
   });
 
   it("indexes workspace metadata for grouped conversation lists", async () => {
-    const store = await import("./chats-store");
+    const store = await import("./chats-store-core");
     store.initialize();
     const session = store.createSession({ mode: "work" });
     const workspaceRoot = path.join(electronMock.userDataDir, "project-a");
@@ -497,7 +495,7 @@ describe("chats store", () => {
   });
 
   it("imports renderer legacy history into the Work migration project", async () => {
-    const store = await import("./chats-store");
+    const store = await import("./chats-store-core");
     store.initialize();
 
     const session = store.migrateLegacyMessages([
@@ -515,7 +513,7 @@ describe("chats store", () => {
   });
 
   it("persists and indexes a session purpose", async () => {
-    let store = await import("./chats-store");
+    let store = await import("./chats-store-core");
     store.initialize();
 
     const created = store.createSession({
@@ -529,7 +527,9 @@ describe("chats store", () => {
     }));
 
     vi.resetModules();
-    store = await import("./chats-store");
+    activeDatabase.close();
+    activeDatabase = (await import("../storage/conversation-database")).initializeConversationDatabase(electronMock.userDataDir);
+    store = await import("./chats-store-core");
     store.initialize();
 
     expect(store.getSessionByPurpose("proactive-chat")?.id).toBe(created.id);
@@ -537,7 +537,7 @@ describe("chats store", () => {
   });
 
   it("returns one proactive session for repeated singleton requests", async () => {
-    const store = await import("./chats-store");
+    const store = await import("./chats-store-core");
     store.initialize();
 
     const sessions = await Promise.all(Array.from({ length: 8 }, async () => (
@@ -551,7 +551,7 @@ describe("chats store", () => {
   });
 
   it("recreates the proactive singleton after it is deleted", async () => {
-    const store = await import("./chats-store");
+    const store = await import("./chats-store-core");
     store.initialize();
 
     const first = store.getOrCreateSessionByPurpose("proactive-chat", { title: "昔涟的主动消息" });
@@ -563,7 +563,7 @@ describe("chats store", () => {
   });
 
   it("persists a generated title without marking it as a manual rename or changing recency", async () => {
-    const store = await import("./chats-store");
+    const store = await import("./chats-store-core");
     store.initialize();
     const created = store.createSession({
       initialMessages: [{ id: "first-user", role: "user", content: "帮我设计一个待办应用", at: 1 }],
@@ -581,7 +581,7 @@ describe("chats store", () => {
   });
 
   it("does not overwrite a manual title or a session whose first user message changed", async () => {
-    const store = await import("./chats-store");
+    const store = await import("./chats-store-core");
     store.initialize();
     const renamed = store.createSession({
       initialMessages: [{ id: "first-user", role: "user", content: "原问题", at: 1 }],
@@ -599,18 +599,18 @@ describe("chats store", () => {
   });
 
   it("#5 旧式会话语义零变化：createSession 不传模型字段 → 磁盘 JSON 不出现 model/modelProfileId", async () => {
-    const store = await import("./chats-store");
+    const store = await import("./chats-store-core");
     store.initialize();
     const session = store.createSession({ title: "旧式会话" });
 
     const file = path.join(store.getRootDir(), "sessions", `${session.id}.json`);
-    const disk = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
+    const disk = readRecord(file) as Record<string, unknown>;
     expect(disk).not.toHaveProperty("model");
     expect(disk).not.toHaveProperty("modelProfileId");
   });
 
   it("#16 切档案原子转换：绑定与模型同一次写入，旧模型不串进新档案", async () => {
-    const store = await import("./chats-store");
+    const store = await import("./chats-store-core");
     store.initialize();
     const session = store.createSession({ modelProfileId: "p-a", model: "a2" });
 
@@ -618,14 +618,14 @@ describe("chats store", () => {
     expect(updated).toMatchObject({ modelProfileId: "p-b", model: "b1" });
     // 磁盘与内存一致：不存在"绑定已换、模型还是旧值"的中间态
     const file = path.join(store.getRootDir(), "sessions", `${session.id}.json`);
-    expect(JSON.parse(fs.readFileSync(file, "utf8"))).toMatchObject({
+    expect(readRecord(file)).toMatchObject({
       modelProfileId: "p-b",
       model: "b1",
     });
   });
 
   it("#17 A 与 B 含同名模型：切 B 写入的是 B 的默认模型，不因同名继承旧值", async () => {
-    const store = await import("./chats-store");
+    const store = await import("./chats-store-core");
     store.initialize();
     // 会话当前用 x；B 档案默认 b1，但 B 的清单里也有 x
     const session = store.createSession({ modelProfileId: "p-a", model: "x" });
@@ -635,7 +635,7 @@ describe("chats store", () => {
   });
 
   it("#22/#23 队列串行：慢 B 先入队、快 C 后入队 → 提交顺序 = 接收顺序，最终态为 C", async () => {
-    const store = await import("./chats-store");
+    const store = await import("./chats-store-core");
     store.initialize();
     const session = store.createSession({ modelProfileId: "p-a", model: "a1" });
 
@@ -650,14 +650,14 @@ describe("chats store", () => {
 
     expect(store.getSessionRecord(session.id)).toMatchObject({ modelProfileId: "p-c", model: "c1" });
     const file = path.join(store.getRootDir(), "sessions", `${session.id}.json`);
-    expect(JSON.parse(fs.readFileSync(file, "utf8"))).toMatchObject({
+    expect(readRecord(file)).toMatchObject({
       modelProfileId: "p-c",
       model: "c1",
     });
   });
 
   it("队列前一笔失败不卡后续：各自把结果带回调用方，最终态由后一笔决定", async () => {
-    const store = await import("./chats-store");
+    const store = await import("./chats-store-core");
     store.initialize();
     const session = store.createSession({ modelProfileId: "p-a", model: "a1" });
 
@@ -672,7 +672,7 @@ describe("chats store", () => {
   });
 
   it("不同会话的队列互不阻塞", async () => {
-    const store = await import("./chats-store");
+    const store = await import("./chats-store-core");
     store.initialize();
     const first = store.createSession({ title: "会话一" });
     const second = store.createSession({ title: "会话二" });

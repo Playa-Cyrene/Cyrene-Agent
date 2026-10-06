@@ -1,3 +1,4 @@
+import { closeConversationDatabases } from "../storage/conversation-database-client";
 import { describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
@@ -283,6 +284,7 @@ describe("proactive chat service", () => {
       expect((await journal.readProjection("proactive-session")).messages[0]).toMatchObject({ content: "首次文本" });
       expect(state.pendingCommitIntent).toBeUndefined();
     } finally {
+      await closeConversationDatabases();
       fs.rmSync(root, { recursive: true, force: true });
     }
   });

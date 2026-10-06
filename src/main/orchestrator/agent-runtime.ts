@@ -93,7 +93,7 @@ export interface AgentRuntimeDeps {
   broadcastRuntimeStateChanged: () => void;
   citaService: CitaService;
   socialContextScheduler: { schedule: (input: SocialExtractionInput) => void };
-  chatsStore: { getWorkspaceBinding: (conversationId: string) => { workspaceRoot: string; displayName: string; boundAt: number } | undefined };
+  chatsStore: { getWorkspaceBinding: (conversationId: string) => ({ workspaceRoot: string; displayName: string; boundAt: number } | undefined) | Promise<{ workspaceRoot: string; displayName: string; boundAt: number } | undefined> };
   socialAtomStore: { listActive: (conversationId: string, now: number) => SocialAtom[] };
   buildSummaryMemoryContext?: (conversationId: string) => Promise<{ stablePrompt: string; runtimeContext: string }>;
   scheduleSummaryTurn?: (input: Parameters<typeof scheduleSummaryTurn>[0]) => void;
@@ -251,8 +251,8 @@ export function createAgentRuntime(rawDeps: AgentRuntimeDeps): AgentRuntime {
         momentsStore.initialize();
         return buildMomentsContextBlock(momentsStore.listFeed({ limit: 20 }), query, Date.now());
       },
-      getWorkspaceBinding: (conversationId: string) => {
-        return rawDeps.chatsStore.getWorkspaceBinding(conversationId);
+      getWorkspaceBinding: async (conversationId: string) => {
+        return (await rawDeps.chatsStore.getWorkspaceBinding(conversationId));
       },
       buildSummaryMemoryContext: rawDeps.buildSummaryMemoryContext,
       buildPluginPromptContext: (input) => rawDeps.buildPluginPromptContext(input),

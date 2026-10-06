@@ -107,6 +107,7 @@ export class ConversationTranscriptCompactor {
   }
 
   async compact(request: ConversationCompactionRequest): Promise<ConversationCompactionResult> {
+    await this.runReader.refresh?.();
     const retainTokens = request.retainTokens ?? 1;
     const before = await this.store.read(request.conversationId);
     // 已有有效检查点时输入为"旧摘要 + 后缀"，二次压缩不会丢弃第一次摘要；

@@ -151,7 +151,7 @@ export function registerMemoryUserToolIpc(deps: MemoryUserToolIpcDependencies): 
   ipc.handle(IPC.MEMORY_PANEL_GET_DATA, () => loadMemoryPanelData());
   ipc.handle(IPC.MEMORY_PANEL_GET_SUMMARY, async () => {
     if (!isSummaryMemoryEnabled()) return null;
-    const sessionId = activeConversationRegistry.getMostRecent()?.sessionId ?? chatsStore.getLatestSessionId();
+    const sessionId = activeConversationRegistry.getMostRecent()?.sessionId ?? (await chatsStore.getLatestSessionId());
     if (!sessionId) return null;
     const context = await loadSummaryMemoryContext({
       conversationId: sessionId,

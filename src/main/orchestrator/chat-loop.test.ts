@@ -1,3 +1,4 @@
+import { closeConversationDatabases } from "../storage/conversation-database-client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../token-usage-store", () => ({
@@ -983,6 +984,7 @@ describe("ChatLoop transcript cross-loop continuity", () => {
       const finalSnapshot = await store.read(conversationId);
       expect(finalSnapshot.entries.filter((entry) => entry.kind === "assistant")).toHaveLength(2);
     } finally {
+      await closeConversationDatabases();
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
@@ -1050,6 +1052,7 @@ describe("ChatLoop transcript cross-loop continuity", () => {
         expect.objectContaining({ role: "user", content: "谢谢，再聊聊" }),
       ]));
     } finally {
+      await closeConversationDatabases();
       fs.rmSync(root, { recursive: true, force: true });
     }
   });

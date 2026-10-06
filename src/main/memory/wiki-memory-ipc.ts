@@ -14,24 +14,24 @@ import type {
   WikiSourceRef as StoredSource,
 } from "./wiki-types";
 
-function scopeForUi(scope: StoredScope): WikiPageSummary["scope"] {
+async function scopeForUi(scope: StoredScope): Promise<WikiPageSummary["scope"]> {
   if (scope.kind === "global") return scope;
-  const workspaceName = chatsStore.listSessions().find((session) => session.workspaceRoot &&
+  const workspaceName = (await chatsStore.listSessions()).find((session) => session.workspaceRoot &&
     workspaceScope(session.workspaceRoot).workspaceId === scope.workspaceId)?.workspaceDisplayName;
   return { ...scope, ...(workspaceName ? { workspaceName } : {}) };
 }
 
-function summaryForUi(page: StoredSummary): WikiPageSummary {
+async function summaryForUi(page: StoredSummary): Promise<WikiPageSummary> {
   return {
     id: page.id, title: page.title, kind: page.pageType,
-    tags: page.tags, scope: scopeForUi(page.scope), updatedAt: page.updatedAt,
+    tags: page.tags, scope: await scopeForUi(page.scope), updatedAt: page.updatedAt,
     excerpt: page.summary, claimCount: page.claimCount, conflictCount: page.conflictCount,
   };
 }
 
-function sourceForUi(source: StoredSource): WikiSource {
+async function sourceForUi(source: StoredSource): Promise<WikiSource> {
   if (source.kind === "chat") {
-    const session = chatsStore.getSessionRecord(source.conversationId);
+    const session = (await chatsStore.getSessionRecord(source.conversationId));
     return {
       kind: "chat", sourceId: source.sourceId!,
       locator: `${source.conversationId}/${source.messageId}`,
@@ -49,12 +49,12 @@ function sourceForUi(source: StoredSource): WikiSource {
       label: source.originalPath, quote: source.evidenceQuote };
 }
 
-function claimForUi(claim: StoredClaim): WikiClaim {
+async function claimForUi(claim: StoredClaim): Promise<WikiClaim> {
   return {
     id: claim.id, subject: claim.subject, predicate: claim.predicate, value: claim.value,
     status: claim.status === "uncertain" ? "pending" : claim.status === "revoked" ? "retracted" : claim.status,
     assertedAt: claim.assertedAt, validFrom: claim.validFrom, validTo: claim.validTo,
-    sources: claim.sources.map(sourceForUi),
+    sources: await Promise.all(claim.sources.map(sourceForUi)),
   };
 }
 
@@ -72,10 +72,10 @@ async function detailForUi(page: StoredPage): Promise<WikiPageDetail> {
     .map((claim) => `${claim.predicate}：${claim.value}`).join("；").slice(0, 300);
   return {
     id: page.id, title: page.title, kind: page.pageType, tags: page.tags,
-    scope: scopeForUi(page.scope), updatedAt: page.updatedAt, excerpt,
+    scope: await scopeForUi(page.scope), updatedAt: page.updatedAt, excerpt,
     claimCount: current.length,
     conflictCount: 0,
-    body: page.body, claims: page.claims.map(claimForUi), relatedPages,
+    body: page.body, claims: await Promise.all(page.claims.map(claimForUi)), relatedPages,
   };
 }
 
@@ -94,14 +94,14 @@ export function registerWikiMemoryIpc(ipc: IpcScope = createIpcScope()): void {
     if (!store) return { items: [], total: 0 };
     const options = pageRequest(request);
     const [items, total] = await Promise.all([store.listPages(options), store.countPages(options)]);
-    return { items: items.map(summaryForUi), total };
+    return { items: await Promise.all(items.map(summaryForUi)), total };
   });
   ipc.handle(IPC.MEMORY_WIKI_SEARCH, async (_event, request: WikiSearchRequest): Promise<WikiPageListResult> => {
     const store = getWikiMemoryStore();
     if (!store || typeof request?.query !== "string") return { items: [], total: 0 };
     const options = pageRequest(request);
     const all = await store.search(request.query, undefined, 100, options.tag);
-    return { items: all.slice(options.offset, options.offset! + options.limit!).map(summaryForUi), total: all.length };
+    return { items: await Promise.all(all.slice(options.offset, options.offset! + options.limit!).map(summaryForUi)), total: all.length };
   });
   ipc.handle(IPC.MEMORY_WIKI_READ_PAGE, async (_event, pageId: unknown): Promise<WikiPageDetail | null> => {
     const store = getWikiMemoryStore();

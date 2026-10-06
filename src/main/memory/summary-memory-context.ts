@@ -17,9 +17,9 @@ export interface SummaryMemoryContext {
 export async function loadSummaryMemoryContext(input: {
   conversationId: string;
   userDataRoot: string;
-  getSessionRecord: (id: string) => ChatSessionRecord | null;
+  getSessionRecord: (id: string) => (ChatSessionRecord | null) | Promise<ChatSessionRecord | null>;
 }): Promise<SummaryMemoryContext> {
-  const session = input.getSessionRecord(input.conversationId);
+  const session = (await input.getSessionRecord(input.conversationId));
   const paths = resolveSummaryMemoryPaths({
     conversationId: input.conversationId,
     userDataRoot: input.userDataRoot,

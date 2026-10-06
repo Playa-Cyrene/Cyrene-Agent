@@ -6,8 +6,6 @@
  * format or duplicate run lifecycle writes.
  */
 
-import { createHash } from "node:crypto";
-import { normalizeMailDraftCardData } from "../../shared/mail-draft-card";
 import type { PendingChatAttachment } from "../../shared/chat-types";
 import type { ChatMessageChannel } from "../../shared/chat-types";
 import {
@@ -28,7 +26,6 @@ import type {
 } from "./conversation-transcript-types";
 import { assertValidPresentationPatch } from "./conversation-transcript-types";
 import { createTranscriptSink, type TranscriptSink } from "./transcript-sink";
-import { reconcileCrashedInterruptionsForConversation } from "./conversation-interruption-reconciliation";
 
 export interface JournalUserInput {
   turnId: string;
@@ -332,24 +329,8 @@ export class ConversationJournalService {
   }
 
   async readProjection(conversationId: string): Promise<ConversationProjection> {
-    this.cancelScheduledProjectionCheckpoint(conversationId);
-    const snapshot = await this.store.read(conversationId);
-    const seeded = isProjectionSeedUsable(snapshot);
-    if (seeded) {
-      // After archival the hot snapshot may lag behind the active generation;
-      // apply only its suffix and keep the full UI history in the projection.
-      const rebuilt = reduceTranscriptProjection(snapshot.entries, snapshot.projection);
-      if (rebuilt.throughSeq === snapshot.throughSeq) return rebuilt;
-      await this.store.checkpoint(conversationId, rebuilt);
-      return rebuilt;
-    }
-    const auditEntries = snapshot.archives.length > 0
-      ? await this.store.readAuditEntries(conversationId)
-      : snapshot.entries;
-    const rebuilt = reduceTranscriptProjection(auditEntries);
-    await this.store.checkpoint(conversationId, rebuilt);
-    return rebuilt;
-  }
+ return reduceTranscriptProjection(await this.store.readAuditEntries(conversationId));
+ }
 
   async readProjectionPage(
     conversationId: string,
@@ -370,12 +351,7 @@ export class ConversationJournalService {
   }
 
   async buildModelContext(conversationId: string): Promise<MaterializedTranscript> {
-    if (this.runReader.listInterruptedRuns) {
-      await reconcileCrashedInterruptionsForConversation({
-        runStore: { listInterruptedRuns: (id) => this.runReader.listInterruptedRuns!(id) },
-        transcriptStore: this.store,
-      }, conversationId);
-    }
+    await this.runReader.refresh?.();
     await this.store.waitForIdle(conversationId);
     const snapshot = await this.store.read(conversationId);
     return buildModelContextFromCompactedView(snapshot.entries, this.runReader);
@@ -450,10 +426,7 @@ export class ConversationJournalService {
   }
 
   async checkpoint(conversationId: string): Promise<TranscriptSnapshotV2> {
-    const snapshot = await this.store.read(conversationId);
-    const projection = isUsableProjection(snapshot.projection, snapshot.throughSeq)
-      ? snapshot.projection
-      : reduceTranscriptProjection(snapshot.entries);
+    const projection = await this.readProjection(conversationId);
     return this.store.checkpoint(conversationId, projection);
   }
 
@@ -463,91 +436,9 @@ export class ConversationJournalService {
   }
 
   private async refreshProjection(conversationId: string): Promise<ConversationProjection> {
-    const snapshot = await this.store.read(conversationId);
-    const seeded = isProjectionSeedUsable(snapshot) ? snapshot.projection : undefined;
-    const projection = seeded
-      ? reduceTranscriptProjection(snapshot.entries, seeded)
-      : reduceTranscriptProjection(
-        snapshot.archives.length > 0 ? await this.store.readAuditEntries(conversationId) : snapshot.entries,
-      );
-    await this.store.checkpoint(conversationId, projection);
+    const projection = await this.readProjection(conversationId);
+    try { await this.store.checkpoint(conversationId, projection); }
+    catch (error) { console.warn('[ConversationJournalService] 展示投影检查点失败，可从权威条目重建:', error); }
     return projection;
   }
-}
-
-function isUsableProjection(
-  projection: unknown,
-  throughSeq: number,
-): projection is ConversationProjection {
-  if (!projection || typeof projection !== "object") return false;
-  const candidate = projection as Partial<ConversationProjection>;
-  if (
-    typeof candidate.throughSeq !== "number" ||
-    !Number.isInteger(candidate.throughSeq) ||
-    candidate.throughSeq < 0 ||
-    candidate.throughSeq !== throughSeq ||
-    !Array.isArray(candidate.messages)
-  ) return false;
-  if (!candidate.messages.every(isProjectionMessage)) return false;
-  // Current snapshots carry reducer state so aliases, pending patches, and
-  // branch mutations can be recovered. An empty legacy projection is safe to
-  // accept; a non-empty one without state must be rebuilt.
-  if (candidate.state === undefined) return candidate.messages.length === 0;
-  if (!candidate.state || !Array.isArray(candidate.state.nodes)) return false;
-  if (!candidate.state.nodes.every((node) => (
-    !!node &&
-    (node.kind === "user" || node.kind === "assistant" || node.kind === "compaction") &&
-    typeof node.entryId === "string" &&
-    typeof node.messageId === "string"
-  ))) return false;
-  return candidate.state.patches === undefined || (
-    Array.isArray(candidate.state.patches) && candidate.state.patches.every((patch) => (
-    !!patch &&
-    typeof patch.messageId === "string" &&
-    Number.isInteger(patch.patchRevision) &&
-    !!patch.patch &&
-    typeof patch.patch === "object"
-    ))
-  );
-}
-
-function isProjectionSeedUsable(snapshot: TranscriptSnapshotV2): boolean {
-  const projection = snapshot.projection;
-  if (!isUsableProjection(projection, projection.throughSeq)) return false;
-  const archivedThrough = snapshot.archives.reduce(
-    (max, archive) => Math.max(max, archive.throughSeq), 0,
-  );
-  if (snapshot.archives.length > 0 &&
-    (!snapshot.projectionDigest || digestProjection(projection) !== snapshot.projectionDigest)) return false;
-  if (projection.throughSeq < archivedThrough || projection.throughSeq > snapshot.throughSeq) return false;
-  const messageIds = new Set(projection.messages.map((message) => message.id));
-  return projection.state?.nodes.every((node) => messageIds.has(node.messageId)) ?? projection.messages.length === 0;
-}
-
-function digestProjection(projection: ConversationProjection): string {
-  return createHash("sha256").update(JSON.stringify(projection), "utf8").digest("hex");
-}
-
-function isProjectionMessage(message: unknown): boolean {
-  if (!message || typeof message !== "object") return false;
-  const candidate = message as Record<string, unknown>;
-  if (
-    typeof candidate.id !== "string" ||
-    (candidate.role !== "user" && candidate.role !== "model") ||
-    typeof candidate.content !== "string" ||
-    typeof candidate.at !== "number"
-  ) return false;
-  if (candidate.sticker !== undefined && candidate.sticker !== null && typeof candidate.sticker !== "string") {
-    return false;
-  }
-  for (const key of [
-    "reasoningBlocks", "processMessages", "agentRounds", "taskDelegations", "toolExecutions", "emailDraftCards",
-  ]) {
-    if (candidate[key] !== undefined && !Array.isArray(candidate[key])) return false;
-  }
-  if (candidate.emailDraftCards !== undefined && !(candidate.emailDraftCards as unknown[]).every((card) => normalizeMailDraftCardData(card) !== null)) return false;
-  for (const key of ["reasoning", "ttsCacheKey", "ttsCacheVersion"]) {
-    if (candidate[key] !== undefined && typeof candidate[key] !== "string") return false;
-  }
-  return true;
 }

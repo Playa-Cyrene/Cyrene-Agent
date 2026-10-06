@@ -1,3 +1,4 @@
+import { closeConversationDatabases } from "../storage/conversation-database-client";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -45,7 +46,8 @@ function legacyEntryId(messageId: string): string {
   return `backfill:v1:${messageId}`;
 }
 
-afterEach(() => {
+afterEach(async () => {
+  await closeConversationDatabases();
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 

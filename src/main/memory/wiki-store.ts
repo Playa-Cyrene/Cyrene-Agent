@@ -200,8 +200,8 @@ export class WikiStore {
     }
   }
 
-  private async persist(page: WikiPage, shouldCommit?: () => boolean): Promise<void> {
-    if (shouldCommit && !shouldCommit()) return;
+  private async persist(page: WikiPage, shouldCommit?: () => boolean | Promise<boolean>): Promise<void> {
+    if (shouldCommit && !(await shouldCommit())) return;
     await this.setDirty();
     try {
       await writeWikiFileAtomic(this.root, pageRelativePath(page.id), stringifyWikiPage(page), shouldCommit);
@@ -294,7 +294,7 @@ export class WikiStore {
     await writeWikiFileAtomic(this.root, "log.md", `${kept.join("\n").trimEnd()}\n- ${new Date().toISOString()} ${event}\n`);
   }
 
-  async applyClaims(candidates: WikiClaimCandidate[], options: { shouldCommit?: () => boolean } = {}): Promise<WikiPage[]> {
+  async applyClaims(candidates: WikiClaimCandidate[], options: { shouldCommit?: () => boolean | Promise<boolean> } = {}): Promise<WikiPage[]> {
     await this.initialize();
     return this.enqueue(async () => {
       const changed = new Map<string, WikiPage>();
@@ -311,7 +311,7 @@ export class WikiStore {
         (left.kind === "global" || (right.kind === "workspace" && left.workspaceId === right.workspaceId));
       const normalized = (name: string): string => name.normalize("NFKC").trim().toLocaleLowerCase();
       for (const candidate of candidates) {
-        if (options.shouldCommit && !options.shouldCommit()) break;
+        if (options.shouldCommit && !(await options.shouldCommit())) break;
         if (this.tombstones.has(candidate.source.conversationId)) continue;
         const candidateNames = new Set([candidate.subject, ...(candidate.aliases ?? [])].map(normalized));
         const exactMatches = [
@@ -339,7 +339,7 @@ export class WikiStore {
         })) changed.set(id, page);
       }
       for (const page of changed.values()) {
-        if (options.shouldCommit && !options.shouldCommit()) break;
+        if (options.shouldCommit && !(await options.shouldCommit())) break;
         await this.persist(page, options.shouldCommit);
       }
       return [...changed.values()];

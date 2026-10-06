@@ -1,3 +1,4 @@
+import { closeConversationDatabases } from "../storage/conversation-database-client";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -553,6 +554,7 @@ describe("AgentRuntime 轨迹上下文注入（CTA Phase 1）", () => {
       expect(JSON.stringify(built.options.messages)).not.toContain("stale renderer");
     } finally {
       electronMocks.userDataRoot = "";
+      await closeConversationDatabases();
       rmSync(root, { recursive: true, force: true });
     }
   });

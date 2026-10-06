@@ -65,17 +65,17 @@ describe("conversation title service — 发出消息后切走会话", () => {
     });
 
     // 用户在 A 发出首条消息（对应主进程 CHATS_PENDING_CLAIM 触发 schedule）
-    expect(service.schedule({
+    expect((await service.schedule({
       sessionId: "session-a",
       userMessageId: "user-1",
       text: "帮我设计一个待办事项管理应用",
-    })).toBe(true);
+    }))).toBe(true);
     // 立刻切到 B 并在 B 发消息：B 的操作不应挤掉 A 的后台生成
-    expect(service.schedule({
+    expect((await service.schedule({
       sessionId: "session-b",
       userMessageId: "user-b1",
       text: "B 会话的首条消息",
-    })).toBe(true);
+    }))).toBe(true);
 
     await vi.advanceTimersByTimeAsync(3_000);
     expect(modelCalls).toHaveLength(2);
@@ -106,11 +106,11 @@ describe("conversation title service — 发出消息后切走会话", () => {
       onTitleChanged: () => {},
     });
 
-    service.schedule({
+    (await service.schedule({
       sessionId: stored.id,
       userMessageId: "user-1",
       text: "帮我设计一个待办事项管理应用",
-    });
+    }));
     // 延迟窗口内 agent 回复完成落盘：会话消息增长（用户已切走，主进程照常写入）
     stored = {
       ...stored,
@@ -141,11 +141,11 @@ describe("conversation title service — 发出消息后切走会话", () => {
       onTitleChanged: () => {},
     });
 
-    service.schedule({
+    (await service.schedule({
       sessionId: "session-a",
       userMessageId: "user-1",
       text: "帮我设计一个待办事项管理应用",
-    });
+    }));
     // 延迟窗口内用户在其他会话里删掉了 A
     stored = null;
 

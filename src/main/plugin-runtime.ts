@@ -57,7 +57,7 @@ export async function startPluginRuntime(deps: PluginRuntimeDeps): Promise<Plugi
   // 普通聊天经 IPC 提交桥送入聊天窗口渲染页，活动通话经控制器落到通话管理器
   const speechInput = createSpeechInputService({
     registry: activeChatTargetRegistry,
-    sessionStore: { getSession: (id) => chatsStore.getSession(id) ?? null },
+    sessionStore: { getSession: async (id) => (await chatsStore.getSession(id)) ?? null },
     commitBridge: createSpeechInputCommitBridge(deps.ipc),
     callController: createSpeechInputCallController(),
   });

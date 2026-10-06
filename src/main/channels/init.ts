@@ -320,15 +320,15 @@ function registerChannelsIpc(
     return { ok: true };
   });
 
-  ipc.handle(IPC.CHANNELS_CONTEXT_BINDINGS_GET, () => {
-    return getContextBindingSnapshot(getChannelConversationBindingStore(), listSessions());
+  ipc.handle(IPC.CHANNELS_CONTEXT_BINDINGS_GET, async () => {
+    return getContextBindingSnapshot(getChannelConversationBindingStore(), (await listSessions()));
   });
 
   ipc.handle(IPC.CHANNELS_CONTEXT_BIND, (_e, payload: unknown) => {
     return bindContextConversation(
       getChannelConversationBindingStore(),
       payload,
-      (conversationId) => getSession(conversationId) !== null,
+      async (conversationId) => (await getSession(conversationId)) !== null,
     );
   });
 

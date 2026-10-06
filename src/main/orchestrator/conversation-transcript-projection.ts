@@ -21,6 +21,7 @@ import type {
 import type { ChatMessage, ChatMessageContent, ToolCall } from "./vendors/types";
 
 export interface TranscriptRunReader {
+  refresh?(): Promise<void>;
   get(runId: string): HarnessRunSession | null;
   listInterruptedRuns?(conversationId?: string): HarnessRunSession[];
 }

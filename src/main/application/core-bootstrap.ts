@@ -88,7 +88,7 @@ export interface CoreDependencies {
   /** 必须在内置渠道适配器注册完成后调用；scheduler 先于本步完成 initialize。 */
   startPlugins(services: CoreServices, scheduler: SchedulerSubsystem, runtime: AgentRuntime): Promise<PluginManager>;
   createScheduler(runtime: AgentRuntime, services: CoreServices): SchedulerSubsystem;
-  registerCoreIpc(input: RegisterCoreIpcInput): void;
+  registerCoreIpc(input: RegisterCoreIpcInput): void | Promise<void>;
   /** 组合根装配提醒中心：注册 toast IPC、订阅事件总线、预创建隐藏窗口。 */
   wireToastCenter(input: { ipc: IpcScope; windowManager: WindowManager }): void;
   loadGeneralSettings(): GeneralSettings;
@@ -170,7 +170,7 @@ export async function startCore(deps: CoreDependencies): Promise<CoreResult> {
   const plugins = await timedStep("startPlugins", () => deps.startPlugins(services, scheduler, runtime));
 
   // 注册聊天渲染进程可能调用的全部 IPC 处理器 —— 必须先于 chat.load()
-  deps.registerCoreIpc({ ipc: shell.ipc, runtime, services, channels, scheduler });
+  await deps.registerCoreIpc({ ipc: shell.ipc, runtime, services, channels, scheduler });
 
   // 提醒中心装配：IPC 注册先于 toast 窗口预加载（渲染页加载即可能 invoke getAll）
   deps.wireToastCenter({ ipc: shell.ipc, windowManager: shell.windowManager });

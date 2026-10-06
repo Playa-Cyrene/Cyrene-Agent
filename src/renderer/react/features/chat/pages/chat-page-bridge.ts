@@ -178,7 +178,7 @@ export interface AguiApi {
       anchorUserTurnId: string;
       disposition: "keep_user" | "replace_user";
     };
-  }) => Promise<{ success: boolean; runId: string; error?: string }>;
+  }) => Promise<import("../../../../../shared/run-terminal").AguiRunAck>;
   onEvent: (callback: (event: AguiEvent) => void) => () => void;
   cancel: (runId?: string) => Promise<unknown>;
   // 落盘确认（单向通知）：终态消息写入会话存储后上报，供插件轮次事件使用

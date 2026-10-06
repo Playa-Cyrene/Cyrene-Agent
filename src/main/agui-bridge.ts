@@ -8,6 +8,8 @@
 // Agent 的 Observable 是内存流、跨不过进程边界。
 // 因此主进程统一持有运行并仅把事件发送给 Renderer。
 import { app, IpcMainInvokeEvent, WebContents } from "electron";
+import { getConversationDatabase } from "./storage/conversation-database-client";
+import type { DispatchReceipt } from "./storage/conversation-run-repository";
 import { getHarnessRunStore } from "./orchestrator/harness/run-store";
 import { IPC } from "../shared/ipc-channels";
 import { createIpcScope, type IpcScope } from "./application/ipc-scope";
@@ -39,7 +41,7 @@ import { loadModelSettings, resolveSessionModelSettings } from "./settings/model
 import type { ChatMessage, ConversationMode, PendingChatAttachment } from "../shared/chat-types";
 import { normalizeBrowserElementSelection } from "../shared/browser-panel-types";
 import { isModelFailureInfo } from "../shared/model-error";
-import { prepareTranscriptDispatch, type TranscriptRewindRequest } from "./orchestrator/conversation-transcript-coordinator";
+import { type TranscriptRewindRequest } from "./orchestrator/conversation-transcript-coordinator";
 import { getConversationTranscriptStore } from "./orchestrator/conversation-transcript-store";
 import { createConversationSessionMigration } from "./orchestrator/conversation-session-migration";
 import { refreshWikiMemorySources } from "./memory/wiki-memory-scheduler";
@@ -308,13 +310,13 @@ export function registerAgUiIpc(
   });
   const loadComposedSession = async (sessionId: string) => {
     const recordReader = (chatsStore as typeof chatsStore & {
-      getSessionRecord?: (id: string) => ReturnType<typeof chatsStore.getSessionRecord>;
+      getSessionRecord?: (id: string) => (ReturnType<typeof chatsStore.getSessionRecord>) | Promise<ReturnType<typeof chatsStore.getSessionRecord>>;
     }).getSessionRecord;
     const migrated = typeof recordReader === "function"
       ? await sessionMigration.ensureConversationMigrated(sessionId)
       : null;
     await journal.reconcilePendingWithdrawals();
-    if (!migrated) return chatsStore.getSession(sessionId);
+    if (!migrated) return (await chatsStore.getSession(sessionId));
     return sessionMigration.loadComposedSession(sessionId);
   };
 
@@ -340,11 +342,18 @@ export function registerAgUiIpc(
     lifecycle?.onUserMessage();
     lifecycle?.onConversationStarted();
     perf.beginTurn("desktop");
+    let conversationEnded = false;
+    const endConversation = () => {
+      if (conversationEnded) return;
+      conversationEnded = true;
+      lifecycle?.onConversationEnded();
+    };
     const input = rawInput as AguiRunInput;
+    try {
 
     // 事件转发目标：优先用 invoke 的 sender（发起 run 的窗口），兜底用聊天窗口
     const sender = event.sender;
-    const runId = `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    let runId = `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const turnStartedAt = Date.now();
 
     const send = (baseEvent: unknown): void => {
@@ -372,19 +381,61 @@ export function registerAgUiIpc(
     // ── 顶层模式分流：读取 ChatSession.mode（唯一可信来源） ──
     const sessionId = input.sessionId;
     if (!sessionId) {
-      lifecycle?.onConversationEnded();
+      endConversation();
       throw new Error("AGUI_RUN 缺少 sessionId");
     }
     const session = await loadComposedSession(sessionId);
     if (!session) {
-      lifecycle?.onConversationEnded();
+      endConversation();
       throw new Error(`AGUI_RUN 会话不存在: ${sessionId}`);
     }
     const mode = session.mode ?? (session.purpose === "proactive-chat" ? "chat" : "work");
     if ((mode === "work" || mode === "code" || mode === "learn") && !session.workspaceBinding?.workspaceRoot) {
-      lifecycle?.onConversationEnded();
+      endConversation();
       throw new Error(`${mode} 模式需要先绑定项目工作区`);
     }
+
+    const currentUser = input.currentUser ?? (input.userTurnId
+      ? (() => {
+          const message = session.messages.find((candidate) => candidate.id === input.userTurnId && candidate.role === "user");
+          return message ? {
+            turnId: message.id,
+            text: message.content,
+            visibleContent: message.content,
+            at: message.at,
+            ...(message.attachments ? { attachments: message.attachments } : {}),
+            ...(message.sticker ? { sticker: message.sticker } : {}),
+          } : undefined;
+        })()
+      : undefined);
+    if (input.currentUser && (!input.currentUser.turnId || typeof input.currentUser.text !== "string"
+      || typeof input.currentUser.visibleContent !== "string")) {
+      endConversation();
+      throw new Error("AGUI_RUN_INVALID_CURRENT_USER");
+    }
+    if (input.userTurnId && !currentUser) {
+      endConversation();
+      throw new Error("TRANSCRIPT_USER_TURN_NOT_FOUND");
+    }
+    const currentUserAttachments = currentUser
+      ? normalizeCurrentUserAttachments(currentUser.attachments)
+      : undefined;
+    const database = getConversationDatabase(app.getPath("userData"));
+    const requestId = input.transcriptRewind ? input.assistantTurnId : currentUser?.turnId ?? input.assistantTurnId;
+    if (!requestId) throw new Error("AGUI_RUN_REQUEST_ID_REQUIRED");
+    const requestFacts = {
+      mode, assistantTurnId: input.assistantTurnId,
+      ...(currentUser ? { currentUser: { turnId: currentUser.turnId, text: currentUser.text, visibleContent: currentUser.visibleContent,
+        ...(currentUserAttachments?.length ? { attachments: currentUserAttachments } : {}), ...(currentUser.sticker ? { sticker: currentUser.sticker } : {}) } } : {}),
+      ...(input.transcriptRewind ? { transcriptRewind: input.transcriptRewind } : {}),
+      ...(input.styleId ? { styleId: input.styleId } : {}),
+    };
+    const duplicateAck = (receipt: DispatchReceipt): AguiRunAck => ({
+      success: ["prepared", "running", "completed"].includes(receipt.status), runId: receipt.runId, duplicate: true,
+      status: receipt.status, ...(receipt.error ? { error: receipt.error } : {}),
+    });
+    const existingReceipt = await database.call<DispatchReceipt | null>("runs.lookup", sessionId, requestId, requestFacts);
+    if (existingReceipt) { endConversation(); return duplicateAck(existingReceipt); }
 
     // ── 会话级运行守卫：同一会话同一时刻最多一个 active run ──
     // 检查 + 注册在同一同步代码块内完成（JS 单线程，get 与 set 之间无 await = 原子），
@@ -407,12 +458,12 @@ export function registerAgUiIpc(
         break;
       }
       if (input.takeoverFromRunId !== existing.runId) {
-        lifecycle?.onConversationEnded();
+        endConversation();
         throw new Error(`SESSION_RUN_ACTIVE:${existing.runId}`);
       }
       if (takeovers >= 2) {
         // 防御上限：abort 后旧 run 始终未结算（结算链路自身故障）→ 明确报错而非无限等待
-        lifecycle?.onConversationEnded();
+        endConversation();
         throw new Error(`SESSION_RUN_TAKEOVER_STUCK:${existing.runId}`);
       }
       existing.abort();
@@ -427,33 +478,16 @@ export function registerAgUiIpc(
       clearTimeout(settleTimeout);
     }
 
+    let admitted = false;
+    try {
+      const receipt = await database.call<DispatchReceipt>("runs.admit", sessionId, requestId, requestFacts, runId);
+      if (receipt.duplicate) { releaseSessionGuard?.(); endConversation(); return duplicateAck(receipt); }
+      const guard = sessionActiveRuns.get(sessionId);
+      runId = receipt.runId;
+      if (guard) guard.runId = runId;
+      admitted = true;
     // ── 轨迹派发：canonical user/rewind → presentation → model context ──
     // renderer 的 messages（即使恶意/旧版载荷仍携带）永远不参与模型上下文。
-    const currentUser = input.currentUser ?? (input.userTurnId
-      ? (() => {
-          const message = session.messages.find((candidate) => candidate.id === input.userTurnId && candidate.role === "user");
-          return message ? {
-            turnId: message.id,
-            text: message.content,
-            visibleContent: message.content,
-            at: message.at,
-            ...(message.attachments ? { attachments: message.attachments } : {}),
-            ...(message.sticker ? { sticker: message.sticker } : {}),
-          } : undefined;
-        })()
-      : undefined);
-    if (input.currentUser && (!input.currentUser.turnId || typeof input.currentUser.text !== "string"
-      || typeof input.currentUser.visibleContent !== "string")) {
-      lifecycle?.onConversationEnded();
-      throw new Error("AGUI_RUN_INVALID_CURRENT_USER");
-    }
-    if (input.userTurnId && !currentUser) {
-      lifecycle?.onConversationEnded();
-      throw new Error("TRANSCRIPT_USER_TURN_NOT_FOUND");
-    }
-    const currentUserAttachments = currentUser
-      ? normalizeCurrentUserAttachments(currentUser.attachments)
-      : undefined;
     let modelContext: MaterializedTranscript | undefined;
     if (currentUser) {
       try {
@@ -488,12 +522,13 @@ export function registerAgUiIpc(
           } : {}),
           ...(currentUser.sticker ? { sticker: currentUser.sticker } : {}),
         };
-        const sessionRecord = (chatsStore as typeof chatsStore & {
-          getSessionRecord?: (id: string) => ReturnType<typeof chatsStore.getSessionRecord>;
-        }).getSessionRecord?.(sessionId);
+        const sessionRecord = (await (chatsStore as typeof chatsStore & {
+          getSessionRecord?: (id: string) => (ReturnType<typeof chatsStore.getSessionRecord>) | Promise<ReturnType<typeof chatsStore.getSessionRecord>>;
+        }).getSessionRecord?.(sessionId));
         const migrated = sessionRecord?.schemaVersion === 2
           || (session as unknown as { schemaVersion?: number }).schemaVersion === 2;
         let presentationRevision: number = 1;
+        let canonicalMessageId = `user:v1:${currentUser.turnId}:r1`;
         if (migrated && input.transcriptRewind) {
           const rewindEntry = await journal.appendRewind(sessionId, {
             anchorUserTurnId: input.transcriptRewind.anchorUserTurnId,
@@ -509,8 +544,8 @@ export function registerAgUiIpc(
             } : {}),
           });
           presentationRevision = rewindEntry.revision ?? 1;
-        } else if (migrated) {
-          await journal.appendUser(sessionId, {
+        } else {
+          const userEntry = await journal.appendUser(sessionId, {
             id: `user:v1:${currentUser.turnId}:r1`,
             turnId: currentUser.turnId,
             text: currentUser.text,
@@ -518,51 +553,28 @@ export function registerAgUiIpc(
             at: currentMessage.at,
             revision: 1,
           });
-        } else {
-          // v1 记录仍复用 Task 3 的确定性回填协调器；迁移完成后不会再次走这里。
-          await prepareTranscriptDispatch({
-            store: transcriptStore,
-            session: {
-              ...session,
-              messages: [
-                ...session.messages.filter((message) => message.id !== currentUser.turnId),
-                currentMessage,
-              ],
-            },
-            userTurnId: currentUser.turnId,
-            runId,
-            rewind: input.transcriptRewind,
-          });
+          canonicalMessageId = userEntry.id;
         }
         if (input.transcriptRewind) await refreshWikiMemorySources(sessionId);
         const presentationMessageId = input.transcriptRewind
           ? `${runId}:rewind:${input.transcriptRewind.anchorUserTurnId}`
-          : `user:v1:${currentUser.turnId}:r1`;
-        // v2 pending claim 的 reconcile 可能已写入 revision 1 sticker patch；
-        // 续派展示补丁递增 revision，避免被同 ID 幂等写吞掉。
-        if (!input.transcriptRewind && session.pendingDispatch?.messageId === currentUser.turnId) {
-          presentationRevision = 2;
-        }
-        const presentation: Record<string, unknown> = {};
-        if (currentUser.visibleContent !== currentUser.text) presentation.content = currentUser.visibleContent;
-        if (currentUser.sticker) presentation.sticker = currentUser.sticker;
-        const canPresent = !input.transcriptRewind || input.transcriptRewind.disposition === "replace_user";
-        if (canPresent && Object.keys(presentation).length > 0) {
-          await journal.appendPresentation(
-            sessionId,
-            presentationMessageId,
-            presentationRevision,
-            presentation as TranscriptPresentationPatch,
-          );
+          : canonicalMessageId;
+        if (!input.transcriptRewind && session.pendingDispatch?.messageId === currentUser.turnId) presentationRevision = 2;
+        const presentation: TranscriptPresentationPatch = {
+          ...(currentUser.visibleContent !== currentUser.text ? { content: currentUser.visibleContent } : {}),
+          ...(currentUser.sticker ? { sticker: currentUser.sticker } : {}),
+        };
+        if ((!input.transcriptRewind || input.transcriptRewind.disposition === "replace_user") && Object.keys(presentation).length) {
+          try { await journal.appendPresentation(sessionId, presentationMessageId, presentationRevision, presentation); }
+          catch (error) { console.warn("[AgUiBridge] 用户展示更新失败:", error); }
         }
         modelContext = await journal.buildModelContext(sessionId);
       } catch (error) {
-        // 轨迹写入失败即阻断模型启动（fail-closed），复位守卫与插话标记后上抛
         perf.dump();
-        try { chatsStore.resetPendingAdjustByRun(sessionId, runId); } catch { /* 复位尽力而为 */ }
+        try { (await chatsStore.resetPendingAdjustByRun(sessionId, runId)); } catch { /* 复位尽力而为 */ }
         releaseSessionGuard?.();
         releaseSessionGuard = null;
-        lifecycle?.onConversationEnded();
+        endConversation();
         throw error;
       }
     }
@@ -593,10 +605,10 @@ export function registerAgUiIpc(
     } catch (error) {
       perf.dump();
       // run 未开跑即失败：清掉这期间可能落下的插话标记，条目回普通队列
-      try { chatsStore.resetPendingAdjustByRun(sessionId, runId); } catch { /* 复位尽力而为 */ }
+      try { (await chatsStore.resetPendingAdjustByRun(sessionId, runId)); } catch { /* 复位尽力而为 */ }
       releaseSessionGuard?.();
       releaseSessionGuard = null;
-      lifecycle?.onConversationEnded();
+      endConversation();
       throw error;
     }
     const { options, latestUserText } = built;
@@ -631,30 +643,8 @@ export function registerAgUiIpc(
     options.signal = runAbortController.signal;
     // 插话轮询：把"插入当前运行下一步"的待发条目在模型请求边界提交并注入。
     // Chat 无工具链路是单请求运行，没有安全的下一步，不接轮询（IPC 侧同步拒绝）。
-    // 双写顺序在 poller 内：先以稳定 ID 写权威轨迹（含附件元数据），
-    // 再提交聊天历史；任一步失败 pending 保留并上抛（fail-closed）。
-    if (mode !== "chat") {
-      // 插话轨迹端口只在轨迹开启时注入：兼容调用缺省，poller 退化为只提交聊天历史
-      options.pollRunAdjustments = createRunAdjustmentPoller(
-        sessionId,
-        runId,
-        chatsStore,
-        transcriptEnabled ? {
-          // 稳定 entryId 规则与正常派发一致（user:v1:turnId:r1）：重试时幂等命中
-          appendUser: async ({ turnId, text, attachments }) => {
-            const transcriptStore = getConversationTranscriptStore(app.getPath("userData"));
-            await transcriptStore.append(sessionId, {
-              id: `user:v1:${turnId}:r1`,
-              at: Date.now(),
-              kind: "user",
-              turnId,
-              revision: 1,
-              payload: { text, ...(attachments ? { attachments } : {}) },
-            });
-          },
-        } : undefined,
-      );
-    }
+    // 数据库事务同时提交插话与队列变更，成功后才注入运行。
+    if (mode !== "chat") options.pollRunAdjustments = createRunAdjustmentPoller(sessionId, runId, chatsStore);
     options.requestUserClarification = (card) => requestUserClarification(card, (cardData) => {
       send({ type: "CUSTOM", name: "cyrene.choice", value: cardData, threadId, runId });
     }, (settlement) => {
@@ -671,10 +661,10 @@ export function registerAgUiIpc(
       } catch (error) {
         // 守卫已注册：configure 失败时必须释放，否则该会话永久拒绝新 run。
         // 语义保持"配置失败 → 中断本次 run"（learn 工具不可用时不静默降级）。
-        try { chatsStore.resetPendingAdjustByRun(sessionId, runId); } catch { /* 复位尽力而为 */ }
+        try { (await chatsStore.resetPendingAdjustByRun(sessionId, runId)); } catch { /* 复位尽力而为 */ }
         releaseSessionGuard?.();
         releaseSessionGuard = null;
-        lifecycle?.onConversationEnded();
+        endConversation();
         throw error;
       }
       try {
@@ -686,6 +676,7 @@ export function registerAgUiIpc(
 
     const threadId = `thread-${Date.now()}`;
     const agent = new CyreneAgent({ threadId, description: "Cyrene 主聊天" });
+    if (mode === "chat") await database.call("runs.create", { conversationId: sessionId, runId });
 
     // 桌面轮次事件：run 真正开跑时登记协调器（立即发布 turn:started）。
     // turn:finished 由协调器在"终态 + 渲染端落盘确认"双条件满足后发布一次。
@@ -727,13 +718,13 @@ export function registerAgUiIpc(
       detachPendingTurnWatchers?.();
       detachPendingTurnWatchers = null;
     };
-    const endLifecycle = (): void => {
+    const endLifecycle = async (): Promise<void> => {
       if (lifecycleEnded) return;
       lifecycleEnded = true;
       // 插话复位：运行终态（任何路径）后，已标记但未注入的条目清标记回普通队列。
       // 必须先于会话守卫释放执行，让接续的新 run 从干净的普通队列消费。
       try {
-        chatsStore.resetPendingAdjustByRun(sessionId, runId);
+        (await chatsStore.resetPendingAdjustByRun(sessionId, runId));
       } catch (err) {
         console.warn("[AgUiBridge] 插话标记复位失败:", err);
       }
@@ -745,7 +736,7 @@ export function registerAgUiIpc(
       if (mode === "learn") {
         try { unregisterObsidianTools(); } catch { /* ignore */ }
       }
-      lifecycle?.onConversationEnded();
+      endConversation();
     };
 
     // <think> 标签过滤器：按单条 assistant message 隔离（TEXT_MESSAGE_START ~ END）
@@ -885,7 +876,7 @@ export function registerAgUiIpc(
         // 其他事件原样透传
         send(baseEvent);
       },
-      error: (err) => {
+      error: async (err) => {
         endEmbeddedReasoning();
         thinkFilter = null; // 错误时丢弃残留 filter 状态
         pendingTextStart = null;
@@ -924,6 +915,7 @@ export function registerAgUiIpc(
               durationMs: Date.now() - turnStartedAt,
             });
           }
+          await database.call("runs.terminal", runId, settled?.status === "success" ? "completed" : "failed").catch(error => console.error("[AgUiBridge] 运行回执写入失败:", error));
           cleanupRunState();
           endLifecycle();
           return;
@@ -937,18 +929,18 @@ export function registerAgUiIpc(
         send({ type: "RUN_ERROR", message, code, threadId, runId,
           ...(modelFailure ? { metadata: { cyreneModelFailure: modelFailure } } : {}),
         });
+        await database.call("runs.terminal", runId, "failed", Date.now(), code ?? "E_RUN_FAILURE").catch(error => console.error("[AgUiBridge] 运行回执写入失败:", error));
         cleanupRunState();
         endLifecycle();
       },
       complete: async () => {
         perf.mark("agent_run_complete");
-        cleanupRunState();
         // run 终态同步会话统计：assistant 回复只进轨迹投影、不经 chats-store 落盘，
         // 在 RUN_FINISHED 送达渲染端之前对齐 messageCount/updatedAt，
         // 侧栏的最近聊天时间、排序与未读检测才能看到本轮新消息
         try {
           const projection = await journal.readProjection(sessionId);
-          chatsStore.syncSessionStats(sessionId, projection.messages.length);
+          (await chatsStore.syncSessionStats(sessionId, projection.messages.length));
         } catch { /* 统计同步尽力而为：失败不改变 run 终态语义 */ }
         // complete 路径下 settlement 应已由 next(RUN_FINISHED) 写入。
         // 若 upstream 走裸 complete（没有 RUN_FINISHED），必须补发一个合成的 RUN_FINISHED，
@@ -969,6 +961,8 @@ export function registerAgUiIpc(
         }
         const settlement = settlementGate.get();
         const isSuccessfulCompletion = settlement?.status === "success";
+        await database.call("runs.terminal", runId, isSuccessfulCompletion ? "completed" : settlement?.status === "cancelled" ? "cancelled" : "failed", Date.now(), settlement?.reason).catch(error => console.error("[AgUiBridge] 运行回执写入失败:", error));
+        cleanupRunState();
         // 桌面轮次终态登记：complete 与 error 双路径都会调用，协调器只认首个终态
         if (settlement) {
           pendingTurns?.settleTerminal(runId, {
@@ -1057,6 +1051,18 @@ export function registerAgUiIpc(
     // 终态（RUN_FINISHED/RUN_ERROR）由事件流承载，渲染端据此 offEvent + 收尾。
     // 这样避免 invoke reply 与 send 事件的投递顺序竞争导致 offEvent 提前取消监听。
     return { success: true, runId };
+    } catch (error) {
+      if (admitted) await database.call("runs.terminal", runId, "failed", Date.now(), (error as Error).message).catch(failure => console.error("[AgUiBridge] 失败回执写入失败:", failure));
+      releaseSessionGuard?.();
+      endConversation();
+      throw error;
+    }
+    } catch (error) {
+      endConversation();
+      const requestId = input.transcriptRewind ? input.assistantTurnId : input.currentUser?.turnId ?? input.userTurnId ?? input.assistantTurnId;
+      if (input.sessionId && requestId) await getConversationDatabase(app.getPath("userData")).call("runs.failRequest", input.sessionId, requestId, (error as Error).message).catch(failure => console.error("[AgUiBridge] 接纳准备失败回执写入失败:", failure));
+      throw error;
+    }
   });
 
   ipc.handle(IPC.AGUI_CANCEL, (_event, runId?: string) => {
@@ -1099,13 +1105,13 @@ export function registerAgUiIpc(
     if (!session) return { ok: false, error: "session-not-found" };
     const active = sessionActiveRuns.get(sessionId);
     if (!active) {
-      return { ok: false, error: "no-active-run", queue: chatsStore.getPendingMessages(sessionId) ?? [] };
+      return { ok: false, error: "no-active-run", queue: (await chatsStore.getPendingMessages(sessionId)) ?? [] };
     }
     const mode = session.mode ?? (session.purpose === "proactive-chat" ? "chat" : "work");
     if (mode === "chat") {
-      return { ok: false, error: "no-safe-next-step", queue: chatsStore.getPendingMessages(sessionId) ?? [] };
+      return { ok: false, error: "no-safe-next-step", queue: (await chatsStore.getPendingMessages(sessionId)) ?? [] };
     }
-    const result = chatsStore.markPendingAdjust(sessionId, messageId, active.runId);
+    const result = (await chatsStore.markPendingAdjust(sessionId, messageId, active.runId));
     if (result.ok) broadcastChatsChanged(event.sender);
     return result;
   });

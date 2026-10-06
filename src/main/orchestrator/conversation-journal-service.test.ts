@@ -1,3 +1,5 @@
+import { withConversationDatabase } from "../../test-utils/conversation-storage";
+import { closeConversationDatabases } from "../storage/conversation-database-client";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -9,7 +11,6 @@ import {
 import { ConversationTranscriptCompactor } from "./conversation-transcript-compactor";
 import {
   ConversationTranscriptStore,
-  transcriptStorageKey,
 } from "./conversation-transcript-store";
 
 const roots: string[] = [];
@@ -30,24 +31,23 @@ function userInput(turnId: string, text: string): JournalUserInput {
 }
 
 async function corruptSnapshotProjection(root: string, conversationId: string): Promise<void> {
-  const snapshotPath = path.join(
-    root,
-    "transcripts",
-    transcriptStorageKey(conversationId),
-    "snapshot.json",
-  );
-  const snapshot = JSON.parse(await fs.promises.readFile(snapshotPath, "utf8")) as {
-    projection: unknown;
-  };
-  snapshot.projection = { throughSeq: "corrupt", messages: null };
-  await fs.promises.writeFile(snapshotPath, JSON.stringify(snapshot), "utf8");
+  const { getConversationDatabase } = await import("../storage/conversation-database-client");
+  await getConversationDatabase(root).call("transcript.checkpoint", conversationId, { throughSeq: "corrupt", messages: null });
 }
 
-afterEach(() => {
+afterEach(async () => {
+  await closeConversationDatabases();
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 
 describe("ConversationJournalService", () => {
+  it("derived checkpoint failure does not block canonical input or model context", async () => {
+    const { root, journal } = createJournal();
+    await journal.appendUser("c1", userInput("u1", "hello"));
+    withConversationDatabase(root, db => db.exec("CREATE TRIGGER fail_projection BEFORE UPDATE OF projection_json ON conversations BEGIN SELECT RAISE(ABORT,'INJECTED'); END"));
+    await expect(journal.appendUser("c1", userInput("u2", "next"))).resolves.toMatchObject({ kind: "user" });
+    expect((await journal.buildModelContext("c1")).messages.map(message => message.content)).toEqual(["hello", "next"]);
+  });
   it("待发撤回先落 withdrawing，墓碑后崩溃可由重启对账完成", async () => {
     const { root, journal } = createJournal();
     await journal.appendUser("c1", userInput("p1", "hidden ghost"));
@@ -151,14 +151,8 @@ describe("ConversationJournalService", () => {
   it("canonical 行损坏时保持 fail-closed", async () => {
     const { root, journal } = createJournal();
     await journal.appendUser("c1", userInput("u1", "hello"));
-    const jsonlPath = path.join(
-      root,
-      "transcripts",
-      transcriptStorageKey("c1"),
-      "transcript.jsonl",
-    );
-    await fs.promises.appendFile(jsonlPath, '{"seq":2,"id":"broken"}\nnot-json\n', "utf8");
-    await expect(journal.readProjection("c1")).rejects.toThrow("TRANSCRIPT_CORRUPT_ROW");
+    withConversationDatabase(root, db => db.prepare("UPDATE transcript_entries SET entry_json='{}' WHERE conversation_id=?").run("c1"));
+    await expect(journal.readProjection("c1")).rejects.toThrow("CONVERSATION_STORE_INTEGRITY_ERROR");
   });
 
   it("展示补丁使用确定性 ID 并按投影尾部分页", async () => {
@@ -211,7 +205,7 @@ describe("ConversationJournalService", () => {
     expect(retry.id).toBe(first.id);
     expect([tts.payload.patchRevision, activity.payload.patchRevision].sort()).toEqual([2, 3]);
     await expect(journal.appendPresentationNext("c1", "user:u1", "run:r1", { sticker: "different" }))
-      .rejects.toThrow("TRANSCRIPT_IDEMPOTENCY_CONFLICT");
+      .rejects.toThrow("PRESENTATION_MUTATION_CONFLICT");
     expect((await journal.readProjection("c1")).messages[0]).toMatchObject({
       sticker: "calm",
       ttsCacheKey: "k1",

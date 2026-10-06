@@ -15,6 +15,7 @@ import * as chatsStore from "./chats-store";
 
 const FILE_NAME = "sidebar-organization.json";
 let snapshot: SidebarOrganizationSnapshot | null = null;
+let initialization: Promise<void> | null = null;
 
 function normalizeRoot(root: string): string {
   const resolved = path.resolve(root);
@@ -225,20 +226,23 @@ function isValidDraft(draft: SidebarOrganizationDraft, sessions: ChatSessionMeta
   return true;
 }
 
-export function initialize(): void {
+export async function initialize(): Promise<void> {
   if (snapshot) return;
-  const sessions = chatsStore.listSessions();
+  if (!initialization) initialization = (async () => {
+  const sessions = (await chatsStore.listSessions());
   const loaded = readDisk();
   snapshot = reconcile(migrateLegacyProjects(loaded, sessions), sessions);
   if (JSON.stringify(snapshot) !== JSON.stringify(loaded)) {
     snapshot.revision = loaded.revision + 1;
     try { persist(snapshot); } catch (error) { console.error("[sidebar-organization] initialization save failed", error); }
   }
+  })();
+  try { await initialization; } finally { initialization = null; }
 }
 
-export function getSnapshot(): SidebarOrganizationSnapshot {
-  initialize();
-  const reconciled = reconcile(snapshot!, chatsStore.listSessions());
+export async function getSnapshot(): Promise<SidebarOrganizationSnapshot> {
+  await initialize();
+  const reconciled = reconcile(snapshot!, (await chatsStore.listSessions()));
   if (JSON.stringify(reconciled) !== JSON.stringify(snapshot)) {
     reconciled.revision = snapshot!.revision + 1;
     try {
@@ -251,11 +255,11 @@ export function getSnapshot(): SidebarOrganizationSnapshot {
   return clone(snapshot!);
 }
 
-export function applyDraft(expectedRevision: number, draft: SidebarOrganizationDraft): SidebarOrganizationResult {
-  initialize();
+export async function applyDraft(expectedRevision: number, draft: SidebarOrganizationDraft): Promise<SidebarOrganizationResult> {
+  await initialize();
+  const sessions = (await chatsStore.listSessions());
   const current = snapshot!;
   if (expectedRevision !== current.revision) return { ok: false, reason: "conflict", snapshot: clone(current) };
-  const sessions = chatsStore.listSessions();
   if (!isValidDraft(draft, sessions, current.projects)) return { ok: false, reason: "invalid", snapshot: clone(current) };
   const next: SidebarOrganizationSnapshot = { ...draft, version: 1, revision: current.revision + 1 };
   try {
