@@ -16,7 +16,7 @@ body:
     id: commit
     attributes:
       label: 提交号（commit）
-      description: 在仓库目录运行 `git rev-parse --short HEAD` 的输出
+      description: 在仓库目录运行 `git rev-parse --short HEAD` 的输出；从应用内「报告问题」入口填写时会带过来
       placeholder: "如 a1b2c3d"
     validations:
       required: true

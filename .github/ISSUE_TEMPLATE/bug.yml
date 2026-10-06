@@ -47,7 +47,7 @@ body:
       label: 复现步骤
       description: 你执行了哪些命令？按顺序列出
       placeholder: |
-        1. git clone https://github.com/Playa-0v0/Cyrene-Agent.git
+        1. git clone https://github.com/Playa-Cyrene/Cyrene-Agent.git
         2. cd Cyrene-Agent
         3. pnpm install
         4. ...
