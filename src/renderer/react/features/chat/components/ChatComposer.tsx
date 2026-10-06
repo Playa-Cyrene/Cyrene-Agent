@@ -592,7 +592,13 @@ export function ChatComposer({
     const nativeEvent = event.nativeEvent as globalThis.KeyboardEvent;
     const composing = compositionActiveRef.current || nativeEvent.isComposing || nativeEvent.keyCode === 229;
     const hasModifier = event.shiftKey || event.ctrlKey || event.altKey || event.metaKey;
-    if (slashOpenRef.current && !composing && (event.key !== "Enter" || !hasModifier)) {
+    const isSuggestionNavigationKey = ["ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight", "Escape"].includes(event.key);
+    // Sender 是 Suggestion/Cascader 的自定义输入节点；阻止 Cascader 把文本编辑按键
+    // 当作 combobox 控制键处理（它会默认拦截 Space 和 Enter）。
+    if (event.key === " " || event.key === "Enter" || (slashOpenRef.current && isSuggestionNavigationKey)) {
+      event.stopPropagation();
+    }
+    if (slashOpenRef.current && !composing && (isSuggestionNavigationKey || (event.key === "Enter" && !hasModifier))) {
       suggestionKeyDown?.(event);
     }
     if (slashOpenRef.current && !composing && event.key === "Enter" && !hasModifier) {

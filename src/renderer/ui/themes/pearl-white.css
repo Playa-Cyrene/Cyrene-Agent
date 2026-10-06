@@ -6,6 +6,7 @@
   --rb-surface-hover: #fff1f6;
   --rb-surface-active: #fde0ed;
   --rb-surface-soft: var(--rb-surface-hover);
+  --rb-surface-secondary: var(--rb-surface-soft);
   --rb-code-bg: #fafafa;
   --rb-diff-bg: #fbfafb;
   --rb-diff-add-bg: #e6ffec;

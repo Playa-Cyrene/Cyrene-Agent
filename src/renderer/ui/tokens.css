@@ -46,6 +46,7 @@
   --rb-surface-hover: var(--rb-bg-2);
   --rb-surface-active: var(--rb-bg-3);
   --rb-surface-soft: var(--rb-surface-hover);
+  --rb-surface-secondary: var(--rb-surface-soft);
   --rb-code-bg: #fafafa;
   --rb-diff-bg: #fbfafb;
   --rb-diff-add-bg: #e6ffec;

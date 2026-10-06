@@ -117,6 +117,19 @@ function pressEnter(modifiers: { shift?: boolean; ctrl?: boolean } = {}): Keyboa
   return event;
 }
 
+function pressSpace(): KeyboardEvent {
+  const node = textarea();
+  const event = new KeyboardEvent("keydown", {
+    key: " ",
+    bubbles: true,
+    cancelable: true,
+  });
+  act(() => {
+    node.dispatchEvent(event);
+  });
+  return event;
+}
+
 /** 输入法组合开始/结束（对应 React onCompositionStart/onCompositionEnd）。 */
 function composition(phase: "start" | "end") {
   const node = textarea();
@@ -227,6 +240,12 @@ describe("ChatComposer 忙闲路由（真实 Sender）", () => {
 });
 
 describe("ChatComposer 键盘边界（真实 Sender）", () => {
+  it("空格键放行给文本框，不触发外层菜单快捷键", async () => {
+    await mountComposer({ modelBusy: false });
+    const event = pressSpace();
+    expect(event.defaultPrevented).toBe(false);
+  });
+
   it("Shift+Enter 不提交且放行默认换行行为", async () => {
     await mountComposer({ modelBusy: false });
     input("第一行");

@@ -10,6 +10,7 @@ const requiredTokens = [
   "--rb-surface-hover",
   "--rb-surface-active",
   "--rb-surface-soft",
+  "--rb-surface-secondary",
   "--rb-text-primary",
   "--rb-text-secondary",
   "--rb-text-disabled",
@@ -56,6 +57,16 @@ describe("React 主题令牌契约", () => {
 
     expect(themeEntry).toContain('@import url("./themes/pearl-white.css")');
     expect(themeEntry).not.toContain("cyrene-dark");
+  });
+
+  it("每个主题都为次级表面角色提供自己的颜色", () => {
+    const themesRoot = resolve(uiRoot, "themes");
+    const themeFiles = readdirSync(themesRoot).filter((file) => file.endsWith(".css"));
+
+    for (const file of themeFiles) {
+      expect(readStyle(resolve(themesRoot, file)), `${file} should define --rb-surface-secondary`)
+        .toMatch(/--rb-surface-secondary\s*:/);
+    }
   });
 
   it("让应用外壳直接消费页面和工作区角色令牌", () => {
