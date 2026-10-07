@@ -30,7 +30,7 @@ import {
   reactChatWindow,
   setGetCurrentAppIconPath,
 } from "../windows/window-state";
-import { loadModelSettings, resolveModelSettingsProfile, saveModelSettings } from "../settings/model-settings";
+import { loadModelSettings, saveModelSettings } from "../settings/model-settings";
 import { getConversationTranscriptStore } from "../orchestrator/conversation-transcript-store";
 import { getHarnessRunStore } from "../orchestrator/harness/run-store";
 import { createModelBackedConversationTranscriptCompactor } from "../orchestrator/conversation-transcript-compactor";
@@ -264,7 +264,6 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
     createModelBackedConversationTranscriptCompactor({
       store: getConversationTranscriptStore(app.getPath("userData")),
       runReader: getHarnessRunStore(app.getPath("userData")),
-      loadModelSettings: () => resolveModelSettingsProfile(loadModelSettings()),
       // 压缩阶段推给窗口：自动压缩发生在 run 开始前的主进程侧，
       // 渲染端拿不到 AG-UI 事件，靠这条推送显示消息流尾部的呼吸提示。
       onPhase: (phase, conversationId) => broadcastCompactionPhase(conversationId, phase),

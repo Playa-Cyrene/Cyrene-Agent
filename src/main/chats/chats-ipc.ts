@@ -312,11 +312,15 @@ export async function registerChatsIpc(
       return { ok: false as const, error: "TRANSCRIPT_COMPACTION_REQUIRED" as const };
     }
     try {
+      const sessionRecord = await chatsStore.getSessionRecord(payload.sessionId);
+      if (!sessionRecord) throw createTranscriptCompactionRequiredError();
+      const modelSettings = resolveSessionModelSettings(loadModelSettings(), sessionRecord);
       // 正常 run 的最新快照写在消息上；压缩前从组合会话取出，避免归档后丢失来源。
       const previousUsage = latestContextUsage(await sessionMigration.loadComposedSession(payload.sessionId));
       const result = await transcriptCompactor.compact({
         conversationId: payload.sessionId,
         trigger: "manual",
+        modelSettings,
         ...(typeof payload.retainTokens === "number" && Number.isFinite(payload.retainTokens)
           ? { retainTokens: payload.retainTokens }
           : {}),

@@ -19,6 +19,8 @@ export interface ConversationCompactionRequest {
   conversationId: string;
   trigger: "automatic" | "manual";
   retainTokens?: number;
+  /** 调用方已解析的会话当前模型；只在本次摘要请求中使用，不写入会话记录。 */
+  modelSettings?: TranscriptCompactionModelSettings;
 }
 
 export interface ConversationCompactionResult {
@@ -29,7 +31,10 @@ export interface ConversationCompactionResult {
 
 export interface ConversationTranscriptCompactorOptions {
   store: ConversationTranscriptStore;
-  summarize: (history: CanonicalChatMessage[]) => Promise<string>;
+  summarize: (
+    history: CanonicalChatMessage[],
+    modelSettings?: TranscriptCompactionModelSettings,
+  ) => Promise<string>;
   runReader?: TranscriptRunReader;
   archive?: ConversationTranscriptArchive;
   now?: () => number;
@@ -62,15 +67,14 @@ export function createTranscriptCompactionRequiredError(cause?: unknown): Error 
 export function createModelBackedConversationTranscriptCompactor(input: {
   store: ConversationTranscriptStore;
   runReader?: TranscriptRunReader;
-  loadModelSettings: () => TranscriptCompactionModelSettings;
   onPhase?: ConversationTranscriptCompactorOptions["onPhase"];
 }): ConversationTranscriptCompactor {
   return new ConversationTranscriptCompactor({
     store: input.store,
     runReader: input.runReader,
     onPhase: input.onPhase,
-    summarize: async (history) => {
-      const settings = input.loadModelSettings();
+    summarize: async (history, settings) => {
+      if (!settings) throw createTranscriptCompactionRequiredError();
       return callSummarizeModel(
         history,
         getAdapterForConfig({
@@ -130,7 +134,7 @@ export class ConversationTranscriptCompactor {
         retainTokens,
         summarize: async (history) => {
           try {
-            return await this.summarize(history);
+            return await this.summarize(history, request.modelSettings);
           } catch (error) {
             summaryError = error;
             throw error;

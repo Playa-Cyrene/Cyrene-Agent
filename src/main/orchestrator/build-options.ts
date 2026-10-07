@@ -67,7 +67,10 @@ import { resolveTranscriptRetainTokens, type MaterializedTranscript } from "./co
 import type { UncertainEffect } from "./harness/types";
 import { DEFAULT_HARNESS_CONFIG } from "./harness/types";
 import { estimateMessageTokens } from "./context-manager";
-import { createTranscriptCompactionRequiredError } from "./conversation-transcript-compactor";
+import {
+  createTranscriptCompactionRequiredError,
+  type TranscriptCompactionModelSettings,
+} from "./conversation-transcript-compactor";
 import { MAX_PARALLEL_TOOL_CALLS } from "../../shared/task-session";
 import { normalizeMemoryMode } from "../memory/memory-mode";
 
@@ -138,6 +141,7 @@ export interface BuildOptionsDeps {
     conversationId: string;
     trigger: "automatic" | "manual";
     retainTokens: number;
+    modelSettings: TranscriptCompactionModelSettings;
   }) => Promise<unknown>;
   chatRequestTimeoutMs: number;
   captionImageForFallback?: (filePath: string) => Promise<{ ok: boolean; caption?: string; error?: string }>;
@@ -624,6 +628,7 @@ export async function buildAgentRunOptions(
           conversationId: input.sessionId,
           trigger: "automatic",
           retainTokens: Math.max(1, Math.floor(contextWindowTokens * DEFAULT_HARNESS_CONFIG.compactionRetainRatio)),
+          modelSettings: settings,
         });
       } catch (error) {
         console.error("[BuildOptions] transcript compaction failed", error);
