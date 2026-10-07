@@ -81,7 +81,6 @@ export interface HarnessRun {
   cache: HarnessCacheState;
   /** 已完成的工具执行轮数（最终无工具的回复轮不计入；LLM 请求轮数 = rounds + 最终回复轮）。 */
   rounds: number;
-  checkpointFailure?: string;
   /** ask_user 等交互内置工具的 dispatch 上下文。 */
   askDispatchContext: ToolDispatchContext;
   /** 普通工具的 dispatch 上下文（延迟输出持久化，重试收敛后统一落盘）。 */
@@ -109,9 +108,6 @@ export async function runCyreneHarness(input: HarnessInput): Promise<HarnessResu
   materializeInitialContext(run);
 
   while (!run.clock.isExecutionTimeout()) {
-    if (run.checkpointFailure) {
-      return finishRun(run, `执行状态保存失败：${run.checkpointFailure}`, true, "error");
-    }
     // 用户取消：finalAnswer 保持为空，不生成 "最终回复被取消。" 之类的占位文案。
     if (input.signal?.aborted) return cancelledResult(run);
     refreshRunTools(run);
@@ -139,10 +135,6 @@ export async function runCyreneHarness(input: HarnessInput): Promise<HarnessResu
         for (const adjustment of adjustments) {
           run.messages.push({ role: "user", content: adjustment.rawContent });
         }
-        checkpoint(run);
-        if (run.checkpointFailure) {
-          return finishRun(run, `执行状态保存失败：${run.checkpointFailure}`, true, "error");
-        }
       }
     }
 
@@ -156,11 +148,8 @@ export async function runCyreneHarness(input: HarnessInput): Promise<HarnessResu
     const compaction = compactIfNeeded(run, promptLayers);
     if (compaction) {
       await compaction;
-      // 压缩已替换模型历史：checkpoint 失败 = 新 epoch 未持久化。
-      // 此时继续请求模型，崩溃恢复会拿到旧历史 + 旧周期，违反缓存周期不变量 → 立即熔断。
-      if (run.checkpointFailure) {
-        return finishRun(run, `执行状态保存失败：${run.checkpointFailure}`, true, "error");
-      }
+      // 压缩已替换模型历史并推进 cache epoch：崩溃恢复最坏情况是缓存未命中，
+      // 权威历史始终以 transcript 为准，无需额外快照保障。
     }
 
     // ── 上下文容量快照 + 缓存诊断（压缩后、请求前）──
@@ -253,7 +242,6 @@ export async function runCyreneHarness(input: HarnessInput): Promise<HarnessResu
       if (outcome === "cancelled") return cancelledResult(run);
       input.onEvent?.({ type: "round_end", roundId });
       run.rounds++;
-      checkpoint(run);
       continue;
     }
 
@@ -288,10 +276,6 @@ export async function runCyreneHarness(input: HarnessInput): Promise<HarnessResu
       // 本轮模型已产出回复且运行未结束：按工具轮口径推进轮次，
       // 让下一轮拿到新 roundId，轮次上限也能正确计数
       run.rounds++;
-      checkpoint(run);
-      if (run.checkpointFailure) {
-        return finishRun(run, `执行状态保存失败：${run.checkpointFailure}`, true, "error");
-      }
       continue;
     }
     const finalAnswer = run.streamController.commitProgressBuffer() + truncatedSuffix;
@@ -519,8 +503,7 @@ function buildRoundPromptLayers(run: HarnessRun): PromptLayers {
 
 /**
  * Mid-loop compaction（循环中途压缩）：估算超预算时压缩历史并推进缓存周期。
- * 压缩会替换模型历史，因此下一次请求前必须先持久化新 epoch
- * （主循环在压缩后检查 checkpointFailure，失败即熔断，不再发起模型请求）。
+ * 权威历史以 transcript 为准；压缩只影响模型上下文与缓存周期。
  *
  * 同步门控：未超预算时返回 undefined（不产生 await 挂起点），
  * 保证主循环到首次 LLM fetch 之间保持同步直达。
@@ -571,7 +554,6 @@ async function runCompaction(run: HarnessRun, roundSystemPrompt: string, budget:
       messageCountAfter: compactedMessages.length,
       cache: { ...run.cache },
     });
-    checkpoint(run);
   } else {
     run.messages = compactedMessages;
   }
@@ -614,40 +596,17 @@ async function callRoundLLM(run: HarnessRun, promptLayers: PromptLayers, roundId
 
 // ═══ 结算出口 ═════════════════════════════════════════════
 
-/** 持久化可恢复子运行状态；失败记入 checkpointFailure，由主循环统一降级为 error。
- *  注意：messages/state 传的是活引用（不做 deepClone），克隆契约由消费方
- *  （run-store / task-session-store）在回调返回前同步完成。 */
-function checkpoint(run: HarnessRun): void {
-  try {
-    run.input.onCheckpoint?.({
-      messages: run.messages,
-      state: run.state,
-      toolOutputs: run.toolOutputs,
-      rounds: run.rounds,
-      cache: { ...run.cache },
-      at: Date.now(),
-    });
-  } catch (error) {
-    run.checkpointFailure = error instanceof Error ? error.message : String(error);
-    console.error(`${LOG_PREFIX} checkpoint failed:`, error);
-  }
-}
-
-/** 终态统一结算（所有终态共享）：停表 → terminal 快照 → checkpoint。
+/** 终态统一结算（所有终态共享）：停表 → terminal 快照。
  *  cancelled / error / timeout / success 一律经过此处，
- *  保证上下文环 UI 拿到终态数据、可恢复状态落盘。 */
+ *  保证上下文环 UI 拿到终态数据。 */
 function settleRun(run: HarnessRun): void {
   run.clock.stopActive();
   emitContextUsage(run, "terminal");
-  checkpoint(run);
 }
 
 /** 用户取消的统一出口：settleRun 后返回空 finalAnswer 的 cancelled 结果。 */
 function cancelledResult(run: HarnessRun): HarnessResult {
   settleRun(run);
-  if (run.checkpointFailure) {
-    return buildResult(`执行状态保存失败：${run.checkpointFailure}`, run.state, true, "error", run.rounds);
-  }
   return {
     finalAnswer: "",
     finalState: run.state,
@@ -658,7 +617,7 @@ function cancelledResult(run: HarnessRun): HarnessResult {
   };
 }
 
-/** 终态统一出口：settleRun → checkpointFailure 降级 error → 构造结果。 */
+/** 终态统一出口：settleRun → 构造结果。 */
 function finishRun(
   run: HarnessRun,
   finalAnswer: string,
@@ -666,9 +625,6 @@ function finishRun(
   terminateReason: HarnessResult["terminateReason"],
 ): HarnessResult {
   settleRun(run);
-  if (run.checkpointFailure) {
-    return buildResult(`执行状态保存失败：${run.checkpointFailure}`, run.state, true, "error", run.rounds);
-  }
   return buildResult(finalAnswer, run.state, terminated, terminateReason, run.rounds);
 }
 

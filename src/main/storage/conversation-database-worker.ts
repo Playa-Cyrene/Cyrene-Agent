@@ -1,5 +1,7 @@
 import { parentPort, workerData } from "node:worker_threads";
 import { importRuns, runCommand } from "./conversation-run-repository";
+import { importTaskSessions, runTaskCommand } from "./conversation-task-repository";
+import { importTokenUsage, runUsageCommand } from "./conversation-usage-repository";
 import { createHash, randomUUID } from "node:crypto";
 import { backup } from "node:sqlite";
 import { isDeepStrictEqual } from "node:util";
@@ -13,6 +15,8 @@ import { diagnosticHash } from "./conversation-store-error";
 const database = initializeConversationDatabase(workerData.root);
 chats.initialize();
 importRuns(database);
+importTaskSessions(database);
+importTokenUsage(database);
 const legacy = new LegacyConversationTranscriptReader(workerData.root);
 async function importTranscript(id: string): Promise<void> {
   if (database.db.prepare('SELECT transcript_imported FROM conversations WHERE id=?').get(id)?.transcript_imported)
@@ -288,6 +292,12 @@ async function execute(method: string, args: any[]): Promise<unknown> {
       database.transaction(() => { database.db.prepare('DELETE FROM transcript_entries WHERE conversation_id=?').run(id); database.db.prepare("UPDATE conversations SET max_seq=0,archived_through=0,projection_json=NULL,transcript_imported=1 WHERE id=?").run(id); });
       return;
     }
+  }
+  if (method.startsWith('tasks.')) {
+    return database.transaction(() => runTaskCommand(database, method, args));
+  }
+  if (method.startsWith('usage.')) {
+    return runUsageCommand(database, method, args);
   }
   if (method.startsWith('tools.')) {
     const [scope, id, fingerprint] = args;

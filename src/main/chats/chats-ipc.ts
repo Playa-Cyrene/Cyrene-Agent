@@ -45,6 +45,7 @@ import type { ContextUsageSnapshot } from "../../shared/context-usage";
 import { getRunReviewTracker } from "../orchestrator/review/run-review-tracker";
 import { activeChatTargetRegistry } from "../plugin-host/active-chat-target";
 import { getTaskSessionStore } from "../tasks/task-session-store";
+import { projectTaskTodoItems, projectTaskTranscriptMessages } from "../orchestrator/task-transcript-projection";
 import { cancelSummaryMemorySession, releaseSummaryMemorySessionCancellation } from "../memory/summary-memory-scheduler";
 import { cancelWikiMemorySession, getWikiMemoryStore, releaseWikiMemorySessionCancellation } from "../memory/wiki-memory-scheduler";
 import { resolveSummaryMemoryPaths } from "../memory/summary-memory-paths";
@@ -225,10 +226,19 @@ export async function registerChatsIpc(
     const session = await sessionMigration.loadComposedSession(id);
     return session ? withLiveContextWindow(session) : null;
   });
-  ipc.handle(IPC.TASK_SESSION_GET, (_event, payload: { taskId?: unknown; parentConversationId?: unknown }) => {
+  ipc.handle(IPC.TASK_SESSION_GET, async (_event, payload: { taskId?: unknown; parentConversationId?: unknown }) => {
     if (typeof payload?.taskId !== "string" || typeof payload.parentConversationId !== "string") return null;
-    const task = getTaskSessionStore(app.getPath("userData")).get(payload.taskId);
-    return task?.parentConversationId === payload.parentConversationId ? task : null;
+    const task = await getTaskSessionStore(app.getPath("userData")).get(payload.taskId);
+    if (!task || task.parentConversationId !== payload.parentConversationId) return null;
+    // 对话内容自增量子任务落库起以 SQLite transcript 为源（含 assistant.toolCalls 与 tool 消息，
+    // 检查器的工具执行面板依赖它们）；旧任务没有条目，回退读迁移前的 messages 快照。
+    const transcript = getConversationTranscriptStore(app.getPath("userData"));
+    const snapshot = await transcript.read(task.id);
+    if (snapshot.entries.length > 0) {
+      task.messages = projectTaskTranscriptMessages(snapshot.entries);
+      task.todoItems = projectTaskTodoItems(snapshot.entries);
+    }
+    return task;
   });
   ipc.handle(IPC.CHATS_GET_PAGE, async (_event, payload: { id: string; before?: number | null; limit?: number }) => {
     if (!payload?.id) return null;

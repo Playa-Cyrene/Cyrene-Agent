@@ -58,6 +58,30 @@ export class ConversationDatabase {
     if (!this.db.prepare("SELECT version FROM schema_migrations WHERE version=4").get()) {
       this.transaction(() => this.db.exec("ALTER TABLE conversations ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0; INSERT INTO schema_migrations VALUES(4)"));
     }
+    if (!this.db.prepare("SELECT version FROM schema_migrations WHERE version=5").get()) {
+      this.transaction(() => this.db.exec(`CREATE TABLE IF NOT EXISTS task_sessions(
+   id TEXT PRIMARY KEY, parent_conversation_id TEXT NOT NULL, parent_run_id TEXT NOT NULL, child_run_id TEXT NOT NULL,
+   description TEXT NOT NULL, subagent_type TEXT NOT NULL, companion_id TEXT, context_open INTEGER NOT NULL DEFAULT 1,
+   mode TEXT NOT NULL, resolved_workspace_root TEXT, status TEXT NOT NULL, messages_json TEXT NOT NULL DEFAULT '[]',
+   todo_items_json TEXT NOT NULL DEFAULT '[]', result_text TEXT, error_code TEXT, error_message TEXT,
+   created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, completed_at INTEGER);
+   CREATE INDEX IF NOT EXISTS task_sessions_parent_idx ON task_sessions(parent_conversation_id, updated_at);
+   CREATE TABLE IF NOT EXISTS task_trace(
+   task_id TEXT NOT NULL REFERENCES task_sessions(id) ON DELETE CASCADE,
+   seq INTEGER NOT NULL, record_json TEXT NOT NULL, PRIMARY KEY(task_id, seq));
+   INSERT INTO schema_migrations VALUES(5)`));
+    }
+    if (!this.db.prepare("SELECT version FROM schema_migrations WHERE version=6").get()) {
+      this.transaction(() => this.db.exec(`CREATE TABLE IF NOT EXISTS token_usage(
+   day TEXT NOT NULL, model TEXT NOT NULL,
+   input INTEGER NOT NULL DEFAULT 0, output INTEGER NOT NULL DEFAULT 0,
+   hit INTEGER NOT NULL DEFAULT 0, miss INTEGER NOT NULL DEFAULT 0,
+   cache_creation INTEGER NOT NULL DEFAULT 0, cache_usage_requests INTEGER NOT NULL DEFAULT 0,
+   requests INTEGER NOT NULL DEFAULT 0, attempted_requests INTEGER NOT NULL DEFAULT 0,
+   PRIMARY KEY(day, model));
+   CREATE INDEX IF NOT EXISTS token_usage_day_idx ON token_usage(day);
+   INSERT INTO schema_migrations VALUES(6)`));
+    }
     this.transaction(() => {
       const rows = this.db.prepare("SELECT run_id,record_json FROM runs WHERE status IN ('prepared','running')").all();
       for (const row of rows) {
@@ -68,6 +92,8 @@ export class ConversationDatabase {
         this.db.prepare("UPDATE conversation_requests SET status='interrupted',error_code='EXECUTION_INTERRUPTED' WHERE run_id=?").run(row.run_id!);
       }
       this.db.exec("UPDATE tool_operations SET status='unknown' WHERE status IN ('started','ready')");
+      // 子任务会话：崩溃遗留的 running 一律翻转 interrupted（与 runs 对账同语义）。
+      this.db.exec("UPDATE task_sessions SET status='interrupted', updated_at=CAST(strftime('%s','now') AS INTEGER)*1000 WHERE status='running'");
     });
     this.db.exec("CREATE UNIQUE INDEX IF NOT EXISTS one_active_conversation_run ON runs(conversation_id) WHERE status IN ('prepared','running')");
   }

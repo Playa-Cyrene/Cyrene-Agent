@@ -251,3 +251,5 @@ dist/renderer/cyrene-welcome.png
 /src/renderer/learn-exam-preview.html
 /src/renderer/learn-exam-preview.tsx
 /dist/renderer/learn-exam.html
+*.sqlite
+*.sqlite-*

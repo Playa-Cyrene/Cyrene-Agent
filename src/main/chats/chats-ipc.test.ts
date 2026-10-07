@@ -917,4 +917,69 @@ describe("chats IPC mode filtering", () => {
       error: "session-not-found",
     });
   });
+
+  it("TASK_SESSION_GET 投影 SQLite transcript，旧任务回退 messages 快照", async () => {
+    const { registerChatsIpc } = await import("./chats-ipc");
+    const { getTaskSessionStore } = await import("../tasks/task-session-store");
+    const { getConversationTranscriptStore } = await import("../orchestrator/conversation-transcript-store");
+    (await registerChatsIpc());
+    const handler = mocks.handlers.get(IPC.TASK_SESSION_GET);
+    if (!handler) throw new Error("TASK_SESSION_GET handler was not registered");
+
+    const store = getTaskSessionStore(mocks.userDataDir);
+    const task = await store.create({
+      parentConversationId: "conv-1",
+      parentRunId: "run-1",
+      description: "检查落库",
+      prompt: "迁移前的提示",
+      subagentType: "general",
+      companionId: "风堇",
+      mode: "code",
+    });
+
+    // 无 transcript 条目 → 回退旧 messages 快照（create 时种下的 prompt）
+    const fallback = await handler(null, { taskId: task.id, parentConversationId: "conv-1" }) as { messages: Array<{ role: string; content: string }> };
+    expect(fallback.messages).toEqual([{ role: "user", content: "迁移前的提示" }]);
+
+    const transcript = getConversationTranscriptStore(mocks.userDataDir);
+    await transcript.append(task.id, {
+      id: `${task.childRunId}:prompt`,
+      kind: "user",
+      at: Date.now(),
+      runId: task.childRunId,
+      turnId: `${task.childRunId}:prompt`,
+      revision: 1,
+      payload: { text: "子任务提示" },
+    });
+    await transcript.append(task.id, {
+      id: `${task.childRunId}:assistant:n0`,
+      kind: "assistant",
+      at: Date.now(),
+      runId: task.childRunId,
+      turnId: `${task.childRunId}:assistant`,
+      payload: { role: "assistant", content: "干活中", toolCalls: [{ id: "t1", name: "read_file", arguments: "{}" }] } as never,
+    });
+    await transcript.append(task.id, {
+      id: `${task.childRunId}:tool:t1`,
+      kind: "tool_result",
+      at: Date.now(),
+      runId: task.childRunId,
+      payload: {
+        assistantEntryId: `${task.childRunId}:assistant:n0`,
+        toolCallId: "t1",
+        outcome: "success",
+        message: { role: "tool", toolCallId: "t1", content: "文件内容" },
+      },
+    });
+
+    const result = await handler(null, { taskId: task.id, parentConversationId: "conv-1" }) as { messages: Array<{ role: string; content: string; toolCalls?: unknown[] }> };
+    expect(result.messages).toHaveLength(3);
+    expect(result.messages[0]).toEqual({ role: "user", content: "子任务提示" });
+    expect(result.messages[1]).toMatchObject({ role: "assistant", content: "干活中" });
+    expect(result.messages[1]!.toolCalls).toEqual([{ id: "t1", name: "read_file", arguments: "{}" }]);
+    expect(result.messages[2]).toEqual({ role: "tool", content: "文件内容", toolCallId: "t1" });
+
+    // 父会话不匹配时保持原有拒绝语义
+    await expect(handler(null, { taskId: task.id, parentConversationId: "other" })).resolves.toBeNull();
+  });
 });

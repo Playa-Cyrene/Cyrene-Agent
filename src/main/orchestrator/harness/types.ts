@@ -220,17 +220,6 @@ export interface HarnessCompactionLifecycleEvent {
   cache?: HarnessCacheState;
 }
 
-/** 供持久化执行者保存可恢复子运行状态的只读快照。 */
-export interface HarnessCheckpoint {
-  messages: ChatMessage[];
-  state: AgentState;
-  /** 完整工具输出的引用，不复制 output.txt 内容。 */
-  toolOutputs: ToolOutputRef[];
-  rounds: number;
-  cache: HarnessCacheState;
-  at: number;
-}
-
 // ── Harness 输入与输出 ───────────────────────────────────
 
 /** 插入当前运行的用户调整消息（宿主已提交为正式用户消息，harness 只负责进上下文）。 */
@@ -292,11 +281,6 @@ export interface HarnessInput {
   signal?: AbortSignal;
   /** 事件回调 */
   onEvent?: (event: HarnessEvent) => void;
-  /** 每轮和终态时发送的可持久化 transcript 快照。
-   *  契约：Harness 传活引用（不克隆）；消费方必须在回调返回前同步完成克隆或落盘，
-   *  不得持有跨 await 的活引用。payload 必须严格 JSON-serializable
-   *  （不得含 Date / Map / Set / BigInt / class instance），否则克隆与持久化都会失真。 */
-  onCheckpoint?: (checkpoint: HarnessCheckpoint) => void;
   /** 工具执行前与模型可见结果提交后的持久化边界。 */
   onToolLifecycle?: (event: HarnessToolLifecycleEvent) => void;
   /** 工具结果确定后的只读观察回调；只读稳定元数据，不参与执行决策。 */

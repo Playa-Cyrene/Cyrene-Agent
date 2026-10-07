@@ -26,12 +26,12 @@ export interface PreparedToolRuntime {
   openTaskCompanions: string[];
 }
 
-export function prepareToolRuntime(input: {
+export async function prepareToolRuntime(input: {
   options: CyreneRunOptions;
   signal: AbortSignal;
   prepared: PreparedHarnessRun;
   sendBaseEvent: (event: BaseEvent) => void;
-}): PreparedToolRuntime {
+}): Promise<PreparedToolRuntime> {
   const { options, signal, prepared } = input;
   const { threadId, runId, systemPrompt, vendorConfig, tools } = prepared;
   const permissionCheck: NonNullable<HarnessInput["checkPermission"]> = async (
@@ -104,6 +104,7 @@ export function prepareToolRuntime(input: {
         includeInteractiveTools: options.harnessInteractiveTools,
         permissionMode: options.permissionMode,
         toolOutputStore,
+        transcriptRoot: app.getPath("userData"),
       },
       store: taskStore,
       onLifecycle: (event) => sendTaskLifecycleAsAgui(event, threadId, runId, input.sendBaseEvent),
@@ -112,7 +113,7 @@ export function prepareToolRuntime(input: {
   const closeTaskExecutor = taskStore
     ? createTaskCloser({ store: taskStore, parentConversationId: threadId })
     : undefined;
-  const openTaskCompanions = taskStore?.listOpenCompanions(threadId) ?? [];
+  const openTaskCompanions = taskStore ? await taskStore.listOpenCompanions(threadId) : [];
 
   return { toolContext, checkPermission: permissionCheck, toolOutputStore, taskExecutor, closeTaskExecutor, openTaskCompanions };
 }

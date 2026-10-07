@@ -1,9 +1,13 @@
-import { DEFAULT_TASK_MAX_PARALLEL_TOOL_CALLS, type TaskAccessMode, type TaskSession, type TaskSessionStatus, type TaskSubagentType, type TaskTraceRecord, type TaskTranscriptMessage } from "../../shared/task-session";
+import { DEFAULT_TASK_MAX_PARALLEL_TOOL_CALLS, type TaskAccessMode, type TaskSession, type TaskSessionStatus, type TaskSubagentType, type TaskTraceRecord } from "../../shared/task-session";
 import { TaskSessionStore } from "../tasks/task-session-store";
 import { projectTaskTraceEvent } from "./task-events";
 import { getTaskAgentProfile, resolveTaskTools } from "./task-profiles";
 import { runCyreneHarness } from "./harness/cyrene-harness";
 import type { HarnessInput, HarnessResult } from "./harness/types";
+import { getHarnessRunStore } from "./harness/run-store";
+import { getConversationTranscriptStore } from "./conversation-transcript-store";
+import { createTranscriptSink } from "./transcript-sink";
+import { projectTaskTodoItems, projectTaskTranscriptMessages } from "./task-transcript-projection";
 import type { ToolDefinition } from "./tools/registry/tool-registry";
 import type { VendorConfig, ChatMessage } from "./vendors/types";
 import type { ToolContext } from "./tools/registry/tool-context";
@@ -76,6 +80,8 @@ export interface TaskRuntimeParentContext {
   includeInteractiveTools?: boolean;
   permissionMode?: import("./cyrene-agent").CyreneRunOptions["permissionMode"];
   toolOutputStore?: ToolOutputStore;
+  /** 子任务 session 增量落库（SQLite transcript）的 userData 根。缺省时子任务不写轨迹（仅测试路径）。 */
+  transcriptRoot?: string;
 }
 
 function taskStatus(result: HarnessResult): { status: Exclude<TaskSessionStatus, "running" | "interrupted">; error?: { code: string; message: string } } {
@@ -171,6 +177,17 @@ export function createTaskExecutor(input: {
 }): (request: TaskExecuteRequest) => Promise<TaskExecuteResult> {
   const runHarness = input.runHarness ?? runCyreneHarness;
   const characterPool = input.characterPool ?? taskCharacterLeasePool;
+  // session 增量落库的 facade：transcript 管对话事实，runs 管 run 生命周期。
+  // conversationId 用稳定的 session.id，runId 用每次 resume 换新的 childRunId——
+  // 与主 agent 的 conversationId/runId 模型同构，复用同一套表与幂等约束。
+  const transcript = input.parent.transcriptRoot
+    ? {
+        store: getConversationTranscriptStore(input.parent.transcriptRoot),
+        runs: getHarnessRunStore(input.parent.transcriptRoot),
+      }
+    : undefined;
+  let transcriptHistory: ReturnType<typeof projectTaskTranscriptMessages> | undefined;
+  let transcriptTodoItems: ReturnType<typeof projectTaskTodoItems> | undefined;
   return async (request) => {
     const profile = getTaskAgentProfile(request.subagentType);
     const lease = characterPool.acquire(input.parent.parentConversationId, request.companionId);
@@ -178,17 +195,17 @@ export function createTaskExecutor(input: {
     try {
       const previous = request.taskId
         ? null
-        : input.store.findOpenByCompanion(input.parent.parentConversationId, request.companionId);
+        : await input.store.findOpenByCompanion(input.parent.parentConversationId, request.companionId);
       const taskId = request.taskId ?? previous?.id;
       session = taskId
-        ? input.store.resume(taskId, {
+        ? await input.store.resume(taskId, {
             parentConversationId: input.parent.parentConversationId,
             parentRunId: input.parent.parentRunId,
             subagentType: request.subagentType,
             prompt: request.prompt,
             companionId: request.companionId,
           })
-        : input.store.create({
+        : await input.store.create({
             parentConversationId: input.parent.parentConversationId,
             parentRunId: input.parent.parentRunId,
             description: request.description,
@@ -198,6 +215,25 @@ export function createTaskExecutor(input: {
             mode: input.parent.mode,
             resolvedWorkspaceRoot: input.parent.resolvedWorkspaceRoot,
           });
+      if (transcript) {
+        // run 记录先行：崩溃在对账时标记 interrupted（fail-closed），
+        // user 条目随后；两步间的崩溃窗口只会留下孤儿 prompt 条目，可接受。
+        await transcript.runs.create({ conversationId: session.id, runId: session.childRunId });
+        await transcript.store.append(session.id, {
+          id: `${session.childRunId}:prompt`,
+          kind: "user",
+          at: Date.now(),
+          runId: session.childRunId,
+          turnId: `${session.childRunId}:prompt`,
+          revision: 1,
+          payload: { text: request.prompt },
+        });
+        // 对话历史以 transcript 为唯一来源：checkpoint 全量快照退役后，
+        // resume 的 harness 输入靠重投影（含当前 prompt，它刚追加为最后一个 user 条目）。
+        const snapshot = await transcript.store.read(session.id);
+        transcriptHistory = projectTaskTranscriptMessages(snapshot.entries);
+        transcriptTodoItems = projectTaskTodoItems(snapshot.entries);
+      }
     } catch (error) {
       lease.release();
       throw error;
@@ -225,7 +261,7 @@ export function createTaskExecutor(input: {
     let pendingTaskTrace: TaskTraceRecord[] = [];
     let taskTraceDirty = false;
     let taskTraceFlushTimer: ReturnType<typeof setTimeout> | undefined;
-    const flushTaskTrace = () => {
+    const flushTaskTrace = async (): Promise<void> => {
       if (taskTraceFlushTimer !== undefined) {
         clearTimeout(taskTraceFlushTimer);
         taskTraceFlushTimer = undefined;
@@ -236,19 +272,15 @@ export function createTaskExecutor(input: {
         taskTraceDirty = true;
       }
       if (!taskTraceDirty) return;
-      input.store.checkpoint(session.id, { trace: taskTrace });
+      await input.store.checkpoint(session.id, { trace: taskTrace });
       taskTraceDirty = false;
     };
     const scheduleTaskTraceFlush = () => {
       if (taskTraceFlushTimer !== undefined) return;
       taskTraceFlushTimer = setTimeout(() => {
         taskTraceFlushTimer = undefined;
-        try {
-          flushTaskTrace();
-        } catch (error) {
-          // Retain the dirty in-memory trace; the next batch or terminal flush retries it.
-          console.error("[TaskRuntime] trace checkpoint failed", error);
-        }
+        // Retain the dirty in-memory trace; the next batch or terminal flush retries it.
+        void flushTaskTrace().catch((error) => console.error("[TaskRuntime] trace checkpoint failed", error));
       }, TASK_TRACE_CHECKPOINT_INTERVAL_MS);
     };
     input.onLifecycle?.({ ...presentation, status: "running" });
@@ -258,10 +290,19 @@ export function createTaskExecutor(input: {
       const promptLayers = buildChildPromptLayers(input.parent, combinedTaskPrompt, request.accessMode ?? "write");
       const taskModel = resolveTaskModel(input.parent.vendorConfig);
       let activeRoundId: string | undefined;
+      // entryId 由 (runId, 协议点) 确定性生成：resume 产生新 childRunId，重试不会写重复条目。
+      const transcriptSink = transcript
+        ? createTranscriptSink({
+            store: transcript.store,
+            conversationId: session.id,
+            runId: session.childRunId,
+            assistantTurnId: `${session.childRunId}:assistant`,
+          })
+        : undefined;
       const result = await runHarness({
         systemPrompt: promptLayers.stablePrefix,
         promptLayers,
-        messages: session.messages as ChatMessage[],
+        messages: (transcriptHistory ?? session.messages) as ChatMessage[],
         tools: resolveTaskTools(profile, input.parent.tools, request.accessMode ?? "write"),
         vendorConfig: taskModel.vendorConfig,
         config: {
@@ -270,9 +311,10 @@ export function createTaskExecutor(input: {
           ...(taskModel.contextWindowTokens ? { contextWindowTokens: taskModel.contextWindowTokens } : {}),
         },
         initialState: {
-          todoItems: session.todoItems,
+          todoItems: transcriptTodoItems ?? session.todoItems,
           uncertainEffects: [],
         },
+        ...(transcriptSink ? { transcriptSink } : {}),
         signal: input.parent.signal,
         toolContext,
         toolOutputStore: input.parent.toolOutputStore,
@@ -290,16 +332,16 @@ export function createTaskExecutor(input: {
           }
           if (event.type === "round_end") activeRoundId = undefined;
         },
-        onCheckpoint: (checkpoint) => {
-          input.store.checkpoint(session.id, {
-            messages: checkpoint.messages as TaskTranscriptMessage[],
-            todoItems: checkpoint.state.todoItems,
-          });
-        },
       });
-      flushTaskTrace();
+      await flushTaskTrace();
       const mapped = taskStatus(result);
-      input.store.checkpoint(session.id, {
+      // run 生命周期是元数据不是权威事实（权威在 transcript）；落库失败只记录，不改变任务结果。
+      try {
+        await transcript?.runs.markTerminal(session.childRunId, mapped.status === "completed" ? "completed" : "failed");
+      } catch (terminalError) {
+        console.error("[TaskRuntime] run terminal 记录失败:", terminalError);
+      }
+      await input.store.checkpoint(session.id, {
         status: mapped.status,
         resultText: result.finalAnswer,
         todoItems: result.finalState.todoItems,
@@ -310,12 +352,18 @@ export function createTaskExecutor(input: {
       return { taskId: session.id, status: mapped.status, text: result.finalAnswer };
     } catch (error) {
       try {
-        flushTaskTrace();
+        await flushTaskTrace();
       } catch (traceError) {
         console.error("[TaskRuntime] final trace checkpoint failed", traceError);
       }
       const message = error instanceof Error ? error.message : String(error);
-      input.store.checkpoint(session.id, {
+      try {
+        // 终态必须落库：run 行滞留 running 会触发 one_active 唯一索引，阻塞该任务的下次 resume。
+        await transcript?.runs.markTerminal(session.childRunId, input.parent.signal?.aborted ? "cancelled" : "failed");
+      } catch (terminalError) {
+        console.error("[TaskRuntime] run terminal 记录失败（任务已失败）:", terminalError);
+      }
+      await input.store.checkpoint(session.id, {
         status: input.parent.signal?.aborted ? "cancelled" : "failed",
         error: { code: input.parent.signal?.aborted ? "TASK_CANCELLED" : "TASK_RUNTIME_ERROR", message },
         completedAt: Date.now(),
@@ -332,9 +380,9 @@ export function createTaskExecutor(input: {
 export function createTaskCloser(input: {
   store: TaskSessionStore;
   parentConversationId: string;
-}): (request: TaskCloseRequest) => TaskCloseResult {
-  return ({ companionId }) => {
-    const session = input.store.closeByCompanion(input.parentConversationId, companionId);
+}): (request: TaskCloseRequest) => Promise<TaskCloseResult> {
+  return async ({ companionId }) => {
+    const session = await input.store.closeByCompanion(input.parentConversationId, companionId);
     return { taskId: session.id, companionId, status: "closed" };
   };
 }
