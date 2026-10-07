@@ -32,7 +32,10 @@ function userInput(turnId: string, text: string): JournalUserInput {
 
 async function corruptSnapshotProjection(root: string, conversationId: string): Promise<void> {
   const { getConversationDatabase } = await import("../storage/conversation-database-client");
-  await getConversationDatabase(root).call("transcript.checkpoint", conversationId, { throughSeq: "corrupt", messages: null });
+  // 先确保会话行存在，再把投影写坏：快照解析失败时必须能从权威条目重建
+  await getConversationDatabase(root).call("transcript.read", conversationId);
+  withConversationDatabase(root, db =>
+    db.prepare("UPDATE conversations SET projection_json='{\"throughSeq\":\"corrupt\"}' WHERE id=?").run(conversationId));
 }
 
 afterEach(async () => {
@@ -233,7 +236,6 @@ describe("ConversationJournalService", () => {
     await journal.appendUser("c1", userInput("u1", "旧问题".repeat(20)));
     const sink = journal.createRunSink({ conversationId: "c1", runId: "run-1" });
     await sink.appendAssistant({ message: { role: "assistant", content: "旧回答".repeat(20) } });
-    await sink.checkpoint();
     // 手动压缩并归档：u1 进入压缩前缀，热日志只剩检查点与后缀
     const compactor = new ConversationTranscriptCompactor({ store, summarize: async () => "摘要" });
     await compactor.compact({ conversationId: "c1", trigger: "manual", retainTokens: 1 });

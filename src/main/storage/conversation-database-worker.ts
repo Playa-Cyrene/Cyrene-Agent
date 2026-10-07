@@ -259,11 +259,6 @@ async function execute(method: string, args: any[]): Promise<unknown> {
       return database.append(id, args[1]);
     if (name === 'presentation')
       return presentation(id, args[1], args[2], args[3], args[4]);
-    if (name === 'checkpoint') {
-      if (args[1])
-        database.db.prepare('UPDATE conversations SET projection_json=? WHERE id=?').run(JSON.stringify(args[1]), id);
-      return database.snapshot(id);
-    }
     if (name === 'compaction')
       return database.transaction(() => {
         const input = args[1] as Extract<TranscriptAppendInput, {

@@ -240,7 +240,7 @@ describe("proactive chat service", () => {
     expect(ctx.commitMessage.mock.calls.map((call) => (call[0] as { intentAt?: number }).intentAt)).toEqual([NOW, NOW]);
   });
 
-  it("retries one real canonical assistant and presentation after refresh failure", async () => {
+  it("retries one real canonical assistant and presentation after append failure", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "cta-proactive-journal-"));
     try {
       const store = new ConversationTranscriptStore(root, { now: () => 1_000 });
@@ -248,7 +248,7 @@ describe("proactive chat service", () => {
       const state = createDefaultProactiveState();
       let now = NOW;
       let generatedText = "首次文本";
-      vi.spyOn(store, "checkpoint").mockRejectedValueOnce(new Error("checkpoint failed"));
+      const appendSpy = vi.spyOn(store, "append").mockRejectedValueOnce(new Error("canonical append failed"));
       const service = createProactiveChatService({
         loadState: () => state,
         saveState: (next) => {
@@ -268,12 +268,11 @@ describe("proactive chat service", () => {
             content: input.text,
             runSnapshot: { runId: input.intentId, status: "terminal", updatedAt: input.intentAt ?? 0 },
           });
-          await sink.checkpoint();
           return { kind: "committed" as const };
         },
       });
 
-      await expect(service.evaluateCandidate(candidate)).rejects.toThrow("checkpoint failed");
+      await expect(service.evaluateCandidate(candidate)).rejects.toThrow("canonical append failed");
       expect(state.pendingCommitIntent?.intentId).toBe("proactive-intent-1");
       generatedText = "第二次模型文本";
       now += 999_999;
@@ -283,6 +282,7 @@ describe("proactive chat service", () => {
       expect(snapshot.entries.filter((entry) => entry.kind === "presentation_patch")).toHaveLength(1);
       expect((await journal.readProjection("proactive-session")).messages[0]).toMatchObject({ content: "首次文本" });
       expect(state.pendingCommitIntent).toBeUndefined();
+      appendSpy.mockRestore();
     } finally {
       await closeConversationDatabases();
       fs.rmSync(root, { recursive: true, force: true });

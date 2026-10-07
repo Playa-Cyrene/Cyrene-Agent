@@ -86,7 +86,6 @@ async function appendAssistant(
     },
   });
   if (!toolCall) {
-    await sink.checkpoint();
     return;
   }
   const runSession = {

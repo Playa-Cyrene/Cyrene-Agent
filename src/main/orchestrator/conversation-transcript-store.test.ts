@@ -124,17 +124,6 @@ it("serializes concurrent appends for one conversation", async () => {
     expect((await store.read("c1")).entries.map((entry) => entry.seq))
       .toEqual(Array.from({ length: 20 }, (_, index) => index + 1));
   });
-it("checkpoint can replace only the recoverable projection while retaining canonical rows", async () => {
-    const { store } = createStore();
-    await store.append("c1", userDraft("e1", "u1", 1, "one"));
-    const snapshot = await store.checkpoint("c1", {
-      throughSeq: 1,
-      messages: [{ id: "e1", role: "user", content: "one", at: 1_000 }],
-    });
-    expect(snapshot.entries.map((entry) => entry.id)).toEqual(["e1"]);
-    expect(snapshot.projection.messages[0].content).toBe("one");
-    expect((await store.read("c1")).entries.map((entry) => entry.id)).toEqual(["e1"]);
-  });
 it("interruption 边界接受 user_cancel / runtime_error / crashed 三种 reason", async () => {
     const { store } = createStore();
     for (const reason of ["user_cancel", "runtime_error", "crashed"] as const) {

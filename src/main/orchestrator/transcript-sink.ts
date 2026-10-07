@@ -78,10 +78,6 @@ export interface TranscriptSink {
     reason: "user_cancel" | "runtime_error";
     runSession: HarnessRunSession | null;
   }): Promise<void>;
-  /** 快照检查点：只在快照写失败时 reject，永不改写 JSONL。 */
-  checkpoint(): Promise<void>;
-  /** Run 结算后安排空闲投影快照；不进入任务完成等待链。 */
-  scheduleCheckpoint?(): void;
   /** Last canonical assistant entry, used by derived presentation writers. */
   getLastAssistantEntryId?(): string | undefined;
 }
@@ -91,7 +87,6 @@ export function createTranscriptSink(input: {
   conversationId: string;
   runId: string;
   assistantTurnId?: string;
-  scheduleCheckpoint?: () => void;
 }): TranscriptSink {
   const { store, conversationId, runId, assistantTurnId } = input;
   // toolCallId → 声明它的 assistant 条目（合成闭合需要锚点）
@@ -277,12 +272,6 @@ export function createTranscriptSink(input: {
       });
     },
 
-    async checkpoint() {
-      await store.checkpoint(conversationId);
-    },
-    scheduleCheckpoint() {
-      input.scheduleCheckpoint?.();
-    },
     getLastAssistantEntryId() {
       return lastAssistantEntryId;
     },

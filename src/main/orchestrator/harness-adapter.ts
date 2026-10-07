@@ -196,9 +196,6 @@ export async function runHarnessWithAdapter(
     `${LOG_PREFIX} harness run complete, rounds=${result.rounds} terminated=${result.terminated} terminal=${terminal.status}`,
   );
 
-  // ── 终态后安排空闲投影快照，不阻塞本次 Run 的完成返回 ──
-  options.transcriptSink?.scheduleCheckpoint?.();
-
   return {
     reply: result.finalAnswer,
     toolResults,

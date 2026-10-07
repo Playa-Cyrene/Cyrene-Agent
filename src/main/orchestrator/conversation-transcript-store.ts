@@ -36,7 +36,6 @@ export class ConversationTranscriptStore {
   }
   read(id: string): Promise<TranscriptSnapshotV2> { return this.database.call('transcript.read', id); }
   readAuditEntries(id: string): Promise<TranscriptEntry[]> { return this.database.call('transcript.audit', id); }
-  checkpoint(id: string, projection?: TranscriptSnapshotV2['projection']): Promise<TranscriptSnapshotV2> { return this.database.call('transcript.checkpoint', id, projection); }
   async archiveThrough(id: string, through: number, beforeCommit?: () => Promise<void>): Promise<void> { if (beforeCommit)
     await beforeCommit(); await this.database.call('transcript.archive', id, through); }
   async waitForIdle(_id: string): Promise<void> { await this.database.call('barrier'); }

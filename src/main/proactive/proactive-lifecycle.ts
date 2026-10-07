@@ -192,21 +192,16 @@ export function createProactiveLifecycle(options: ProactiveLifecycleOptions): Pr
     const runId = commitKey;
     const intentAt = input.intentAt ?? 0;
     const sink = conversationJournal.createRunSink({ conversationId: session.id, runId });
-    try {
-      const assistantEntryId = await sink.appendAssistant({
-        message: { role: "assistant", content: input.text },
-        roundId: "proactive",
-      });
-      await conversationJournal.appendPresentationNext(
-        session.id,
-        assistantEntryId,
-        `${commitKey}:presentation`,
-        { content: input.text, runSnapshot: { runId, status: "terminal", updatedAt: intentAt } },
-      );
-      await sink.checkpoint();
-    } catch (error) {
-      throw error;
-    }
+    const assistantEntryId = await sink.appendAssistant({
+      message: { role: "assistant", content: input.text },
+      roundId: "proactive",
+    });
+    await conversationJournal.appendPresentationNext(
+      session.id,
+      assistantEntryId,
+      `${commitKey}:presentation`,
+      { content: input.text, runSnapshot: { runId, status: "terminal", updatedAt: intentAt } },
+    );
     broadcastChatsChanged();
 
     // 文本已落库；上次落库后没有 panel/show 步骤要做（opener 气泡已被移除，fallback 路径没有了）。

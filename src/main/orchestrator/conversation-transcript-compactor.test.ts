@@ -26,7 +26,12 @@ describe("ConversationTranscriptCompactor", () => {
     let releaseSummary!: (value: string) => void;
     let shouldReject = false;
     let paused = false;
+    // summarize 真正被调用后放行：appendUser 退役投影重算后不再天然慢，
+    // 并发追加的用例必须显式等 summary 启动，避免 resume 抢在 summarize 之前。
+    let signalSummaryStarted!: () => void;
+    const summaryStarted = new Promise<void>((resolve) => { signalSummaryStarted = resolve; });
     const summarize = async () => {
+      signalSummaryStarted();
       if (shouldReject) throw new Error("provider down");
       if (!paused) return "保留的摘要";
       return new Promise<string>((resolve, reject) => {
@@ -40,6 +45,7 @@ describe("ConversationTranscriptCompactor", () => {
       journal,
       compactor,
       pause: () => { paused = true; },
+      summaryStarted,
       resume: (summary: string) => releaseSummary(summary),
       reject: () => { shouldReject = true; },
     };
@@ -87,6 +93,7 @@ describe("ConversationTranscriptCompactor", () => {
     await seed(fixture);
     fixture.pause();
     const pending = fixture.compactor.compact({ conversationId: "c1", trigger: "automatic", retainTokens: 1 });
+    await fixture.summaryStarted;
     await fixture.journal.appendUser("c1", { turnId: "u-new", id: "u-new", text: "arrived during summary" });
     fixture.resume("summary");
     const result = await pending;

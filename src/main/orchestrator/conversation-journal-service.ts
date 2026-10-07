@@ -22,7 +22,6 @@ import {
 import type {
   TranscriptEntry,
   TranscriptPresentationPatch,
-  TranscriptSnapshotV2,
 } from "./conversation-transcript-types";
 import { assertValidPresentationPatch } from "./conversation-transcript-types";
 import { createTranscriptSink, type TranscriptSink } from "./transcript-sink";
@@ -101,7 +100,6 @@ export class ConversationJournalService {
   private readonly runReader: TranscriptRunReader;
   private readonly pendingStore?: ConversationPendingWithdrawalStore;
   private readonly withdrawalLocks = new Map<string, Promise<PendingWithdrawalCommitResult>>();
-  private readonly projectionCheckpointTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private crashAfterTombstone = false;
 
   constructor(
@@ -124,7 +122,6 @@ export class ConversationJournalService {
   }
 
   async appendUser(conversationId: string, input: JournalUserInput): Promise<TranscriptEntry> {
-    this.cancelScheduledProjectionCheckpoint(conversationId);
     const revision = input.revision ?? 1;
     const entry = await this.store.append(conversationId, {
       kind: "user",
@@ -138,7 +135,6 @@ export class ConversationJournalService {
         ...(input.attachments?.length ? { attachments: input.attachments } : {}),
       },
     });
-    await this.refreshProjection(conversationId);
     return entry;
   }
 
@@ -148,7 +144,6 @@ export class ConversationJournalService {
     patchRevision: number,
   patch: TranscriptPresentationPatch,
   ): Promise<TranscriptEntry> {
-    this.cancelScheduledProjectionCheckpoint(conversationId);
     if (!messageId || !Number.isInteger(patchRevision) || patchRevision < 1) {
       throw new Error("TRANSCRIPT_INVALID_PRESENTATION_PATCH");
     }
@@ -159,7 +154,6 @@ export class ConversationJournalService {
       at: Date.now(),
       payload: { messageId, patchRevision, patch },
     });
-    await this.refreshProjection(conversationId);
     return entry;
   }
 
@@ -170,13 +164,11 @@ export class ConversationJournalService {
     patch: TranscriptPresentationPatch,
   ): Promise<TranscriptEntry> {
     const entry = await this.store.appendPresentationNext(conversationId, messageId, mutationKey, patch);
-    this.scheduleProjectionCheckpoint(conversationId);
     return entry;
   }
 
   /** 以单行 turn_rewind 原子提交 regenerate/edit，避免产生第二个 active user。 */
   async appendRewind(conversationId: string, input: JournalRewindInput): Promise<TranscriptEntry> {
-    this.cancelScheduledProjectionCheckpoint(conversationId);
     const snapshot = await this.store.read(conversationId);
     const entryId = `${input.runId}:rewind:${input.anchorUserTurnId}`;
     const existing = snapshot.entries.find((entry) => entry.id === entryId);
@@ -215,7 +207,6 @@ export class ConversationJournalService {
         } : {}),
       },
     });
-    await this.refreshProjection(conversationId);
     return entry;
   }
 
@@ -223,27 +214,7 @@ export class ConversationJournalService {
     return createTranscriptSink({
       store: this.store,
       ...input,
-      scheduleCheckpoint: () => this.scheduleProjectionCheckpoint(input.conversationId),
     });
-  }
-
-  private scheduleProjectionCheckpoint(conversationId: string): void {
-    this.cancelScheduledProjectionCheckpoint(conversationId);
-    const timer = setTimeout(() => {
-      this.projectionCheckpointTimers.delete(conversationId);
-      void this.readProjection(conversationId).catch((error) => {
-        console.error("[ConversationTranscriptStore] idle projection checkpoint failed:", error);
-      });
-    }, 2_000);
-    timer.unref?.();
-    this.projectionCheckpointTimers.set(conversationId, timer);
-  }
-
-  private cancelScheduledProjectionCheckpoint(conversationId: string): void {
-    const timer = this.projectionCheckpointTimers.get(conversationId);
-    if (!timer) return;
-    clearTimeout(timer);
-    this.projectionCheckpointTimers.delete(conversationId);
   }
 
   async withdrawUserTurn(conversationId: string, userTurnId: string): Promise<"written" | "absent"> {
@@ -259,7 +230,6 @@ export class ConversationJournalService {
       at: Date.now(),
       payload: { targetUserTurnId: userTurnId, reason: "pending_withdrawn" },
     });
-    await this.refreshProjection(conversationId);
     return "written";
   }
 
@@ -425,20 +395,7 @@ export class ConversationJournalService {
     });
   }
 
-  async checkpoint(conversationId: string): Promise<TranscriptSnapshotV2> {
-    const projection = await this.readProjection(conversationId);
-    return this.store.checkpoint(conversationId, projection);
-  }
-
   deleteConversation(conversationId: string): Promise<void> {
-    this.cancelScheduledProjectionCheckpoint(conversationId);
     return this.store.deleteConversation(conversationId);
-  }
-
-  private async refreshProjection(conversationId: string): Promise<ConversationProjection> {
-    const projection = await this.readProjection(conversationId);
-    try { await this.store.checkpoint(conversationId, projection); }
-    catch (error) { console.warn('[ConversationJournalService] 展示投影检查点失败，可从权威条目重建:', error); }
-    return projection;
   }
 }
