@@ -83,6 +83,13 @@ export interface IncomingMessage {
   _raw?: unknown;
 }
 
+/** 出站文件附件（send_file 记账 → bootstrap 读回 → composer 转成 file part）。 */
+export interface OutgoingFileAttachment {
+  filePath: string;
+  name?: string;
+  mime?: string;
+}
+
 /** 出站消息的单个片段。多模态按 parts 数组，capability 降级在 dispatcher 做。 */
 export type OutgoingPart =
   | { kind: "text"; text: string }

@@ -721,6 +721,15 @@
     "progress": "{{completed}}/{{total}} 完了",
     "empty": "タスクはありません"
   },
+  "fileCard": {
+    "panelAria": "検索結果",
+    "count": "{{count}} 件のファイル",
+    "openHint": "クリックで既定のアプリで開く",
+    "matchedContent": "内容マッチ",
+    "matchedName": "ファイル名マッチ",
+    "unreadableImage": "画像 · 視覚認識が必要",
+    "unreadableOther": "内容を直接読み取れません"
+  },
   "fileChange": {
     "panelAria": "ファイル変更",
     "summary": "{{count}} 個のファイル変更",

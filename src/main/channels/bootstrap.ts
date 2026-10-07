@@ -6,8 +6,10 @@ import type { PluginPromptMode, PluginTurnStatus } from "../../plugins/api";
 import { loadGeneralSettings } from "../settings/settings-facade";
 import { loadModelSettings, resolveModelSettingsProfile } from "../settings/model-settings";
 import type { LifecyclePublisher } from "../plugin-host/lifecycle-publisher";
+import type { OutgoingFileAttachment } from "./types";
 import { CyreneAgent } from "../orchestrator/cyrene-agent";
 import { toolRegistry } from "../orchestrator/tools/registry/tool-registry";
+import { consumePendingSends } from "../orchestrator/tools/builtin-tools/send-file-tool";
 import { captionImageSafe, IMAGE_CAPTION_PROMPT } from "../chat/image-caption";
 import { resolveCaptionVisionConfig, resolveImageRoute } from "../orchestrator/image-router";
 import { ConversationJournalService } from "../orchestrator/conversation-journal-service";
@@ -115,7 +117,7 @@ export function createChannelsSubsystem(
         runId: randomUUID(),
       }
       : input as ChannelAgentInput;
-    const channelResult: { text: string; sticker: string | null } = { text: "", sticker: null };
+    const channelResult: { text: string; sticker: string | null; attachments?: OutgoingFileAttachment[] } = { text: "", sticker: null };
 
     const sandbox = loadChannelsSettings().toolSandbox;
     const policy = resolveChannelAgentPolicy(sandbox, {
@@ -208,6 +210,9 @@ export function createChannelsSubsystem(
           channel: msg.channel,
         });
         channelResult.sticker = finished.sticker;
+        // send_file 记账的附件（harness 下 toolResults 恒空，改按 runId 侧存取回）→随回复发回来源会话。
+        const pendingAtts = consumePendingSends(channelInput.runId);
+        if (pendingAtts.length > 0) channelResult.attachments = pendingAtts;
       }
       void indexConversationTurn(channelInput.target.conversationId, agentUserText, reply);
       return channelResult;
