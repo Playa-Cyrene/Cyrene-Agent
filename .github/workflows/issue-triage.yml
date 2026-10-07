@@ -1,0 +1,49 @@
+name: issue-triage
+
+# 新 Issue 自动分流：GitHub 搜索拉候选 → 模型一次判断三类问题 → 给命中的打标签。
+#
+# 机器人可打的标签（缺失时自动创建）：
+# - possible-duplicate 疑似与已有 Issue 重复
+# - needs-info 缺少定位问题所需的可核查信息
+# - needs-maintainer 涉及架构、权限边界或安全，需维护者亲自定夺
+#
+# 刻意保留的行为边界：
+# - 只打标签，不评论、不关单、不承诺处理时间——自动评论最容易在语气上误伤好心反馈的人；
+# - 判重所需置信度设为 high，宁漏勿错；
+# - 仅 issues.opened 触发，天然每个 Issue 只跑一次。
+#
+# 模型提供方二选一：
+# - 不配置变量时走 GitHub Models，复用 GITHUB_TOKEN，无需任何额外密钥；
+# - 配置 Repository variables 的 LLM_BASE_URL / LLM_MODEL 后走自有 OpenAI 兼容端点，
+#   密钥存在 Actions secret LLM_API_KEY。
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  triage:
+    runs-on: ubuntu-latest
+    permissions:
+      # 检出仓库里的分流脚本
+      contents: read
+      # 给 Issue 打标签
+      issues: write
+      # GitHub Models 复用 GITHUB_TOKEN 调用，需要此权限；改用自有端点时该权限不参与
+      models: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      # 密钥与变量一律经 env 注入，不内联进 run；
+      # Issue 正文由脚本从 GITHUB_EVENT_PATH 事件文件读取，不经过 shell 插值。
+      - name: Triage new issue
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LLM_BASE_URL: ${{ vars.LLM_BASE_URL }}
+          LLM_MODEL: ${{ vars.LLM_MODEL }}
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+        run: node .github/scripts/issue-triage.mjs
