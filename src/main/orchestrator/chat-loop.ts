@@ -331,6 +331,7 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<AgentLoopRe
     }
 
     const response = result.response;
+    if (options.signal?.aborted) throw new Error("E_SOUL_ONLY_CANCELLED");
 
     if (result.needsReveal && response.thinking) {
       startReasoning();
@@ -346,11 +347,14 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<AgentLoopRe
     if (response.usage) {
       usageRecorder(response.usage.input, response.usage.output, 1, response.usage.cachedInput, response.usage.cacheCreation);
     }
+    // 推理展示回调也可能触发取消，不提交已取消请求的 assistant 历史。
+    if (options.signal?.aborted) throw new Error("E_SOUL_ONLY_CANCELLED");
     const persistedImages = await persistGeneratedImages(
       options.generatedImageStore,
       options.conversationId ?? "default",
       response.generatedImages,
     );
+    if (options.signal?.aborted) throw new Error("E_SOUL_ONLY_CANCELLED");
     const visibleResponseText = stripLeakedChatTimeContext(stripToolProtocol(response.text));
     const imageSaveNotice = persistedImages.failedCount > 0
       ? persistedImages.attachments.length > 0

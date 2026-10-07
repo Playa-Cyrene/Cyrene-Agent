@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { modelMessageSchema, type AssistantContent, type ModelMessage } from "ai";
-import type { ChatMessage, ChatMessageContent, ModelMessageOrigin, ToolCall } from "./types";
+import type { ChatMessage, ChatMessageContent, ChatVendorAdapter, ModelMessageOrigin, ToolCall, VendorConfig } from "./types";
 import { AgentRuntimeError } from "../agent-runtime-error";
+import { resolveApiEndpoint } from "../../../shared/api-endpoint";
 
 export interface HistoryProjectionDiagnostic {
   code: "HISTORY_PORTABLE_PROJECTION";
@@ -20,9 +21,31 @@ export function originDigest(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
+export function modelMessageOrigin(adapter: ChatVendorAdapter, config: VendorConfig): ModelMessageOrigin {
+  return { transport: adapter.transport, provider: adapter.id, model: config.model,
+    endpoint: originDigest(resolveApiEndpoint(config.baseUrl, adapter.transport).url),
+    credentialScope: originDigest(config.apiKey) };
+}
+
 export function sameMessageOrigin(left: ModelMessageOrigin, right: ModelMessageOrigin): boolean {
   return left.transport === right.transport && left.provider === right.provider && left.model === right.model
     && left.endpoint === right.endpoint && left.credentialScope === right.credentialScope;
+}
+
+/** 统一校验来源和内容，返回副本，避免请求编码修改已保存的历史。 */
+export function readAssistantReplay(message: ChatMessage, target: ModelMessageOrigin): Exclude<AssistantContent, string> | undefined {
+  const replay = message.providerReplay;
+  if (replay?.version !== 1 || !replay.origin || !sameMessageOrigin(replay.origin, target)) return undefined;
+  const parsed = modelMessageSchema.safeParse({ role: "assistant", content: replay.content });
+  return parsed.success && parsed.data.role === "assistant" && Array.isArray(parsed.data.content)
+    ? structuredClone(parsed.data.content) : undefined;
+}
+
+/** 旧版兼容接口只保存 thinking；仅为 DeepSeek 恢复纯文本，不猜测原始块或签名。 */
+export function legacyDeepSeekReasoning(message: ChatMessage, target: ModelMessageOrigin): string | undefined {
+  return target.transport === "openai" && target.provider === "deepseek"
+    && message.role === "assistant" && message.providerReplay === undefined && message.rawAssistant === undefined
+    && typeof message.thinking === "string" ? message.thinking : undefined;
 }
 
 /** 旧消息只恢复已知的正文和工具语义；不猜测签名所属账号和模型。 */
@@ -122,11 +145,10 @@ export function projectModelHistory(
         portable.push({ type: "tool-call", toolCallId: wireId(call.id), toolName: call.name, input: toolInput(call) });
       }
       const replay = message.providerReplay;
-      const parsed = replay?.version === 1 && replay.origin && sameMessageOrigin(replay.origin, target)
-        ? modelMessageSchema.safeParse({ role: "assistant", content: replay.content }) : undefined;
+      const native = readAssistantReplay(message, target);
       let content = portable;
-      if (parsed?.success && parsed.data.role === "assistant" && Array.isArray(parsed.data.content)) {
-        content = structuredClone(parsed.data.content);
+      if (native) {
+        content = native;
         // 展示过滤、正文修订和工具修复后，通用语义始终优先于重放副本。
         const nativeText = content.filter(part => part.type === "text").map(part => part.text).join("");
         if (nativeText !== text) {
@@ -152,12 +174,18 @@ export function projectModelHistory(
       } else {
         diagnostic.portableMessages++;
         if (original.rawAssistant !== undefined) diagnostic.legacyMessages++;
+        const legacyReasoning = legacyDeepSeekReasoning(message, target);
+        if (legacyReasoning && portable.length) {
+          content = [{ type: "reasoning", text: legacyReasoning }, ...portable];
+          diagnostic.legacyMessages++;
+        }
         diagnostic.omittedPrivateParts += Array.isArray(replay?.content)
           ? replay.content.filter(part => record(part)?.type !== "text" && record(part)?.type !== "tool-call").length
-          : original.thinking || original.rawAssistant !== undefined ? 1 : 0;
+          : !legacyReasoning && (original.thinking || original.rawAssistant !== undefined) ? 1 : 0;
       }
-      // 没有通用内容的私有历史在跨来源请求中没有可移植语义。
-      if (content.length) result.push({ role: "assistant", content });
+      // 中断遗留的纯思考空回复，即使来源匹配也不能作为完成的 assistant 回传。
+      // 只过滤请求副本，保留原轨迹供展示和排查。
+      if (portable.length && content.length) result.push({ role: "assistant", content });
     }
   }
   onDiagnostic?.(diagnostic);

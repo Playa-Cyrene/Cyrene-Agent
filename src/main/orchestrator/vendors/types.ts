@@ -76,7 +76,7 @@ export interface ProviderReplay {
 
 /**
  * 通用正文和工具语义是历史事实来源；调度层透传带来源的重放补充数据。
- * 模型执行入口按目标来源投影请求，旧适配器只发送通用内容。
+ * 模型执行入口和旧适配器按目标来源投影请求；新版私有内容只在来源匹配时回传。
  */
 export interface ChatMessage {
   role: "system" | "user" | "assistant" | "tool";

@@ -179,12 +179,16 @@ export async function runCyreneHarness(input: HarnessInput): Promise<HarnessResu
         : failed;
     }
 
+    // 推理结束回调可能触发取消；模型成功返回不代表本轮仍允许提交历史。
+    if (input.signal?.aborted) return cancelledResult(run);
+
     // ── Assistant response 必须写回 transcript（否则模型下一轮看不到自己上一轮的回复）──
     const persistedImages = await persistGeneratedImages(
       input.generatedImageStore,
       input.toolContext?.conversationId ?? "default",
       response.generatedImages,
     );
+    if (input.signal?.aborted) return cancelledResult(run);
     const imageSaveNotice = persistedImages.failedCount > 0
       ? persistedImages.attachments.length > 0
         ? "部分生成图片保存失败。"

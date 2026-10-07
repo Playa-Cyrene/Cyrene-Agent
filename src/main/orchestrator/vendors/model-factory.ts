@@ -2,18 +2,13 @@ import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { jsonSchema, tool, type ModelMessage, type ToolSet } from "ai";
-import { resolveApiEndpoint } from "../../../shared/api-endpoint";
 import { AgentRuntimeError } from "../agent-runtime-error";
-import { originDigest, projectModelHistory, type HistoryProjectionDiagnostic } from "./model-history";
+import { modelMessageOrigin, projectModelHistory, type HistoryProjectionDiagnostic } from "./model-history";
 import { dumpRequest } from "./prompt-dump";
 import { createStreamActivityFetch } from "./sdk-stream/stream-activity-fetch";
-import type { ChatRequest, ChatVendorAdapter, ModelMessageOrigin, VendorConfig } from "./types";
+import type { ChatRequest, ChatVendorAdapter, VendorConfig } from "./types";
 
-export function modelMessageOrigin(adapter: ChatVendorAdapter, config: VendorConfig): ModelMessageOrigin {
-  return { transport: adapter.transport, provider: adapter.id, model: config.model,
-    endpoint: originDigest(resolveApiEndpoint(config.baseUrl, adapter.transport).url),
-    credentialScope: originDigest(config.apiKey) };
-}
+export { modelMessageOrigin } from "./model-history";
 
 const STRUCTURAL_FIELDS = new Set(["model", "messages", "input", "system", "instructions", "tools", "stream"]);
 const POLICY_FIELDS = ["temperature", "top_p", "frequency_penalty", "repetition_penalty", "max_tokens",
@@ -52,6 +47,12 @@ export function prepareModelCall(input: {
     for (const key of POLICY_FIELDS) if (!(key in controls)) delete body[key];
     Object.assign(body, controls);
     if (adapter.transport === "responses") body.store = false;
+    // SDK 按通用 OpenAI 格式输出 content:null；DeepSeek 的纯工具回复要求空字符串。
+    if (adapter.transport === "openai" && adapter.id === "deepseek" && Array.isArray(body.messages)) {
+      for (const message of body.messages) {
+        if (message.role === "assistant" && message.content == null && message.tool_calls?.length) message.content = "";
+      }
+    }
     const hasEmailTools = (request.tools ?? []).some(({ name }) =>
       name === "send_email" || name === "email_create_draft" || name.startsWith("gmail_"));
     // Requests and responses in a run with email tools can contain private mail data.

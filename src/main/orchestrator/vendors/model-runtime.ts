@@ -186,6 +186,9 @@ async function runModel(input: ModelRunInput, streaming: boolean): Promise<ChatR
     }
     if (controller.signal.aborted) throw controller.signal.reason;
     const finalized = accumulator.finalize(raw);
+    if (finalized.thinking && !finalized.text && !finalized.toolCalls.length && !generatedImages.length && !finalized.refusal) {
+      throw new AgentRuntimeError("E_MODEL_RESPONSE_PARSE_FAILED", "模型只返回思考内容，没有正常回复或工具调用");
+    }
     let content: Exclude<AssistantContent, string> = responseMessages.flatMap(message => message.role === "assistant"
       ? typeof message.content === "string" ? [{ type: "text" as const, text: message.content }] : message.content : []);
     if (responsesTerminal) content = reconcileResponsesReplay(content, responsesTerminal);
