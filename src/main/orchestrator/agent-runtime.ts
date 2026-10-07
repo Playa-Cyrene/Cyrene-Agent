@@ -247,8 +247,10 @@ export function createAgentRuntime(rawDeps: AgentRuntimeDeps): AgentRuntime {
         };
       },
       buildMomentsContext: (query: string) => {
-        // 只读本地 moments 数据（内存缓存），同步返回；initialize 幂等防御装配顺序
-        momentsStore.initialize();
+        // 只读本地 moments 数据（内存缓存），同步返回。
+        // 读模型由 registerMomentsIpc 的 await initialize 装载（先于任何运行入口）；
+        // 万一装配顺序被打乱，这里降级为无 moments 上下文而不是抛错。
+        if (!momentsStore.isReady()) return "";
         return buildMomentsContextBlock(momentsStore.listFeed({ limit: 20 }), query, Date.now());
       },
       getWorkspaceBinding: async (conversationId: string) => {

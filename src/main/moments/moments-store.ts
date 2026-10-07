@@ -1,19 +1,25 @@
-// Moments（动态 / 朋友圈）持久化存储。
+// Moments（动态 / 朋友圈）持久化存储（SQLite facade + 内存读模型）。
 //
 // 布局：
-//   <userData>/moments.json               — MomentsStoreData（posts/comments/reactions）
-//   <userData>/moments-media/<postId>/    — 用户上传图片副本（随 post 级联删除）
+//   cyrene.sqlite moment_posts / moment_comments / moment_reactions — 权威存储（行级写入）
+//   <userData>/moments-media/<postId>/    — 用户上传图片副本（文件系统，随 post 级联删除）
+//   <userData>/moments.json               — 旧 JSON 存储（worker 启动时一次性只读导入，源文件保留）
 //
-// 设计（照 chats-store 模式）：
-// - 读走内存缓存（initialize() 时一次性加载），写走 promise 尾链串行队列；
-// - 每次写："校验 → 变更 → 原子落盘（.tmp + rename）→ 通知变更"；
+// 设计：
+// - 读走内存缓存（initialize() 从 DB 全量加载）：listFeed / getFeedItem /
+//   getCharacterTimeline 保持同步——buildMomentsContext 的同步接口依赖这一点；
+// - 写走 promise 尾链串行队列，每次变更是行级 SQL（INSERT / DELETE / 级联事务），
+//   不再全量重写文件；提交即持久（WAL + FULL）；
+// - posts 的 seq 是稳定插入序：createdAt 同毫秒时按 seq 倒序（与旧 JSON 数组序等价）；
+// - reactions 的 (postId, actor, type) 主键即"只能 insert/remove"的唯一性不变量；
 // - 提交时校验：AI 异步产物返回时目标可能已删除、开关可能已关闭，不因"已决定"而豁免；
-// - 删除 post 级联删除 comments / reactions / 图片副本。
+// - 校验、行为开关、反应任务幂等留在本模块（读模型），DB 只承担持久化与级联删除。
 
 import { app } from "electron";
 import { randomUUID } from "crypto";
 import * as fs from "fs";
 import * as path from "path";
+import { getConversationDatabase } from "../storage/conversation-database-client";
 import {
   MOMENT_ALLOWED_IMAGE_MIME,
   MOMENT_MAX_COMMENT_TEXT_LENGTH,
@@ -32,12 +38,10 @@ import {
   type MomentMedia,
   type MomentPost,
   type MomentPostSource,
-  type MomentsStoreData,
+  type MomentReaction,
 } from "../../shared/moments-types";
 
-const STORE_FILE_NAME = "moments.json";
 const MEDIA_ROOT_DIR_NAME = "moments-media";
-const CURRENT_SCHEMA_VERSION = 2;
 
 const MIME_TO_EXT: Record<string, string> = {
   "image/png": "png",
@@ -45,9 +49,16 @@ const MIME_TO_EXT: Record<string, string> = {
   "image/webp": "webp",
 };
 
-let storePath = "";
+interface MomentsCache {
+  posts: MomentPost[];
+  comments: MomentComment[];
+  reactions: MomentReaction[];
+}
+
 let mediaRootDir = "";
-let cache: MomentsStoreData | null = null;
+let cache: MomentsCache | null = null;
+let nextSeq = 1;
+let readyPromise: Promise<void> | null = null;
 let tail: Promise<unknown> = Promise.resolve();
 const changeListeners = new Set<() => void>();
 
@@ -92,18 +103,39 @@ function isValidAuthor(author: string): boolean {
   return author === "user" || author === "cyrene" || knownCharacterAuthors.has(author);
 }
 
-export function initialize(): void {
-  if (cache) return;
-  const userData = app.getPath("userData");
-  storePath = path.join(userData, STORE_FILE_NAME);
-  mediaRootDir = path.join(userData, MEDIA_ROOT_DIR_NAME);
-  fs.mkdirSync(mediaRootDir, { recursive: true });
-  cache = loadFromDisk();
+function database() {
+  return getConversationDatabase(app.getPath("userData"));
+}
+
+/**
+ * 初始化：同步设置媒体目录，异步从 DB 加载读模型。
+ * 幂等——重复调用返回同一个 ready promise。IPC 注册与测试必须 await；
+ * getMomentsMediaRootDir 只依赖同步部分。
+ */
+export function initialize(): Promise<void> {
+  if (!readyPromise) {
+    const userData = app.getPath("userData");
+    mediaRootDir = path.join(userData, MEDIA_ROOT_DIR_NAME);
+    fs.mkdirSync(mediaRootDir, { recursive: true });
+    readyPromise = (async () => {
+      const data = await database().call<{ posts: MomentPost[]; comments: MomentComment[]; reactions: MomentReaction[] }>("moments.loadAll");
+      nextSeq = await database().call<number>("moments.nextSeq");
+      cache = { posts: data.posts, comments: data.comments, reactions: data.reactions };
+    })();
+    // 装配期读取不应产生未处理拒绝
+    readyPromise.catch(() => {});
+  }
+  return readyPromise;
+}
+
+/** 读模型是否已加载（agent-runtime 的同步上下文注入用：未就绪时降级为空）。 */
+export function isReady(): boolean {
+  return cache !== null;
 }
 
 /** moments-media 根目录（moment-media:// 协议解析用；未初始化时先初始化）。 */
 export function getMomentsMediaRootDir(): string {
-  initialize();
+  void initialize();
   return mediaRootDir;
 }
 
@@ -124,31 +156,6 @@ function notifyChanged(): void {
   }
 }
 
-function emptyStore(): MomentsStoreData {
-  return { schemaVersion: CURRENT_SCHEMA_VERSION, posts: [], comments: [], reactions: [] };
-}
-
-function loadFromDisk(): MomentsStoreData {
-  if (!fs.existsSync(storePath)) return emptyStore();
-  try {
-    const parsed = JSON.parse(fs.readFileSync(storePath, "utf8")) as Partial<MomentsStoreData>;
-    return {
-      schemaVersion: CURRENT_SCHEMA_VERSION,
-      posts: Array.isArray(parsed.posts) ? parsed.posts : [],
-      comments: Array.isArray(parsed.comments) ? parsed.comments : [],
-      reactions: Array.isArray(parsed.reactions) ? parsed.reactions : [],
-    };
-  } catch {
-    return emptyStore();
-  }
-}
-
-function persist(): void {
-  const tmpPath = storePath + ".tmp";
-  fs.writeFileSync(tmpPath, JSON.stringify(cache, null, 2), "utf8");
-  fs.renameSync(tmpPath, storePath);
-}
-
 function enqueue<T>(task: () => T | Promise<T>): Promise<T> {
   const next = tail.then(task);
   tail = next.catch(() => {
@@ -157,14 +164,14 @@ function enqueue<T>(task: () => T | Promise<T>): Promise<T> {
   return next;
 }
 
-function requireCache(): MomentsStoreData {
+function requireCache(): MomentsCache {
   if (!cache) throw new Error("[Moments] store 未初始化");
   return cache;
 }
 
 // ── 读（内存缓存，无锁） ────────────────────────────────────────
 
-function assembleFeedItem(store: MomentsStoreData, post: MomentPost): MomentFeedItem {
+function assembleFeedItem(store: MomentsCache, post: MomentPost): MomentFeedItem {
   const comments = store.comments
     .filter((comment) => comment.postId === post.id)
     .sort((a, b) => a.createdAt - b.createdAt);
@@ -193,7 +200,7 @@ export function getFeedItem(postId: string): MomentFeedItem | null {
   return post ? assembleFeedItem(store, post) : null;
 }
 
-// ── 写（串行队列 + 提交时校验） ─────────────────────────────────
+// ── 写（串行队列 + 提交时校验；每变更一次行级 SQL） ─────────────
 
 export function createUserPost(input: MomentCreatePostInput): Promise<MomentCommitResult<MomentPost>> {
   return enqueue(() => commitCreatePost("user", input));
@@ -206,7 +213,7 @@ export function createCyrenePost(input: {
   media?: MomentMedia[];
   source?: MomentPostSource;
 }): Promise<MomentCommitResult<MomentPost>> {
-  return enqueue(() => {
+  return enqueue(async () => {
     if (!cyreneBehaviorGate("posting")) {
       return { applied: false, reason: "moments_disabled" as const };
     }
@@ -224,13 +231,13 @@ export function createCyrenePost(input: {
       source: input.source,
     };
     store.posts.push(post);
-    persist();
+    await database().call("moments.insertPost", post, nextSeq++);
     notifyChanged();
     return { applied: true, value: post };
   });
 }
 
-function commitCreatePost(author: MomentAuthor, input: MomentCreatePostInput): MomentCommitResult<MomentPost> {
+async function commitCreatePost(author: MomentAuthor, input: MomentCreatePostInput): Promise<MomentCommitResult<MomentPost>> {
   const store = requireCache();
   const text = (input.text ?? "").trim();
   const title = (input.title ?? "").trim().slice(0, MOMENT_MAX_POST_TITLE_LENGTH);
@@ -277,14 +284,14 @@ function commitCreatePost(author: MomentAuthor, input: MomentCreatePostInput): M
     source: { type: "manual" },
   };
   store.posts.push(post);
-  persist();
+  await database().call("moments.insertPost", post, nextSeq++);
   notifyChanged();
   return { applied: true, value: post };
 }
 
-/** 级联删除：post + comments + reactions + 图片副本（不动用户原始文件，副本才是我们的）。 */
+/** 级联删除：post + comments + reactions（同一事务）+ 图片副本（不动用户原始文件，副本才是我们的）。 */
 export function deletePost(postId: string): Promise<MomentCommitResult<null>> {
-  return enqueue(() => {
+  return enqueue(async () => {
     const store = requireCache();
     const index = store.posts.findIndex((post) => post.id === postId);
     if (index < 0) return { applied: false, reason: "post_not_found" as const };
@@ -296,7 +303,7 @@ export function deletePost(postId: string): Promise<MomentCommitResult<null>> {
     const mediaDir = path.join(mediaRootDir, postId);
     if (fs.existsSync(mediaDir)) fs.rmSync(mediaDir, { recursive: true, force: true });
 
-    persist();
+    await database().call("moments.deletePost", postId);
     notifyChanged();
     return { applied: true, value: null };
   });
@@ -307,7 +314,7 @@ export function createComment(
   author: MomentAuthor,
   options: { sourceTaskId?: string } = {},
 ): Promise<MomentCommitResult<MomentComment>> {
-  return enqueue(() => {
+  return enqueue(async () => {
     const store = requireCache();
     if (!isValidAuthor(author)) {
       return { applied: false, reason: "invalid_input" as const };
@@ -348,7 +355,7 @@ export function createComment(
       sourceTaskId: options.sourceTaskId,
     };
     store.comments.push(comment);
-    persist();
+    await database().call("moments.insertComment", comment);
     notifyChanged();
     return { applied: true, value: comment };
   });
@@ -359,7 +366,7 @@ export function toggleLike(
   postId: string,
   actor: MomentAuthor,
 ): Promise<MomentCommitResult<{ liked: boolean }>> {
-  return enqueue(() => {
+  return enqueue(async () => {
     const store = requireCache();
     if (!store.posts.some((post) => post.id === postId)) {
       return { applied: false, reason: "post_not_found" as const };
@@ -371,12 +378,14 @@ export function toggleLike(
     let liked: boolean;
     if (existingIndex >= 0) {
       store.reactions.splice(existingIndex, 1);
+      await database().call("moments.deleteReaction", postId, actor, "like");
       liked = false;
     } else {
-      store.reactions.push({ postId, actor, type: "like", createdAt: Date.now() });
+      const reaction: MomentReaction = { postId, actor, type: "like", createdAt: Date.now() };
+      store.reactions.push(reaction);
+      await database().call("moments.insertReaction", reaction);
       liked = true;
     }
-    persist();
     notifyChanged();
     return { applied: true, value: { liked } };
   });
@@ -387,11 +396,11 @@ export function toggleLike(
  * 与用户的 toggleLike 语义不同——AI 决策"点赞"就是点赞，重复提交按唯一性拒绝。
  */
 export function createCyreneLike(postId: string): Promise<MomentCommitResult<{ liked: true }>> {
-  return enqueue(() => {
-    const store = requireCache();
+  return enqueue(async () => {
     if (!cyreneBehaviorGate("reaction")) {
       return { applied: false, reason: "moments_disabled" as const };
     }
+    const store = requireCache();
     if (!store.posts.some((post) => post.id === postId)) {
       return { applied: false, reason: "post_not_found" as const };
     }
@@ -400,8 +409,9 @@ export function createCyreneLike(postId: string): Promise<MomentCommitResult<{ l
     );
     if (exists) return { applied: false, reason: "reaction_exists" as const };
 
-    store.reactions.push({ postId, actor: "cyrene", type: "like", createdAt: Date.now() });
-    persist();
+    const reaction: MomentReaction = { postId, actor: "cyrene", type: "like", createdAt: Date.now() };
+    store.reactions.push(reaction);
+    await database().call("moments.insertReaction", reaction);
     notifyChanged();
     return { applied: true, value: { liked: true } };
   });
@@ -416,7 +426,7 @@ export function createCharacterLike(
   nickname: string,
   postId: string,
 ): Promise<MomentCommitResult<{ liked: true }>> {
-  return enqueue(() => {
+  return enqueue(async () => {
     if (!characterBehaviorGate()) {
       return { applied: false, reason: "moments_disabled" as const };
     }
@@ -432,8 +442,9 @@ export function createCharacterLike(
     );
     if (exists) return { applied: true, value: { liked: true } };
 
-    store.reactions.push({ postId, actor: nickname, type: "like", createdAt: Date.now() });
-    persist();
+    const reaction: MomentReaction = { postId, actor: nickname, type: "like", createdAt: Date.now() };
+    store.reactions.push(reaction);
+    await database().call("moments.insertReaction", reaction);
     notifyChanged();
     return { applied: true, value: { liked: true } };
   });
@@ -454,7 +465,7 @@ export function createCharacterComment(
     sourceTaskId?: string;
   },
 ): Promise<ApplyCommentResult> {
-  return enqueue(() => {
+  return enqueue(async () => {
     if (!characterBehaviorGate()) {
       return { status: "rejected", reason: "moments_disabled" as const };
     }
@@ -493,7 +504,7 @@ export function createCharacterComment(
       sourceTaskId: input.sourceTaskId,
     };
     store.comments.push(comment);
-    persist();
+    await database().call("moments.insertComment", comment);
     notifyChanged();
     return { status: "created", comment };
   });
@@ -540,7 +551,7 @@ export function getCharacterTimeline(
       post: store.posts.find((post) => post.id === reaction.postId),
       reaction,
     }))
-    .filter((entry): entry is { kind: "like"; post: MomentPost; reaction: (typeof store.reactions)[number] } =>
+    .filter((entry): entry is { kind: "like"; post: MomentPost; reaction: MomentReaction } =>
       Boolean(entry.post),
     );
 

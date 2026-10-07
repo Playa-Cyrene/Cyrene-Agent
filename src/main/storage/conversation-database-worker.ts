@@ -2,6 +2,7 @@ import { parentPort, workerData } from "node:worker_threads";
 import { importRuns, runCommand } from "./conversation-run-repository";
 import { importTaskSessions, runTaskCommand } from "./conversation-task-repository";
 import { importTokenUsage, runUsageCommand } from "./conversation-usage-repository";
+import { importMoments, runMomentsCommand } from "./conversation-moments-repository";
 import { createHash, randomUUID } from "node:crypto";
 import { backup } from "node:sqlite";
 import { isDeepStrictEqual } from "node:util";
@@ -17,6 +18,7 @@ chats.initialize();
 importRuns(database);
 importTaskSessions(database);
 importTokenUsage(database);
+importMoments(database);
 const legacy = new LegacyConversationTranscriptReader(workerData.root);
 async function importTranscript(id: string): Promise<void> {
   if (database.db.prepare('SELECT transcript_imported FROM conversations WHERE id=?').get(id)?.transcript_imported)
@@ -293,6 +295,10 @@ async function execute(method: string, args: any[]): Promise<unknown> {
   }
   if (method.startsWith('usage.')) {
     return runUsageCommand(database, method, args);
+  }
+  if (method.startsWith('moments.')) {
+    // loadAll/nextSeq 只读；写命令内部自管事务。
+    return runMomentsCommand(database, method, args);
   }
   if (method.startsWith('tools.')) {
     const [scope, id, fingerprint] = args;

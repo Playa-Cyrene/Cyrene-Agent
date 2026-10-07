@@ -30,9 +30,10 @@ function broadcastChanged(): void {
   }
 }
 
-export function registerMomentsIpc(ipcOption?: IpcScope): void {
+export async function registerMomentsIpc(ipcOption?: IpcScope): Promise<void> {
   const ipc = ipcOption ?? createIpcScope();
-  momentsStore.initialize();
+  // 读模型加载完成后才注册 handler：渲染端最早可触发的读不会撞上未就绪的缓存
+  await momentsStore.initialize();
   momentsStore.onMomentsChanged(() => broadcastChanged());
 
   // 昔涟行为的提交时开关复核：AI 思考期间关闭开关时，迟到的结果被 moments_disabled 拒绝。

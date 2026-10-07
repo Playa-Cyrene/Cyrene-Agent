@@ -82,6 +82,21 @@ export class ConversationDatabase {
    CREATE INDEX IF NOT EXISTS token_usage_day_idx ON token_usage(day);
    INSERT INTO schema_migrations VALUES(6)`));
     }
+    if (!this.db.prepare("SELECT version FROM schema_migrations WHERE version=7").get()) {
+      this.transaction(() => this.db.exec(`CREATE TABLE IF NOT EXISTS moment_posts(
+   id TEXT PRIMARY KEY, seq INTEGER NOT NULL UNIQUE, created_at INTEGER NOT NULL, post_json TEXT NOT NULL);
+   CREATE INDEX IF NOT EXISTS moment_posts_feed_idx ON moment_posts(created_at, seq);
+   CREATE TABLE IF NOT EXISTS moment_comments(
+   id TEXT PRIMARY KEY, post_id TEXT NOT NULL, author TEXT NOT NULL, reply_to TEXT,
+   source_task_id TEXT, created_at INTEGER NOT NULL, comment_json TEXT NOT NULL);
+   CREATE INDEX IF NOT EXISTS moment_comments_post_idx ON moment_comments(post_id, created_at);
+   CREATE INDEX IF NOT EXISTS moment_comments_author_idx ON moment_comments(author, created_at);
+   CREATE INDEX IF NOT EXISTS moment_comments_reply_idx ON moment_comments(reply_to);
+   CREATE TABLE IF NOT EXISTS moment_reactions(
+   post_id TEXT NOT NULL, actor TEXT NOT NULL, type TEXT NOT NULL, created_at INTEGER NOT NULL,
+   PRIMARY KEY(post_id, actor, type));
+   INSERT INTO schema_migrations VALUES(7)`));
+    }
     this.transaction(() => {
       const rows = this.db.prepare("SELECT run_id,record_json FROM runs WHERE status IN ('prepared','running')").all();
       for (const row of rows) {

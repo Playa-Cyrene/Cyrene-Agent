@@ -709,7 +709,7 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
           isPrimaryModelBusy: hasActiveConversationRun,
           transcriptCompactor,
         });
-        registerMomentsIpc(ipc);
+        await registerMomentsIpc(ipc);
         registerCodeGitIpc({ ipc, service: services.git });
         // 会话工作区只读文件（右侧面板文件树 / 预览）
         registerWorkspaceFilesIpc(ipc);
