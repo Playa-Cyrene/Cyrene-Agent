@@ -105,10 +105,12 @@
   content: "";
 }
 
+/* 日期与标题竖排：横排时日期会吃掉标题宽度，长标题被迫折行 */
 .cy-news__item-head {
   display: flex;
-  align-items: baseline;
-  gap: 8px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
   margin-bottom: 8px;
 }
 
