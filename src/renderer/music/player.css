@@ -91,6 +91,10 @@ body {
   justify-content: center;
   gap: 8px;
   color: var(--text-dim);
+  /* 无框窗口只能靠 drag 区域移动；未就绪视图没有 .mp-header，
+     不设这一行窗口就完全拖不动。窗口按钮能否点击取决于 App.tsx 里
+     .mp-window-chrome 排在本元素之后（Electron 按文档顺序合成拖拽区域）。 */
+  -webkit-app-region: drag;
 }
 
 .mp-not-ready p {

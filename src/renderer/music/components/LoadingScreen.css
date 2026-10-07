@@ -6,6 +6,8 @@
   justify-content: center;
   background: transparent;
   z-index: 2147483647;
+  /* 加载阶段没有窗口按钮也没有头部，整屏设为 drag 区域，否则加载期间窗口拖不动 */
+  -webkit-app-region: drag;
 }
 
 .loading-card {
