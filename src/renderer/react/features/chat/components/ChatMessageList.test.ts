@@ -25,7 +25,7 @@ vi.mock("./file-icon-assets", () => ({
 vi.mock("./MermaidBlock", () => ({ MermaidBlock: () => null }));
 vi.mock("./SvgCardBlock", () => ({ SvgCardBlock: () => null }));
 
-import { assembleMessageItems, createMessageItems, formatChannelSourceLabel, MarkdownContent, resolveChannelConversationLabel, RunActivityDetail, type ChatMessageItem, type EnabledSticker } from "./ChatMessageList";
+import { AskUserQaContent, assembleMessageItems, createMessageItems, formatChannelSourceLabel, MarkdownContent, resolveChannelConversationLabel, RunActivityDetail, type ChatMessageItem, type EnabledSticker } from "./ChatMessageList";
 import { extractMessageStickerId, stripMessageStickerMarkers } from "./message-sticker";
 
 describe("React chat sticker messages", () => {
@@ -229,6 +229,108 @@ describe("formal answer visibility", () => {
 
     expect(html).toContain("未完成的生成内容");
     expect(html).toContain("做到一半");
+  });
+});
+
+describe("answered user questions in the message stream", () => {
+  const answeredAsk = {
+    id: "ask-1", name: "ask_user", status: "success" as const,
+    result: "怎么显示背景？ → 居中裁切铺满\n文字怎么处理？ → 半透明底色",
+  };
+
+  it("keeps answered questions outside a completed run's collapsed activity", () => {
+    const items = createMessageItems([{
+      id: "answer", role: "assistant", content: "按你的选择实施。",
+      runActivity: { startedAt: 1, completedAt: 2, reasoningMs: 0 },
+      agentRounds: [{ id: "round-ask", status: "completed", startedAt: 1, completedAt: 2 }],
+      toolExecutions: [{ ...answeredAsk, roundId: "round-ask" }],
+    }], []);
+
+    expect(items.map((item) => item.role)).toEqual(["ask_user", "assistant"]);
+    expect(items[0]).toMatchObject({
+      avatar: null,
+      extraInfo: { rows: ["怎么显示背景？ → 居中裁切铺满", "文字怎么处理？ → 半透明底色"] },
+    });
+  });
+
+  it("preserves narration and other tools on each side of an answered question", () => {
+    const items = createMessageItems([{
+      id: "mixed", role: "assistant", content: "完成。",
+      runActivity: { startedAt: 1, completedAt: 2, reasoningMs: 0 },
+      processMessages: [
+        { id: "before", content: "需要你选一下", seq: 1 },
+        { id: "after", content: "按选择修改", seq: 4 },
+      ],
+      toolExecutions: [
+        { id: "read", name: "read_file", status: "success", seq: 2 },
+        { ...answeredAsk, seq: 3 },
+        { id: "edit", name: "str_replace", status: "success", seq: 5 },
+      ],
+    }], []);
+
+    expect(items.map((item) => item.role)).toEqual(["activity", "ask_user", "activity", "assistant"]);
+    expect(items[0].extraInfo).toMatchObject({
+      processMessages: [{ id: "before" }], tools: [{ id: "read" }],
+    });
+    expect(items[2].extraInfo).toMatchObject({
+      continuation: true,
+      processMessages: [{ id: "after" }], tools: [{ id: "edit" }],
+    });
+  });
+
+  it("preserves historical ordering when records only have afterToolCount", () => {
+    const items = createMessageItems([{
+      id: "history", role: "assistant", content: "",
+      runActivity: { startedAt: 1, completedAt: 2, reasoningMs: 0 },
+      processMessages: [
+        { id: "before", content: "先确认", afterToolCount: 0 },
+        { id: "after", content: "收到答案", afterToolCount: 1 },
+      ],
+      toolExecutions: [answeredAsk],
+    }], []);
+
+    expect(items.map((item) => item.role)).toEqual(["activity", "ask_user", "activity"]);
+    expect(items[2].extraInfo).toMatchObject({
+      processMessages: [{ id: "after", afterToolCount: 0 }],
+    });
+  });
+
+  it("also renders answered questions directly in older messages without run activity", () => {
+    const items = createMessageItems([{
+      id: "legacy", role: "assistant", content: "", toolExecutions: [answeredAsk],
+    }], []);
+    expect(items.map((item) => item.role)).toEqual(["ask_user"]);
+  });
+
+  it.each(["running", "error"] as const)("keeps %s questions on the existing tool path", (status) => {
+    const items = createMessageItems([{
+      id: "pending", role: "assistant", content: "",
+      runActivity: { startedAt: 1, reasoningMs: 0 },
+      toolExecutions: [{ ...answeredAsk, status }],
+    }], []);
+    expect(items.map((item) => item.role)).toEqual(["activity"]);
+    expect(items[0].extraInfo).toMatchObject({ tools: [{ id: "ask-1", status }] });
+  });
+
+  it("retains unrecognized results instead of silently removing the tool", () => {
+    const items = createMessageItems([{
+      id: "unknown", role: "assistant", content: "",
+      toolExecutions: [{ ...answeredAsk, result: "用户取消了问题" }],
+    }], []);
+    expect(items.map((item) => item.role)).toEqual(["tool"]);
+  });
+
+  it("renders repeated answers as numbered text and escapes user-provided markup", () => {
+    (globalThis as typeof globalThis & { React: typeof React }).React = React;
+    const html = renderToStaticMarkup(React.createElement(AskUserQaContent, {
+      rows: ["下一步？ → <script>不执行</script> → 保留箭头", "下一步？ → <script>不执行</script> → 保留箭头"],
+    }));
+    expect(html).toContain("<ol");
+    expect(html.match(/<li /g)).toHaveLength(2);
+    expect(html.match(/>Q:<\/span>/g)).toHaveLength(2);
+    expect(html.match(/>A:<\/span>/g)).toHaveLength(2);
+    expect(html).toContain("&lt;script&gt;不执行&lt;/script&gt; → 保留箭头");
+    expect(html).not.toContain("<script>");
   });
 });
 

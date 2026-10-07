@@ -847,22 +847,28 @@ function ToolExecutionContent({ tools }: { tools: ToolExecutionRecord[] }) {
   );
 }
 
-/** ask_user 问答配对展示：问题 + 用户回答成对出现，不展示原始 JSON。 */
-function AskUserQaContent({ rows }: { rows: string[] }) {
+/** 已回答的询问直接显示为编号问答，不再放入工具折叠卡片。 */
+export function AskUserQaContent({ rows }: { rows: string[] }) {
   return (
-    <ul className="cy-ask-user-qa">
-      {rows.map((row) => {
+    <ol className="cy-ask-user-qa">
+      {rows.map((row, index) => {
         const separator = row.indexOf("→");
         const question = separator >= 0 ? row.slice(0, separator).trim() : row;
         const answer = separator >= 0 ? row.slice(separator + 1).trim() : "";
         return (
-          <li className="cy-ask-user-qa__row" key={row}>
-            <span className="cy-ask-user-qa__question">{question}</span>
-            <span className="cy-ask-user-qa__answer">{answer}</span>
+          <li className="cy-ask-user-qa__row" key={`${index}-${row}`}>
+            <div className="cy-ask-user-qa__question">
+              <span className="cy-ask-user-qa__label">Q:</span>
+              <span>{question}</span>
+            </div>
+            <div className="cy-ask-user-qa__answer">
+              <span className="cy-ask-user-qa__label">A:</span>
+              <span>{answer}</span>
+            </div>
           </li>
         );
       })}
-    </ul>
+    </ol>
   );
 }
 
@@ -1179,6 +1185,15 @@ function createRoles(
       );
     },
   },
+  ask_user: {
+    placement: "start" as const,
+    variant: "borderless" as const,
+    avatar: null,
+    rootClassName: "cy-message cy-message--ask-user",
+    contentRender: (_content: string, info: { extraInfo?: { rows?: string[] } }) => (
+      <AskUserQaContent rows={info.extraInfo?.rows ?? []} />
+    ),
+  },
   tool: {
     placement: "start" as const,
     variant: "borderless" as const,
@@ -1279,6 +1294,20 @@ function convertMessage(message: ChatMessageItem, enabledStickers: readonly Enab
     });
   };
   const tools = message.toolExecutions ?? [];
+  const answeredQuestions = new Map(tools.flatMap((tool) => {
+    if (tool.name !== "ask_user" || tool.status !== "success") return [];
+    const rows = buildAskUserQa(tool);
+    return rows.length ? [[tool.id, rows] as const] : [];
+  }));
+  const appendAnsweredQuestion = (tool: ToolExecutionRecord) => {
+    assistantItems.push({
+      key: `${message.id}-ask-${tool.id}`,
+      role: "ask_user",
+      content: "",
+      avatar: null,
+      extraInfo: { rows: answeredQuestions.get(tool.id) },
+    });
+  };
   // 活动卡是否渲染：运行中始终显示；终态只在确实产生了过程内容（正文/推理/工具/委派）时保留，
   // 首轮无工具调用的成功运行不产生空折叠头部。头像钉在活动卡头部，正文据此决定是否隐藏自己的头像。
   const hasProcessContent = (message.processMessages ?? []).some((item) => item.content.trim())
@@ -1288,38 +1317,85 @@ function convertMessage(message: ChatMessageItem, enabledStickers: readonly Enab
   const display = message.runDisplay;
   const activity = display?.activity ?? message.runActivity;
   const processing = activity?.completedAt === undefined;
-  const activityVisible = Boolean(activity) && (processing || hasProcessContent || (display && !display.continuation));
+  let activityVisible = false;
+  const appendActivity = (
+    details: Parameters<typeof buildFlatRunTimeline>[0],
+    key: string,
+    continuation = Boolean(display?.continuation),
+    flat = false,
+  ) => {
+    if (!activity) return;
+    activityVisible = true;
+    assistantItems.push({
+      key,
+      role: "activity",
+      content: "",
+      // 头像钉在运行块头部（状态行左侧）：一次运行只出现一次，不随每条消息重复。
+      // 用 createElement 而非 JSX：convertMessage 在测试里直接执行，不经过 JSX 运行时
+      avatar: createElement(AssistantMessageAvatar),
+      ...(continuation ? { rootClassName: "cy-message cy-message--activity cy-message--activity-continuation" } : {}),
+      extraInfo: {
+        activityId: key,
+        rootActivityId: `${display?.rootId ?? message.id}-activity`,
+        activity,
+        continuation,
+        // 问答前后的片段继续沿用时间线顺序，避免终态分组把内容挪到问答另一侧。
+        detailLive: flat ? true : display ? display.last && processing : undefined,
+        ...details,
+        agentRounds: flat ? [] : message.agentRounds ?? [],
+        runStage: display ? display.stage : message.runStage,
+        taskPlan: display ? display.taskPlan : message.taskPlan,
+        modelRetry: display ? display.modelRetry : message.modelRetry,
+      },
+    });
+  };
+  const details = {
+    reasoningBlocks,
+    processMessages: message.processMessages ?? [],
+    taskDelegations: message.taskDelegations ?? [],
+    tools,
+  };
   if (activity) {
-    if (activityVisible) {
-      assistantItems.push({
-        key: `${message.id}-activity`,
-        role: "activity",
-        content: "",
-        // 头像钉在运行块头部（状态行左侧）：一次运行只出现一次，不随每条消息重复。
-        // 用 createElement 而非 JSX：convertMessage 在测试里直接执行，不经过 JSX 运行时
-        avatar: createElement(AssistantMessageAvatar),
-        ...(display?.continuation ? { rootClassName: "cy-message cy-message--activity cy-message--activity-continuation" } : {}),
-        extraInfo: {
-          activityId: `${message.id}-activity`,
-          rootActivityId: display ? `${display.rootId}-activity` : undefined,
-          activity,
-          continuation: display?.continuation,
-          detailLive: display ? display.last && processing : undefined,
-          reasoningBlocks,
-          processMessages: message.processMessages ?? [],
-          agentRounds: message.agentRounds ?? [],
-          taskDelegations: message.taskDelegations ?? [],
-          tools,
-          runStage: display ? display.stage : message.runStage,
-          taskPlan: display ? display.taskPlan : message.taskPlan,
-          modelRetry: display ? display.modelRetry : message.modelRetry,
-        },
-      });
+    if (answeredQuestions.size > 0) {
+      let segment: typeof details = { reasoningBlocks: [], processMessages: [], taskDelegations: [], tools: [] };
+      let key = `${message.id}-activity`;
+      let continuation = Boolean(display?.continuation);
+      const flushSegment = () => {
+        if (!segment.reasoningBlocks.length && !segment.processMessages.length && !segment.taskDelegations.length && !segment.tools.length) return;
+        appendActivity(segment, key, continuation, true);
+        continuation = true;
+        segment = { reasoningBlocks: [], processMessages: [], taskDelegations: [], tools: [] };
+      };
+      // 复用既有时间线，问答单独成为消息；其余事件仍用原来的工具和流程组件。
+      for (const entry of buildFlatRunTimeline(details)) {
+        if (entry.tool && answeredQuestions.has(entry.tool.id)) {
+          flushSegment();
+          appendAnsweredQuestion(entry.tool);
+          key = `${message.id}-activity-after-${entry.tool.id}`;
+        } else if (entry.tool) {
+          segment.tools.push(entry.tool);
+        } else if (entry.process) {
+          segment.processMessages.push({ ...entry.process, afterToolCount: segment.tools.length });
+        } else if (entry.reasoning) {
+          segment.reasoningBlocks.push({ ...entry.reasoning, afterToolCount: segment.tools.length });
+        } else if (entry.task) {
+          segment.taskDelegations.push(entry.task);
+        }
+      }
+      flushSegment();
+      // 纯问答完成后不留空的“已完成”包装；运行中仍保留阶段、计划和重试提示。
+      if (processing && !activityVisible) appendActivity(segment, key, continuation, true);
+    } else if (processing || hasProcessContent || (display && !display.continuation)) {
+      appendActivity(details, `${message.id}-activity`);
     }
   } else {
     for (let index = 0; index <= tools.length; index += 1) {
       reasoningBlocks.filter((block) => (block.afterToolCount ?? 0) === index).forEach(appendReasoning);
       if (index === tools.length) continue;
+      if (answeredQuestions.has(tools[index].id)) {
+        appendAnsweredQuestion(tools[index]);
+        continue;
+      }
       assistantItems.push({
         key: `${message.id}-tool-${tools[index].id}`,
         role: "tool",

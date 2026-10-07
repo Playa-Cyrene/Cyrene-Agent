@@ -510,6 +510,7 @@
 }
 
 .cy-message--tool,
+.cy-message--ask-user,
 .cy-message--review {
   width: var(--cy-message-reading-width);
   max-width: var(--cy-message-reading-width);
@@ -528,6 +529,7 @@
 }
 
 .cy-message--tool .ant-bubble-content,
+.cy-message--ask-user .ant-bubble-content,
 .cy-message--review .ant-bubble-content {
   padding: 0;
   min-height: 0;
@@ -941,36 +943,48 @@
   white-space: pre-wrap;
 }
 
-/* ask_user 工具卡展开后的问答配对：问题弱化、回答强调 */
+/* 已回答的询问是独立正文，两套主题共用语义文字颜色。 */
+.cy-message--ask-user .ant-bubble-body {
+  min-width: 0;
+  width: calc(100% - 54px);
+  max-width: calc(100% - 54px);
+  margin-inline-start: 54px;
+}
+
 .cy-ask-user-qa {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin: 7px 0 2px;
-  padding: 0;
-  list-style: none;
+  display: grid;
+  gap: 12px;
+  margin: 4px 0;
+  padding-inline-start: 1.5em;
+  color: var(--rb-text-primary);
+  font: 13px/1.7 var(--rb-font-sans, sans-serif);
+  list-style: decimal;
 }
 
 .cy-ask-user-qa__row {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 7px 9px;
-  border-radius: 8px;
-  background: #f4f4f5;
+  padding-inline-start: 3px;
 }
 
-.cy-ask-user-qa__question {
-  color: var(--rb-text-secondary);
-  font-size: 12px;
-  line-height: 1.5;
+.cy-ask-user-qa__row::marker {
+  color: var(--rb-text-primary);
+}
+
+.cy-ask-user-qa__question,
+.cy-ask-user-qa__answer {
+  display: grid;
+  grid-template-columns: 1.5em minmax(0, 1fr);
+  gap: 4px;
+  color: var(--rb-text-primary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .cy-ask-user-qa__answer {
-  color: var(--rb-text-primary);
-  font-size: 12.5px;
-  line-height: 1.5;
-  font-weight: 500;
+  margin-top: 2px;
+}
+
+.cy-ask-user-qa__label {
+  font-weight: 600;
 }
 
 .cy-message-reasoning {
