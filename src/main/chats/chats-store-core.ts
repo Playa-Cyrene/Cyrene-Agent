@@ -856,6 +856,12 @@ export function claimPendingMessage(sessionId: string): ClaimPendingResult {
   const claimedAt = Date.now();
   const userMessage = pendingUserMessage(head, claimedAt);
   const remaining = queue.slice(1);
+  // 复用正式会话视图判断首条有效用户消息；后续认领不能覆盖已生成的标题。
+  const firstUserMessage = record.titleIsCustom ? undefined : sessionView(record).messages.find(
+    (message) => message.role === "user" && message.content.trim(),
+  );
+  const initializeTitle = !record.titleIsCustom && Boolean(userMessage.content.trim())
+    && (!firstUserMessage || firstUserMessage.id === userMessage.id);
   if (record.schemaVersion === 2) {
     record.pendingMessages = remaining;
     record.pendingDispatch = {
@@ -874,8 +880,8 @@ export function claimPendingMessage(sessionId: string): ClaimPendingResult {
     // 否则侧栏列表（排序/最近聊天时间/未读检测）在 v2 会话上永远停留在旧值
     record.messageCount = (record.messageCount ?? 0) + 1;
     record.updatedAt = claimedAt;
-    // 与 v1 分支一致：非自定义标题时先落首条消息推导的临时标题（生成标题 3 秒后覆盖）
-    if (!record.titleIsCustom)
+    // 仅首条有效用户消息设置临时标题，生成标题随后由标题服务写回。
+    if (initializeTitle)
       record.title = deriveTitle([userMessage]);
     try {
       writeSessionRecordFile(record);
@@ -905,7 +911,7 @@ export function claimPendingMessage(sessionId: string): ClaimPendingResult {
   session.pendingMessages = remaining;
   session.pendingDispatch = { messageId: head.id, claimedAt };
   session.updatedAt = claimedAt;
-  if (!session.titleIsCustom)
+  if (initializeTitle)
     session.title = deriveTitle(session.messages);
   try {
     writeSessionFile(session);
