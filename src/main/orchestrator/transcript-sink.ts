@@ -80,6 +80,8 @@ export interface TranscriptSink {
   }): Promise<void>;
   /** Last canonical assistant entry, used by derived presentation writers. */
   getLastAssistantEntryId?(): string | undefined;
+  /** 插话后的下一条 assistant 使用新展示分组，运行标识和工具锚点保持不变。 */
+  setAssistantTurnId?(turnId: string): void;
 }
 
 export function createTranscriptSink(input: {
@@ -88,7 +90,8 @@ export function createTranscriptSink(input: {
   runId: string;
   assistantTurnId?: string;
 }): TranscriptSink {
-  const { store, conversationId, runId, assistantTurnId } = input;
+  const { store, conversationId, runId } = input;
+  let assistantTurnId = input.assistantTurnId;
   // toolCallId → 声明它的 assistant 条目（合成闭合需要锚点）
   const assistantEntryOfCall = new Map<string, string>();
   const startedToolCallIds = new Set<string>();
@@ -97,6 +100,7 @@ export function createTranscriptSink(input: {
   let lastAssistantEntryId: string | undefined;
 
   return {
+    setAssistantTurnId(turnId) { assistantTurnId = turnId; },
     async appendAssistant({ message, roundId }) {
       const entryId = `${runId}:assistant:${roundId ?? `n${assistantCounter++}`}`;
       for (const call of message.toolCalls ?? []) {

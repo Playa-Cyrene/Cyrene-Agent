@@ -111,6 +111,39 @@ function reconcilePending(id: string): void {
     database.saveRecord(record);
   }
 }
+/** 复用同一事务提交队列消费和用户轨迹；运行边界与终态恢复共用。 */
+function commitAdjustment(id: string, messageId: string, runId: string): ReturnType<typeof chats.commitPendingAdjust> {
+  return database.transaction(() => {
+    const pending = chats.getPendingMessages(id)?.find(item => item.id === messageId);
+    const result = chats.commitPendingAdjust(id, messageId, runId);
+    if (result.ok && pending) {
+      const canonicalId = `user:v1:${pending.id}:r1`;
+      database.append(id, { id: canonicalId, at: result.userMessage.at, kind: 'user', turnId: pending.id, revision: 1,
+        payload: { text: pending.rawContent, ...(pending.attachments?.length ? { attachments: pending.attachments } : {}) } });
+      const patch = { ...(pending.userSticker ? { sticker: pending.userSticker } : {}),
+        ...(pending.visibleContent !== pending.rawContent ? { content: pending.visibleContent } : {}) };
+      if (Object.keys(patch).length) presentation(id, canonicalId, `adjust:${pending.id}`, patch, result.userMessage.at);
+      const record = database.record(id)!;
+      if (record.schemaVersion === 2) record.messageCount = reduceTranscriptProjection(database.entries(id, true)).messages.length;
+      record.updatedAt = Math.max(record.updatedAt, result.userMessage.at);
+      database.saveRecord(record);
+    }
+    if (!result.ok && result.error === 'write-failed') throw new ConversationStoreError('CONVERSATION_STORE_WRITE_FAILED');
+    return result;
+  });
+}
+
+function preserveAcceptedAdjustments(id: string, runId?: string): number {
+  const pending = (chats.getPendingMessages(id) ?? [])
+    .filter(item => item.adjustAcceptedAt !== undefined && item.adjustRunId && (!runId || item.adjustRunId === runId))
+    .sort((left, right) => left.adjustAcceptedAt! - right.adjustAcceptedAt!);
+  for (const item of pending) {
+    const result = commitAdjustment(id, item.id, item.adjustRunId!);
+    if (!result.ok) throw new ConversationStoreError('CONVERSATION_STORE_WRITE_FAILED');
+  }
+  return pending.length;
+}
+
 async function execute(method: string, args: any[]): Promise<unknown> {
   if (method === 'close') {
     database.close();
@@ -156,6 +189,22 @@ async function execute(method: string, args: any[]): Promise<unknown> {
     const name = method.slice(6);
     if (typeof args[0] === 'string' && database.record(args[0]))
       await importTranscript(args[0]);
+    if (name === 'resetPendingAdjustByRun') {
+      return database.transaction(() => {
+        const preserved = preserveAcceptedAdjustments(args[0], args[1]);
+        const result = chats.resetPendingAdjustByRun(args[0], args[1]);
+        if (!result.ok && result.error === 'write-failed') throw new ConversationStoreError('CONVERSATION_STORE_WRITE_FAILED');
+        return result.ok ? { ...result, reset: result.reset + preserved } : result;
+      });
+    }
+    if (name === 'clearStalePendingAdjustMarks') {
+      for (const session of chats.listSessions()) {
+        if (!chats.getPendingMessages(session.id)?.some(item => item.adjustAcceptedAt !== undefined && item.adjustRunId)) continue;
+        await importTranscript(session.id);
+        database.transaction(() => preserveAcceptedAdjustments(session.id));
+      }
+      return database.transaction(() => chats.clearStalePendingAdjustMarks());
+    }
     if (name === 'claimPendingMessage') {
       const id = args[0];
       await importTranscript(id);
@@ -204,26 +253,7 @@ async function execute(method: string, args: any[]): Promise<unknown> {
     }
     if (name === 'commitPendingAdjust') {
       try {
-        return database.transaction(() => {
-          const pending = chats.getPendingMessages(args[0])?.find(item => item.id === args[1]);
-          const result = chats.commitPendingAdjust(args[0], args[1], args[2]);
-          if (result.ok && pending) {
-            database.append(args[0], { id: `user:v1:${pending.id}:r1`, at: result.userMessage.at, kind: 'user', turnId: pending.id, revision: 1,
-              payload: { text: pending.rawContent, ...(pending.attachments?.length ? { attachments: pending.attachments } : {}) } });
-          if (pending.userSticker) {
-            try { presentation(args[0], `user:v1:${pending.id}:r1`, `adjust:${pending.id}`, { sticker: pending.userSticker }, result.userMessage.at); }
-            catch (error) { console.warn('[conversation-store] 插话展示更新失败:', error); }
-          }
-            const record = database.record(args[0])!;
-            if (record.schemaVersion === 2)
-              record.messageCount = reduceTranscriptProjection(database.entries(args[0], true)).messages.length;
-            record.updatedAt = result.userMessage.at;
-            database.saveRecord(record);
-          }
-          if (!result.ok && result.error === 'write-failed')
-            throw new ConversationStoreError('CONVERSATION_STORE_WRITE_FAILED');
-          return result;
-        });
+        return commitAdjustment(args[0], args[1], args[2]);
       }
       catch (error) {
         if (isWriteFailure(error))

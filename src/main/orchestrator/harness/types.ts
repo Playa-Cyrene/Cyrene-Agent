@@ -168,6 +168,7 @@ export type HarnessEvent =
   | { type: "model_retry"; status: import("../../../shared/model-retry").ModelRetryStatus }
   | { type: "round_start"; roundId: string }
   | { type: "round_end"; roundId: string }
+  | { type: "run_adjustment"; messages: RunAdjustmentMessage[]; assistantMessageId: string }
   | { type: "candidate_text_delta"; roundId: string; delta: string }
   | { type: "candidate_text_discard"; roundId: string }
   | { type: "progress_text"; content: string }
@@ -228,6 +229,8 @@ export interface RunAdjustmentMessage {
   id: string;
   /** 模型可见的原始文字。 */
   rawContent: string;
+  /** 与队列投影和权威轨迹共用的展示消息。 */
+  userMessage?: import("../../../shared/chat-types").ChatMessage;
 }
 
 export interface HarnessToolSpec extends ToolSpec {

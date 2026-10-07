@@ -56,10 +56,16 @@ export function useSessionMessages(
   }
 
   function appendMessages(sessionId: string, items: ChatMessageItem[]) {
-    setMessagesBySession((current) => ({
-      ...current,
-      [sessionId]: [...(current[sessionId] ?? []), ...items],
-    }));
+    setMessagesBySession((current) => {
+      const existing = current[sessionId] ?? [];
+      const ids = new Set(existing.map((item) => item.id));
+      const additions = items.filter((item) => {
+        if (ids.has(item.id)) return false;
+        ids.add(item.id);
+        return true;
+      });
+      return additions.length ? { ...current, [sessionId]: [...existing, ...additions] } : current;
+    });
   }
 
   function patchMessageAttachments(

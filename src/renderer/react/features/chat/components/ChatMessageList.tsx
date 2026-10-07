@@ -73,6 +73,8 @@ export interface ChatMessageItem {
   sticker?: string | null;
   toolExecutions?: ToolExecutionRecord[];
   runActivity?: RunActivityRecord;
+  /** 同一次运行被用户插话分隔时，派生出的共用任务头；不写入会话。 */
+  runDisplay?: RunMessageDisplay;
   runSnapshot?: ChatMessage["runSnapshot"];
   runStage?: AgentRunStage;
   /** 关联的 Run ID，用于获取 Review 快照 */
@@ -88,6 +90,16 @@ export interface ChatMessageItem {
   compaction?: ChatMessage["compaction"];
   /** 回复时间戳：历史消息来自持久化消息的 at，进行中消息由 run 终态回写。 */
   at?: number;
+}
+
+interface RunMessageDisplay {
+  rootId: string;
+  continuation: boolean;
+  last: boolean;
+  activity: RunActivityRecord;
+  stage?: AgentRunStage;
+  modelRetry?: ModelRetryStatus | null;
+  taskPlan?: TaskPlanPresentation;
 }
 
 export interface ChatMessageAttachment {
@@ -719,6 +731,8 @@ function RunActivityContent({
   stage,
   taskPlan,
   modelRetry,
+  continuation = false,
+  detailLive,
   expanded,
   onExpand,
   onOpenTaskInspector,
@@ -733,6 +747,8 @@ function RunActivityContent({
   stage?: AgentRunStage;
   taskPlan?: TaskPlanPresentation;
   modelRetry?: ModelRetryStatus | null;
+  continuation?: boolean;
+  detailLive?: boolean;
   expanded: boolean;
   onExpand: (expanded: boolean) => void;
   onOpenTaskInspector?: (delegation: TaskDelegationDisplayRecord) => void;
@@ -744,9 +760,9 @@ function RunActivityContent({
   const snapshot = resolveRunActivitySnapshot(activity, now);
   const wasProcessingRef = useRef(snapshot.processing);
   useEffect(() => {
-    if (shouldAutoCollapseRunActivity(wasProcessingRef.current, snapshot.processing, activity.keepExpanded)) onExpand(false);
+    if (!continuation && shouldAutoCollapseRunActivity(wasProcessingRef.current, snapshot.processing, activity.keepExpanded)) onExpand(false);
     wasProcessingRef.current = snapshot.processing;
-  }, [activity.keepExpanded, onExpand, snapshot.processing]);
+  }, [activity.keepExpanded, continuation, onExpand, snapshot.processing]);
 
   const title = snapshot.processing
     ? t("messageList.activityProcessingTitle", { elapsed: formatElapsed(snapshot.processingMs) })
@@ -756,7 +772,7 @@ function RunActivityContent({
 
   return (
     <section className={`cy-run-activity${snapshot.processing ? " is-processing" : " is-complete"}`}>
-      <button
+      {!continuation && <button
         type="button"
         className="cy-run-activity__header"
         onClick={() => onExpand(!expanded)}
@@ -775,13 +791,13 @@ function RunActivityContent({
         <svg className={`cy-run-activity__chevron${expanded ? " is-expanded" : ""}`} viewBox="0 0 16 16" aria-hidden="true">
           <path d="m4 6 4 4 4-4" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.75" />
         </svg>
-      </button>
+      </button>}
       {expanded && (
         <div className="cy-run-activity__expanded" id={`${activityId}-details`}>
-          {taskPlan && <TaskPlanCard plan={taskPlan} />}
-          <div className="cy-run-activity__divider" />
+          {!continuation && taskPlan && <TaskPlanCard plan={taskPlan} />}
+          {!continuation && <div className="cy-run-activity__divider" />}
           <RunActivityDetail
-            live={snapshot.processing}
+            live={detailLive ?? snapshot.processing}
             agentRounds={agentRounds}
             reasoningBlocks={reasoningBlocks}
             processMessages={processMessages}
@@ -1124,7 +1140,10 @@ function createRoles(
     contentRender: (_content: string, info: {
       extraInfo?: {
         activityId?: string;
+        rootActivityId?: string;
         activity?: RunActivityRecord;
+        continuation?: boolean;
+        detailLive?: boolean;
         reasoningBlocks?: ReasoningBlock[];
         processMessages?: ProcessMessageRecord[];
         agentRounds?: AgentRoundRecord[];
@@ -1136,8 +1155,9 @@ function createRoles(
       };
     }) => {
       const activityId = info.extraInfo?.activityId;
+      const rootActivityId = info.extraInfo?.rootActivityId ?? activityId;
       const activity = info.extraInfo?.activity;
-      if (!activityId || !activity) return null;
+      if (!activityId || !rootActivityId || !activity) return null;
       return (
         <RunActivityContent
           activityId={activityId}
@@ -1150,8 +1170,10 @@ function createRoles(
           stage={info.extraInfo?.runStage}
           taskPlan={info.extraInfo?.taskPlan}
           modelRetry={info.extraInfo?.modelRetry}
-          expanded={resolveRunActivityExpanded(reasoningExpanded, activityId, activity)}
-          onExpand={(expanded) => onReasoningExpand(activityId, expanded)}
+          continuation={info.extraInfo?.continuation}
+          detailLive={info.extraInfo?.detailLive}
+          expanded={resolveRunActivityExpanded(reasoningExpanded, rootActivityId, activity)}
+          onExpand={(expanded) => onReasoningExpand(rootActivityId, expanded)}
           onOpenTaskInspector={onOpenTaskInspector}
         />
       );
@@ -1263,9 +1285,11 @@ function convertMessage(message: ChatMessageItem, enabledStickers: readonly Enab
     || tools.length > 0
     || (message.taskDelegations ?? []).length > 0
     || reasoningBlocks.some((block) => block.content.trim());
-  const processing = message.runActivity?.completedAt === undefined;
-  const activityVisible = Boolean(message.runActivity) && (processing || hasProcessContent);
-  if (message.runActivity) {
+  const display = message.runDisplay;
+  const activity = display?.activity ?? message.runActivity;
+  const processing = activity?.completedAt === undefined;
+  const activityVisible = Boolean(activity) && (processing || hasProcessContent || (display && !display.continuation));
+  if (activity) {
     if (activityVisible) {
       assistantItems.push({
         key: `${message.id}-activity`,
@@ -1274,17 +1298,21 @@ function convertMessage(message: ChatMessageItem, enabledStickers: readonly Enab
         // 头像钉在运行块头部（状态行左侧）：一次运行只出现一次，不随每条消息重复。
         // 用 createElement 而非 JSX：convertMessage 在测试里直接执行，不经过 JSX 运行时
         avatar: createElement(AssistantMessageAvatar),
+        ...(display?.continuation ? { rootClassName: "cy-message cy-message--activity cy-message--activity-continuation" } : {}),
         extraInfo: {
           activityId: `${message.id}-activity`,
-          activity: message.runActivity,
+          rootActivityId: display ? `${display.rootId}-activity` : undefined,
+          activity,
+          continuation: display?.continuation,
+          detailLive: display ? display.last && processing : undefined,
           reasoningBlocks,
           processMessages: message.processMessages ?? [],
           agentRounds: message.agentRounds ?? [],
           taskDelegations: message.taskDelegations ?? [],
           tools,
-          runStage: message.runStage,
-          taskPlan: message.taskPlan,
-          modelRetry: message.modelRetry,
+          runStage: display ? display.stage : message.runStage,
+          taskPlan: display ? display.taskPlan : message.taskPlan,
+          modelRetry: display ? display.modelRetry : message.modelRetry,
         },
       });
     }
@@ -1304,7 +1332,7 @@ function convertMessage(message: ChatMessageItem, enabledStickers: readonly Enab
     // 运行块内的正文不重复头像（头像已钉在活动卡头部）：
     // 保留头像占位只做视觉隐藏，正文左边缘与活动卡时间线内容精确对齐。
     // 活动卡未渲染时（如首轮直接回答的纯文本运行）正文保留自己的头像。
-    const hideAvatar = activityVisible;
+    const hideAvatar = activityVisible || display?.continuation;
     assistantItems.push({
       key: message.id,
       role: "assistant",
@@ -1332,7 +1360,7 @@ function convertMessage(message: ChatMessageItem, enabledStickers: readonly Enab
     });
   }
   // Review 面板：Run 结束后（非 streaming/loading）且有 runId 时显示
-  if (message.runId && !message.streaming && !message.loading) {
+  if (message.runId && !message.streaming && !message.loading && (!display || (display.last && !processing))) {
     assistantItems.push({
       key: `${message.id}-review`,
       role: "review",
@@ -1347,13 +1375,42 @@ function convertMessage(message: ChatMessageItem, enabledStickers: readonly Enab
 }
 
 export function createMessageItems(messages: ChatMessageItem[], enabledStickers: EnabledSticker[]): BubbleItemType[] {
-  return messages.flatMap((message) => convertMessage(message, enabledStickers));
+  return assembleMessageItems(messages, enabledStickers, null).items;
 }
 
 /** 阶段 2：单消息派生缓存状态——stickers 引用变化时整体替换（新 WeakMap），不逐条维护版本号 */
 export interface MessageItemsCacheState {
   stickers: readonly EnabledSticker[];
   byMessage: WeakMap<ChatMessageItem, readonly BubbleItemType[]>;
+  byRunMessage: WeakMap<ChatMessageItem, { sourceActivity: RunActivityRecord; message: ChatMessageItem }>;
+}
+
+/** 复用持久化的 runId：插话只分隔内容，头像、计时、阶段与折叠状态仍属于同一个运行。 */
+function projectRunMessage(
+  message: ChatMessageItem,
+  root: ChatMessageItem,
+  latest: ChatMessageItem,
+  cache: MessageItemsCacheState,
+): ChatMessageItem {
+  const sourceActivity = latest.runActivity!;
+  const continuation = message !== root;
+  const last = message === latest;
+  const stage = continuation ? undefined : latest.runStage;
+  const modelRetry = continuation ? undefined : latest.modelRetry;
+  const taskPlan = continuation ? undefined : latest.taskPlan ?? root.taskPlan;
+  const previous = cache.byRunMessage.get(message);
+  const display = previous?.message.runDisplay;
+  if (previous?.sourceActivity === sourceActivity && display?.rootId === root.id
+    && display.activity.startedAt === root.runActivity!.startedAt
+    && display.continuation === continuation && display.last === last && display.stage === stage
+    && display.modelRetry === modelRetry && display.taskPlan === taskPlan) return previous.message;
+  const projected: ChatMessageItem = { ...message, runDisplay: {
+    rootId: root.id, continuation, last, stage, modelRetry, taskPlan,
+    activity: sourceActivity.startedAt === root.runActivity!.startedAt
+      ? sourceActivity : { ...sourceActivity, startedAt: root.runActivity!.startedAt },
+  } };
+  cache.byRunMessage.set(message, { sourceActivity, message: projected });
+  return projected;
 }
 
 /**
@@ -1368,13 +1425,23 @@ export function assembleMessageItems(
 ): { items: BubbleItemType[]; cache: MessageItemsCacheState } {
   const state: MessageItemsCacheState = cache && cache.stickers === stickers
     ? cache
-    : { stickers, byMessage: new WeakMap<ChatMessageItem, readonly BubbleItemType[]>() };
+    : { stickers, byMessage: new WeakMap<ChatMessageItem, readonly BubbleItemType[]>(), byRunMessage: new WeakMap() };
+  const runs = new Map<string, { root: ChatMessageItem; latest: ChatMessageItem }>();
+  for (const message of messages) {
+    if (message.role !== "assistant" || !message.runId || !message.runActivity) continue;
+    const group = runs.get(message.runId);
+    if (group) group.latest = message;
+    else runs.set(message.runId, { root: message, latest: message });
+  }
   const items: BubbleItemType[] = [];
   for (const message of messages) {
-    let converted = state.byMessage.get(message);
+    const group = message.role === "assistant" && message.runActivity && message.runId ? runs.get(message.runId) : undefined;
+    const projected = group && group.root !== group.latest
+      ? projectRunMessage(message, group.root, group.latest, state) : message;
+    let converted = state.byMessage.get(projected);
     if (converted === undefined) {
-      converted = convertMessage(message, stickers);
-      state.byMessage.set(message, converted);
+      converted = convertMessage(projected, stickers);
+      state.byMessage.set(projected, converted);
     }
     for (const item of converted) items.push(item);
   }

@@ -1,4 +1,5 @@
 import { CHAT_SCHEMA_VERSION, type ChatSessionRecord, type ChatSession, type ChatMessage } from "../../shared/chat-types";
+import { pendingAdjustmentUserMessage } from "../../shared/pending-adjustment";
 export function composeSession(record: ChatSessionRecord, messages: ChatMessage[]): ChatSession {
   if (record.schemaVersion === 1)
     return { ...record, messages: [...messages] };
@@ -22,5 +23,9 @@ export function composeSession(record: ChatSessionRecord, messages: ChatMessage[
       ...message,
     };
   });
-  return { ...metadata, messages: restoredMessages, schemaVersion: CHAT_SCHEMA_VERSION };
+  const ids = new Set(restoredMessages.map((message) => message.id));
+  const accepted = (record.pendingMessages ?? []).filter((item) => item.adjustAcceptedAt !== undefined && !ids.has(item.id))
+    .sort((left, right) => left.adjustAcceptedAt! - right.adjustAcceptedAt!)
+    .map(pendingAdjustmentUserMessage);
+  return { ...metadata, messages: [...restoredMessages, ...accepted], schemaVersion: CHAT_SCHEMA_VERSION };
 }

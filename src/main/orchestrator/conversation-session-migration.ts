@@ -43,7 +43,9 @@ export class ConversationSessionMigration {
     if (!record)
       return null;
     const page = await this.options.journal.readProjectionPage(id, before, limit);
-    const { messages, ...session } = chatsStore.composeSession(record, page.messages);
+    const pageRecord = before === null ? record : { ...record,
+      pendingMessages: record.pendingMessages?.filter((item) => item.adjustAcceptedAt === undefined) };
+    const { messages, ...session } = chatsStore.composeSession(pageRecord, page.messages);
     return { session: { ...session, messageCount: page.messageCount }, messages, hasMore: page.hasMore, nextBefore: page.nextBefore };
   }
   reconcilePendingDispatch(id: string): Promise<boolean> { return chatsStore.reconcilePendingDispatch(id); }

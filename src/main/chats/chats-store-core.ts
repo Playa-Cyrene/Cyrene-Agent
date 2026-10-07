@@ -1067,7 +1067,8 @@ export function markPendingAdjust(sessionId: string, messageId: string, runId: s
   if (target.attachments && target.attachments.length > 0) {
     return { ok: false, error: "has-attachments", queue: snapshot() };
   }
-  queue[index] = { ...target, adjustRunId: runId };
+  const acceptedAt = Math.max(Date.now(), ...queue.map((item) => (item.adjustAcceptedAt ?? 0) + 1));
+  queue[index] = { ...target, adjustRunId: runId, adjustAcceptedAt: acceptedAt };
   try {
     writeWritableSession(session);
   }
@@ -1103,7 +1104,7 @@ export function commitPendingAdjust(sessionId: string, messageId: string, runId:
   const target = queue[index];
   if (target.adjustRunId !== runId)
     return { ok: false, error: "run-mismatch" };
-  const committedAt = Date.now();
+  const committedAt = target.adjustAcceptedAt ?? Date.now();
   const userMessage = pendingUserMessage(target, committedAt);
   if (record.schemaVersion === 2) {
     record.pendingMessages = queue.filter((item) => item.id !== messageId);

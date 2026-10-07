@@ -3,6 +3,7 @@
 import * as chatsStore from "./chats-store";
 import type { PendingChatAttachment, PendingChatMessage } from "../../shared/chat-types";
 import type { RunAdjustmentMessage } from "../orchestrator/harness/types";
+import { pendingAdjustmentUserMessage } from "../../shared/pending-adjustment";
 
 /** 轮询所需的存储端口（生产用 chats-store，测试可注入替身）。 */
 export interface PendingAdjustmentStore {
@@ -31,11 +32,13 @@ export function createRunAdjustmentPoller(
   runId: string,
   store: PendingAdjustmentStore = chatsStore,
   transcript?: TranscriptUserWritePort,
+  onCommitted?: () => void,
 ): () => Promise<RunAdjustmentMessage[]> {
   return async () => {
     const queue = (await store.getPendingMessages(sessionId));
     if (!queue) return [];
-    const marked = queue.filter((item) => item.adjustRunId === runId);
+    const marked = queue.filter((item) => item.adjustRunId === runId)
+      .sort((left, right) => (left.adjustAcceptedAt ?? left.enqueuedAt) - (right.adjustAcceptedAt ?? right.enqueuedAt));
     if (marked.length === 0) return [];
     return (async () => {
       const injected: RunAdjustmentMessage[] = [];
@@ -55,7 +58,9 @@ export function createRunAdjustmentPoller(
           throw new Error(`PENDING_ADJUST_COMMIT_FAILED:${item.id}:${commit.error}`);
         }
         // ③ 双写成功才注入运行
-        injected.push({ id: commit.userMessage.id, rawContent: item.rawContent });
+        injected.push({ id: commit.userMessage.id, rawContent: item.rawContent,
+          userMessage: pendingAdjustmentUserMessage(item) });
+        onCommitted?.();
       }
       return injected;
     })();

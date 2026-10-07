@@ -132,9 +132,7 @@ export async function runCyreneHarness(input: HarnessInput): Promise<HarnessResu
         return finishRun(run, `插话提交失败：${errorMessage(error)}`, true, "error");
       }
       if (adjustments.length > 0) {
-        for (const adjustment of adjustments) {
-          run.messages.push({ role: "user", content: adjustment.rawContent });
-        }
+        applyRunAdjustments(run, adjustments);
       }
     }
 
@@ -279,9 +277,7 @@ export async function runCyreneHarness(input: HarnessInput): Promise<HarnessResu
       if (intermediate) {
         input.onEvent?.({ type: "progress_text", content: intermediate });
       }
-      for (const adjustment of endAdjustments) {
-        run.messages.push({ role: "user", content: adjustment.rawContent });
-      }
+      applyRunAdjustments(run, endAdjustments);
       // 本轮模型已产出回复且运行未结束：按工具轮口径推进轮次，
       // 让下一轮拿到新 roundId，轮次上限也能正确计数
       run.rounds++;
@@ -300,6 +296,15 @@ export async function runCyreneHarness(input: HarnessInput): Promise<HarnessResu
 }
 
 // ═══ 运行准备 ═════════════════════════════════════════════
+
+/** 工具结果已完整提交后追加插话，下一轮使用新的助手展示分组。 */
+function applyRunAdjustments(run: HarnessRun, adjustments: RunAdjustmentMessage[]): void {
+  for (const adjustment of adjustments) run.messages.push({ role: "user", content: adjustment.rawContent });
+  const assistantMessageId = `${run.input.runId ?? "harness-run"}:adjust:${adjustments.at(-1)!.id}`;
+  run.input.assistantTurnId = assistantMessageId;
+  run.input.transcriptSink?.setAssistantTurnId?.(assistantMessageId);
+  run.input.onEvent?.({ type: "run_adjustment", messages: adjustments, assistantMessageId });
+}
 
 /** 初始化单次运行：合并配置、深拷贝状态、构建工具清单与 dispatch 上下文。 */
 function createRun(input: HarnessInput): HarnessRun {

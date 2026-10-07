@@ -961,6 +961,13 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
       api: aguiApi(),
       store: chatStore(),
       host: {
+        appendMessages,
+        onAssistantSegment: (previousId, nextId) => {
+          if (activeMailDraftControllersRef.current[previousId] === controller) {
+            delete activeMailDraftControllersRef.current[previousId];
+          }
+          activeMailDraftControllersRef.current[nextId] = controller;
+        },
         patchMessage: updateMessage,
         setInteraction: setInteractionForSession,
         clearInteraction: clearInteractionForSession,
@@ -1057,8 +1064,8 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
     try {
       await controller.start();
     } finally {
-      if (activeMailDraftControllersRef.current[input.assistantId] === controller) {
-        delete activeMailDraftControllersRef.current[input.assistantId];
+      for (const [messageId, active] of Object.entries(activeMailDraftControllersRef.current)) {
+        if (active === controller) delete activeMailDraftControllersRef.current[messageId];
       }
     }
   }
@@ -1651,7 +1658,7 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
 
   const isCurrentScopeRunning = Boolean(activeSessionId && activeRunsBySession.current[activeSessionId]);
   const currentPendingQueue = activeSessionId
-    ? (pendingQueueBySession[activeSessionId] ?? []).map((item) => ({
+    ? (pendingQueueBySession[activeSessionId] ?? []).filter((item) => item.adjustAcceptedAt === undefined).map((item) => ({
       id: item.id,
       content: item.visibleContent || item.rawContent,
       attachmentCount: item.attachments?.length,

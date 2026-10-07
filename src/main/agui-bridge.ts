@@ -644,7 +644,9 @@ export function registerAgUiIpc(
     // 插话轮询：把"插入当前运行下一步"的待发条目在模型请求边界提交并注入。
     // Chat 无工具链路是单请求运行，没有安全的下一步，不接轮询（IPC 侧同步拒绝）。
     // 数据库事务同时提交插话与队列变更，成功后才注入运行。
-    if (mode !== "chat") options.pollRunAdjustments = createRunAdjustmentPoller(sessionId, runId, chatsStore);
+    if (mode !== "chat") options.pollRunAdjustments = createRunAdjustmentPoller(
+      sessionId, runId, chatsStore, undefined, () => broadcastChatsChanged(),
+    );
     options.requestUserClarification = (card) => requestUserClarification(card, (cardData) => {
       send({ type: "CUSTOM", name: "cyrene.choice", value: cardData, threadId, runId });
     }, (settlement) => {
@@ -721,10 +723,12 @@ export function registerAgUiIpc(
     const endLifecycle = async (): Promise<void> => {
       if (lifecycleEnded) return;
       lifecycleEnded = true;
-      // 插话复位：运行终态（任何路径）后，已标记但未注入的条目清标记回普通队列。
-      // 必须先于会话守卫释放执行，让接续的新 run 从干净的普通队列消费。
+      // 已接受的插话入册但不自动重跑；旧版本仅标记的条目仍回普通队列。
+      // 先提交再释放守卫，确保下一次用户续跑能读到这些消息。
       try {
-        (await chatsStore.resetPendingAdjustByRun(sessionId, runId));
+        const reset = await chatsStore.resetPendingAdjustByRun(sessionId, runId);
+        if (!reset.ok) throw new Error(reset.error);
+        if (reset.reset > 0) broadcastChatsChanged();
       } catch (err) {
         console.warn("[AgUiBridge] 插话标记复位失败:", err);
       }
@@ -1029,6 +1033,8 @@ export function registerAgUiIpc(
         } catch (err) {
           console.warn("[AgUiBridge] 副作用失败（不影响结果）:", err);
         }
+        // 先保存未注入的已发送消息并释放守卫，再让渲染端处理终态及后续发送。
+        await endLifecycle();
         // runtime_error 已在 next 回调发过 RUN_ERROR，complete 不再补发终态事件。
         if (settlement?.status === "runtime_error") {
           pendingRunFinishedEvent = null;
@@ -1036,7 +1042,6 @@ export function registerAgUiIpc(
           send(pendingRunFinishedEvent);
           pendingRunFinishedEvent = null;
         }
-        endLifecycle();
         perf.dump();
       },
     });
@@ -1112,7 +1117,13 @@ export function registerAgUiIpc(
       return { ok: false, error: "no-safe-next-step", queue: (await chatsStore.getPendingMessages(sessionId)) ?? [] };
     }
     const result = (await chatsStore.markPendingAdjust(sessionId, messageId, active.runId));
-    if (result.ok) broadcastChatsChanged(event.sender);
+    if (result.ok) {
+      // 标记写盘期间运行可能已结束，补做终态入册，避免已显示的消息滞留在旧运行。
+      if (sessionActiveRuns.get(sessionId)?.runId !== active.runId) {
+        await chatsStore.resetPendingAdjustByRun(sessionId, active.runId);
+      }
+      broadcastChatsChanged(event.sender);
+    }
     return result;
   });
 }

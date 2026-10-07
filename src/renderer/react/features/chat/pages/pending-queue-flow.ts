@@ -10,6 +10,7 @@ import { t } from "../../../i18n";
 import type { ChatStoreApi, PendingClaimResult, PendingMutationResult } from "./chat-page-bridge";
 import type { AgentRunInput } from "./run/AgentRunController";
 import { evaluateClaimRecovery } from "./session-runtime-state";
+import { pendingAdjustmentUserMessage } from "../../../../../shared/pending-adjustment";
 
 /**
  * 待发队列流程宿主：页面注入的端口。队列的权威数据在主进程会话文件里，
@@ -88,6 +89,15 @@ export function createPendingQueueFlow(getHost: () => PendingQueueFlowHost): Pen
   const failedEnqueueIds = new Map<string, string>();
   /** 认领记录损坏（消息缺失）而暂停消费的会话：恢复需人工处理或重启后重新评估 */
   const pausedSessions = new Set<string>();
+
+  function publishQueue(sessionId: string, queue: PendingChatMessage[] | null): void {
+    const host = getHost();
+    host.replaceProjection(sessionId, queue);
+    const accepted = (queue ?? []).filter((item) => item.adjustAcceptedAt !== undefined)
+      .sort((left, right) => left.adjustAcceptedAt! - right.adjustAcceptedAt!)
+      .map((item): ChatMessageItem => ({ ...pendingAdjustmentUserMessage(item), role: "user" }));
+    if (accepted.length) host.appendMessages(sessionId, accepted);
+  }
 
   function rememberFailedEnqueue(key: string, id: string): void {
     failedEnqueueIds.set(key, id);
@@ -391,7 +401,7 @@ export function createPendingQueueFlow(getHost: () => PendingQueueFlowHost): Pen
       host.reportError(t("chatPage.errorPendingAdjustFailed", { error: errorKey }));
       return false;
     }
-    host.replaceProjection(sessionId, result.queue.map((item) => ({ ...item })));
+    publishQueue(sessionId, result.queue.map((item) => ({ ...item })));
     return true;
   }
 
@@ -406,7 +416,7 @@ export function createPendingQueueFlow(getHost: () => PendingQueueFlowHost): Pen
       console.warn("[pending-queue-flow] 读取待发队列失败，投影保持不变:", sessionId, error);
       return;
     }
-    host.replaceProjection(sessionId, queue === null ? null : queue.map((item) => ({ ...item })));
+    publishQueue(sessionId, queue === null ? null : queue.map((item) => ({ ...item })));
   }
 
   function handleRunFinished(input: { mode: ConversationMode; sessionId: string; queuePaused: boolean }): void {

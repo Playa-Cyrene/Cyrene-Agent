@@ -588,6 +588,11 @@
   box-shadow: none;
 }
 
+/* 插话后的过程沿用任务头，保留头像占位以对齐时间线。 */
+.cy-message--activity-continuation .ant-bubble-avatar {
+  visibility: hidden;
+}
+
 .cy-run-activity {
   width: 100%;
 }

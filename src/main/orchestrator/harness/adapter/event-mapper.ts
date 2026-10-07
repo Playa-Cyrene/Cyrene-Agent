@@ -16,6 +16,11 @@ export function sendHarnessEventAsAgui(
   send: (event: BaseEvent) => void,
 ): void {
   switch (event.type) {
+    case "run_adjustment": {
+      send({ type: EventType.CUSTOM, name: "cyrene.run.adjustment",
+        value: { messages: event.messages, assistantMessageId: event.assistantMessageId }, threadId, runId } as BaseEvent);
+      break;
+    }
     case "model_retry": {
       send({
         type: EventType.CUSTOM,

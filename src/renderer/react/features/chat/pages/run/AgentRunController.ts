@@ -87,6 +87,9 @@ export type PlanReviewUpdate =
  * 新增成员前优先考虑合并语义相近的通知。
  */
 export interface AgentRunHost {
+  /** 插话边界补用户消息与新的助手消息段；沿用当前 run。 */
+  appendMessages?(sessionId: string, messages: ChatMessageItem[]): void;
+  onAssistantSegment?(previousId: string, nextId: string): void;
   /** 消息视图补丁：流式内容、推理块、工具执行记录等全部经此写入。 */
   patchMessage(sessionId: string, messageId: string, patch: Partial<ChatMessageItem>): void;
   /** 展示 composer 交互卡（审批请求 / ask 选择卡）。 */
@@ -256,6 +259,8 @@ function normalizeModelRetryStatus(value: unknown): ModelRetryStatus | undefined
 export class AgentRunController {
   private readonly input: AgentRunInput;
   private readonly deps: AgentRunDeps;
+  /** 插话边界等待旧段渐显及检查点完成，后续事件仍按到达顺序处理。 */
+  private eventChain: Promise<void> | undefined;
 
   // —— 流式累积状态 ——
   private streamContent = "";
@@ -308,11 +313,12 @@ export class AgentRunController {
   private readonly activeReasoningStarts = new Map<string, number>();
   private currentReasoningId: string | undefined;
   private earlyTtsQueue: EarlyTtsPlaybackQueue | undefined;
+  private earlyTtsSplitMode: EarlyTtsSplitMode = "sentence";
   private resolveTerminal!: (error?: Error) => void;
   private readonly terminal: Promise<Error | undefined>;
 
   constructor(input: AgentRunInput, deps: AgentRunDeps) {
-    this.input = input;
+    this.input = { ...input };
     this.deps = deps;
     this.terminal = new Promise<Error | undefined>((resolve) => {
       this.resolveTerminal = resolve;
@@ -364,6 +370,7 @@ export class AgentRunController {
         general?.ttsEarlyReadSplitEnabled,
         general?.ttsEarlyReadSplitMode,
       );
+      this.earlyTtsSplitMode = splitMode;
       this.earlyTtsQueue = this.deps.host.earlyTts.start(
         this.input.targetMode,
         this.input.sessionId,
@@ -657,16 +664,17 @@ export class AgentRunController {
         return false;
       })
       .then(async () => {
-        const patch = buildPresentationCheckpointPatch(this.persistedCheckpoint, snapshot, status);
+        const previous = this.persistedCheckpoint?.id === snapshot.id ? this.persistedCheckpoint : undefined;
+        const patch = buildPresentationCheckpointPatch(previous, snapshot, status);
         if (!patch) {
           this.persistedCheckpoint = snapshot;
           return true;
         }
-        const mutationKey = `run:${this.input.assistantId}:${this.checkpointRunToken}:p${++this.checkpointMutationSequence}`;
+        const mutationKey = `run:${snapshot.id}:${this.checkpointRunToken}:p${++this.checkpointMutationSequence}`;
         try {
           const result = await this.deps.store!.checkpointPresentation(
             this.input.sessionId,
-            this.input.assistantId,
+            snapshot.id,
             mutationKey,
             patch,
           );
@@ -944,6 +952,7 @@ export class AgentRunController {
         };
       }
       this.activeReasoningStarts.clear();
+      this.updateActiveReasoningStart();
       this.runActivity = {
         ...(this.runActivity ?? { startedAt: completedAt, reasoningMs: 0 }),
         completedAt,
@@ -979,8 +988,94 @@ export class AgentRunController {
     void this.checkpointRun("running");
   }
 
+  private handleEvent(event: AguiEvent): void {
+    if (event.type === "CUSTOM" && event.name === "cyrene.run.adjustment") {
+      this.eventChain = (this.eventChain ?? Promise.resolve()).then(async () => {
+        await this.revealChain;
+        await this.beginAdjustmentSegment(event.value);
+      });
+    } else if (this.eventChain) {
+      this.eventChain = this.eventChain.then(() => this.reduceEvent(event));
+    } else this.reduceEvent(event);
+    // 展示处理异常不能让终态 promise 永久悬挂。
+    if (this.eventChain) this.eventChain = this.eventChain.catch((error) => {
+      this.resolveTerminal(error instanceof Error ? error : new Error(String(error)));
+    });
+  }
+
+  private async beginAdjustmentSegment(value: unknown): Promise<void> {
+    const adjustment = value as { messages?: unknown; assistantMessageId?: unknown } | null;
+    if (!adjustment || typeof adjustment.assistantMessageId !== "string" || !adjustment.assistantMessageId
+      || !Array.isArray(adjustment.messages) || !adjustment.messages.length
+      || adjustment.assistantMessageId === this.input.assistantId) return;
+    const users: ChatMessageItem[] = adjustment.messages.flatMap((entry) => {
+      const item = entry as { id?: unknown; rawContent?: unknown; userMessage?: ChatMessage } | null;
+      if (!item || typeof item.id !== "string" || typeof item.rawContent !== "string") return [];
+      const user = item.userMessage;
+      return [{ id: item.id, role: "user" as const, content: user?.content ?? item.rawContent,
+        ...(user?.sticker ? { sticker: user.sticker } : {}), ...(user?.at ? { at: user.at } : {}) }];
+    });
+    if (!users.length || !this.deps.host.appendMessages) return;
+    this.publishCandidateChunk(this.candidateRevealQueue.drain());
+    this.completeCandidateDrain();
+    this.commitPendingCandidateClassification();
+    this.closeRoundCandidateText();
+    this.publishCandidateChunk(this.candidateRevealQueue.drain());
+    this.completeCandidateDrain();
+    this.commitPendingCandidateClassification();
+    this.cancelCandidateFrame();
+    this.resetCandidateState();
+    this.completeRunActivity();
+    this.deps.host.patchMessage(this.input.sessionId, this.input.assistantId, {
+      loading: false, waitingForFirstEvent: false, streaming: false, reasoningStreaming: false,
+      transientText: undefined, runStage: { kind: "completed" },
+    });
+    // 封存插话前的内容，但保留整个运行的起点和累计推理时间。
+    // 先捕获旧消息检查点，再同步追加后续片段，避免界面短暂显示为已完成。
+    const previousCheckpoint = this.checkpointRun("terminal", true);
+    if (this.runActivity) {
+      const { completedAt: _completedAt, keepExpanded: _keepExpanded, ...ongoing } = this.runActivity;
+      this.runActivity = ongoing;
+    }
+    this.earlyTtsQueue?.cancel();
+    const previousId = this.input.assistantId;
+    this.input.assistantId = adjustment.assistantMessageId;
+    this.streamContent = "";
+    this.reasoningContent = "";
+    this.reasoningBlocks = [];
+    this.processMessages = [];
+    this.agentRounds = [];
+    this.taskDelegations = [];
+    this.activeRoundId = undefined;
+    this.processMessageSequence = 0;
+    this.eventSequence = 0;
+    this.finalMessageCompleted = false;
+    this.currentReasoningId = undefined;
+    this.persistedFinalContent = "";
+    this.toolExecutions = [];
+    this.emailDraftCards = [];
+    this.generatedImageAttachments = [];
+    this.sticker = null;
+    this.assistantAt = Date.now();
+    const active = this.deps.registries.activeRuns.current[this.input.sessionId];
+    this.deps.registries.activeRuns.current = { ...this.deps.registries.activeRuns.current,
+      [this.input.sessionId]: { ...(active ?? { mode: this.input.targetMode }), assistantId: this.input.assistantId } };
+    this.deps.host.appendMessages(this.input.sessionId, [...users, {
+      id: this.input.assistantId, role: "assistant", content: "", loading: true,
+      waitingForFirstEvent: true, streaming: false, responseStarted: false, runId: active?.runId,
+      runActivity: this.runActivity ? { ...this.runActivity } : undefined,
+      runStage: { kind: "understanding" },
+    }]);
+    this.deps.host.onAssistantSegment?.(previousId, this.input.assistantId);
+    this.earlyTtsQueue = this.deps.host.earlyTts.start(
+      this.input.targetMode, this.input.sessionId, this.input.assistantId, this.earlyTtsSplitMode,
+    );
+    await previousCheckpoint;
+    await this.checkpointRun("running", true);
+  }
+
   /** AG-UI 事件归约：流式内容、推理、工具、交互卡与终态全部在此处理。 */
-  private handleEvent(event: AguiEvent) {
+  private reduceEvent(event: AguiEvent) {
     if (event.type === "CUSTOM" && event.name === "cyrene.mail_draft_card") {
       const card = normalizeMailDraftCardData((event.value as { card?: unknown } | null | undefined)?.card);
       if (!card) return;
