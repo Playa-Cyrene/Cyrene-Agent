@@ -310,6 +310,8 @@ export interface HarnessInput {
   requestUserClarification?: (card: unknown) => Promise<unknown>;
   /** 是否向模型公布并允许 Ask/不确定副作用确认工具；默认 true。 */
   includeInteractiveTools?: boolean;
+  /** 可选的运行层工具白名单；子任务据此限制模型清单与执行入口。 */
+  allowedBuiltinToolIds?: ReadonlySet<string>;
   /** 计划模式状态；控制计划工具组可见性（undefined = 不注入计划工具，兼容旧调用方/子任务）。 */
   planState?: import("../plan-mode").PlanStateName;
   /** 工具上下文（权限检查等） */

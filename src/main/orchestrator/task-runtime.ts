@@ -1,14 +1,14 @@
 import { DEFAULT_TASK_MAX_PARALLEL_TOOL_CALLS, type TaskAccessMode, type TaskSession, type TaskSessionStatus, type TaskSubagentType, type TaskTraceRecord } from "../../shared/task-session";
 import { TaskSessionStore } from "../tasks/task-session-store";
 import { projectTaskTraceEvent } from "./task-events";
-import { getTaskAgentProfile, resolveTaskTools } from "./task-profiles";
+import { getTaskAgentProfile, resolveTaskTools, TASK_BUILTIN_TOOL_IDS } from "./task-profiles";
 import { runCyreneHarness } from "./harness/cyrene-harness";
 import type { HarnessInput, HarnessResult } from "./harness/types";
 import { getHarnessRunStore } from "./harness/run-store";
 import { getConversationTranscriptStore } from "./conversation-transcript-store";
 import { createTranscriptSink } from "./transcript-sink";
 import { projectTaskTodoItems, projectTaskTranscriptMessages } from "./task-transcript-projection";
-import type { ToolDefinition } from "./tools/registry/tool-registry";
+import { resolveEffectKind, type ToolDefinition } from "./tools/registry/tool-registry";
 import type { VendorConfig, ChatMessage } from "./vendors/types";
 import type { ToolContext } from "./tools/registry/tool-context";
 import { taskCharacterLeasePool, type TaskCharacterLeasePool } from "../tasks/task-character-pool";
@@ -19,6 +19,10 @@ import type { TaskDelegationPresentation } from "../../shared/task-session";
 import type { RunCapabilities } from "./run-capabilities";
 import type { PromptLayers } from "./prompt-layers";
 import type { ToolOutputStore } from "./harness/tool-output/tool-output-store";
+import type { SkillEntry } from "../skills/types";
+import { buildSkillCatalog } from "../skills/skill-catalog";
+import { ACCESS_LEVEL_LABEL } from "../permission";
+import { getFileAccessLevel } from "./tools/file-access";
 
 const TASK_TRACE_CHECKPOINT_INTERVAL_MS = 500;
 const TASK_TRACE_LIMIT = 2_000;
@@ -100,6 +104,7 @@ export function buildChildPromptLayers(
   parent: TaskRuntimeParentContext,
   profilePrompt: string,
   accessMode: TaskAccessMode = "write",
+  skills: readonly SkillEntry[] = [],
 ): PromptLayers {
   const workspace = parent.resolvedWorkspaceRoot
     ? `可信工作目录：${parent.resolvedWorkspaceRoot}`
@@ -109,9 +114,13 @@ export function buildChildPromptLayers(
       profilePrompt,
       accessMode === "read_only"
         ? "本任务处于只读模式：只检查和读取信息，不修改文件、仓库或外部状态。你可用的工具也已按只读能力限制。"
-        : "本任务允许按指令执行写入；若同一轮存在并行委派，只读子任务可并行，写入子任务会排队串行执行。",
-    ].join("\n"),
-    sessionPrefix: `${workspace}\n会话模式：${parent.mode}`,
+        : "本任务可在主代理当前权限允许的范围内按指令写入；并行委派时，只读子任务可并行，写入子任务排队串行执行。",
+      "专用能力由主代理协调；若缺少完成任务所需的工具，请在结果中说明。技能只提供执行指令，实际操作以可用工具和权限为准。",
+      buildSkillCatalog(skills.map((skill) => ({ ...skill, manifest: undefined,
+        description: skill.description.split(/\r?\n/)[0].slice(0, 240) }))),
+    ].filter(Boolean).join("\n\n"),
+    sessionPrefix: `${workspace}\n会话模式：${parent.mode}\n当前文件权限：${ACCESS_LEVEL_LABEL[getFileAccessLevel(parent)]}。`
+      + "工作目录用于解析相对路径；绝对路径能否访问由主代理当前权限决定。仅项目只读限制在工作区内，普通只读可读取外部路径，审批档位按操作审批，完全访问允许外部读写。执行时跟随最新权限。",
     mode: parent.mode,
   };
 }
@@ -239,15 +248,24 @@ export function createTaskExecutor(input: {
       throw error;
     }
 
+    const accessMode = request.accessMode ?? "write";
+    const taskTools = resolveTaskTools(profile, input.parent.tools, accessMode);
+    const taskToolIds = new Set(taskTools.map((tool) => tool.id));
+    const taskSkills = taskToolIds.has("invoke_skill")
+      ? (input.parent.capabilities?.skills ?? []).filter((skill) => skill.enabled
+        && (!input.parent.capabilities || input.parent.capabilities.skillIds.has(skill.id))
+        && (skill.tools ?? []).every((toolId) => taskToolIds.has(toolId)))
+      : [];
     const toolContext: ToolContext = {
       userQuery: request.prompt,
-      conversationId: input.parent.parentConversationId,
+      conversationId: session.id,
       runId: session.childRunId,
       signal: input.parent.signal,
       resolvedWorkspaceRoot: input.parent.resolvedWorkspaceRoot,
       mode: input.parent.mode,
-      allowedSkillIds: input.parent.capabilities?.skillIds,
+      allowedSkillIds: new Set(taskSkills.map((skill) => skill.id)),
       permissionMode: input.parent.permissionMode,
+      readOnly: accessMode === "read_only",
     };
 
     const presentation = {
@@ -287,7 +305,7 @@ export function createTaskExecutor(input: {
 
     try {
       const combinedTaskPrompt = buildCharacterTaskPrompt(request.companionId);
-      const promptLayers = buildChildPromptLayers(input.parent, combinedTaskPrompt, request.accessMode ?? "write");
+      const promptLayers = buildChildPromptLayers(input.parent, combinedTaskPrompt, accessMode, taskSkills);
       const taskModel = resolveTaskModel(input.parent.vendorConfig);
       let activeRoundId: string | undefined;
       // entryId 由 (runId, 协议点) 确定性生成：resume 产生新 childRunId，重试不会写重复条目。
@@ -300,10 +318,12 @@ export function createTaskExecutor(input: {
           })
         : undefined;
       const result = await runHarness({
+        runId: session.childRunId,
+        assistantTurnId: `${session.childRunId}:assistant`,
         systemPrompt: promptLayers.stablePrefix,
         promptLayers,
         messages: (transcriptHistory ?? session.messages) as ChatMessage[],
-        tools: resolveTaskTools(profile, input.parent.tools, request.accessMode ?? "write"),
+        tools: taskTools,
         vendorConfig: taskModel.vendorConfig,
         config: {
           totalTimeoutMs: profile.timeoutMs,
@@ -318,8 +338,13 @@ export function createTaskExecutor(input: {
         signal: input.parent.signal,
         toolContext,
         toolOutputStore: input.parent.toolOutputStore,
-        checkPermission: input.parent.checkPermission,
-        includeInteractiveTools: input.parent.includeInteractiveTools,
+        checkPermission: async (toolId, args) => {
+          const tool = taskTools.find((candidate) => candidate.id === toolId);
+          if (!tool || (accessMode === "read_only" && resolveEffectKind(tool, args) !== "read")) return false;
+          return input.parent.checkPermission ? input.parent.checkPermission(toolId, args) : true;
+        },
+        includeInteractiveTools: false,
+        allowedBuiltinToolIds: TASK_BUILTIN_TOOL_IDS,
         onEvent: (event) => {
           if (event.type === "round_start") activeRoundId = event.roundId;
           const trace = projectTaskTraceEvent(event);

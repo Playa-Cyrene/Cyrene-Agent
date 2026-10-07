@@ -14,6 +14,7 @@ import { app } from "electron";
 import { toolRegistry } from "./registry/tool-registry";
 import { buildReplacedDiff, countLines, finalizeFileChanges } from "./registry/tool-evidence";
 import { applyStrReplaceEdits } from "./str-replace-core";
+import { resolveFileAccessPath } from "./file-access";
 import { currentUserTimezone } from "./built-in-tools";
 import { resolveTimeoutPolicy } from "../../runtime-policy";
 import { getDateLocale } from "../../locale-context";
@@ -360,8 +361,11 @@ function registerStrReplaceTool(): void {
       required: ["file_path"],
     },
     execute: async (args, ctx?) => {
-      const filePath = String(args.file_path || "");
+      let filePath = String(args.file_path || "");
       if (!filePath) return JSON.stringify({ success: false, errorCode: "INVALID_PATH", error: "file_path 不能为空", retryable: false });
+      const access = resolveFileAccessPath(path.resolve(ctx?.resolvedWorkspaceRoot ?? process.cwd(), filePath), "write", ctx);
+      if (!access.ok) return JSON.stringify({ success: false, errorCode: "PERMISSION_DENIED", category: "permission_denied", error: access.message, retryable: false });
+      filePath = access.path;
       if (!fs.existsSync(filePath)) {
         return JSON.stringify({
           success: false,

@@ -328,6 +328,7 @@ function createRun(input: HarnessInput): HarnessRun {
     ...registryToolSpecs,
     ...getHarnessBuiltinToolSpecs({
       includeInteractive: input.includeInteractiveTools,
+      allowedToolIds: input.allowedBuiltinToolIds,
       includeTask: Boolean(input.taskExecutor),
       includeCloseTask: Boolean(input.closeTaskExecutor),
       openTaskCompanions: input.openTaskCompanions,
@@ -397,6 +398,7 @@ function createRun(input: HarnessInput): HarnessRun {
     onEvent: input.onEvent,
     requestUserClarification: input.requestUserClarification,
     includeInteractiveTools: input.includeInteractiveTools,
+    allowedBuiltinToolIds: input.allowedBuiltinToolIds,
     signal: input.signal,
     toolOutputStore: input.toolOutputStore,
     toolContext: input.toolContext,
@@ -483,6 +485,7 @@ function refreshRunTools(run: HarnessRun): void {
     })),
     ...getHarnessBuiltinToolSpecs({
       includeInteractive: run.input.includeInteractiveTools,
+      allowedToolIds: run.input.allowedBuiltinToolIds,
       includeTask: Boolean(run.input.taskExecutor),
       includeCloseTask: Boolean(run.input.closeTaskExecutor),
       openTaskCompanions: run.input.openTaskCompanions,

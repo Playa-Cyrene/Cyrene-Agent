@@ -14,6 +14,7 @@ import { logger, LogTag } from "../../logger";
 import { ToolExecutionError } from "./registry/tool-execution-error";
 import { app } from "electron";
 import { getRunReviewTracker } from "../review/run-review-tracker";
+import { resolveFileAccessPath } from "./file-access";
 
 const LOG_PREFIX = "[FsTools]";
 
@@ -43,13 +44,16 @@ function humanBytes(n: number): string {
 
 // ── 工具 1：read_file ─────────────────────────────────────
 
-async function executeReadFile(args: Record<string, unknown>): Promise<string> {
+async function executeReadFile(args: Record<string, unknown>, ctx?: ToolContext): Promise<string> {
   const raw = String(args.path || "").trim();
-  const filePath = ensureAbsolute(raw);
+  let filePath = ensureAbsolute(raw);
   if (!filePath) {
     console.log(LOG_PREFIX, "read_file 非绝对路径:", raw, "cwd=", process.cwd());
     return JSON.stringify({ success: false, errorCode: "INVALID_PATH", error: "path 必须是绝对路径: " + raw, retryable: false });
   }
+  const access = resolveFileAccessPath(filePath, "read", ctx);
+  if (!access.ok) return JSON.stringify({ success: false, errorCode: "PERMISSION_DENIED", category: "permission_denied", error: access.message, retryable: false });
+  filePath = access.path;
 
   const stat = safeStat(filePath);
   if (!stat) {
@@ -168,6 +172,7 @@ toolRegistry.register({
   modes: ["chat", "learn", "code", "work"],
   chatBuiltin: true,
   requiresFileAttachments: true,
+  needsContext: true,
   effectKind: "read" as const,
   // 只读同步文件读取；不会改工作区或 Harness 父状态。
   isConcurrencySafe: () => true,
@@ -186,10 +191,13 @@ toolRegistry.register({
 
 // ── 工具 2：list_dir ──────────────────────────────────────
 
-async function executeListDir(args: Record<string, unknown>): Promise<string> {
+async function executeListDir(args: Record<string, unknown>, ctx?: ToolContext): Promise<string> {
   const raw = String(args.path || "").trim();
-  const dirPath = ensureAbsolute(raw);
+  let dirPath = ensureAbsolute(raw);
   if (!dirPath) return "[错误] path 必须是绝对路径";
+  const access = resolveFileAccessPath(dirPath, "read", ctx);
+  if (!access.ok) return "[拒绝] " + access.message;
+  dirPath = access.path;
 
   const stat = safeStat(dirPath);
   if (!stat) return "[错误] 目录不存在或无法访问: " + dirPath;
@@ -269,6 +277,7 @@ toolRegistry.register({
     "- 用户给了完整文件路径 → 直接 read_file\n\n" +
     "参数：path (必填，绝对路径)，showHidden (可选，是否显示以 . 开头的隐藏项，默认 false)。",
   enabled: true,
+  needsContext: true,
   risk: "fs-read",
   modes: ["learn", "code", "work"],
   effectKind: "read" as const,
@@ -308,7 +317,7 @@ function resolveWritePath(rawPath: string, workspaceRoot?: string): string | nul
 
 async function executeWriteFile(args: Record<string, unknown>, ctx?: ToolContext): Promise<string> {
   const raw = String(args.path || "").trim();
-  const filePath = resolveWritePath(raw, ctx?.resolvedWorkspaceRoot);
+  let filePath = resolveWritePath(raw, ctx?.resolvedWorkspaceRoot);
   if (!filePath) {
     throw new ToolExecutionError(
       "E_PATH_NOT_ABSOLUTE",
@@ -316,6 +325,9 @@ async function executeWriteFile(args: Record<string, unknown>, ctx?: ToolContext
       "invalid_arguments",
     );
   }
+  const access = resolveFileAccessPath(filePath, "write", ctx);
+  if (!access.ok) throw new ToolExecutionError("E_FILE_ACCESS_DENIED", access.message, "permission_denied");
+  filePath = access.path;
 
   const content = typeof args.content === "string" ? args.content : "";
   const append = args.append === true;
@@ -494,6 +506,7 @@ toolRegistry.register({
     "绑定项目时落到项目根目录，未绑定时落到桌面。\n" +
     "参数：path，content (要写的字符串)，append (可选，true=追加，默认 false=覆盖)，createDirs (可选，默认 true)。",
   enabled: true,
+  needsContext: true,
   risk: "fs-write",
   modes: ["learn", "code", "work"],
   effectKind: "mutation" as const,
@@ -529,8 +542,11 @@ async function executeReadImage(
   ctx?: ToolContext,
 ): Promise<string> {
   const raw = String(args.path || "").trim();
-  const filePath = ensureAbsolute(raw);
+  let filePath = ensureAbsolute(raw);
   if (!filePath) return "[错误] path 必须是绝对路径";
+  const access = resolveFileAccessPath(filePath, "read", ctx);
+  if (!access.ok) return "[拒绝] " + access.message;
+  filePath = access.path;
 
   const stat = safeStat(filePath);
   if (!stat) return "[错误] 文件不存在或无法访问: " + filePath;

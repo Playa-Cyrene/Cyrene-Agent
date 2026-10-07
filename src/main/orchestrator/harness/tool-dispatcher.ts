@@ -145,6 +145,7 @@ export interface ToolDispatchContext {
   onEvent?: (event: HarnessEvent) => void;
   requestUserClarification?: (card: unknown) => Promise<unknown>;
   includeInteractiveTools?: boolean;
+  allowedBuiltinToolIds?: ReadonlySet<string>;
   signal?: AbortSignal;
   checkPermission?: (toolId: string, args: Record<string, unknown>) => Promise<boolean>;
   toolContext?: import("../tools/registry/tool-context").ToolContext;
@@ -207,6 +208,9 @@ export async function dispatchToolCall(
 
   // ── 内置工具 ──
   if (isHarnessBuiltin(call.name)) {
+    if (ctx.allowedBuiltinToolIds && !ctx.allowedBuiltinToolIds.has(call.name)) {
+      return { outcome: "failure", category: "not_found", tool: call.name, message: "当前子任务未开放此工具。" };
+    }
     if (ctx.includeInteractiveTools === false && isInteractiveHarnessBuiltin(call.name)) {
       return {
         outcome: "failure",

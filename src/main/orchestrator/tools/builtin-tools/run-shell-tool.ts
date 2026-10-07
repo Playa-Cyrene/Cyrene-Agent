@@ -9,11 +9,13 @@
 // 门禁见 built-in-tools.snapshot.test.ts）。
 
 import { spawn } from "child_process";
+import * as path from "node:path";
+import * as fs from "node:fs";
 import type { ToolDefinition } from "../registry/tool-registry";
 import type { ShellOutputUpdate } from "../registry/tool-context";
 import { SHELL_VISIBLE_OUTPUT_LIMIT } from "../../../../shared/shell-output";
 import { wrapWithSandbox, type SandboxWrapOutcome } from "../../sandbox/sandbox-exec";
-import { getCurrentLevel } from "../../../permission";
+import { getFileAccessLevel, resolveFileAccessPath } from "../file-access";
 import { classifyShellEffect, isCatastrophicCommand, type ShellEffect } from "../../shell-execution-policy";
 import { logger, LogTag } from "../../../logger";
 import {
@@ -205,6 +207,7 @@ async function resolveExecutionPlan(
   requestedShell: ShellKind,
   resolvedShell: ResolvedShellExecutable,
   requiresSandbox: boolean,
+  trustedWorkspaceRoot?: string,
 ): Promise<ExecutionPlan> {
   const base = { command, cwd, requestedShell };
   let outcome: SandboxWrapOutcome;
@@ -213,6 +216,7 @@ async function resolveExecutionPlan(
       command,
       cwd,
       requestedShell === "bash" ? resolvedShell.executable : undefined,
+      trustedWorkspaceRoot,
     );
   } catch (err) {
     // 契约上 wrapWithSandbox 永不抛错；此处兜底防止 API 破约重新打开 fail-open 缺口
@@ -486,7 +490,9 @@ function executePlan(
 
 async function executeRunShell(args: Record<string, unknown>, context?: import("../registry/tool-context").ToolContext): Promise<string> {
   const command = String(args.command || "").trim();
-  const cwd = args.cwd ? String(args.cwd) : undefined;
+  let cwd = args.cwd
+    ? path.resolve(context?.resolvedWorkspaceRoot ?? process.cwd(), String(args.cwd))
+    : context?.resolvedWorkspaceRoot;
   // timeout_ms 显式 deadline：钳制 + 禁用 idle 检测（解析规则见 resolveTimeoutPolicy）
   const timeoutPolicy = resolveTimeoutPolicy(args.timeout_ms);
   if (timeoutPolicy.explicitDeadline) {
@@ -516,8 +522,25 @@ async function executeRunShell(args: Record<string, unknown>, context?: import("
     });
   }
 
-  const level = context?.permissionMode === "allow_all" ? "full" : getCurrentLevel();
+  const level = getFileAccessLevel(context);
   const effect: ShellEffect = classifyShellEffect(command);
+  if (cwd) {
+    const access = resolveFileAccessPath(cwd, "read", context);
+    if (!access.ok) {
+      return JSON.stringify({
+        success: false, errorCode: "PERMISSION_DENIED", category: "permission_denied",
+        command, cwd, shell: requestedShell, exitCode: -1, timedOut: false,
+        captureTruncated: false, effect, sandboxed: false, stderr: `[拒绝] ${access.message}`, stdout: "",
+      });
+    }
+    cwd = access.path;
+    try {
+      if (!fs.statSync(cwd).isDirectory()) throw new Error("不是目录");
+    } catch {
+      return JSON.stringify({ success: false, errorCode: "INVALID_CWD", category: "invalid_arguments",
+        error: `工作目录不存在或无法访问：${cwd}` });
+    }
+  }
   logger.info(LogTag.BuiltinTools, `[run_shell] entry: command="${command}" cwd=${cwd || "(undefined)"} effect=${effect} level=${level}`);
 
   // 解释器前置解析：直跑和沙箱包装都需要（bash 不可用在此提前返回，不进入执行计划）
@@ -538,7 +561,7 @@ async function executeRunShell(args: Record<string, unknown>, context?: import("
   if (args.run_in_background === true || args.run_in_background === "true") {
     const plan: ExecutionPlan = level === "full"
       ? { kind: "direct", command, cwd, requestedShell }
-      : await resolveExecutionPlan(command, cwd, requestedShell, resolvedShell, requiresSandbox);
+      : await resolveExecutionPlan(command, cwd, requestedShell, resolvedShell, requiresSandbox, context?.resolvedWorkspaceRoot);
     if (plan.kind === "rejected") {
       // 与前台一致的拒绝协议：spawn 从未被调用，stdout 必然为空
       return JSON.stringify({
@@ -587,7 +610,7 @@ async function executeRunShell(args: Record<string, unknown>, context?: import("
   // - read  → 仅当"用户显式无沙箱"（reason: disabled）时允许 direct 降级
   // - write/unknown → 必须 wrap 成功，否则 rejected（fail-closed，不执行）
   // （requiresSandbox 已在后台分支前声明，此处复用）
-  const plan = await resolveExecutionPlan(command, cwd, requestedShell, resolvedShell, requiresSandbox);
+  const plan = await resolveExecutionPlan(command, cwd, requestedShell, resolvedShell, requiresSandbox, context?.resolvedWorkspaceRoot);
 
   if (plan.kind === "rejected") {
     // 到达这里时 spawn 从未被调用——命令没有执行过，stdout 必然为空
@@ -615,6 +638,7 @@ async function executeRunShell(args: Record<string, unknown>, context?: import("
 
 export const runShellTool: ToolDefinition = {
   id: "run_shell",
+  needsContext: true,
   name: "执行命令",
   description:
     "在用户电脑上执行一条 Shell 命令字符串。默认由 cmd.exe 解析；需要类 Unix 语法时可显式选择 bash。返回 exitCode + stdout + stderr。\n\n" +

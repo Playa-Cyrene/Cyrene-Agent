@@ -19,7 +19,7 @@ export interface SkillEntry {
   enabled: boolean;      // 运行时状态，持久化到 settings.json
   source: "builtin" | "user";  // 来源
   manifest?: SkillManifest;
-  /** Skill 声明的工具效果类型。未声明时 invoke_skill 会被 ExecutionPolicyGuard 拒绝。 */
+  /** Skill 声明的工作流效果类型；加载指令本身只读，实际操作由各工具检查权限。 */
   effectKind?: ToolEffectKind;
   /** Skill 默认可用的会话模式白名单。未设置 = 全模式通用（向后兼容）。
    *  仅 work/code/learn 参与过滤；可被 SkillModeOverrides 覆盖。 */

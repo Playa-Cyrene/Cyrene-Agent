@@ -37,6 +37,7 @@ export const taskToolSpec: ToolSpec = {
     "委托一个需要独立上下文、多步执行的前台子任务。",
     "何时用：多个互不依赖的调查方向可以并行；较大目录或多个模块的独立审查；有明确交付物的专项任务。",
     "何时不用：一句话能回答的；只需一次工具调用的。",
+    "子任务只开放命令、文件查找/搜索/读写/编辑和技能加载；search 类型额外开放当前联网搜索后端与网页读取。专用业务工具由主代理执行。文件范围跟随主代理当前权限，工作区是默认操作目录。",
     "访问模式：access_mode=read_only 仅用于完全不修改文件、仓库或外部状态的任务；运行时会移除所有非只读工具。需要任何写入或不确定时必须用 write；只读子任务可并行，write 子任务会排队串行执行。",
     `子任务工具并发：可选 max_parallel_tool_calls，范围 1–${MAX_PARALLEL_TOOL_CALLS}，默认 ${DEFAULT_TASK_MAX_PARALLEL_TOOL_CALLS}；只影响此子任务内部，不影响主 Agent 或其他子任务。仅在有足够多互不依赖的安全操作时提高。`,
     buildGoldenDescendantsPrompt(),
@@ -737,6 +738,7 @@ export function getHarnessBuiltinToolSpecs(options?: {
   includeInteractive?: boolean;
   includeTask?: boolean;
   includeCloseTask?: boolean;
+  allowedToolIds?: ReadonlySet<string>;
   openTaskCompanions?: readonly string[];
   planState?: import("../plan-mode").PlanStateName;
 }): ToolSpec[] {
@@ -754,5 +756,6 @@ export function getHarnessBuiltinToolSpecs(options?: {
     ? []
     : [taskSpec, ...(options?.includeCloseTask ? [closeTaskToolSpec] : [])];
   const plan = planToolSpecsFor(options?.planState);
-  return [updateTodoToolSpec, ...interactive, ...task, readToolResultToolSpec, ...plan];
+  return [updateTodoToolSpec, ...interactive, ...task, readToolResultToolSpec, ...plan]
+    .filter((tool) => !options?.allowedToolIds || options.allowedToolIds.has(tool.name));
 }

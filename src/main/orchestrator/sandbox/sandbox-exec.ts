@@ -158,17 +158,20 @@ export function resolveSandboxSessionFilesystem(level: AgentFileAccessLevel, wor
 
 function buildSandboxConfig(level: AgentFileAccessLevel, workspaceRoot: string): SrtModule["SandboxRuntimeConfig"] {
   // 确保 allowWrite 目录存在（ACL grant 依赖）
-  try {
-    fs.mkdirSync(workspaceRoot, { recursive: true });
-  } catch (err) {
-    logger.warn(LogTag.Runtime, `[Sandbox] mkdir workspace root failed: ${workspaceRoot}`, err);
+  const filesystem = resolveSandboxSessionFilesystem(level, workspaceRoot);
+  for (const writableRoot of filesystem.allowWrite) {
+    try {
+      fs.mkdirSync(writableRoot, { recursive: true });
+    } catch (err) {
+      logger.warn(LogTag.Runtime, `[Sandbox] mkdir workspace root failed: ${writableRoot}`, err);
+    }
   }
   return {
     network: {
       allowedDomains: [],
       deniedDomains: [],
     },
-    filesystem: resolveSandboxSessionFilesystem(level, workspaceRoot),
+    filesystem,
     windows: {
       srtWin: { path: srtWinExePath ?? srtModule.VENDORED_SRT_WIN_EXE },
     },
@@ -181,7 +184,8 @@ function buildSandboxConfig(level: AgentFileAccessLevel, workspaceRoot: string):
  */
 async function initSandboxManager(level: AgentFileAccessLevel, cwd: string): Promise<void> {
   if (!srtModule) throw new Error("SRT module not loaded");
-  const workspaceRoot = level === "project-read-only" ? detectProjectRoot(cwd) : path.resolve(cwd);
+  // ensureSandboxReady 已确定可信根目录；这里不能再向上推断项目扩大范围。
+  const workspaceRoot = path.resolve(cwd);
   const config = buildSandboxConfig(level, workspaceRoot);
   logger.info(LogTag.Runtime, `[Sandbox] initSandboxManager: cwd=${cwd} allowWrite=${config.filesystem.allowWrite.join(",")} srtWin=${config.windows.srtWin.path}`);
   await srtModule.SandboxManager.initialize(config);
@@ -260,13 +264,15 @@ export function isSandboxReady(): boolean {
  *
  * UAC 取消不算错误（用户可能只是这次不想装），下次还会再试。
  */
-export async function ensureSandboxReady(cwd: string = process.cwd()): Promise<boolean> {
+export async function ensureSandboxReady(cwd: string = process.cwd(), trustedWorkspaceRoot?: string): Promise<boolean> {
   if (sandboxDisabled || !isWindows()) {
     logger.info(LogTag.Runtime, `[Sandbox] ensureSandboxReady: skip (sandboxDisabled=${sandboxDisabled} isWindows=${isWindows()})`);
     return false;
   }
   const level = getCurrentLevel();
-  const workspaceRoot = level === "project-read-only" ? detectProjectRoot(cwd) : path.resolve(cwd);
+  const workspaceRoot = trustedWorkspaceRoot
+    ? fs.realpathSync.native(trustedWorkspaceRoot)
+    : level === "project-read-only" ? detectProjectRoot(cwd) : path.resolve(cwd);
   const desiredSessionKey = JSON.stringify({ level, workspaceRoot });
   if (sandboxReady && sandboxSessionKey === desiredSessionKey) {
     logger.info(LogTag.Runtime, "[Sandbox] ensureSandboxReady: already ready");
@@ -348,7 +354,7 @@ export type SandboxWrapOutcome =
  *          调用方据此决定 fail-closed 还是降级（见 run-shell-tool.ts 的 ExecutionPlan）
  *
  * 流程：
- * 1. 沙箱未就绪 → 先 ensureSandboxReady(cwd)（可能弹 UAC，失败返回 not_ready）
+ * 1. 沙箱未就绪 → 用可信工作区初始化权限，cwd 只决定命令执行位置（失败返回 not_ready）
  * 2. 调 wrapWithSandboxArgv(command, binShell, customConfig, undefined, cwd)
  *    工作区读写权限已在初始化阶段授予；customConfig 仅承载本次命令的 deny 规则
  */
@@ -356,6 +362,7 @@ export async function wrapWithSandbox(
   command: string,
   cwd?: string,
   binShell?: string,
+  trustedWorkspaceRoot?: string,
 ): Promise<SandboxWrapOutcome> {
   const level = getCurrentLevel();
   logger.info(LogTag.Runtime, `[Sandbox] wrapWithSandbox: command="${command}" cwd=${cwd || "(undefined)"} level=${level}`);
@@ -372,7 +379,7 @@ export async function wrapWithSandbox(
   }
 
   const resolvedCwd = cwd || process.cwd();
-  const ready = await ensureSandboxReady(resolvedCwd);
+  const ready = await ensureSandboxReady(resolvedCwd, trustedWorkspaceRoot);
   if (!ready || !srtModule) {
     logger.info(LogTag.Runtime, `[Sandbox] wrapWithSandbox: sandbox not ready (ready=${ready} srtModule=${!!srtModule}), returning not_ready`);
     return { ok: false, reason: "not_ready", detail: `ready=${ready} srtModule=${!!srtModule}` };
@@ -380,13 +387,6 @@ export async function wrapWithSandbox(
 
   try {
     logger.info(LogTag.Runtime, `[Sandbox] wrapWithSandbox: command="${command}" resolvedCwd=${resolvedCwd}`);
-
-    // 确保 cwd 存在（ACL grant 依赖；mkdirSync recursive 是幂等的）
-    try {
-      fs.mkdirSync(resolvedCwd, { recursive: true });
-    } catch (err) {
-      logger.warn(LogTag.Runtime, `[Sandbox] wrapWithSandbox: mkdir cwd failed: ${resolvedCwd}`, err);
-    }
 
     // per-call customConfig：按当前权限档位选 fs 配置
     const customConfig = buildFilesystemConfigForLevel(resolvedCwd);
