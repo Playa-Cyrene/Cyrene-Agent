@@ -20,6 +20,7 @@ export function prepareModelCall(input: {
   onStreamActivity?: () => void;
   onHistoryDiagnostic?: (diagnostic: HistoryProjectionDiagnostic) => void;
   onRequest?: (traceId: string) => void;
+  onRefusal?: (reason: string) => void;
 }) {
   const { adapter, config, request } = input;
   const imageGeneration = request.imageGeneration?.enabled ? request.imageGeneration : undefined;
@@ -60,7 +61,9 @@ export function prepareModelCall(input: {
     input.onRequest?.(hasEmailTools ? "" : dumpRequest({ transport: adapter.transport, endpoint: policyHttp.url, body }));
     const headers = new Headers(original.headers);
     for (const [name, value] of Object.entries(policyHttp.headers)) headers.set(name, value);
-    return delegate(policyHttp.url, { method: "POST", headers, body: JSON.stringify(body), signal: original.signal });
+    const response = await delegate(policyHttp.url, { method: "POST", headers, body: JSON.stringify(body), signal: original.signal });
+    return adapter.transport === "responses" && !input.stream
+      ? preserveResponsesRefusal(response, input.onRefusal) : response;
   };
   const baseURL = new URL(policyHttp.url).origin;
   const origin = modelMessageOrigin(adapter, { ...config, model: request.model });
@@ -100,6 +103,37 @@ export function prepareModelCall(input: {
       store: false, ...(policy.include ? { include: policy.include as string[] } : {}),
     } } : undefined,
   };
+}
+
+/** 当前 SDK 的 Responses 非流式 schema 不接受 refusal 块；保留拒答标记后交回 SDK 校验其余响应。 */
+async function preserveResponsesRefusal(response: Response, onRefusal?: (reason: string) => void): Promise<Response> {
+  if (!response.ok || !onRefusal) return response;
+  let body: Record<string, unknown>;
+  try {
+    const value: unknown = await response.clone().json();
+    if (!value || typeof value !== "object" || Array.isArray(value)) return response;
+    body = value as Record<string, unknown>;
+  } catch {
+    return response;
+  }
+  if (!Array.isArray(body.output)) return response;
+  let refusal = "";
+  let hasRefusal = false;
+  const output = body.output.map(item => {
+    if (!item || item.type !== "message" || !Array.isArray(item.content)) return item;
+    return { ...item, content: item.content.filter((part: Record<string, unknown> | null) => {
+      if (part?.type !== "refusal" || typeof part.refusal !== "string") return true;
+      hasRefusal = true;
+      refusal += part.refusal;
+      return false;
+    }) };
+  });
+  if (!hasRefusal) return response;
+  onRefusal(refusal);
+  const headers = new Headers(response.headers);
+  headers.delete("content-length");
+  headers.delete("content-encoding");
+  return new Response(JSON.stringify({ ...body, output }), { status: response.status, statusText: response.statusText, headers });
 }
 
 function applyAnthropicCache(messages: ModelMessage[], adapter: ChatVendorAdapter, model: string): void {

@@ -1,9 +1,11 @@
 import type { ModelSettings } from "../../settings/model-settings";
-import { getAdapterForConfig, createSseReader } from "../../orchestrator/vendors";
+import { getAdapterForConfig, generateChatWithAiSdk, streamChatWithSdk } from "../../orchestrator/vendors";
 import type {
+  ChatResponse,
   StructuredOutputRequest,
   VendorConfig,
 } from "../../orchestrator/vendors";
+import { AgentRuntimeError } from "../../orchestrator/agent-runtime-error";
 import {
   createVisibleStreamFilter,
   stripThinkBlocks,
@@ -71,6 +73,24 @@ function buildVendorConfig(settings: LlmRequestSettings): VendorConfig {
   };
 }
 
+function recordModelUsage(model: string, response: ChatResponse): void {
+  recordRequest(model);
+  if (response.usage) {
+    recordUsage(response.usage.input, response.usage.output, 1, response.usage.cachedInput, model, response.usage.cacheCreation);
+  }
+}
+
+function logRequestFailure(label: string, startedAt: number, error: unknown, signal?: AbortSignal): void {
+  const elapsed = Date.now() - startedAt;
+  if (signal?.aborted) {
+    console.log(`[TIMING] ${label} CANCELLED at ${elapsed}ms`);
+  } else if (error instanceof AgentRuntimeError && error.code === "E_MODEL_REQUEST_TIMEOUT") {
+    console.log(`[TIMING] ${label} TIMEOUT at ${elapsed}ms`);
+  } else {
+    console.log(`[TIMING] ${label} ERROR at ${elapsed}ms: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
 export function createLlmClient(): LlmClient {
   async function stream(
     settings: ModelSettings,
@@ -81,8 +101,6 @@ export function createLlmClient(): LlmClient {
     onChunk: (text: string) => void,
     logTiming = true,
   ): Promise<string> {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
     const startTime = Date.now();
     if (logTiming) {
       console.log(
@@ -94,95 +112,39 @@ export function createLlmClient(): LlmClient {
 
     try {
       const adapter = getAdapterForConfig(cfg);
-      const http = adapter.buildStreamRequest(
-        {
+      const visibleFilter = createVisibleStreamFilter();
+      const response = await streamChatWithSdk({
+        adapter,
+        config: cfg,
+        request: {
           model: cfg.model,
           messages,
           ...(temperature !== undefined ? { temperature } : {}),
           stream: true,
         },
-        cfg,
-      );
-
-      const response = await fetch(http.url, {
-        method: "POST",
-        signal: controller.signal,
-        headers: http.headers,
-        body: http.body,
-      });
-
-      if (!response.ok) {
-        const errorData = (await response.json().catch(() => ({}))) as Record<string, unknown>;
-        const errMsg = (errorData as { error?: { message?: string } }).error?.message;
-        throw new Error(errMsg || `模型请求失败：HTTP ${response.status}`);
-      }
-
-      if (!response.body) {
-        throw new Error("响应体为空，不支持流式读取");
-      }
-
-      recordRequest(settings.model);
-      let fullText = "";
-      const visibleFilter = createVisibleStreamFilter();
-      // anthropic 流式 usage 分散在 message_start（input）和 message_delta（output）两个事件里，
-      // 逐 chunk 记会重复计数；改为逐字段取最大值合并，循环结束记一次。
-      let sawUsage = false;
-      let usageInput = 0;
-      let usageOutput = 0;
-      let usageCached: number | undefined;
-      let usageCacheCreation: number | undefined;
-
-      for await (const event of createSseReader(adapter, response.body)) {
-        const chunk = adapter.parseStreamEvent(event);
-        if (!chunk) continue;
-        if (chunk.deltaText) {
-          fullText += chunk.deltaText;
-          const visibleDelta = visibleFilter.push(chunk.deltaText);
+        timeoutMs,
+        onDelta: (delta) => {
+          if (delta.type !== "text_delta") return;
+          const visibleDelta = visibleFilter.push(delta.delta);
           if (visibleDelta) onChunk(visibleDelta);
-        }
-        if (chunk.usage) {
-          sawUsage = true;
-          usageInput = Math.max(usageInput, chunk.usage.input ?? 0);
-          usageOutput = Math.max(usageOutput, chunk.usage.output ?? 0);
-          if (chunk.usage.cachedInput !== undefined) {
-            usageCached = Math.max(usageCached ?? 0, chunk.usage.cachedInput);
-          }
-          if (chunk.usage.cacheCreation !== undefined) {
-            usageCacheCreation = Math.max(usageCacheCreation ?? 0, chunk.usage.cacheCreation);
-          }
-        }
-        if (chunk.done) break;
-      }
-      if (sawUsage) {
-        recordUsage(usageInput, usageOutput, 1, usageCached, settings.model, usageCacheCreation);
-      }
+        },
+      });
+      recordModelUsage(settings.model, response);
 
       const visibleTail = visibleFilter.flush();
       if (visibleTail) {
         onChunk(visibleTail);
       }
 
-      const result = stripThinkBlocks(fullText);
+      const result = stripThinkBlocks(response.text);
       if (logTiming) {
         console.log(`[TIMING] ${label} OK in ${Date.now() - startTime}ms resultLen=${result.length}`);
       }
-      appendApiLog(label, messages, fullText, result);
+      appendApiLog(label, messages, response.text, result);
       return result;
     } catch (err) {
-      if (err instanceof Error && err.name === "AbortError") {
-        if (logTiming) {
-          console.log(`[TIMING] ${label} TIMEOUT at ${Date.now() - startTime}ms`);
-        }
-        throw new Error("模型请求超时，请稍后重试。");
-      }
-      if (logTiming) {
-        console.log(
-          `[TIMING] ${label} ERROR at ${Date.now() - startTime}ms: ${err instanceof Error ? err.message : err}`,
-        );
-      }
+      if (logTiming) logRequestFailure(label, startTime, err);
       throw err;
-    } finally {
-      clearTimeout(timer);
     }
   }
 
@@ -218,13 +180,8 @@ export function createLlmClient(): LlmClient {
     structuredValue?: unknown;
   }> {
     const cfg: VendorConfig = {
-      provider: settings.provider,
-      baseUrl: settings.baseUrl,
-      model: settings.model,
-      apiKey: settings.apiKey,
-      explicitTransport: settings.explicitTransport,
+      ...buildVendorConfig(settings),
       reasoning: reasoningOverride ?? settings.reasoning,
-      manualReasoning: settings.manualReasoning,
     };
     const adapter = getAdapterForConfig(cfg);
     const chatRequest = {
@@ -237,33 +194,20 @@ export function createLlmClient(): LlmClient {
       ...(options?.extraBody ? { extraBody: options.extraBody } : {}),
     };
 
-    const controller = new AbortController();
-    const abort = (): void => controller.abort(signal?.reason);
-    signal?.addEventListener("abort", abort, { once: true });
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
     const startTime = Date.now();
     console.log(
       `[TIMING] ${label} START (non-stream) timeout=${timeoutMs}ms msgLen=${messages.length} sysLen=${messages[0]?.content?.length ?? 0}`,
     );
 
     try {
-      const http = adapter.buildRequest(chatRequest, cfg);
-      const response = await fetch(http.url, {
-        method: "POST",
-        headers: http.headers,
-        body: http.body,
-        signal: controller.signal,
+      const parsed = await generateChatWithAiSdk({
+        adapter,
+        config: cfg,
+        request: chatRequest,
+        timeoutMs,
+        signal,
       });
-      if (!response.ok) {
-        const errorData = (await response.json().catch(() => ({}))) as Record<string, unknown>;
-        const errMsg = (errorData as { error?: { message?: string } }).error?.message;
-        throw new Error(errMsg || `模型请求失败：HTTP ${response.status}`);
-      }
-      const parsed = adapter.parseResponse(await response.json());
-      recordRequest(settings.model);
-      if (parsed.usage) {
-        recordUsage(parsed.usage.input, parsed.usage.output, 1, parsed.usage.cachedInput, settings.model, parsed.usage.cacheCreation);
-      }
+      recordModelUsage(settings.model, parsed);
       const totalTime = Date.now() - startTime;
       console.log(`[TIMING] ${label} OK in ${totalTime}ms resultLen=${parsed.text.length}`);
       return {
@@ -274,16 +218,8 @@ export function createLlmClient(): LlmClient {
         structuredValue: parsed.structuredValue,
       };
     } catch (error) {
-      const totalTime = Date.now() - startTime;
-      if (error instanceof Error && error.name === "AbortError") {
-        console.log(`[TIMING] ${label} TIMEOUT at ${totalTime}ms`);
-      } else {
-        console.log(`[TIMING] ${label} ERROR at ${totalTime}ms: ${error}`);
-      }
+      logRequestFailure(label, startTime, error, signal);
       throw error;
-    } finally {
-      clearTimeout(timer);
-      signal?.removeEventListener("abort", abort);
     }
   }
 

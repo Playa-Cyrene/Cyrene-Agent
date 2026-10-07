@@ -30,6 +30,10 @@ function usageDelta(usage: LanguageModelUsage): UnifiedStreamDelta {
     cachedInputTokens: usage.inputTokenDetails.cacheReadTokens, cacheCreationTokens: usage.inputTokenDetails.cacheWriteTokens };
 }
 
+function finishDelta(reason: string): UnifiedStreamDelta {
+  return { type: "finish", reason: reason === "tool-calls" ? "tool_calls" : reason === "content-filter" ? "content_filter" : reason };
+}
+
 export const streamChatWithAiSdk = (input: ModelRunInput): Promise<ChatResponse> => runModel(input, true);
 export const generateChatWithAiSdk = (input: ModelRunInput): Promise<ChatResponse> => runModel(input, false);
 
@@ -62,6 +66,7 @@ async function runModel(input: ModelRunInput, streaming: boolean): Promise<ChatR
   try {
     if (controller.signal.aborted) throw controller.signal.reason;
     const prepared = prepareModelCall({ ...input, stream: streaming, onRequest: id => { traceId = id; },
+      onRefusal: reason => commit({ type: "refusal", reason }),
       onHistoryDiagnostic: diagnostic => {
         input.onHistoryDiagnostic?.(diagnostic);
         if (diagnostic.omittedPrivateParts || diagnostic.legacyMessages) console.info("[model-history]", diagnostic);
@@ -72,6 +77,7 @@ async function runModel(input: ModelRunInput, streaming: boolean): Promise<ChatR
     let responseMessages: ModelMessage[];
     let raw: unknown;
     let aliasReasoning = "";
+    let streamedRefusal = "";
     let generatedImages: GeneratedImageOutput[] = [];
     let responsesTerminal: Record<string, unknown> | undefined;
     if (streaming) {
@@ -91,6 +97,10 @@ async function runModel(input: ModelRunInput, streaming: boolean): Promise<ChatR
             const event = asRecord(part.rawValue);
             if (input.adapter.transport === "openai") {
               const delta = chatChoice(event, "delta");
+              if (typeof delta?.refusal === "string") {
+                streamedRefusal += delta.refusal;
+                commit({ type: "refusal", reason: streamedRefusal });
+              }
               // 仅补 SDK 未识别的兼容端别名，不重复处理标准推理增量。
               if (delta?.reasoning_content == null && delta?.reasoning == null && typeof delta?.thinking === "string") {
                 aliasReasoning += delta.thinking;
@@ -99,6 +109,10 @@ async function runModel(input: ModelRunInput, streaming: boolean): Promise<ChatR
               break;
             }
             if (input.adapter.transport !== "responses") break;
+            if (event?.type === "response.refusal.delta" && typeof event.delta === "string") {
+              streamedRefusal += event.delta;
+              commit({ type: "refusal", reason: streamedRefusal });
+            }
             outputTracker.observe(event);
             if (event?.type === "response.completed" || event?.type === "response.incomplete") {
               responsesTerminal = asRecord(event.response);
@@ -126,7 +140,7 @@ async function runModel(input: ModelRunInput, streaming: boolean): Promise<ChatR
             flush();
             if (part.finishReason === "error" || part.finishReason === "other") throw new AgentRuntimeError("E_MODEL_RESPONSE_PARSE_FAILED", "模型流缺少有效终态");
             commit(usageDelta(part.totalUsage));
-            finish = { type: "finish", reason: part.finishReason === "tool-calls" ? "tool_calls" : part.finishReason };
+            finish = finishDelta(part.finishReason);
             break;
         }
       }
@@ -137,6 +151,8 @@ async function runModel(input: ModelRunInput, streaming: boolean): Promise<ChatR
           throw new AgentRuntimeError("E_MODEL_RESPONSE_PARSE_FAILED", "Responses 终态缺少完整输出");
         }
         responsesTerminal = outputTracker.reconcile(responsesTerminal, accumulator.snapshot(), responsesTerminal.status === "completed");
+        const refusal = providerRefusal(responsesTerminal);
+        if (refusal) commit({ type: "refusal", reason: refusal });
         for (const value of responsesTerminal.output as unknown[]) {
           const item = asRecord(value);
           if (item?.type !== "function_call") continue;
@@ -161,6 +177,8 @@ async function runModel(input: ModelRunInput, streaming: boolean): Promise<ChatR
       if (result.finishReason === "error" || result.finishReason === "other") {
         throw new AgentRuntimeError("E_MODEL_RESPONSE_PARSE_FAILED", "模型响应缺少有效终态");
       }
+      const refusal = providerRefusal(asRecord(result.response.body));
+      if (refusal) commit({ type: "refusal", reason: refusal });
       text(result.text);
       if (result.reasoningText) commit({ type: "reasoning_delta", delta: result.reasoningText });
       else if (input.adapter.transport === "openai") {
@@ -179,7 +197,7 @@ async function runModel(input: ModelRunInput, streaming: boolean): Promise<ChatR
       generatedImages = collectGeneratedImages(result.staticToolResults);
       flush();
       commit(usageDelta(result.usage));
-      commit({ type: "finish", reason: result.finishReason === "tool-calls" ? "tool_calls" : result.finishReason });
+      commit(finishDelta(result.finishReason));
       responseMessages = result.responseMessages;
       raw = result.response;
       reportWarnings(result.warnings);
@@ -234,6 +252,23 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 
 function chatChoice(body: Record<string, unknown> | undefined, field: "message" | "delta"): Record<string, unknown> | undefined {
   return Array.isArray(body?.choices) ? asRecord(asRecord(body.choices[0])?.[field]) : undefined;
+}
+
+/** SDK 未统一暴露拒答字段；保留厂商明确的拒答标记，供结构化输出和业务层判定。 */
+function providerRefusal(body: Record<string, unknown> | undefined): string | undefined {
+  const refusal = chatChoice(body, "message")?.refusal;
+  if (typeof refusal === "string" && refusal) return refusal;
+  if (!Array.isArray(body?.output)) return undefined;
+  const parts: string[] = [];
+  for (const value of body.output) {
+    const item = asRecord(value);
+    if (item?.type !== "message" || !Array.isArray(item.content)) continue;
+    for (const value of item.content) {
+      const part = asRecord(value);
+      if (part?.type === "refusal" && typeof part.refusal === "string") parts.push(part.refusal);
+    }
+  }
+  return parts.join("") || undefined;
 }
 
 /** 工具是否开放由调度层反馈；生成与重放接受同样的参数对象范围。 */
