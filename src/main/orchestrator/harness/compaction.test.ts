@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ChatMessage } from "../vendors/types";
 import {
+  computeTokenBudget,
   compressForAgentLoop,
   findSafeCutPointForRetainedTokens,
   isToolPairSafeBoundary,
@@ -9,6 +10,27 @@ import {
 function message(role: ChatMessage["role"], content: string): ChatMessage {
   return { role, content };
 }
+
+describe("compaction trigger budget", () => {
+  it.each([
+    { tokens: 217_599, expected: false },
+    { tokens: 217_600, expected: true },
+  ])("256K 上下文在 $tokens 个词元时压缩判定为 $expected", ({ tokens, expected }) => {
+    // 英文内容按 4 字符/词元，加上消息格式的 4 个词元。
+    const messages = [message("user", "a".repeat((tokens - 4) * 4))];
+    const budget = computeTokenBudget("", [], messages, 256_000, 8_192, 512);
+
+    expect(budget.estimatedInput).toBe(tokens);
+    expect(budget.needsCompaction).toBe(expected);
+  });
+
+  it("小窗口输入挤占输出预留时仍触发安全压缩", () => {
+    const messages = [message("user", "a".repeat((1_296 - 4) * 4))];
+    const budget = computeTokenBudget("", [], messages, 10_000, 8_192, 512);
+
+    expect(budget.needsCompaction).toBe(true);
+  });
+});
 
 describe("Harness context compaction v2", () => {
   it("keeps a tool call and its result in the retained token-budgeted tail", () => {

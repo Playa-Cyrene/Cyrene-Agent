@@ -7,7 +7,7 @@
  * transcript-level checkpoint operation; callers must not silently tail-cut.
  */
 
-import { DEFAULT_HARNESS_CONFIG } from "./harness/types";
+import { resolveCompactionTriggerTokens } from "./harness/compaction";
 import type { ConversationTranscriptStore } from "./conversation-transcript-store";
 import {
   buildFullModelContext,
@@ -58,11 +58,5 @@ export async function buildModelContext(input: {
 
 /** 轨迹尾窗预算：沿用 Harness 既有 token 预算体系，不另立标准。 */
 export function resolveTranscriptRetainTokens(contextWindowTokens: number): number {
-  const usable = Math.max(
-    1,
-    contextWindowTokens
-      - DEFAULT_HARNESS_CONFIG.reservedOutputTokens
-      - DEFAULT_HARNESS_CONFIG.safetyMarginTokens,
-  );
-  return Math.max(1, Math.floor(usable * DEFAULT_HARNESS_CONFIG.compactionThreshold));
+  return Math.max(1, Math.floor(resolveCompactionTriggerTokens(contextWindowTokens)));
 }

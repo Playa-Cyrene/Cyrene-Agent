@@ -111,6 +111,7 @@ export async function runHarnessWithAdapter(
     closeTaskExecutor,
     openTaskCompanions,
     ...(options.transcriptSink ? { transcriptSink: options.transcriptSink } : {}),
+    ...(options.compactTranscript ? { compactTranscript: options.compactTranscript } : {}),
   };
 
   // ── 运行 Harness ──

@@ -11,6 +11,9 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 // ── Hoisted mocks（必须在 import SUT 之前）──────────────
 
@@ -77,6 +80,10 @@ import type { ToolDefinition } from "../tools/registry/tool-registry";
 import { projectCacheRelevantChatRequest } from "../prompt-layers";
 import type { TranscriptSink } from "../transcript-sink";
 import { parseToolCallArgs, toolCallFingerprint } from "./types";
+import { ConversationTranscriptStore } from "../conversation-transcript-store";
+import { ConversationJournalService } from "../conversation-journal-service";
+import { ConversationTranscriptCompactor } from "../conversation-transcript-compactor";
+import { closeConversationDatabases } from "../../storage/conversation-database-client";
 
 const mockedDispatch = vi.mocked(dispatchToolCall);
 
@@ -694,6 +701,77 @@ describe("CyreneHarness completion", () => {
       expect.objectContaining({ status: "started", messageCountBefore: historicalMessages.length + 1 }),
       expect.objectContaining({ status: "committed", cache: { cacheEpoch: 2, epochReason: "compaction" } }),
     ]);
+  });
+
+  it("轮次内压缩保存检查点，下一轮沿用摘要且保留当前运行环境", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-durable-compaction-"));
+    try {
+      const store = new ConversationTranscriptStore(root);
+      const journal = new ConversationJournalService(store);
+      const oldContent = "旧历史".repeat(200);
+      for (let index = 0; index < 20; index++) {
+        if (index % 2 === 0) {
+          await journal.appendUser("c1", { id: `old-${index}`, turnId: `old-${index}`, text: oldContent });
+        } else {
+          await journal.createRunSink({ conversationId: "c1", runId: `old-${index}` })
+            .appendAssistant({ message: { role: "assistant", content: oldContent } });
+        }
+      }
+      await journal.appendUser("c1", { id: "latest", turnId: "latest", text: "继续读取文件" });
+      const call = { id: "read-big", name: "read_file", arguments: "{}" };
+      const output = "FILE_OBSERVATION_".repeat(800);
+      const dispatch = successDispatchResult(call.id);
+      mockStartedDispatch({ ...dispatch, tool: "read_file", message: output, output, preview: output,
+        rawResult: { ...dispatch.rawResult!, toolId: "read_file", output } });
+      const { fn: fetchMock } = fakeFetchSequencer([
+        assistantResponse({ toolCalls: [call] }),
+        assistantResponse({ text: "完成当前读取任务" }),
+        assistantResponse({ text: "继续下一条任务" }),
+      ]);
+      vi.stubGlobal("fetch", fetchMock);
+      const summarize = vi.fn(async () => "保留用户的文件读取目标。");
+      const compactor = new ConversationTranscriptCompactor({ store, summarize });
+      const events: HarnessEvent[] = [];
+      const compactTranscript: NonNullable<HarnessInput["compactTranscript"]> = async (request) => (
+        await compactor.compact({ ...request, conversationId: "c1", trigger: "automatic",
+          modelSettings: { ...vendorConfig, contextWindowTokens: 20_000 } })
+      ).compactedMessages;
+      const config = { contextWindowTokens: 20_000, reservedOutputTokens: 500, safetyMarginTokens: 0 };
+      const first = await runCyreneHarness({
+        systemPrompt: "文件任务", vendorConfig, config, includeInteractiveTools: false,
+        runId: "run-first", tools: [safeReadTool("read_file")],
+        messages: (await journal.buildModelContext("c1")).messages,
+        initialInternalContext: { kind: "run_start", content: "当前运行环境仅供本轮使用" },
+        transcriptSink: journal.createRunSink({ conversationId: "c1", runId: "run-first" }),
+        compactTranscript, onEvent: (event) => events.push(event),
+      });
+      expect(first.finalAnswer).toBe("完成当前读取任务");
+      expect(summarize).toHaveBeenCalledTimes(1);
+      const after = await journal.buildModelContext("c1");
+      expect(after.messages[0]?.content).toContain("<cyrene_compaction_checkpoint>");
+      expect(after.messages.some((message) => message.content === oldContent)).toBe(false);
+      expect(after.messages.some((message) => message.visibility === "internal")).toBe(false);
+      const secondRequest = JSON.parse((fetchMock.mock.calls[1]![1] as RequestInit).body as string);
+      expect(secondRequest.messages.some((message: ChatMessage) => String(message.content).includes("当前运行环境仅供本轮使用"))).toBe(true);
+      const usages = events.filter((event): event is Extract<HarnessEvent, { type: "context_usage" }> => event.type === "context_usage");
+      const beforeIndex = usages.findIndex((event) => event.snapshot.phase === "preCompaction");
+      expect(beforeIndex).toBeGreaterThan(0);
+      expect(usages[beforeIndex + 1]?.snapshot.totalTokens).toBeLessThan(usages[beforeIndex]!.snapshot.totalTokens);
+      await journal.appendUser("c1", { id: "next", turnId: "next", text: "继续下一条任务" });
+      const next = await runCyreneHarness({
+        systemPrompt: "文件任务", vendorConfig, config, includeInteractiveTools: false,
+        runId: "run-next", tools: [safeReadTool("read_file")],
+        messages: (await journal.buildModelContext("c1")).messages,
+        transcriptSink: journal.createRunSink({ conversationId: "c1", runId: "run-next" }), compactTranscript,
+      });
+      expect(next.finalAnswer).toBe("继续下一条任务");
+      expect(summarize).toHaveBeenCalledTimes(1);
+      expect((await store.read("c1")).entries.filter((entry) => entry.kind === "compaction_checkpoint")).toHaveLength(1);
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+    } finally {
+      await closeConversationDatabases();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("routes a tool round failure to a unified error terminal settlement", async () => {

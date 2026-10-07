@@ -33,7 +33,7 @@ import type {
   TaskDelegationDisplayRecord,
 } from "../../../../../shared/chat-types";
 import type { SidebarOrganizationDraft, SidebarOrganizationSnapshot } from "../../../../../shared/sidebar-organization";
-import { type ContextUsageSnapshot } from "../../../../../shared/context-usage";
+import { isContextUsageSnapshot, type ContextUsageSnapshot } from "../../../../../shared/context-usage";
 import type { ModelFailureInfo } from "../../../../../shared/model-error";
 import { ChatPagePanelHost } from "../components/ChatPagePanelHost";
 import { useUserCallPreference } from "../../../hooks/useUserNickname";
@@ -237,7 +237,14 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
   useEffect(() => {
     const store = chatStore();
     if (!store?.onCompactionPhase) return;
-    return store.onCompactionPhase(({ sessionId, phase }) => {
+    return store.onCompactionPhase(({ sessionId, phase, contextUsage }) => {
+      if (isContextUsageSnapshot(contextUsage)) {
+        setSessionContextUsageBySession((current) => {
+          const previous = current[sessionId];
+          if (previous && previous.updatedAt > contextUsage.updatedAt) return current;
+          return { ...current, [sessionId]: contextUsage };
+        });
+      }
       setAutoCompactingSessionId((current) =>
         phase === "running" ? sessionId : current === sessionId ? null : current,
       );

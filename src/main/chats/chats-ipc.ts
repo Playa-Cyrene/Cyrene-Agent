@@ -40,7 +40,7 @@ import {
   createTranscriptCompactionRequiredError,
   TRANSCRIPT_COMPACTION_REQUIRED,
 } from "../orchestrator/conversation-transcript-compactor";
-import { buildContextUsageSnapshot } from "../orchestrator/context-usage";
+import { buildCompactionContextUsageSnapshot } from "../orchestrator/context-usage";
 import type { ContextUsageSnapshot } from "../../shared/context-usage";
 import { getRunReviewTracker } from "../orchestrator/review/run-review-tracker";
 import { activeChatTargetRegistry } from "../plugin-host/active-chat-target";
@@ -82,30 +82,16 @@ async function recordCompactionUsage(
   previous?: ContextUsageSnapshot,
 ): Promise<void> {
   previous ??= (await chatsStore.getSessionView(sessionId))?.currentContextUsage;
-  const inheritable = new Map(
-    (previous?.categories ?? [])
-      .filter((category) => category.key === "systemPrompt" || category.key === "tools" || category.key === "skills")
-      .map((category) => [category.key, category.tokens]),
-  );
   const sessionRecord = (await chatsStore.getSessionView(sessionId));
   const contextWindowTokens = (sessionRecord
     ? resolveSessionModelSettings(loadModelSettings(), sessionRecord).contextWindowTokens
     : undefined) ?? 256000;
-  const computed = buildContextUsageSnapshot({
+  const usage = buildCompactionContextUsageSnapshot({
     phase: "preRequest",
     contextWindowTokens,
-    personaContent: "",
     messages: compactedMessages,
+    previous,
   });
-  const categories = computed.categories.map((category) => {
-    const tokens = inheritable.get(category.key);
-    return tokens === undefined ? category : { ...category, tokens };
-  });
-  const usage: ContextUsageSnapshot = {
-    ...computed,
-    categories,
-    totalTokens: categories.reduce((sum, category) => sum + category.tokens, 0),
-  };
   (await chatsStore.setSessionContextUsage(sessionId, usage));
 }
 
@@ -146,13 +132,12 @@ function broadcastChanged(senderWebContents?: WebContents | null): void {
   }
 }
 
-/** 广播上下文压缩阶段：run 开始前的自动压缩只在主进程发生，
- *  渲染端靠这条推送在消息流尾部显示「正在触发压缩」的呼吸提示。 */
-export function broadcastCompactionPhase(sessionId: string, phase: "running" | "finished"): void {
+/** 广播压缩阶段及占用，覆盖运行前和运行中的自动压缩。 */
+export function broadcastCompactionPhase(sessionId: string, phase: "running" | "finished", contextUsage?: ContextUsageSnapshot): void {
   for (const win of BrowserWindow.getAllWindows()) {
     if (win.isDestroyed()) continue;
     try {
-      win.webContents.send(IPC.CHATS_COMPACTION_PHASE, { sessionId, phase });
+      win.webContents.send(IPC.CHATS_COMPACTION_PHASE, { sessionId, phase, ...(contextUsage ? { contextUsage } : {}) });
     } catch {
       // 窗口可能正在关闭，忽略
     }

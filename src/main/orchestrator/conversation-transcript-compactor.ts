@@ -10,6 +10,8 @@ import type { TranscriptAppendInput, TranscriptEntry } from "./conversation-tran
 import type { ChatMessage as CanonicalChatMessage } from "./vendors/types";
 import { callSummarizeModel } from "./context-manager";
 import { getAdapterForConfig } from "./vendors";
+import { buildCompactionContextUsageSnapshot } from "./context-usage";
+import type { ContextUsageSnapshot } from "../../shared/context-usage";
 import {
   compressForAgentLoop,
   findSafeCutPointForRetainedTokens,
@@ -21,6 +23,8 @@ export interface ConversationCompactionRequest {
   retainTokens?: number;
   /** 调用方已解析的会话当前模型；只在本次摘要请求中使用，不写入会话记录。 */
   modelSettings?: TranscriptCompactionModelSettings;
+  transientMessages?: CanonicalChatMessage[];
+  signal?: AbortSignal;
 }
 
 export interface ConversationCompactionResult {
@@ -34,14 +38,14 @@ export interface ConversationTranscriptCompactorOptions {
   summarize: (
     history: CanonicalChatMessage[],
     modelSettings?: TranscriptCompactionModelSettings,
+    signal?: AbortSignal,
   ) => Promise<string>;
   runReader?: TranscriptRunReader;
   archive?: ConversationTranscriptArchive;
   now?: () => number;
-  /** 压缩阶段观察者：摘要请求前 running、结束后 finished（失败也发）。
-   *  自动压缩发生在 run 开始前的主进程侧，渲染端拿不到 AG-UI 事件，
-   *  只能靠这个回调把「正在压缩」推给窗口驱动呼吸提示。 */
-  onPhase?: (phase: "running" | "finished", conversationId: string) => void;
+  /** 压缩阶段观察者：摘要请求前 running、检查点提交后 finished（失败也发）。
+   *  统一推送运行前和运行中压缩的阶段及占用，驱动窗口提示。 */
+  onPhase?: (phase: "running" | "finished", conversationId: string, usage?: ContextUsageSnapshot) => void;
 }
 
 export interface TranscriptCompactionModelSettings {
@@ -73,7 +77,7 @@ export function createModelBackedConversationTranscriptCompactor(input: {
     store: input.store,
     runReader: input.runReader,
     onPhase: input.onPhase,
-    summarize: async (history, settings) => {
+    summarize: async (history, settings, signal) => {
       if (!settings) throw createTranscriptCompactionRequiredError();
       return callSummarizeModel(
         history,
@@ -87,6 +91,7 @@ export function createModelBackedConversationTranscriptCompactor(input: {
           manualReasoning: settings.manualReasoning,
         }),
         { ...settings, contextWindowTokens: settings.contextWindowTokens ?? 256_000 },
+        signal,
       );
     },
   });
@@ -111,6 +116,7 @@ export class ConversationTranscriptCompactor {
   }
 
   async compact(request: ConversationCompactionRequest): Promise<ConversationCompactionResult> {
+    request.signal?.throwIfAborted();
     await this.runReader.refresh?.();
     const retainTokens = request.retainTokens ?? 1;
     const before = await this.store.read(request.conversationId);
@@ -124,79 +130,89 @@ export class ConversationTranscriptCompactor {
     if (sourceThroughSeq <= 0) throw createTranscriptCompactionRequiredError();
     const sourceEntries = before.entries.filter((entry) => entry.seq <= sourceThroughSeq);
     const sourceDigest = digest(sourceEntries);
+    const previousUsage = before.entries.reduce<ContextUsageSnapshot | undefined>((latest, entry) => {
+      const usage = entry.kind === "presentation_patch" ? entry.payload.patch.contextUsage : undefined;
+      return usage && (!latest || usage.updatedAt > latest.updatedAt) ? usage : latest;
+    }, undefined);
+    const buildUsage = (messages: CanonicalChatMessage[], phase: ContextUsageSnapshot["phase"]) => request.modelSettings
+      ? buildCompactionContextUsageSnapshot({
+        phase,
+        contextWindowTokens: request.modelSettings.contextWindowTokens ?? 256_000,
+        messages: [...messages, ...(request.transientMessages ?? [])],
+        previous: previousUsage,
+      })
+      : undefined;
+    let phaseUsage = buildUsage(full.messages, "preCompaction");
     let summaryError: unknown;
     let compacted: CanonicalChatMessage[];
     // 呼吸提示覆盖整个压缩流程（含重试），只发一对 running/finished 避免闪烁。
-    this.onPhase?.("running", request.conversationId);
+    this.onPhase?.("running", request.conversationId, phaseUsage);
     try {
       compacted = await compressForAgentLoop({
         messages: full.messages,
         retainTokens,
         summarize: async (history) => {
           try {
-            return await this.summarize(history, request.modelSettings);
+            return await this.summarize(history, request.modelSettings, request.signal);
           } catch (error) {
             summaryError = error;
             throw error;
           }
         },
       });
-    } finally {
-      this.onPhase?.("finished", request.conversationId);
-    }
-    if (summaryError) {
-      console.error("[ConversationTranscriptCompactor] summary failed", summaryError);
-      throw createTranscriptCompactionRequiredError(summaryError);
-    }
-    const replacement = compacted[0];
-    if (!replacement || replacement.role !== "system" || !isCompactionReplacement(replacement)
-      // compressForAgentLoop 在无法产出更小摘要时会原样返回输入；此时首条即旧摘要本体，
-      // 必须拒绝提交，否则新检查点会静默吞掉本应压缩的后缀历史。
-      || replacement === full.previousReplacement) {
-      throw createTranscriptCompactionRequiredError();
-    }
+      request.signal?.throwIfAborted();
+      if (summaryError) {
+        console.error("[ConversationTranscriptCompactor] summary failed", summaryError);
+        throw createTranscriptCompactionRequiredError(summaryError);
+      }
+      const replacement = compacted[0];
+      if (!replacement || replacement.role !== "system" || !isCompactionReplacement(replacement)
+        // 无法产出更小摘要时首条可能是旧摘要，不能提交新检查点吞掉后缀历史。
+        || replacement === full.previousReplacement) {
+        throw createTranscriptCompactionRequiredError();
+      }
 
-    // A rewind or a competing checkpoint invalidates the prefix selected above.
-    // Appended user/tool rows are intentionally allowed and become the suffix.
-    const afterSummary = await this.store.read(request.conversationId);
-    const currentPrefix = afterSummary.entries.filter((entry) => entry.seq <= sourceThroughSeq);
-    if (digest(currentPrefix) !== sourceDigest || afterSummary.entries.some((entry) => (
-      entry.seq > before.throughSeq
-      && (entry.kind === "compaction_checkpoint" || entry.kind === "turn_rewind" || entry.kind === "turn_tombstone")
-    ))) {
-      throw createTranscriptCompactionRequiredError();
-    }
+      // 撤回或其它检查点会使摘要来源失效；新追加的消息则留作后缀。
+      const afterSummary = await this.store.read(request.conversationId);
+      const currentPrefix = afterSummary.entries.filter((entry) => entry.seq <= sourceThroughSeq);
+      if (digest(currentPrefix) !== sourceDigest || afterSummary.entries.some((entry) => (
+        entry.seq > before.throughSeq
+        && (entry.kind === "compaction_checkpoint" || entry.kind === "turn_rewind" || entry.kind === "turn_tombstone")
+      ))) {
+        throw createTranscriptCompactionRequiredError();
+      }
 
-    const checkpointInput: TranscriptAppendInput = {
-      id: `compaction:${sourceThroughSeq}:${sourceDigest}`,
-      at: this.now(),
-      kind: "compaction_checkpoint",
-      payload: {
-        baseThroughSeq: before.throughSeq,
+      const checkpointInput: TranscriptAppendInput = {
+        id: `compaction:${sourceThroughSeq}:${sourceDigest}`,
+        at: this.now(),
+        kind: "compaction_checkpoint",
+        payload: {
+          baseThroughSeq: before.throughSeq,
+          sourceThroughSeq,
+          sourceDigest,
+          replacement,
+          trigger: request.trigger,
+        },
+      };
+      request.signal?.throwIfAborted();
+      const checkpoint = await this.store.appendCompactionCheckpoint(request.conversationId, checkpointInput);
+      // 先提交检查点再归档；归档失败不会撤销已持久化的摘要。
+      try {
+        await this.archive.archiveThrough(request.conversationId, sourceThroughSeq);
+      } catch (error) {
+        console.error("[ConversationTranscriptCompactor] archive failed", error);
+      }
+      const finalSnapshot = await this.store.read(request.conversationId);
+      const finalContext = buildModelContextFromCompactedView(finalSnapshot.entries, this.runReader);
+      phaseUsage = buildUsage(finalContext.messages, "preRequest");
+      return {
+        checkpointEntryId: checkpoint.id,
         sourceThroughSeq,
-        sourceDigest,
-        replacement,
-        trigger: request.trigger,
-      },
-    };
-    const checkpoint = await this.store.appendCompactionCheckpoint(request.conversationId, checkpointInput);
-    // The checkpoint is committed before archival. A crash in the generation
-    // commit therefore leaves the complete canonical log readable and lets a
-    // later attempt safely retry the hot-prefix archive.
-    try {
-      await this.archive.archiveThrough(request.conversationId, sourceThroughSeq);
-    } catch (error) {
-      // The durable checkpoint is the compaction commit. Archival is a
-      // recoverable hot-path optimization and can be retried independently.
-      console.error("[ConversationTranscriptCompactor] archive failed", error);
+        compactedMessages: finalContext.messages,
+      };
+    } finally {
+      this.onPhase?.("finished", request.conversationId, phaseUsage);
     }
-    const finalSnapshot = await this.store.read(request.conversationId);
-    const finalContext = buildModelContextFromCompactedView(finalSnapshot.entries, this.runReader);
-    return {
-      checkpointEntryId: checkpoint.id,
-      sourceThroughSeq,
-      compactedMessages: finalContext.messages,
-    };
   }
 }
 

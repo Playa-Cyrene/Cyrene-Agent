@@ -1404,6 +1404,27 @@ describe("权威轨迹上下文源（CTA Phase 1）", () => {
     } as never, deps)).rejects.toThrow("TRANSCRIPT_COMPACTION_REQUIRED")
   })
 
+  it("轮次内压缩入口绑定当前会话模型并重读已提交摘要", async () => {
+    const deps = createBuildDeps()
+    const selected = { provider: "current", baseUrl: "https://current.test", model: "selected-model", apiKey: "k", contextWindowTokens: 128_000 }
+    let compressed = false
+    deps.buildModelContext = vi.fn(async () => ({
+      messages: [{ role: "user" as const, content: compressed ? "已提交摘要" : "当前问题" }],
+      uncertainEffects: [], throughSeq: 8,
+    }))
+    deps.compactTranscript = vi.fn(async () => { compressed = true })
+    const built = await buildAgentRunOptions({
+      sessionId: "active-model", sessionModelSettings: selected,
+      currentUser: { turnId: "turn-1", text: "当前问题", visibleContent: "当前问题" },
+    } as never, deps)
+    const signal = new AbortController().signal
+    const messages = await built.options.compactTranscript!({ retainTokens: 20_000, transientMessages: [], signal })
+    expect(deps.compactTranscript).toHaveBeenCalledWith(expect.objectContaining({
+      conversationId: "active-model", trigger: "automatic", modelSettings: selected, retainTokens: 20_000, signal,
+    }))
+    expect(messages).toEqual([{ role: "user", content: "已提交摘要" }])
+  })
+
   it("崩溃孤儿不确定效果并入 recoveryContext", async () => {
     const deps = createBuildDeps()
     deps.buildModelContext = vi.fn(async () => ({

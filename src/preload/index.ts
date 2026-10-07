@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
 import { IPC } from "../shared/ipc-channels";
+import type { ContextCompactionPhaseEvent } from "../shared/context-usage";
 import type { QqListenAuthRequirement } from "../shared/qq-listen";
 import type { ApprovalRequest, ApprovalSettledPayload } from "../shared/permission-approval";
 import type { StartTtsRequest, TtsSessionEvent, TtsStartResult } from "../shared/tts-session";
@@ -844,11 +845,11 @@ const chatStoreApi = {
     ipcRenderer.on(IPC.CHATS_WORKSPACE_CHANGED, listener);
     return () => ipcRenderer.removeListener(IPC.CHATS_WORKSPACE_CHANGED, listener);
   },
-  // main → 所有窗口：上下文压缩阶段（自动压缩在 run 前发生，渲染端没有 AG-UI 事件可听）
-  onCompactionPhase: (callback: (payload: { sessionId: string; phase: "running" | "finished" }) => void) => {
+  // main → 所有窗口：上下文压缩阶段及占用
+  onCompactionPhase: (callback: (payload: ContextCompactionPhaseEvent) => void) => {
     const listener = (
       _e: Electron.IpcRendererEvent,
-      payload: { sessionId: string; phase: "running" | "finished" },
+      payload: ContextCompactionPhaseEvent,
     ) => callback(payload);
     ipcRenderer.on(IPC.CHATS_COMPACTION_PHASE, listener);
     return () => ipcRenderer.removeListener(IPC.CHATS_COMPACTION_PHASE, listener);

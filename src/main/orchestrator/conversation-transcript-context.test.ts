@@ -226,7 +226,7 @@ describe("buildModelContext", () => {
 describe("resolveTranscriptRetainTokens", () => {
   it("derives the retain window from the harness budget constants", () => {
     expect(resolveTranscriptRetainTokens(256_000))
-      .toBe(Math.floor((256_000 - 8_192 - 512) * 0.7));
+      .toBe(217_600);
     expect(resolveTranscriptRetainTokens(0)).toBe(1);
   });
 });

@@ -142,7 +142,7 @@ export interface HarnessConfig {
   reservedOutputTokens: number;
   /** 固定安全余量（token） */
   safetyMarginTokens: number;
-  /** 压缩触发阈值比例（默认 0.7） */
+  /** 压缩触发阈值占总上下文窗口的比例（默认 0.85），同时受可用输入预算限制。 */
   compactionThreshold: number;
   /** 压缩后原样保留的近期 transcript 占上下文窗口比例（默认 0.16）。 */
   compactionRetainRatio: number;
@@ -158,7 +158,7 @@ export const DEFAULT_HARNESS_CONFIG: HarnessConfig = {
   contextWindowTokens: 256_000,
   reservedOutputTokens: 8_192,
   safetyMarginTokens: 512,
-  compactionThreshold: 0.7,
+  compactionThreshold: 0.85,
   compactionRetainRatio: 0.16,
 };
 
@@ -287,6 +287,12 @@ export interface HarnessInput {
   onToolFinished?: (event: HarnessToolFinishedEvent) => void;
   /** 压缩前后持久化事务边界。 */
   onCompactionLifecycle?: (event: HarnessCompactionLifecycleEvent) => void;
+  /** 保存会话压缩检查点并返回权威模型历史；临时运行信息只参与占用计量。 */
+  compactTranscript?: (input: {
+    retainTokens: number;
+    transientMessages: ChatMessage[];
+    signal?: AbortSignal;
+  }) => Promise<ChatMessage[]>;
   /** 每次模型请求前的非敏感缓存结构诊断。 */
   onCacheDiagnostic?: (diagnostic: HarnessCacheDiagnostic) => void;
   /**

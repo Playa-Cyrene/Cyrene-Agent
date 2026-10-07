@@ -227,6 +227,22 @@ describe("ConversationTranscriptCompactor", () => {
     expect(phases).toEqual(["running", "finished"]);
   });
 
+  it("摘要生成期间取消后不提交检查点", async () => {
+    const fixture = createFixture();
+    await seed(fixture);
+    fixture.pause();
+    const controller = new AbortController();
+    const pending = fixture.compactor.compact({
+      conversationId: "c1", trigger: "automatic", retainTokens: 1, signal: controller.signal,
+    });
+    const rejected = expect(pending).rejects.toThrow();
+    await fixture.summaryStarted;
+    controller.abort();
+    fixture.resume("取消后的摘要");
+    await rejected;
+    expect((await fixture.store.read("c1")).entries.some((entry) => entry.kind === "compaction_checkpoint")).toBe(false);
+  });
+
   it("第一次压缩归档后仍可按热分支完成第二次压缩", async () => {
     const fixture = createFixture();
     await seed(fixture);

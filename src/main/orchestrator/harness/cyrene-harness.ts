@@ -147,10 +147,15 @@ export async function runCyreneHarness(input: HarnessInput): Promise<HarnessResu
     //（调用方/测试依赖 fetch 同步发起），因此只在真正需要压缩时才 await。
     const compaction = compactIfNeeded(run, promptLayers);
     if (compaction) {
-      await compaction;
-      // 压缩已替换模型历史并推进 cache epoch：崩溃恢复最坏情况是缓存未命中，
-      // 权威历史始终以 transcript 为准，无需额外快照保障。
+      try {
+        await compaction;
+      } catch (error) {
+        if (input.signal?.aborted) return cancelledResult(run);
+        return finishRun(run, `上下文压缩失败：${errorMessage(error)}`, true, "error");
+      }
+      // 会话摘要已提交检查点，运行历史与后续轮次从同一压缩视图继续。
     }
+    if (input.signal?.aborted) return cancelledResult(run);
 
     // ── 上下文容量快照 + 缓存诊断（压缩后、请求前）──
     emitContextUsage(run, "preRequest");
@@ -507,7 +512,7 @@ function buildRoundPromptLayers(run: HarnessRun): PromptLayers {
 
 /**
  * Mid-loop compaction（循环中途压缩）：估算超预算时压缩历史并推进缓存周期。
- * 权威历史以 transcript 为准；压缩只影响模型上下文与缓存周期。
+ * 会话压缩先提交 transcript 检查点，再替换模型上下文并推进缓存周期。
  *
  * 同步门控：未超预算时返回 undefined（不产生 await 挂起点），
  * 保证主循环到首次 LLM fetch 之间保持同步直达。
@@ -532,23 +537,31 @@ async function runCompaction(run: HarnessRun, roundSystemPrompt: string, budget:
   const { input, config } = run;
   console.log(`${LOG_PREFIX} mid-loop compaction triggered (estimated=${budget.estimatedInput} budget=${budget.usableInputBudget})`);
   const messageCountBefore = run.messages.length;
+  emitContextUsage(run, "preCompaction");
   input.onCompactionLifecycle?.({ status: "started", messageCountBefore });
-  const compactedMessages = await compressForAgentLoop({
-    messages: run.messages,
-    retainTokens: Math.floor(config.contextWindowTokens * config.compactionRetainRatio),
-    summarize: (history) => summarizeHistory(
-      input.vendorConfig,
-      roundSystemPrompt,
-      history,
-      run.allToolSpecs,
-      input.signal,
-      {
-        maxRetries: config.modelRequestMaxRetries,
-        idleTimeoutMs: config.modelRequestIdleTimeoutMs,
-        onStatus: (status) => input.onEvent?.({ type: "model_retry", status }),
-      },
-    ),
-  });
+  const retainTokens = Math.floor(config.contextWindowTokens * config.compactionRetainRatio);
+  // 运行时环境等内部事实不属于会话历史；压缩后继续供本轮使用。
+  const transientMessages = run.messages.filter((message) => message.visibility === "internal"
+    && message.role === "user"
+    && message.internal?.runId === (input.runId ?? "harness-run"));
+  const compactedMessages = input.compactTranscript && input.transcriptSink
+    ? [...await input.compactTranscript({ retainTokens, transientMessages, signal: input.signal }), ...transientMessages]
+    : await compressForAgentLoop({
+      messages: run.messages,
+      retainTokens,
+      summarize: (history) => summarizeHistory(
+        input.vendorConfig,
+        roundSystemPrompt,
+        history,
+        run.allToolSpecs,
+        input.signal,
+        {
+          maxRetries: config.modelRequestMaxRetries,
+          idleTimeoutMs: config.modelRequestIdleTimeoutMs,
+          onStatus: (status) => input.onEvent?.({ type: "model_retry", status }),
+        },
+      ),
+    });
   if (compactedMessages !== run.messages) {
     run.cache = { cacheEpoch: run.cache.cacheEpoch + 1, epochReason: "compaction" };
     run.messages = compactedMessages;

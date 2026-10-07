@@ -1,8 +1,8 @@
 // 上下文容量观看器的共享类型（main / preload / renderer 三端共用）。
 //
-// 快照由主进程在每轮 LLM 请求发出前（preRequest）与 run 终态（terminal）拍摄，
+// 快照由主进程在压缩前（preCompaction）、请求前（preRequest）与 run 终态（terminal）拍摄，
 // riding 现有 AG-UI CUSTOM 事件 "cyrene.context.usage" 推送到渲染层：
-// - preRequest 只更新 renderer 内存态，圆环实时刷新，零 I/O；
+// - preCompaction/preRequest 更新 renderer 内存态，圆环实时刷新；
 // - terminal 包含最终 assistant 回复，随消息持久化（一次落盘）。
 
 /** 六类分类 key；口径见 docs/context-usage-viewer-construction-plan.md。
@@ -21,8 +21,8 @@ export interface ContextUsageCategory {
   tokens: number;
 }
 
-/** preRequest = 本轮请求发出前；terminal = run 终态（含最终回复）。 */
-export type ContextUsagePhase = "preRequest" | "terminal";
+/** preCompaction = 压缩前的完整占用；preRequest = 本轮请求发出前；terminal = run 终态。 */
+export type ContextUsagePhase = "preCompaction" | "preRequest" | "terminal";
 
 export interface ContextUsageSnapshot {
   phase: ContextUsagePhase;
@@ -40,6 +40,12 @@ export interface ContextUsageSnapshot {
   updatedAt: number;
 }
 
+export interface ContextCompactionPhaseEvent {
+  sessionId: string;
+  phase: "running" | "finished";
+  contextUsage?: ContextUsageSnapshot;
+}
+
 const CATEGORY_KEY_SET = new Set<string>([
   "systemPrompt",
   "tools",
@@ -55,7 +61,7 @@ const CATEGORY_KEY_SET = new Set<string>([
 export function isContextUsageSnapshot(value: unknown): value is ContextUsageSnapshot {
   if (!value || typeof value !== "object") return false;
   const snapshot = value as Partial<ContextUsageSnapshot>;
-  if (snapshot.phase !== "preRequest" && snapshot.phase !== "terminal") return false;
+  if (snapshot.phase !== "preCompaction" && snapshot.phase !== "preRequest" && snapshot.phase !== "terminal") return false;
   if (typeof snapshot.contextWindowTokens !== "number" || !Number.isFinite(snapshot.contextWindowTokens)) return false;
   if (typeof snapshot.totalTokens !== "number" || !Number.isFinite(snapshot.totalTokens)) return false;
   if (typeof snapshot.messageCount !== "number" || !Number.isFinite(snapshot.messageCount)) return false;

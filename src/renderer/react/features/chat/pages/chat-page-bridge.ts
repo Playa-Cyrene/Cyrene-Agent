@@ -103,9 +103,8 @@ export interface ChatStoreApi {
   // 验证工作区目录当前是否可用（存在且为目录）：失效路径不得显示为已选上
   validateWorkspacePath: (workspaceRoot: string) => Promise<{ ok: boolean; path?: string; error?: string }>;
   setWorkspace: (sessionId: string, workspaceRoot: string) => Promise<{ ok: boolean; error?: string; isEmpty?: boolean }>;
-  // main → 渲染端：上下文压缩阶段。自动压缩在 run 开始前于主进程发生，
-  // 渲染端收不到 AG-UI 事件，靠这条推送显示消息流尾部的呼吸提示。
-  onCompactionPhase: (callback: (payload: { sessionId: string; phase: "running" | "finished" }) => void) => () => void;
+  // main → 渲染端：压缩阶段及占用，驱动消息流提示和上下文圆环。
+  onCompactionPhase: (callback: (payload: import("../../../../../shared/context-usage").ContextCompactionPhaseEvent) => void) => () => void;
   initLearnWorkspace: (sessionId: string) => Promise<{ ok: boolean; error?: string; created?: string[]; skipped?: string[] }>;
   openWorkspace: (workspaceRoot: string) => Promise<{ ok: boolean; error?: string }>;
   // 聊天文件卡片右键菜单：本机默认方式打开 / 在资源管理器中定位工作区内文件

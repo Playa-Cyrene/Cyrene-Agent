@@ -56,6 +56,10 @@ describe("chats IPC mode filtering", () => {
 
     expect(send).toHaveBeenCalledWith(IPC.CHATS_COMPACTION_PHASE, { sessionId: "c1", phase: "running" });
     expect(destroyedSend).not.toHaveBeenCalled();
+    const usage = { phase: "preCompaction" as const, contextWindowTokens: 128_000, totalTokens: 110_000,
+      categories: [], messageCount: 3, updatedAt: Date.now() };
+    broadcastCompactionPhase("c1", "running", usage);
+    expect(send).toHaveBeenLastCalledWith(IPC.CHATS_COMPACTION_PHASE, { sessionId: "c1", phase: "running", contextUsage: usage });
   });
 
   it("returns only Code sessions for CHATS_LIST({ mode: \"code\" })", async () => {

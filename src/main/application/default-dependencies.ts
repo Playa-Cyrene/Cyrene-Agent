@@ -264,9 +264,8 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
     createModelBackedConversationTranscriptCompactor({
       store: getConversationTranscriptStore(app.getPath("userData")),
       runReader: getHarnessRunStore(app.getPath("userData")),
-      // 压缩阶段推给窗口：自动压缩发生在 run 开始前的主进程侧，
-      // 渲染端拿不到 AG-UI 事件，靠这条推送显示消息流尾部的呼吸提示。
-      onPhase: (phase, conversationId) => broadcastCompactionPhase(conversationId, phase),
+      // 统一向窗口推送运行前和运行中压缩的阶段及上下文占用。
+      onPhase: (phase, conversationId, usage) => broadcastCompactionPhase(conversationId, phase, usage),
     }));
   // 生命周期事件发布器：插件系统就绪前发布的事件没有监听器，直接丢弃
   const lifecyclePublisher = createLifecyclePublisher({

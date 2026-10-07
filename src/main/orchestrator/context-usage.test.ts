@@ -1,10 +1,29 @@
 import { describe, expect, it } from "vitest";
-import { buildContextUsageSnapshot } from "./context-usage";
+import { buildCompactionContextUsageSnapshot, buildContextUsageSnapshot } from "./context-usage";
+import { isContextUsageSnapshot } from "../../shared/context-usage";
 import { buildCompactionCheckpoint } from "./harness/compaction";
 import { estimateTokens } from "./context-manager";
 import type { ChatMessage } from "./vendors/types";
 
 const WINDOW = 128_000;
+
+it("压缩阶段快照保留系统与工具占用，并支持当前模型容量和新阶段", () => {
+  const previous = buildContextUsageSnapshot({
+    phase: "preRequest", contextWindowTokens: 256_000, personaContent: "系统规则",
+    toolLayerContent: "工具规则", skillLayerContent: "技能", messages: [],
+  });
+  const next = buildCompactionContextUsageSnapshot({
+    phase: "preCompaction", contextWindowTokens: WINDOW, previous,
+    messages: [{ role: "user", content: "新的历史" }],
+  });
+  for (const key of ["systemPrompt", "tools", "skills"] as const) {
+    expect(next.categories.find((category) => category.key === key)?.tokens)
+      .toBe(previous.categories.find((category) => category.key === key)?.tokens);
+  }
+  expect(next.contextWindowTokens).toBe(WINDOW);
+  expect(isContextUsageSnapshot(next)).toBe(true);
+  expect(next.totalTokens).toBe(next.categories.reduce((sum, category) => sum + category.tokens, 0));
+});
 
 function snapshotOf(messages: ChatMessage[], overrides: Partial<Parameters<typeof buildContextUsageSnapshot>[0]> = {}) {
   return buildContextUsageSnapshot({

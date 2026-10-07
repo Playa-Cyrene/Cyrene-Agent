@@ -216,6 +216,8 @@ export interface CyreneRunOptions {
    * 桌面链路由上游创建并注入；缺省（渠道/插件/测试）不写轨迹。
    */
   transcriptSink?: import("./transcript-sink").TranscriptSink;
+  /** 绑定当前会话和模型的持久化压缩入口。 */
+  compactTranscript?: import("./harness/types").HarnessInput["compactTranscript"];
 }
 
 /** Agent run 最终结果（供桥层做副作用用）。 */
