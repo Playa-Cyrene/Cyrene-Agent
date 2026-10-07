@@ -1,7 +1,9 @@
 // Issue 自动分流 —— 新 Issue 打开时给出三类判断并打对应标签。
 //
 // 行为边界（改动前请先读）：
-// - 只打标签提示，不评论、不关单、不替维护者承诺任何处理时间；
+// - 分流部分只打标签提示，不替维护者承诺任何处理时间；
+// - 唯一的例外是模板闸门：正文里找不到模板声明行时，会评论 + 打标 + 关闭（not planned）。
+//   「没走模板」是机器能确定的事实判定，不是对内容质量的评价，所以可以自动处置；
 // - 结论来自「GitHub 搜索候选 + 模型语义比对」，仅供参考、可能出错，人工可随时移除标签；
 // - 仅在 issues.opened 触发，天然每个 Issue 只跑一次，不需要额外限频；
 // - Issue 标题与正文一律从事件 JSON 读取，不经过 shell 插值，避免命令注入。
@@ -35,6 +37,20 @@ const LABELS = {
     color: "1d76db",
     description: "涉及架构、权限边界或安全，需维护者亲自判断（自动分流）",
   },
+};
+
+// 模板闸门：Issue 正文里必须能找到这句声明，否则判定为「没走模板」。
+// 这句话与 .github/ISSUE_TEMPLATE/ 下 7 个模板里的必勾选项逐字对应，改模板时必须同步改这里，
+// 否则会把所有老老实实走模板的人一起误判掉。
+// 只匹配复选框 label 中间这段固定短语，不依赖 `- [x]` 的大小写、空格和前后缀写法。
+const TEMPLATE_SENTINEL = /本\s*Issue\s*由我本人阅读、核对并整理/;
+
+// 闸门专用标签。刻意与下面三类分流标签分开：它由固定规则命中，不来自模型判断，
+// 也不参与「三类标签是否都已存在」的提前返回判断。
+const GATE_LABEL = {
+  name: "needs-template",
+  color: "6e7781",
+  description: "未按 Issue 模板提交，已自动关闭（按模板重提后可重开）",
 };
 
 // 判重所需的最低置信度。设为 high 是刻意保守：
@@ -286,6 +302,59 @@ async function addLabels(issueNumber, names) {
   return true;
 }
 
+async function commentIssue(issueNumber, body) {
+  const res = await api(`/repos/${owner}/${repo}/issues/${issueNumber}/comments`, {
+    method: "POST",
+    body: JSON.stringify({ body }),
+  });
+  if (!res.ok) {
+    console.warn(`[issue-triage] 评论失败（${res.status}）`);
+    return false;
+  }
+  return true;
+}
+
+async function closeIssue(issueNumber) {
+  const res = await api(`/repos/${owner}/${repo}/issues/${issueNumber}`, {
+    method: "PATCH",
+    // not_planned 而非 completed：这条单没有被处理，只是被退回
+    body: JSON.stringify({ state: "closed", state_reason: "not_planned" }),
+  });
+  if (!res.ok) {
+    console.warn(`[issue-triage] 关闭失败（${res.status}）`);
+    return false;
+  }
+  return true;
+}
+
+// 中英双语：仓库里存在纯英文标题的 Issue，只写中文会让那部分人不知道发生了什么
+function buildTemplateReminder() {
+  const link = `https://github.com/${owner}/${repo}/issues/new/choose`;
+  return [
+    "> [!IMPORTANT]",
+    "> 这条 Issue 没有走本仓库的 Issue 模板，已由机器人自动关闭。",
+    "> 这不是对你个人的判断，只是流程上的要求，请不要因此停下反馈。",
+    "",
+    `请回到 [新建 Issue](${link}) 选择对应模板重新提交。模板里的字段会引导你把复现步骤、版本号、日志和源码依据一次讲清楚，处理速度差别很大。`,
+    "",
+    "按模板重新提交后，请在本条下方回复一声，我会把它重新打开。",
+    "",
+    "---",
+    "",
+    `This issue was automatically closed because it was not submitted through one of this repository's [issue templates](${link}).`,
+    "",
+    "Please re-submit using the matching template, then leave a comment here and we will reopen this one.",
+  ].join("\n");
+}
+
+async function rejectOffTemplateIssue(issue) {
+  await ensureLabel(GATE_LABEL);
+  const labeled = await addLabels(issue.number, [GATE_LABEL.name]);
+  const commented = await commentIssue(issue.number, buildTemplateReminder());
+  const closed = await closeIssue(issue.number);
+  return labeled && commented && closed;
+}
+
 async function main() {
   const event = JSON.parse(readFileSync(eventPath, "utf8"));
   const issue = event.issue;
@@ -304,6 +373,14 @@ async function main() {
   const existingLabels = (issue.labels ?? []).map((label) => (typeof label === "string" ? label : label.name));
   if (Object.values(LABELS).every((label) => existingLabels.includes(label.name))) {
     console.log("[issue-triage] 三类标签都已存在，跳过");
+    return;
+  }
+
+  // 模板闸门：没走模板的直接退回，不进入下面的模型分流，省一次调用。
+  // 放在分流之前是刻意的——分流是「帮报告者改进」，闸门是「这份报告还没进入流程」。
+  if (!TEMPLATE_SENTINEL.test(issue.body ?? "")) {
+    const rejected = await rejectOffTemplateIssue(issue);
+    console.log(rejected ? "[issue-triage] 未走模板，已评论、打标并关闭" : "[issue-triage] 未走模板，处置中有失败项");
     return;
   }
 
