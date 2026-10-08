@@ -39,6 +39,7 @@ export function projectTaskTraceEvent(
     case "tool_start":
       return {
         id: createId(), at, kind: "tool", phase: "start", label: event.toolName,
+        toolCallId: event.toolCallId,
         ...(event.displayName ? { displayName: event.displayName } : {}),
       };
     case "tool_end":

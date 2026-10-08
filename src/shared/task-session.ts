@@ -27,13 +27,25 @@ export interface TaskTranscriptMessage {
   toolCalls?: unknown[];
   toolCallId?: string;
   name?: string;
+  /** 检查器的展示关联信息，不进入恢复运行时的模型消息。 */
+  presentation?: {
+    id?: string;
+    at?: number;
+    runId?: string;
+    roundId?: string;
+    outcome?: string;
+    fullRef?: string;
+  };
   [key: string]: unknown;
 }
 
 export interface TaskTraceRecord {
   id: string;
   at: number;
+  /** 区分同一角色上下文中的多次委派；旧轨迹没有此字段。 */
+  runId?: string;
   roundId?: string;
+  toolCallId?: string;
   kind: "round" | "candidate" | "progress" | "reasoning" | "tool" | "todo" | "terminal";
   phase?: "start" | "delta" | "end" | "discard";
   label?: string;

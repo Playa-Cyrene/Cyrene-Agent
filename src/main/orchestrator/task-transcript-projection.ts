@@ -25,14 +25,19 @@ export function transcriptContentText(content: unknown): string {
   return "";
 }
 
-export function projectTaskTranscriptMessages(entries: TranscriptEntry[]): TaskTranscriptMessage[] {
+export function projectTaskTranscriptMessages(entries: TranscriptEntry[], includePresentation = false): TaskTranscriptMessage[] {
   const messages: TaskTranscriptMessage[] = [];
   for (const entry of entries) {
+    const presentation = includePresentation ? {
+      presentation: { id: entry.id, at: entry.at, runId: entry.runId, roundId: entry.roundId,
+        ...(entry.kind === "tool_result" ? { outcome: entry.payload.outcome, fullRef: entry.payload.fullRef } : {}),
+      },
+    } : {};
     if (entry.kind === "user") {
-      messages.push({ role: "user", content: entry.payload.text });
+      messages.push({ role: "user", content: entry.payload.text, ...presentation });
     } else if (entry.kind === "assistant") {
       const { role, content, toolCalls } = entry.payload;
-      messages.push({ role, content: transcriptContentText(content), ...(Array.isArray(toolCalls) ? { toolCalls } : {}) });
+      messages.push({ role, content: transcriptContentText(content), ...(Array.isArray(toolCalls) ? { toolCalls } : {}), ...presentation });
     } else if (entry.kind === "tool_result") {
       const message = entry.payload.message;
       messages.push({
@@ -40,6 +45,7 @@ export function projectTaskTranscriptMessages(entries: TranscriptEntry[]): TaskT
         content: transcriptContentText(message.content),
         toolCallId: message.toolCallId,
         ...(message.name ? { name: message.name } : {}),
+        ...presentation,
       });
     }
   }

@@ -510,7 +510,6 @@
 }
 
 .cy-message--tool,
-.cy-message--ask-user,
 .cy-message--review {
   width: var(--cy-message-reading-width);
   max-width: var(--cy-message-reading-width);
@@ -529,7 +528,6 @@
 }
 
 .cy-message--tool .ant-bubble-content,
-.cy-message--ask-user .ant-bubble-content,
 .cy-message--review .ant-bubble-content {
   padding: 0;
   min-height: 0;
@@ -902,13 +900,63 @@
   padding-block: 4px;
 }
 
+.cy-tool-executions__chain .ant-thought-chain-node-box {
+  flex: 1;
+  min-width: 0;
+}
+
 .cy-tool-executions__description {
   display: flex;
+  flex-wrap: wrap;
   width: 100%;
   max-width: 100%;
   min-width: 0;
   align-items: center;
   gap: 7px;
+}
+
+.cy-file-link.cy-tool-executions__file {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  gap: 5px;
+  padding: 2px 0;
+  color: var(--rb-text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.cy-tool-executions__file .cy-file-link__icon {
+  width: 14px;
+  height: 14px;
+  opacity: 1;
+}
+
+.cy-tool-executions__file-stats {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 5px;
+  font-family: var(--rb-font-mono, monospace);
+  font-variant-numeric: tabular-nums;
+}
+
+.cy-tool-executions__file-stats .is-add {
+  color: var(--rb-diff-add-text, #116329);
+}
+
+.cy-tool-executions__file-stats .is-remove {
+  color: var(--rb-diff-remove-text, #82071e);
+}
+
+.cy-tool-executions__file:focus-visible {
+  outline: 2px solid var(--rb-accent);
+  outline-offset: 3px;
+  border-radius: 3px;
+}
+
+.cy-tool-executions__file.is-unavailable {
+  cursor: default;
+  text-decoration: none;
 }
 
 .cy-tool-executions__status {
@@ -941,14 +989,6 @@
   color: var(--rb-text-secondary);
   font: 12px/1.55 var(--rb-font-mono, monospace);
   white-space: pre-wrap;
-}
-
-/* 已回答的询问是独立正文，两套主题共用语义文字颜色。 */
-.cy-message--ask-user .ant-bubble-body {
-  min-width: 0;
-  width: calc(100% - 54px);
-  max-width: calc(100% - 54px);
-  margin-inline-start: 54px;
 }
 
 .cy-ask-user-qa {

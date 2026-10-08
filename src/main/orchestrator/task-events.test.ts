@@ -16,6 +16,7 @@ describe("projectTaskTraceEvent", () => {
       kind: "tool",
       phase: "start",
       label: "read_file",
+      toolCallId: "call-1",
     });
     expect(JSON.stringify(record)).not.toContain("secret");
     expect(JSON.stringify(record)).not.toContain("token");

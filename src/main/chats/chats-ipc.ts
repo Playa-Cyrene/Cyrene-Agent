@@ -220,7 +220,7 @@ export async function registerChatsIpc(
     const transcript = getConversationTranscriptStore(app.getPath("userData"));
     const snapshot = await transcript.read(task.id);
     if (snapshot.entries.length > 0) {
-      task.messages = projectTaskTranscriptMessages(snapshot.entries);
+      task.messages = projectTaskTranscriptMessages(snapshot.entries, true);
       task.todoItems = projectTaskTodoItems(snapshot.entries);
     }
     return task;

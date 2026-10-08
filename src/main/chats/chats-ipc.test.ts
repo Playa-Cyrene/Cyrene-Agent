@@ -978,10 +978,10 @@ describe("chats IPC mode filtering", () => {
 
     const result = await handler(null, { taskId: task.id, parentConversationId: "conv-1" }) as { messages: Array<{ role: string; content: string; toolCalls?: unknown[] }> };
     expect(result.messages).toHaveLength(3);
-    expect(result.messages[0]).toEqual({ role: "user", content: "子任务提示" });
+    expect(result.messages[0]).toMatchObject({ role: "user", content: "子任务提示", presentation: { runId: task.childRunId } });
     expect(result.messages[1]).toMatchObject({ role: "assistant", content: "干活中" });
     expect(result.messages[1]!.toolCalls).toEqual([{ id: "t1", name: "read_file", arguments: "{}" }]);
-    expect(result.messages[2]).toEqual({ role: "tool", content: "文件内容", toolCallId: "t1" });
+    expect(result.messages[2]).toMatchObject({ role: "tool", content: "文件内容", toolCallId: "t1", presentation: { outcome: "success" } });
 
     // 父会话不匹配时保持原有拒绝语义
     await expect(handler(null, { taskId: task.id, parentConversationId: "other" })).resolves.toBeNull();

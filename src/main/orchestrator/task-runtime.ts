@@ -349,6 +349,7 @@ export function createTaskExecutor(input: {
           if (event.type === "round_start") activeRoundId = event.roundId;
           const trace = projectTaskTraceEvent(event);
           if (trace) {
+            trace.runId = session.childRunId;
             if (event.type !== "round_start" && event.type !== "round_end" && activeRoundId) {
               trace.roundId = activeRoundId;
             }

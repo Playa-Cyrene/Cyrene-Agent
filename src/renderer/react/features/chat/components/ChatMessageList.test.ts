@@ -25,8 +25,61 @@ vi.mock("./file-icon-assets", () => ({
 vi.mock("./MermaidBlock", () => ({ MermaidBlock: () => null }));
 vi.mock("./SvgCardBlock", () => ({ SvgCardBlock: () => null }));
 
-import { AskUserQaContent, assembleMessageItems, createMessageItems, formatChannelSourceLabel, MarkdownContent, resolveChannelConversationLabel, RunActivityDetail, type ChatMessageItem, type EnabledSticker } from "./ChatMessageList";
+import { AskUserQaContent, assembleMessageItems, createMessageItems, formatChannelSourceLabel, MarkdownContent, resolveChannelConversationLabel, RunActivityDetail, ToolFileLink, type ChatMessageItem, type EnabledSticker } from "./ChatMessageList";
+import { FileLinkContext } from "./FileLinkContext";
 import { extractMessageStickerId, stripMessageStickerMarkers } from "./message-sticker";
+import { buildFlatRunTimeline } from "./agent-rounds";
+import type { ToolFileChange } from "../../../../../shared/chat-types";
+
+describe("tool file preview links", () => {
+  function renderLink(filePath: string, workspaceRoot?: string, openFile?: (relPath: string) => void, changes?: ToolFileChange[]) {
+    (globalThis as typeof globalThis & { React: typeof React }).React = React;
+    return renderToStaticMarkup(React.createElement(FileLinkContext.Provider,
+      { value: { workspaceRoot, openFile } }, React.createElement(ToolFileLink, { filePath, changes })));
+  }
+
+  it.each(["D:\\项目\\src\\characters.ts", "src/characters.ts"])("renders only the filename and icon for %s", (filePath) => {
+    const html = renderLink(filePath, "D:\\项目", () => {});
+    expect(html).toContain("<button");
+    expect(html).toContain(`title="${filePath}"`);
+    expect(html).toContain("cy-file-link__icon");
+    expect(html).toContain(">characters.ts</span>");
+    expect(html).not.toContain("<code");
+    expect(html.replace(/title="[^"]*"/, "")).not.toContain("src/");
+  });
+
+  it.each([
+    ["D:/项目外/a.ts", "D:/项目", true],
+    ["src/a.ts", undefined, true],
+    ["src/a.ts", "D:/项目", false],
+  ] as const)("keeps unavailable preview targets readable without a dead button", (filePath, root, hasCallback) => {
+    const html = renderLink(filePath, root, hasCallback ? () => {} : undefined);
+    expect(html).not.toContain("<button");
+    expect(html).toContain("is-unavailable");
+    expect(html).toContain(">a.ts</span>");
+  });
+
+  it("places the matching file's change counts after its name across absolute and relative paths", () => {
+    const changes: ToolFileChange[] = [
+      { file: "src/other.ts", kind: "modified", insertions: 99, deletions: 88 },
+      { file: "src/characters.ts", kind: "modified", insertions: 20, deletions: 19 },
+    ];
+    const html = renderLink("D:\\项目\\src\\Characters.ts", "D:\\项目", () => {}, changes);
+    expect(html).toContain('class="is-add">+20</span>');
+    expect(html).toContain('class="is-remove">-19</span>');
+    expect(html.indexOf(">Characters.ts</span>")).toBeLessThan(html.indexOf("+20</span>"));
+    expect(html).not.toContain("+99");
+    expect(html).not.toContain("-88");
+  });
+
+  it("shows only nonzero counts and leaves unmatched files without invented statistics", () => {
+    const changes: ToolFileChange[] = [{ file: "src/new.ts", kind: "added", insertions: 5, deletions: 0 }];
+    const addedHtml = renderLink("src/new.ts", "D:/项目", () => {}, changes);
+    expect(addedHtml).toContain('class="is-add">+5</span>');
+    expect(addedHtml).not.toContain('class="is-remove"');
+    expect(renderLink("src/read.ts", "D:/项目", () => {}, changes)).not.toContain("file-stats");
+  });
+});
 
 describe("React chat sticker messages", () => {
   it("extracts a persisted user sticker marker and hides the raw marker", () => {
@@ -232,13 +285,13 @@ describe("formal answer visibility", () => {
   });
 });
 
-describe("answered user questions in the message stream", () => {
+describe("interactive tool results stay in tool details", () => {
   const answeredAsk = {
     id: "ask-1", name: "ask_user", status: "success" as const,
     result: "怎么显示背景？ → 居中裁切铺满\n文字怎么处理？ → 半透明底色",
   };
 
-  it("keeps answered questions outside a completed run's collapsed activity", () => {
+  it("keeps answered questions inside a completed run's collapsed activity", () => {
     const items = createMessageItems([{
       id: "answer", role: "assistant", content: "按你的选择实施。",
       runActivity: { startedAt: 1, completedAt: 2, reasoningMs: 0 },
@@ -246,10 +299,9 @@ describe("answered user questions in the message stream", () => {
       toolExecutions: [{ ...answeredAsk, roundId: "round-ask" }],
     }], []);
 
-    expect(items.map((item) => item.role)).toEqual(["ask_user", "assistant"]);
+    expect(items.map((item) => item.role)).toEqual(["activity", "assistant"]);
     expect(items[0]).toMatchObject({
-      avatar: null,
-      extraInfo: { rows: ["怎么显示背景？ → 居中裁切铺满", "文字怎么处理？ → 半透明底色"] },
+      extraInfo: { tools: [{ id: "ask-1", result: "怎么显示背景？ → 居中裁切铺满\n文字怎么处理？ → 半透明底色" }] },
     });
   });
 
@@ -268,14 +320,13 @@ describe("answered user questions in the message stream", () => {
       ],
     }], []);
 
-    expect(items.map((item) => item.role)).toEqual(["activity", "ask_user", "activity", "assistant"]);
+    expect(items.map((item) => item.role)).toEqual(["activity", "assistant"]);
     expect(items[0].extraInfo).toMatchObject({
-      processMessages: [{ id: "before" }], tools: [{ id: "read" }],
+      processMessages: [{ id: "before" }, { id: "after" }],
+      tools: [{ id: "read" }, { id: "ask-1" }, { id: "edit" }],
     });
-    expect(items[2].extraInfo).toMatchObject({
-      continuation: true,
-      processMessages: [{ id: "after" }], tools: [{ id: "edit" }],
-    });
+    expect(buildFlatRunTimeline(items[0].extraInfo as Parameters<typeof buildFlatRunTimeline>[0]).map((entry) => entry.key))
+      .toEqual(["before", "read", "ask-1", "after", "edit"]);
   });
 
   it("preserves historical ordering when records only have afterToolCount", () => {
@@ -289,20 +340,22 @@ describe("answered user questions in the message stream", () => {
       toolExecutions: [answeredAsk],
     }], []);
 
-    expect(items.map((item) => item.role)).toEqual(["activity", "ask_user", "activity"]);
-    expect(items[2].extraInfo).toMatchObject({
-      processMessages: [{ id: "after", afterToolCount: 0 }],
+    expect(items.map((item) => item.role)).toEqual(["activity"]);
+    expect(items[0].extraInfo).toMatchObject({
+      processMessages: [{ id: "before", afterToolCount: 0 }, { id: "after", afterToolCount: 1 }],
+      tools: [{ id: "ask-1" }],
     });
   });
 
-  it("also renders answered questions directly in older messages without run activity", () => {
+  it("keeps answered questions in a tool card for older messages without run activity", () => {
     const items = createMessageItems([{
       id: "legacy", role: "assistant", content: "", toolExecutions: [answeredAsk],
     }], []);
-    expect(items.map((item) => item.role)).toEqual(["ask_user"]);
+    expect(items.map((item) => item.role)).toEqual(["tool"]);
+    expect(items[0].extraInfo).toMatchObject({ tools: [{ id: "ask-1", result: answeredAsk.result }] });
   });
 
-  it.each(["running", "error"] as const)("keeps %s questions on the existing tool path", (status) => {
+  it.each(["running", "error", "success"] as const)("keeps %s questions on the existing tool path", (status) => {
     const items = createMessageItems([{
       id: "pending", role: "assistant", content: "",
       runActivity: { startedAt: 1, reasoningMs: 0 },
@@ -310,6 +363,21 @@ describe("answered user questions in the message stream", () => {
     }], []);
     expect(items.map((item) => item.role)).toEqual(["activity"]);
     expect(items[0].extraInfo).toMatchObject({ tools: [{ id: "ask-1", status }] });
+  });
+
+  it("keeps quiz answers and grading in the activity alongside other tool details", () => {
+    const result = JSON.stringify({ status: "submitted", results: [{ question: "测试题", userAnswer: "A", grading: "correct" }] });
+    const items = createMessageItems([{
+      id: "quiz", role: "assistant", content: "讲评正文。",
+      runActivity: { startedAt: 1, completedAt: 2, reasoningMs: 0 },
+      toolExecutions: [
+        answeredAsk,
+        { id: "quiz-1", name: "pop_quiz", displayName: "突击抽查", status: "success", result },
+      ],
+    }], []);
+    expect(items.map((item) => item.role)).toEqual(["activity", "assistant"]);
+    expect(items[0].extraInfo).toMatchObject({ tools: [{ id: "ask-1", result: answeredAsk.result }, { id: "quiz-1", result }] });
+    expect(items[1].content).toBe("讲评正文。");
   });
 
   it("retains unrecognized results instead of silently removing the tool", () => {

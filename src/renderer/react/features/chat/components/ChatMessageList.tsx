@@ -37,6 +37,8 @@ import { buildAskUserQa, buildFlatRunTimeline, countRoundChangedFiles, describeT
 import { TaskDelegationRow } from "./TaskDelegationRow";
 import { extractFileChanges, FileChangeCard } from "./FileChangeCard";
 import { FileLinkContext, type FileLinkEnv } from "./FileLinkContext";
+import { FileIcon } from "./file-icon";
+import { relativePathInsideWorkspace } from "./file-link";
 import { ReviewPanel } from "./ReviewPanel";
 import { reportChatPerfRender } from "./chat-perf-probe";
 import { StreamdownMessageContent } from "./StreamdownMessageContent";
@@ -813,6 +815,50 @@ function RunActivityContent({
   );
 }
 
+/** 工具摘要里的文件入口复用正文文件链接环境，预览读取当前完整文件。 */
+export function ToolFileLink({ filePath, changes }: { filePath: string; changes?: ToolFileChange[] }) {
+  const { workspaceRoot, openFile } = useContext(FileLinkContext);
+  const normalizedPath = filePath.replaceAll("\\", "/");
+  const fileName = normalizedPath.split("/").pop() ?? filePath;
+  const relPath = workspaceRoot
+    ? /^(?:[A-Za-z]:\/|\/)/.test(normalizedPath)
+      ? relativePathInsideWorkspace(normalizedPath, workspaceRoot)
+      : normalizedPath.replace(/^\.\//, "")
+    : null;
+  const pathKey = (path: string) => {
+    const normalized = path.replaceAll("\\", "/");
+    const relative = (workspaceRoot ? relativePathInsideWorkspace(normalized, workspaceRoot) : null) ?? normalized;
+    const key = relative.replace(/^\.\//, "");
+    return /^(?:[A-Za-z]:|[\\/]{2})/.test(workspaceRoot ?? normalized) ? key.toLowerCase() : key;
+  };
+  const change = changes?.find((item) => pathKey(item.file) === pathKey(filePath));
+  const content = (
+    <>
+      <FileIcon fileName={fileName} className="cy-file-link__icon" />
+      <span className="cy-file-link__text">{fileName}</span>
+      {change && (change.insertions > 0 || change.deletions > 0) && (
+        <span className="cy-tool-executions__file-stats">
+          {change.insertions > 0 && <span className="is-add">+{change.insertions}</span>}
+          {change.deletions > 0 && <span className="is-remove">-{change.deletions}</span>}
+        </span>
+      )}
+    </>
+  );
+  if (!relPath || !openFile) {
+    return <span className="cy-file-link cy-tool-executions__file is-unavailable" title={filePath}>{content}</span>;
+  }
+  return (
+    <button
+      type="button"
+      className="cy-file-link cy-tool-executions__file"
+      title={filePath}
+      onClick={(event) => { event.stopPropagation(); openFile(relPath); }}
+    >
+      {content}
+    </button>
+  );
+}
+
 function ToolExecutionContent({ tools }: { tools: ToolExecutionRecord[] }) {
   const { t } = useTranslation();
   return (
@@ -823,13 +869,16 @@ function ToolExecutionContent({ tools }: { tools: ToolExecutionRecord[] }) {
         line="dashed"
         items={tools.map((tool) => {
           const presentation = describeToolExecution(tool);
+          const changes = tool.changes ?? (tool.result ? extractFileChanges(tool.result) ?? undefined : undefined);
           return {
             key: tool.id,
             title: presentation.label,
             description: (
               <span className="cy-tool-executions__description">
                 <span className="cy-tool-executions__status">{presentation.statusText}</span>
-                {presentation.detail && <code className="cy-tool-executions__detail" title={presentation.detail}>{presentation.detail}</code>}
+                {presentation.filePaths
+                  ? presentation.filePaths.map((filePath) => <ToolFileLink key={filePath} filePath={filePath} changes={changes} />)
+                  : presentation.detail && <code className="cy-tool-executions__detail" title={presentation.detail}>{presentation.detail}</code>}
               </span>
             ),
             status: tool.status === "running" ? "loading" : tool.status === "error" ? "error" : "success",
@@ -847,7 +896,7 @@ function ToolExecutionContent({ tools }: { tools: ToolExecutionRecord[] }) {
   );
 }
 
-/** 已回答的询问直接显示为编号问答，不再放入工具折叠卡片。 */
+/** 工具折叠详情中的编号问答。 */
 export function AskUserQaContent({ rows }: { rows: string[] }) {
   return (
     <ol className="cy-ask-user-qa">
@@ -1185,15 +1234,6 @@ function createRoles(
       );
     },
   },
-  ask_user: {
-    placement: "start" as const,
-    variant: "borderless" as const,
-    avatar: null,
-    rootClassName: "cy-message cy-message--ask-user",
-    contentRender: (_content: string, info: { extraInfo?: { rows?: string[] } }) => (
-      <AskUserQaContent rows={info.extraInfo?.rows ?? []} />
-    ),
-  },
   tool: {
     placement: "start" as const,
     variant: "borderless" as const,
@@ -1294,20 +1334,6 @@ function convertMessage(message: ChatMessageItem, enabledStickers: readonly Enab
     });
   };
   const tools = message.toolExecutions ?? [];
-  const answeredQuestions = new Map(tools.flatMap((tool) => {
-    if (tool.name !== "ask_user" || tool.status !== "success") return [];
-    const rows = buildAskUserQa(tool);
-    return rows.length ? [[tool.id, rows] as const] : [];
-  }));
-  const appendAnsweredQuestion = (tool: ToolExecutionRecord) => {
-    assistantItems.push({
-      key: `${message.id}-ask-${tool.id}`,
-      role: "ask_user",
-      content: "",
-      avatar: null,
-      extraInfo: { rows: answeredQuestions.get(tool.id) },
-    });
-  };
   // 活动卡是否渲染：运行中始终显示；终态只在确实产生了过程内容（正文/推理/工具/委派）时保留，
   // 首轮无工具调用的成功运行不产生空折叠头部。头像钉在活动卡头部，正文据此决定是否隐藏自己的头像。
   const hasProcessContent = (message.processMessages ?? []).some((item) => item.content.trim())
@@ -1322,7 +1348,6 @@ function convertMessage(message: ChatMessageItem, enabledStickers: readonly Enab
     details: Parameters<typeof buildFlatRunTimeline>[0],
     key: string,
     continuation = Boolean(display?.continuation),
-    flat = false,
   ) => {
     if (!activity) return;
     activityVisible = true;
@@ -1339,10 +1364,9 @@ function convertMessage(message: ChatMessageItem, enabledStickers: readonly Enab
         rootActivityId: `${display?.rootId ?? message.id}-activity`,
         activity,
         continuation,
-        // 问答前后的片段继续沿用时间线顺序，避免终态分组把内容挪到问答另一侧。
-        detailLive: flat ? true : display ? display.last && processing : undefined,
+        detailLive: display ? display.last && processing : undefined,
         ...details,
-        agentRounds: flat ? [] : message.agentRounds ?? [],
+        agentRounds: message.agentRounds ?? [],
         runStage: display ? display.stage : message.runStage,
         taskPlan: display ? display.taskPlan : message.taskPlan,
         modelRetry: display ? display.modelRetry : message.modelRetry,
@@ -1356,46 +1380,13 @@ function convertMessage(message: ChatMessageItem, enabledStickers: readonly Enab
     tools,
   };
   if (activity) {
-    if (answeredQuestions.size > 0) {
-      let segment: typeof details = { reasoningBlocks: [], processMessages: [], taskDelegations: [], tools: [] };
-      let key = `${message.id}-activity`;
-      let continuation = Boolean(display?.continuation);
-      const flushSegment = () => {
-        if (!segment.reasoningBlocks.length && !segment.processMessages.length && !segment.taskDelegations.length && !segment.tools.length) return;
-        appendActivity(segment, key, continuation, true);
-        continuation = true;
-        segment = { reasoningBlocks: [], processMessages: [], taskDelegations: [], tools: [] };
-      };
-      // 复用既有时间线，问答单独成为消息；其余事件仍用原来的工具和流程组件。
-      for (const entry of buildFlatRunTimeline(details)) {
-        if (entry.tool && answeredQuestions.has(entry.tool.id)) {
-          flushSegment();
-          appendAnsweredQuestion(entry.tool);
-          key = `${message.id}-activity-after-${entry.tool.id}`;
-        } else if (entry.tool) {
-          segment.tools.push(entry.tool);
-        } else if (entry.process) {
-          segment.processMessages.push({ ...entry.process, afterToolCount: segment.tools.length });
-        } else if (entry.reasoning) {
-          segment.reasoningBlocks.push({ ...entry.reasoning, afterToolCount: segment.tools.length });
-        } else if (entry.task) {
-          segment.taskDelegations.push(entry.task);
-        }
-      }
-      flushSegment();
-      // 纯问答完成后不留空的“已完成”包装；运行中仍保留阶段、计划和重试提示。
-      if (processing && !activityVisible) appendActivity(segment, key, continuation, true);
-    } else if (processing || hasProcessContent || (display && !display.continuation)) {
+    if (processing || hasProcessContent || (display && !display.continuation)) {
       appendActivity(details, `${message.id}-activity`);
     }
   } else {
     for (let index = 0; index <= tools.length; index += 1) {
       reasoningBlocks.filter((block) => (block.afterToolCount ?? 0) === index).forEach(appendReasoning);
       if (index === tools.length) continue;
-      if (answeredQuestions.has(tools[index].id)) {
-        appendAnsweredQuestion(tools[index]);
-        continue;
-      }
       assistantItems.push({
         key: `${message.id}-tool-${tools[index].id}`,
         role: "tool",
