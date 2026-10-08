@@ -46,6 +46,8 @@ const TRANSPORT_NAMES_EN: Readonly<Record<Transport, string>> = {
 const NOTES_EN: Readonly<Record<string, string>> = {
   "历史清单保留名称；不改写用户请求。": "Legacy catalog entry; the model name is sent as provided.",
   "现有采样白名单未覆盖该型号。": "The existing sampling allowlist does not cover this model.",
+  "2026-10-07 发布；固定型号名，无日期后缀、无别名。": "Released 2026-10-07; a fixed model name with no date suffix and no alias.",
+  "官方说明非默认 temperature/top_p/top_k 返回 400；未加采样白名单即不注入采样参数。": "Officially, non-default temperature/top_p/top_k return a 400; with no sampling allowlist, no sampling parameters are sent.",
   "预设协议没有专用结构化输出规则，保留提示词 JSON 回退。": "No dedicated structured output rule exists for the preset transport; prompt-based JSON fallback is retained.",
   "现有推理规则未确认该型号。": "The existing reasoning rule has not been verified for this model.",
   "MiniMax-M2.x 系列": "MiniMax M2.x family",

@@ -11,6 +11,7 @@ describe("resolveStructuredOutputProfile", () => {
     ["chatgpt", "gpt-6-luna", "openai", "provider_json_schema"],
     ["chatgpt", "gpt-5.6", "openai", "provider_json_schema"],
     ["claude", "claude-sonnet-4-6", "anthropic", "provider_json_schema"],
+    ["claude", "claude-haiku-5-5", "anthropic", "provider_json_schema"],
     ["kimi", "kimi-k3", "openai", "provider_json_schema"],
     ["kimi", "kimi-for-coding", "openai", "provider_json_schema"],
     ["doubao", "doubao-seed-2-1-pro-260628", "openai", "provider_json_schema"],
