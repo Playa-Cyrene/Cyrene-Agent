@@ -678,7 +678,11 @@ export function registerAgUiIpc(
 
     const threadId = `thread-${Date.now()}`;
     const agent = new CyreneAgent({ threadId, description: "Cyrene 主聊天" });
-    if (mode === "chat") await database.call("runs.create", { conversationId: sessionId, runId });
+    // 纯 ChatLoop 没有 Harness 生命周期，由 bridge 将已接纳的 run 标记为 running；
+    // Chat 启用工具时会进入 Harness，由 Harness adapter 创建同一条运行记录。
+    if (mode === "chat" && (options.tools ?? []).length === 0) {
+      await database.call("runs.create", { conversationId: sessionId, runId });
+    }
 
     // 桌面轮次事件：run 真正开跑时登记协调器（立即发布 turn:started）。
     // turn:finished 由协调器在"终态 + 渲染端落盘确认"双条件满足后发布一次。
