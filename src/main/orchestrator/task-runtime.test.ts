@@ -32,7 +32,8 @@ const parent = {
   mode: "code" as const,
   systemPrompt: "parent persona must not be copied",
   vendorConfig: { provider: "fake", model: "fake" } as never,
-  tools: [tool("read_file"), tool("task"), tool("ask_user")],
+  tools: [tool("Read"), tool("task"), tool("ask_user")],
+  permissionMode: "normal" as const,
   resolvedWorkspaceRoot: "E:\\project",
   checkPermission: vi.fn(async () => true),
 };
@@ -73,11 +74,13 @@ describe("TaskRuntime", () => {
     expect(result).toEqual({ taskId: "task-1", status: "completed", text: "检查完成。" });
     expect(runHarness).toHaveBeenCalledWith(expect.objectContaining({
       messages: [{ role: "user", content: "检查取消传播并报告证据。" }],
-      tools: [expect.objectContaining({ id: "read_file" })],
+      tools: [expect.objectContaining({ id: "Read" })],
       config: expect.not.objectContaining({ maxRounds: expect.anything() }),
       toolContext: expect.objectContaining({
         runId: "child-run-1",
         resolvedWorkspaceRoot: "E:\\project",
+        permissionMode: "normal",
+        readOnly: false,
       }),
     }));
     expect(await store.get("task-1")).toMatchObject({ status: "completed", resultText: "检查完成。" });

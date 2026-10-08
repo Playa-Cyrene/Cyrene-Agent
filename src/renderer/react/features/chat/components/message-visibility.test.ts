@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
@@ -6,6 +6,18 @@ import {
   resolveReasoningExpanded,
   updateReasoningExpanded,
 } from "./message-visibility";
+import { createMessageItems, type ChatMessageItem } from "./ChatMessageList";
+
+vi.mock("@ant-design/x", () => ({
+  Bubble: { List: () => null },
+  CodeHighlighter: () => null,
+  Think: () => null,
+  ThoughtChain: () => null,
+}));
+vi.mock("../../../../../shared/renderer-base", () => ({ resolveAsset: (path: string) => path }));
+vi.mock("./file-icon-assets", () => ({ FILE_ICON_URLS: {}, FILE_NAME_MAP: {}, FILE_EXT_MAP: {} }));
+vi.mock("./MermaidBlock", () => ({ MermaidBlock: () => null }));
+vi.mock("./SvgCardBlock", () => ({ SvgCardBlock: () => null }));
 
 describe("assistantRenderStages", () => {
   it("does not render a Think component for a pending response without real reasoning", () => {
@@ -67,15 +79,35 @@ describe("assistantRenderStages", () => {
     expect(resolveReasoningExpanded({}, "assistant-new")).toBe(false);
   });
 
-  it("groups a run's reasoning and tools under one activity item with unique keys", () => {
-    const source = fs.readFileSync(
-      fileURLToPath(new URL("./ChatMessageList.tsx", import.meta.url)),
-      "utf8",
-    );
-    expect(source).toContain('role: "activity"');
-    expect(source).toContain('key: `${message.id}-activity`');
-    expect(source).toContain('key: `${message.id}-tool-${tools[index].id}`');
-    expect(source).not.toContain('key: `${message.id}-tools`');
+  it("keeps stable unique keys for grouped run activity and standalone tools", () => {
+    const message: ChatMessageItem = {
+      id: "assistant-keys",
+      role: "assistant",
+      content: "检查完成",
+      toolExecutions: [
+        { id: "read-1", name: "Read", status: "success" },
+        { id: "edit-1", name: "Edit", status: "success" },
+      ],
+    };
+    const activity = createMessageItems([{
+      ...message,
+      reasoning: "先检查文件",
+      runActivity: { startedAt: 1, completedAt: 2, reasoningMs: 1 },
+    }], []);
+    expect(activity.map((item) => [item.key, item.role])).toEqual([
+      ["assistant-keys-activity", "activity"],
+      ["assistant-keys", "assistant"],
+    ]);
+
+    const standalone = createMessageItems([message], []);
+    expect(standalone.map((item) => [item.key, item.role])).toEqual([
+      ["assistant-keys-tool-read-1", "tool"],
+      ["assistant-keys-tool-edit-1", "tool"],
+      ["assistant-keys", "assistant"],
+    ]);
+    expect(new Set(standalone.map((item) => item.key)).size).toBe(standalone.length);
+    expect(createMessageItems([{ ...message, content: "检查完成，已更新" }], []).map((item) => item.key))
+      .toEqual(standalone.map((item) => item.key));
   });
 
   it("removes hidden streaming Markdown from the DOM after collapse", () => {

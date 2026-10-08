@@ -55,6 +55,12 @@ vi.mock("electron", () => ({
   },
 }));
 
+// 写入契约使用明确的可写权限，避免依赖主进程默认只读档位。
+vi.mock("../../permission", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../../permission")>(),
+  getCurrentLevel: () => "full",
+}));
+
 // Mock vision-captioner
 vi.mock("../vision-captioner", () => ({
   captionImage: vi.fn(),

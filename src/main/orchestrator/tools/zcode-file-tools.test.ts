@@ -3,6 +3,14 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { ToolDefinition } from "./registry/tool-registry";
+import type { AgentFileAccessLevel } from "../../permission-policy";
+
+const permissionFixture = vi.hoisted(() => ({ level: "full" as AgentFileAccessLevel }));
+
+vi.mock("../../permission", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../../permission")>(),
+  getCurrentLevel: () => permissionFixture.level,
+}));
 
 const registryState = vi.hoisted(() => {
   const definitions = new Map<string, ToolDefinition>();
@@ -61,6 +69,7 @@ function registerAdapters(): void {
 }
 
 beforeEach(() => {
+  permissionFixture.level = "full";
   registryState.definitions.clear();
   vi.clearAllMocks();
   workspace = fs.mkdtempSync(path.join(os.tmpdir(), "zcode-file-tools-"));
@@ -106,22 +115,49 @@ describe("ZCode file tool adapters", () => {
     expect(backends.read.execute).not.toHaveBeenCalled();
   });
 
-  it("rejects Read paths outside the bound workspace before accessing a backend", async () => {
+  it("rejects outside Read paths in project-read-only mode before accessing a backend", async () => {
+    permissionFixture.level = "project-read-only";
     const outsidePath = path.resolve(workspace, "..", "outside.txt");
     const result = await tool("Read").execute({ file_path: outsidePath }, context());
 
-    expect(result).toContain("outside the current workspace");
+    expect(JSON.parse(result)).toMatchObject({ success: false, errorCode: "PERMISSION_DENIED" });
+    expect(result).toContain("目标路径在当前工作区外");
     expect(backends.read.execute).not.toHaveBeenCalled();
   });
 
-  it.each(["Write", "Edit"])("rejects %s paths outside the bound workspace before mutation", async (id) => {
+  it("allows outside Read paths in ordinary read-only mode", async () => {
+    permissionFixture.level = "read-only";
+    const outsidePath = path.resolve(workspace, "..", "outside.txt");
+
+    expect(await tool("Read").execute({ file_path: outsidePath }, context())).toBe("1\tread result");
+    expect(backends.read.execute).toHaveBeenCalledWith(expect.objectContaining({ path: outsidePath }), context());
+  });
+
+  it.each(["Write", "Edit"])("rejects outside %s paths in scoped mode before mutation", async (id) => {
+    permissionFixture.level = "scoped";
     const outsidePath = path.resolve(workspace, "..", "outside.txt");
     const args = id === "Write"
       ? { file_path: outsidePath, content: "blocked" }
       : { file_path: outsidePath, old_string: "before", new_string: "after" };
     const result = await tool(id).execute(args, context());
 
-    expect(result).toContain("outside the current workspace");
+    expect(JSON.parse(result)).toMatchObject({ success: false, errorCode: "PERMISSION_DENIED" });
+    expect(result).toContain("目标路径在当前工作区外");
+    expect(backends.write.execute).not.toHaveBeenCalled();
+    expect(backends.edit.execute).not.toHaveBeenCalled();
+  });
+
+  it.each(["Write", "Edit"])("rejects %s in ordinary read-only mode even inside the workspace", async (id) => {
+    permissionFixture.level = "read-only";
+    const filePath = path.join(workspace, "note.md");
+    const args = id === "Write"
+      ? { file_path: filePath, content: "blocked" }
+      : { file_path: filePath, old_string: "before", new_string: "after" };
+
+    expect(JSON.parse(await tool(id).execute(args, context()))).toMatchObject({
+      success: false,
+      errorCode: "PERMISSION_DENIED",
+    });
     expect(backends.write.execute).not.toHaveBeenCalled();
     expect(backends.edit.execute).not.toHaveBeenCalled();
   });
@@ -189,11 +225,12 @@ describe("ZCode file tool adapters", () => {
     expect(result.truncated).toBe(false);
   });
 
-  it("rejects Glob roots outside the workspace", async () => {
+  it("rejects outside Glob roots in project-read-only mode", async () => {
+    permissionFixture.level = "project-read-only";
     const outsideDirectory = path.resolve(workspace, "..");
     const result = JSON.parse(await tool("Glob").execute({ pattern: "**/*", path: outsideDirectory }, context()));
 
-    expect(result.errorCode).toBe("INVALID_PATH");
+    expect(result.errorCode).toBe("PERMISSION_DENIED");
     expect(result.filenames).toBeUndefined();
   });
 
