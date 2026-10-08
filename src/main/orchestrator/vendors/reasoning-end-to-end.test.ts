@@ -171,6 +171,34 @@ describe("G2 Claude + reasoning 透传", () => {
     expect((body.output_config as Record<string, unknown>).effort).toBe("xhigh");
     expect((body.thinking as Record<string, unknown>).type).toBe("adaptive");
   });
+
+  // Claude Haiku 5.5 官方约束（核验 2026-10-08）：只接受自适应思考；关闭思考仅在 high 及以下合法，
+  // xhigh/max 下关闭返回 400。下面验证实际请求体满足这些约束。
+  const haikuBody = (reasoning?: ReasoningPreference) => {
+    const http = adapter.buildRequest(
+      { model: "claude-haiku-5-5", messages: [{ role: "user", content: "hi" }], maxTokens: 100 },
+      cfgOf(claudeCap, { model: "claude-haiku-5-5", ...(reasoning ? { reasoning } : {}) }),
+    );
+    return JSON.parse(http.body) as Record<string, unknown>;
+  };
+
+  test("claude-haiku-5-5 + {mode:'on', effort:'max'} → 自适应思考且发送所选档位", () => {
+    const body = haikuBody({ mode: "on", effort: "max" });
+    expect(body.thinking).toEqual({ type: "adaptive" });
+    expect((body.output_config as Record<string, unknown>).effort).toBe("max");
+  });
+
+  test("claude-haiku-5-5 未设置档位 → 自适应思考 + 默认 medium，不发 budget_tokens", () => {
+    const body = haikuBody();
+    expect(body.thinking).toEqual({ type: "adaptive" });
+    expect((body.output_config as Record<string, unknown>).effort).toBe("medium");
+  });
+
+  test("claude-haiku-5-5 + off → thinking.disabled 且不带 effort（避免 xhigh/max 下关闭的 400）", () => {
+    const body = haikuBody({ mode: "off" });
+    expect(body.thinking).toEqual({ type: "disabled" });
+    expect((body.output_config as Record<string, unknown> | undefined)?.effort).toBeUndefined();
+  });
 });
 
 describe("G3 reasoning=undefined（使用滑块默认档）", () => {

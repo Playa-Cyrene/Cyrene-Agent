@@ -60,4 +60,23 @@ describe("resolveReasoningCapability — 行为基准", () => {
       expect(cap).toBe(UNKNOWN_REASONING_CAPABILITY);
     }
   });
+
+  // 预期值按官方文档独立填写（effort 文档，核验 2026-10-08），不从注册表复制。
+  test("claude + claude-haiku-5-5 → 自适应思考，五档 effort，默认 medium，可关闭", () => {
+    const cap = resolveReasoningCapability("claude", "claude-haiku-5-5");
+    expect(cap.control).toBe("toggle-effort");
+    expect(cap.requestStyle).toBe("anthropic-adaptive");
+    expect(cap.supportedEfforts).toEqual(["low", "medium", "high", "xhigh", "max"]);
+    expect(cap.defaultEffort).toBe("medium");
+    expect(cap.supportsDisable).toBe(true);
+  });
+
+  test("Haiku 5.5 规则可跨厂商推断：托管端点使用同一型号名", () => {
+    expect(resolveReasoningCapability("unknown-provider", "claude-haiku-5-5").defaultEffort).toBe("medium");
+  });
+
+  test("邻近反例：claude-haiku-4-5 不命中 Haiku 5.5 规则，仍落兜底", () => {
+    // Haiku 4.5 只支持 budget_tokens 式思考，套用自适应规则会发出它不接受的请求
+    expect(resolveReasoningCapability("claude", "claude-haiku-4-5")).toBe(UNKNOWN_REASONING_CAPABILITY);
+  });
 });

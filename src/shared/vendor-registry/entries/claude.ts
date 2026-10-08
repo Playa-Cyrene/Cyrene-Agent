@@ -44,6 +44,18 @@ export const CLAUDE_REGISTRY = defineVendor({
       ],
     },
     {
+      model: "claude-haiku-5-5",
+      recommendedFor: ["chat"],
+      note: "2026-10-07 发布；固定型号名，无日期后缀、无别名。",
+      unknownCapabilities: [
+        {
+          feature: "sampling",
+          transport: "anthropic",
+          note: "官方说明非默认 temperature/top_p/top_k 返回 400；未加采样白名单即不注入采样参数。",
+        },
+      ],
+    },
+    {
       model: "claude-opus-4-7",
       recommendedFor: [],
       note: "历史清单保留名称；不改写用户请求。",
@@ -61,6 +73,24 @@ export const CLAUDE_REGISTRY = defineVendor({
   ],
   shortName: "Claude",
   structuredOutputRules: [
+    // 具体型号规则放在下方宽泛的历史规则之前；Haiku 5.5 没有日期后缀，按完整名称匹配。
+    {
+      id: "claude-haiku-5-5-structured-output",
+      transport: "anthropic",
+      modelPattern: /^claude-haiku-5-5$/i,
+      tier: "A",
+      mode: "provider_json_schema",
+      verification: "official",
+      metadata: {
+        status: "supported",
+        evidence: {
+          kind: "official",
+          url: "https://platform.claude.com/docs/en/build-with-claude/structured-outputs",
+          checkedAt: "2026-10-08",
+          transports: ["anthropic"],
+        },
+      },
+    },
     {
       id: "claude-structured-output",
 
@@ -99,6 +129,25 @@ export const CLAUDE_REGISTRY = defineVendor({
       control: "toggle-effort",
       supportedEfforts: ["low", "medium", "high", "xhigh"],
       defaultEffort: "high",
+      requestStyle: "anthropic-adaptive",
+      supportsDisable: true,
+    } },
+    // Claude Haiku 5.5：只接受自适应思考（type:"enabled" + budget_tokens 返回 400），五档 effort，默认 medium。
+    // 官方允许在 high 及以下关闭思考，xhigh/max 下关闭返回 400；关闭时本项目不发送 effort，
+    // 服务端取默认 medium，因此 supportsDisable 可以为 true。
+    // 跨厂商推断：Google Cloud、Microsoft Foundry、Claude Platform on AWS 都使用同一型号名。
+    { modelPattern: /^claude-haiku-5-5/i, modelInferencePattern: /^claude-haiku-5-5/i, metadata: {
+      status: "supported",
+      evidence: {
+        kind: "official",
+        url: "https://platform.claude.com/docs/en/build-with-claude/effort",
+        checkedAt: "2026-10-08",
+        transports: ["anthropic"],
+      },
+    }, capability: {
+      control: "toggle-effort",
+      supportedEfforts: ["low", "medium", "high", "xhigh", "max"],
+      defaultEffort: "medium",
       requestStyle: "anthropic-adaptive",
       supportsDisable: true,
     } },
