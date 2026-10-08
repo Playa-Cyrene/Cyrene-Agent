@@ -74,7 +74,7 @@ describe("str_replace 接线：单发替换", () => {
     expect(result.appliedEdits).toBe(1);
     expect(result.whitespaceNormalized).toBe(false);
     expect(result.changes).toHaveLength(1);
-    expect(result.changes[0].file).toBe(file);
+    expect(result.changes[0].file).toBe(fs.realpathSync.native(file));
     expect(result.changes[0].kind).toBe("modified");
     expect(fs.readFileSync(file, "utf8")).toBe("# 标题\n\n修改后的正文。\n");
   });

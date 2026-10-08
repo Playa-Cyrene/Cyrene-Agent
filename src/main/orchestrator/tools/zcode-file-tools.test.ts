@@ -64,6 +64,10 @@ function context(): { userQuery: string; resolvedWorkspaceRoot: string } {
   return { userQuery: "inspect files", resolvedWorkspaceRoot: workspace };
 }
 
+function expectedRealPath(target: string): string {
+  return path.join(fs.realpathSync.native(path.dirname(target)), path.basename(target));
+}
+
 function registerAdapters(): void {
   registerZCodeFileTools(backends);
 }
@@ -105,13 +109,13 @@ describe("ZCode file tool adapters", () => {
     const result = await tool("Read").execute({ file_path: filePath, offset: 4, limit: 12 }, context());
 
     expect(result).toBe("1\tread result");
-    expect(backends.read.execute).toHaveBeenCalledWith({ path: filePath, startLine: 5, maxLines: 12 }, context());
+    expect(backends.read.execute).toHaveBeenCalledWith({ path: expectedRealPath(filePath), startLine: 5, maxLines: 12 }, context());
   });
 
   it("routes image paths through the existing image reader", async () => {
     const filePath = path.join(workspace, "diagram.PNG");
     expect(await tool("Read").execute({ file_path: filePath }, context())).toBe("image result");
-    expect(backends.readImage.execute).toHaveBeenCalledWith({ path: filePath }, context());
+    expect(backends.readImage.execute).toHaveBeenCalledWith({ path: expectedRealPath(filePath) }, context());
     expect(backends.read.execute).not.toHaveBeenCalled();
   });
 
@@ -130,7 +134,7 @@ describe("ZCode file tool adapters", () => {
     const outsidePath = path.resolve(workspace, "..", "outside.txt");
 
     expect(await tool("Read").execute({ file_path: outsidePath }, context())).toBe("1\tread result");
-    expect(backends.read.execute).toHaveBeenCalledWith(expect.objectContaining({ path: outsidePath }), context());
+    expect(backends.read.execute).toHaveBeenCalledWith(expect.objectContaining({ path: expectedRealPath(outsidePath) }), context());
   });
 
   it.each(["Write", "Edit"])("rejects outside %s paths in scoped mode before mutation", async (id) => {
@@ -166,7 +170,7 @@ describe("ZCode file tool adapters", () => {
     const filePath = path.join(workspace, "new.ts");
     const result = await tool("Write").execute({ file_path: filePath, content: "const value = 1;" }, context());
 
-    expect(backends.write.execute).toHaveBeenCalledWith({ path: filePath, content: "const value = 1;" }, context());
+    expect(backends.write.execute).toHaveBeenCalledWith({ path: expectedRealPath(filePath), content: "const value = 1;" }, context());
     expect(tool("Write").verificationPolicyResolver?.({ file_path: filePath })).toBe("code");
     expect(JSON.parse(result)).toMatchObject({ success: true, tool: "Write" });
   });
@@ -175,7 +179,7 @@ describe("ZCode file tool adapters", () => {
     const filePath = path.join(workspace, "note.md");
     const result = await tool("Edit").execute({ file_path: filePath, old_string: "before", new_string: "after" }, context());
 
-    expect(backends.edit.execute).toHaveBeenCalledWith({ file_path: filePath, old_string: "before", new_string: "after" }, context());
+    expect(backends.edit.execute).toHaveBeenCalledWith({ file_path: expectedRealPath(filePath), old_string: "before", new_string: "after" }, context());
     expect(JSON.parse(result)).toMatchObject({ success: true, tool: "Edit" });
   });
 
@@ -194,7 +198,7 @@ describe("ZCode file tool adapters", () => {
     }, context());
 
     expect(fs.readFileSync(filePath, "utf8")).toBe("blue, blue, blue");
-    expect(backends.write.execute).toHaveBeenCalledWith({ path: filePath, content: "blue, blue, blue" }, context());
+    expect(backends.write.execute).toHaveBeenCalledWith({ path: expectedRealPath(filePath), content: "blue, blue, blue" }, context());
     expect(JSON.parse(result)).toMatchObject({ success: true, tool: "Edit" });
   });
 

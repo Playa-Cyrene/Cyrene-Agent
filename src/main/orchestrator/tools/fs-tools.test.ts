@@ -110,7 +110,7 @@ describe("read_file structured output", () => {
     expect(tool).toBeDefined();
 
     const result = JSON.parse(await tool!.execute({ path: testFile }));
-    expect(result).toHaveProperty("path", testFile);
+    expect(result).toHaveProperty("path", fs.realpathSync.native(testFile));
     expect(result).toHaveProperty("startLine", 1);
     expect(result).toHaveProperty("endLine", 5);
     expect(result).toHaveProperty("totalLines", 5);
@@ -206,7 +206,7 @@ describe("write_file truthful contract", () => {
   it("相对文件名落到桌面根目录（learn 模式笔记场景，收编自 write_markdown）", async () => {
     const result = JSON.parse(await writeTool()!.execute({ path: "笔记.md", content: "# 标题" }));
     expect(result.success).toBe(true);
-    expect(result.path).toBe(path.join(tmpDir, "笔记.md"));
+    expect(result.path).toBe(fs.realpathSync.native(path.join(tmpDir, "笔记.md")));
     expect(fs.readFileSync(path.join(tmpDir, "笔记.md"), "utf8")).toBe("# 标题");
   });
 
@@ -224,7 +224,7 @@ describe("write_file truthful contract", () => {
       { resolvedWorkspaceRoot: wsRoot },
     ));
     expect(result.success).toBe(true);
-    expect(result.path).toBe(path.join(wsRoot, "notes", "todo.txt"));
+    expect(result.path).toBe(fs.realpathSync.native(path.join(wsRoot, "notes", "todo.txt")));
   });
 
   it("相对路径含 .. 穿越时报错拒绝", async () => {
@@ -245,13 +245,13 @@ describe("write_file truthful contract", () => {
     expect(result).toEqual({
       success: true,
       tool: "write_file",
-      path: target,
+      path: fs.realpathSync.native(target),
       append: false,
       exists: true,
       sizeBytes: 0,
       writtenBytes: 0,
       changes: [
-        { file: target, kind: "added", insertions: 0, deletions: 0, diff: [] },
+        { file: fs.realpathSync.native(target), kind: "added", insertions: 0, deletions: 0, diff: [] },
       ],
     });
     expect(fs.existsSync(target)).toBe(true);
