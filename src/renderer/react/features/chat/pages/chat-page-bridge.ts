@@ -23,6 +23,8 @@ export type PendingClaimResult =
       claimed: true;
       userMessage: ChatMessage;
       visibleContent: string;
+      /** 模型侧文本：贴纸消息为「用户原话 + 表情包说明」；非贴纸消息缺省。 */
+      modelText?: string;
       remainingQueue: PendingChatMessage[];
       session: ChatSession;
     }

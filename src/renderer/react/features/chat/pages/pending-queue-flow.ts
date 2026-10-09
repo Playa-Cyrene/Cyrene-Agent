@@ -283,6 +283,7 @@ export function createPendingQueueFlow(getHost: () => PendingQueueFlowHost): Pen
     claim: {
       userMessage: ChatMessage;
       visibleContent: string;
+      modelText?: string;
       session: ChatSession;
     },
   ): Promise<void> {
@@ -329,6 +330,7 @@ export function createPendingQueueFlow(getHost: () => PendingQueueFlowHost): Pen
       session: claim.session,
       attachments,
       visibleContent: claim.visibleContent,
+      ...(claim.modelText ? { modelText: claim.modelText } : {}),
       claimedPendingMessageId: claim.userMessage.id,
     });
   }

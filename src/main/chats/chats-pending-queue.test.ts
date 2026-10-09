@@ -460,6 +460,93 @@ describe("chats pending claim & dispatch", () => {
     expect(claim.visibleContent).toBe("看这张图");
   });
 
+  it("认领贴纸消息产出模型侧自然语言文本；普通消息缺省 modelText", async () => {
+    const store = await import("./chats-store");
+    (await store.initialize());
+    const session = (await store.createSession({ mode: "chat" }));
+    (await store.enqueuePendingMessage(session.id, entry({
+      id: "q-sticker",
+      rawContent: "抱抱 [sticker:playful]",
+      visibleContent: "抱抱",
+      userSticker: "playful",
+    })));
+
+    const claim = (await store.claimPendingMessage(session.id));
+    expect(claim).toEqual(expect.objectContaining({ ok: true, claimed: true }));
+    if (!claim.ok || !claim.claimed) throw new Error("unreachable");
+    // 模型侧：用户原话 + 表情包说明（纯文本，不含 [sticker:] 标记）
+    expect(claim.modelText).toBe("抱抱\n\n<internal_context>用户发送表情包：你看人家嘛</internal_context>");
+    // UI 侧不受影响：展示文本仍是剥离标记后的原文
+    expect(claim.visibleContent).toBe("抱抱");
+    // 正式消息仍是含标记的原文（与展示分离的既有契约不变）
+    expect(claim.userMessage.content).toBe("抱抱 [sticker:playful]");
+    expect(claim.userMessage.sticker).toBe("playful");
+
+    await finishActiveClaims();
+    (await store.completePendingDispatch(session.id, "q-sticker"));
+    (await store.enqueuePendingMessage(session.id, entry({ id: "q-plain", rawContent: "纯文本", visibleContent: "纯文本" })));
+    const plain = (await store.claimPendingMessage(session.id));
+    expect(plain).toEqual(expect.objectContaining({ ok: true, claimed: true }));
+    if (!plain.ok || !plain.claimed) throw new Error("unreachable");
+    // 非贴纸消息没有 modelText：渲染端回退旧推导路径
+    expect(plain.modelText).toBeUndefined();
+  });
+
+  it("认领时贴纸解析优先用户自定义清单；清单损坏回退内置描述", async () => {
+    // 自定义清单：phrases 优先于 description
+    fs.writeFileSync(path.join(mocks.userDataDir, "sticker-manifest.json"), JSON.stringify({
+      schemaVersion: 1,
+      stickers: {
+        "my-sticker": { description: "被 phrases 覆盖", phrases: ["摆烂中", "别理我"] },
+        "desc-only": { description: "摸鱼中" },
+      },
+    }));
+    const store = await import("./chats-store");
+    (await store.initialize());
+    const session = (await store.createSession({ mode: "chat" }));
+    (await store.enqueuePendingMessage(session.id, entry({
+      id: "q-custom",
+      rawContent: "[sticker:my-sticker]",
+      visibleContent: "",
+      userSticker: "my-sticker",
+    })));
+
+    let claim = (await store.claimPendingMessage(session.id));
+    expect(claim).toEqual(expect.objectContaining({ ok: true, claimed: true }));
+    if (!claim.ok || !claim.claimed) throw new Error("unreachable");
+    // phrases 优先拼接；纯表情包消息的模型文本只有提示本身
+    expect(claim.modelText).toBe("<internal_context>用户发送表情包：摆烂中，别理我</internal_context>");
+
+    await finishActiveClaims();
+    (await store.completePendingDispatch(session.id, "q-custom"));
+    // 无 phrases 只有 description 的自定义贴纸
+    (await store.enqueuePendingMessage(session.id, entry({
+      id: "q-desc",
+      rawContent: "在忙 [sticker:desc-only]",
+      visibleContent: "在忙",
+      userSticker: "desc-only",
+    })));
+    claim = (await store.claimPendingMessage(session.id));
+    expect(claim).toEqual(expect.objectContaining({ ok: true, claimed: true }));
+    if (!claim.ok || !claim.claimed) throw new Error("unreachable");
+    expect(claim.modelText).toBe("在忙\n\n<internal_context>用户发送表情包：摸鱼中</internal_context>");
+
+    await finishActiveClaims();
+    (await store.completePendingDispatch(session.id, "q-desc"));
+    // 清单损坏（非法 JSON）：不阻塞认领，内置贴纸回退内置描述
+    fs.writeFileSync(path.join(mocks.userDataDir, "sticker-manifest.json"), "{broken");
+    (await store.enqueuePendingMessage(session.id, entry({
+      id: "q-broken",
+      rawContent: "晚安 [sticker:goodnight]",
+      visibleContent: "晚安",
+      userSticker: "goodnight",
+    })));
+    claim = (await store.claimPendingMessage(session.id));
+    expect(claim).toEqual(expect.objectContaining({ ok: true, claimed: true }));
+    if (!claim.ok || !claim.claimed) throw new Error("unreachable");
+    expect(claim.modelText).toBe("晚安\n\n<internal_context>用户发送表情包：晚安，先睡了</internal_context>");
+  });
+
   it("认领写入 pendingDispatch；completePendingDispatch 按 messageId 清除，不匹配幂等", async () => {
     const store = await import("./chats-store");
     (await store.initialize());
@@ -903,6 +990,34 @@ describe("chats pending edit & adjust", () => {
     expect(persisted?.pendingDispatch).toBeUndefined();
     // 认领等于历史入册的口径：列表计数刷新
     expect((await store.listSessions()).find((item) => item.id === session.id)?.messageCount).toBe(2);
+  });
+
+  it("插话贴纸提交后轨迹 canonical 同样是自然语言模型文本", async () => {
+    const store = await import("./chats-store");
+    (await store.initialize());
+    const session = (await store.createSession({ mode: "work" }));
+    (await store.enqueuePendingMessage(session.id, entry({
+      id: "q-adj-sticker",
+      rawContent: "换个思路 [sticker:thinking]",
+      visibleContent: "换个思路",
+      userSticker: "thinking",
+    })));
+    (await store.markPendingAdjust(session.id, "q-adj-sticker", "run-1"));
+    const commit = (await store.commitPendingAdjust(session.id, "q-adj-sticker", "run-1"));
+    expect(commit).toEqual(expect.objectContaining({ ok: true }));
+
+    const db = getConversationDatabase(mocks.userDataDir);
+    const entries = await db.call<Array<{ kind: string; turnId?: string; payload: { text?: string; patch?: Record<string, unknown> } }>>("transcript.audit", session.id);
+    // 模型侧：自然语言（用户原话 + 表情包说明），不含 [sticker:] 标记
+    expect(entries.find((entry) => entry.kind === "user")).toMatchObject({
+      turnId: "q-adj-sticker",
+      payload: { text: "换个思路\n\n<internal_context>用户发送表情包：让我想想</internal_context>" },
+    });
+    // UI 侧：展示补丁仍是剥离标记的原文 + 贴纸图片语义
+    expect(entries.find((entry) => entry.kind === "presentation_patch")?.payload.patch).toEqual({
+      content: "换个思路",
+      sticker: "thinking",
+    });
   });
 
   it("v2 调整轮询先写 user:v1 轨迹再 commit，恢复后只保留一条 user 且磁盘无 messages", async () => {

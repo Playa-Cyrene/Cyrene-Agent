@@ -315,6 +315,8 @@ export interface PendingDispatchUserSnapshot {
   attachments?: PendingChatAttachment[];
   /** 用户表情包标识。 */
   sticker?: string;
+  /** 贴纸消息的模型侧文本（用户原话 + 表情包说明）；缺省时模型侧回退 text。 */
+  modelText?: string;
 }
 
 /**

@@ -1,5 +1,5 @@
 // 内置表情包的语义描述
-// 每个表情包对应一个 phrases 数组，用于文本匹配 + 发送给 LLM
+// 每个表情包对应一个 phrases 数组，用于文本匹配 + 发送给 LLM（用户发贴纸时转成自然语言）
 
 export interface StickerDescription {
   /** 相近语句（描述情绪/适用场景） */
@@ -116,3 +116,39 @@ export const BUILT_IN_STICKER_FILES: Record<string, string> = {
   poorwallet: "poorwallet.jpg",
   please: "please.jpg",
 };
+
+/** 用户表情包清单项（只取描述相关字段，避免依赖 electron 侧的类型）。 */
+export interface StickerPhraseSource {
+  description?: string;
+  phrases?: string[];
+}
+
+/**
+ * 取表情包的自然语言描述：优先用户自定义 phrases，其次用户 description，
+ * 再次内置 phrases，都没有时回退 id（保证模型侧永远能看到一段纯文本）。
+ */
+export function resolveStickerPhrase(
+  id: string,
+  userStickers: Record<string, StickerPhraseSource> = {},
+): string {
+  const user = userStickers[id];
+  const phrases = (user?.phrases ?? []).map((phrase) => phrase.trim()).filter(Boolean);
+  if (phrases.length > 0) return phrases.join("，");
+  const description = user?.description?.trim();
+  if (description) return description;
+  const builtIn = BUILT_IN_STICKER_DESCRIPTIONS[id];
+  return builtIn ? builtIn.phrases.join("，") : id;
+}
+
+/**
+ * 用户贴纸消息的模型侧文本：用户原话 + 一条「系统提示」式的表情包说明。
+ *
+ * 说明包在 <internal_context> 里——系统提示已声明该类内容是私有运行时上下文，
+ * 模型可据此理解表情包语义，但不得向用户复述、也不显示在聊天气泡中。
+ * 这样模型侧拿到的是纯文本，而 UI 侧只看到表情包图片与用户原话。
+ */
+export function buildStickerUserModelText(content: string, phrase: string): string {
+  const hint = `<internal_context>用户发送表情包：${phrase}</internal_context>`;
+  const text = content.trim();
+  return text ? `${text}\n\n${hint}` : hint;
+}

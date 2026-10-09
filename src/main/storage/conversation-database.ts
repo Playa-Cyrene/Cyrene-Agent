@@ -10,6 +10,24 @@ import { ConversationStoreError } from "./conversation-store-error";
 export { ConversationStoreError } from "./conversation-store-error";
 /** JSON is the persistence boundary: transient undefined properties do not affect retries. */
 export function persisted<T>(value: T): T { return JSON.parse(JSON.stringify(value)) as T; }
+/**
+ * 贴纸消息的模型侧文本会随版本演进（标记 → 自然语言描述），
+ * 因此判等时忽略它：表情包最多造成展示差异，绝不阻塞 run。
+ * 其余字段（turnId/visibleContent/sticker/attachments）照常比较，编辑仍能被识别。
+ */
+export function withoutStickerModelText(user: unknown): unknown {
+  if (!user || typeof user !== "object") return user;
+  const record = user as Record<string, unknown>;
+  if (typeof record.sticker !== "string" || !record.sticker) return user;
+  const { text: _text, ...rest } = record;
+  return rest;
+}
+/** 请求事实判等口径：剥离贴纸消息的模型文本后再比较。 */
+export function comparableRequestFacts<T>(facts: T): T {
+  const record = facts as Record<string, unknown> | null;
+  if (!record || typeof record !== "object" || !("currentUser" in record)) return facts;
+  return { ...record, currentUser: withoutStickerModelText(record.currentUser) } as T;
+}
 function semantic(entry: TranscriptAppendInput | TranscriptEntry): unknown {
   const { id: _id, at: _at, ...fields } = entry as TranscriptEntry;
   const { seq: _seq, ...facts } = fields;

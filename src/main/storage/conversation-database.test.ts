@@ -65,6 +65,37 @@ describe("conversation SQLite transactions", () => {
     await expect(client.call('runs.admit', 'c1', 'u1', facts('changed'), 'r4')).rejects.toMatchObject({ code: 'REQUEST_IDEMPOTENCY_CONFLICT' });
     expect(await client.call('runs.admit', 'c1', 'u2', { ...facts('next'), currentUser: { turnId: 'u2', text: 'next', visibleContent: 'next' } }, 'r5')).toMatchObject({ duplicate: false });
   });
+  it("贴纸消息：canonical 存自然语言文本，模型文本差异绝不阻塞 run", async () => {
+    const session = await client.call<{ id: string }>('chats.createSession', { mode: 'chat' });
+    await client.call('chats.enqueuePendingMessage', session.id, { id: 'q1', rawContent: '抱抱 [sticker:playful]', visibleContent: '抱抱', userSticker: 'playful' });
+    const modelText = '抱抱\n\n<internal_context>用户发送表情包：你看人家嘛</internal_context>';
+    expect(await client.call('chats.claimPendingMessage', session.id)).toMatchObject({ ok: true, claimed: true, modelText });
+    // canonical user 条目存模型文本（自然语言，不含 [sticker:] 标记）；UI 侧由展示补丁承担
+    const entries = await client.call<TranscriptEntry[]>('transcript.audit', session.id);
+    expect(entries.find((entry) => entry.kind === 'user')).toMatchObject({ turnId: 'q1', payload: { text: modelText } });
+    expect(entries.find((entry) => entry.kind === 'presentation_patch')?.payload).toMatchObject({
+      patch: { content: '抱抱', sticker: 'playful' },
+    });
+    const stickerFacts = (text: string, sticker = 'playful') => ({ mode: 'chat', assistantTurnId: 'assistant1', currentUser: { turnId: 'q1', text, visibleContent: '抱抱', sticker } });
+    // 旧口径（含标记的原文 / 剥离标记的投影文本）lookup 均不抛幂等冲突：贴纸模型文本不参与判等
+    expect(await client.call('runs.lookup', session.id, 'q1', stickerFacts('抱抱 [sticker:playful]'))).toBeNull();
+    expect(await client.call('runs.lookup', session.id, 'q1', stickerFacts('抱抱'))).toBeNull();
+    // 渲染端用同源模型文本 admit 成功
+    const admit = await client.call<any>('runs.admit', session.id, 'q1', stickerFacts('抱抱'));
+    expect(admit).toMatchObject({ duplicate: false });
+    // admit 后（已有 dispatch_json）模型文本漂移也不阻塞：返回既有 run
+    expect(await client.call('runs.admit', session.id, 'q1', stickerFacts('任意改动的模型文本'))).toMatchObject({ runId: admit.runId, duplicate: true });
+    // 贴纸 id 仍参与判等：换表情包必须冲突（编辑/重放依旧可识别）
+    await expect(client.call('runs.lookup', session.id, 'q1', stickerFacts('抱抱', 'hmph'))).rejects.toMatchObject({ code: 'REQUEST_IDEMPOTENCY_CONFLICT' });
+  });
+  it("非贴纸消息的模型文本差异仍然阻塞（兜底只豁免贴纸）", async () => {
+    const session = await client.call<{ id: string }>('chats.createSession', { mode: 'chat' });
+    await client.call('chats.enqueuePendingMessage', session.id, { id: 'q1', rawContent: '普通消息', visibleContent: '普通消息' });
+    expect(await client.call('chats.claimPendingMessage', session.id)).toMatchObject({ ok: true, claimed: true });
+    const plainFacts = (text: string) => ({ mode: 'chat', currentUser: { turnId: 'q1', text, visibleContent: '普通消息' } });
+    expect(await client.call('runs.lookup', session.id, 'q1', plainFacts('普通消息'))).toBeNull();
+    await expect(client.call('runs.lookup', session.id, 'q1', plainFacts('改内容'))).rejects.toMatchObject({ code: 'REQUEST_IDEMPOTENCY_CONFLICT' });
+  });
   it("rolls back user and request admission when run insertion fails", async () => {
     await client.call('transcript.read', 'c1');
     withConversationDatabase(root, db => db.exec("CREATE TRIGGER fail_run BEFORE INSERT ON runs BEGIN SELECT RAISE(ABORT,'INJECTED'); END"));

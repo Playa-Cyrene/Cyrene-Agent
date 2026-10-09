@@ -10,6 +10,7 @@ import * as path from "path";
 import { CHAT_SCHEMA_VERSION, type ChatMessage, type ChatSession, type ChatSessionRecord, type ChatSessionRecordV2, type ChatSessionMeta, type ChatSessionPurpose, type ConversationMode, type PendingChatAttachment, type PendingChatMessage, type PendingDispatchState, type PendingDispatchUserSnapshot, type PendingWithdrawalState, } from "../../shared/chat-types";
 import type { ContextUsageSnapshot } from "../../shared/context-usage";
 import { normalizeBrowserElementSelection } from "../../shared/browser-panel-types";
+import { buildStickerUserModelText, resolveStickerPhrase, type StickerPhraseSource } from "../sticker-descriptions";
 const ROOT_DIR_NAME = "cyrene-chats";
 const SESSIONS_SUBDIR = "sessions";
 const LEGACY_MIGRATION_PROJECT_NAME = "迁移文件夹";
@@ -778,6 +779,8 @@ export type ClaimPendingResult = {
   userMessage: ChatMessage;
   /** 队首展示内容（剥离表情包标记）：渲染端占位消息直接使用，避免回读 rawContent。 */
   visibleContent: string;
+  /** 贴纸消息的模型侧文本（用户原话 + 表情包说明）；非贴纸消息缺省。 */
+  modelText?: string;
   /** 认领后剩余的待发队列（权威快照，供页面投影对账）。 */
   remainingQueue: PendingChatMessage[];
   /** 认领后的完整会话（runModel 上下文输入）。 */
@@ -789,6 +792,31 @@ export type ClaimPendingResult = {
   ok: false;
   error: "session-not-found" | "already-dispatching" | "withdrawal-in-progress" | "write-failed" | "transcript-write-failed";
 };
+/**
+ * 读取用户表情包清单。这里直接读 userData 根目录下的 sticker-manifest.json，
+ * 避免引入 sticker-storage（它依赖 electron，本模块在数据库 worker 线程内运行）。
+ */
+function readUserStickerManifest(): Record<string, StickerPhraseSource> {
+  try {
+    const filePath = path.join(getWorkerDatabase().userDataRoot, "sticker-manifest.json");
+    if (!fs.existsSync(filePath)) return {};
+    const raw = JSON.parse(fs.readFileSync(filePath, "utf8")) as {
+      stickers?: Record<string, StickerPhraseSource>;
+    };
+    return raw.stickers ?? {};
+  } catch (err) {
+    console.warn("[chats-store] 表情包清单读取失败:", err);
+    return {};
+  }
+}
+
+/** 贴纸消息的模型侧文本：把标记翻译成自然语言描述后再送入模型。非贴纸消息返回 undefined。 */
+export function stickerModelText(head: PendingChatMessage): string | undefined {
+  if (!head.userSticker) return undefined;
+  const phrase = resolveStickerPhrase(head.userSticker, readUserStickerManifest());
+  return buildStickerUserModelText(head.visibleContent, phrase);
+}
+
 function pendingUserMessageFromSnapshot(snapshot: PendingDispatchUserSnapshot): ChatMessage {
   return {
     id: snapshot.id,
@@ -855,6 +883,7 @@ export function claimPendingMessage(sessionId: string): ClaimPendingResult {
   }
   const claimedAt = Date.now();
   const userMessage = pendingUserMessage(head, claimedAt);
+  const modelText = stickerModelText(head);
   const remaining = queue.slice(1);
   // 复用正式会话视图判断首条有效用户消息；后续认领不能覆盖已生成的标题。
   const firstUserMessage = record.titleIsCustom ? undefined : sessionView(record).messages.find(
@@ -874,6 +903,7 @@ export function claimPendingMessage(sessionId: string): ClaimPendingResult {
         visibleContent: head.visibleContent,
         ...(head.attachments?.length ? { attachments: head.attachments } : {}),
         ...(head.userSticker ? { sticker: head.userSticker } : {}),
+        ...(modelText ? { modelText } : {}),
       },
     };
     // 认领即真实历史消息入册（messageCount+1）：与 v1 分支一致地刷新 updatedAt 与索引，
@@ -902,6 +932,7 @@ export function claimPendingMessage(sessionId: string): ClaimPendingResult {
       claimed: true,
       userMessage,
       visibleContent: head.visibleContent,
+      ...(modelText ? { modelText } : {}),
       remainingQueue: remaining.map((item) => ({ ...item })),
       session: composeSession(record, [userMessage]),
     };
@@ -934,6 +965,7 @@ export function claimPendingMessage(sessionId: string): ClaimPendingResult {
     claimed: true,
     userMessage,
     visibleContent: head.visibleContent,
+    ...(modelText ? { modelText } : {}),
     remainingQueue: remaining.map((item) => ({ ...item })),
     session,
   };

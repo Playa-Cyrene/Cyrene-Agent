@@ -6,7 +6,7 @@ import { importMoments, runMomentsCommand } from "./conversation-moments-reposit
 import { createHash, randomUUID } from "node:crypto";
 import { backup } from "node:sqlite";
 import { isDeepStrictEqual } from "node:util";
-import { initializeConversationDatabase, ConversationStoreError, persisted } from "./conversation-database";
+import { initializeConversationDatabase, ConversationStoreError, persisted, withoutStickerModelText } from "./conversation-database";
 import * as chats from "../chats/chats-store-core";
 import { LegacyConversationTranscriptReader } from "../orchestrator/legacy-conversation-transcript-reader";
 import { assertValidPresentationPatch, type TranscriptAppendInput, type TranscriptEntry } from "../orchestrator/conversation-transcript-types";
@@ -85,18 +85,21 @@ function reconcilePending(id: string): void {
   if (!pending?.userMessage)
     return;
   const user = pending.userMessage;
-  const intent = { turnId: user.id, text: user.text, visibleContent: user.visibleContent,
+  // 模型侧文本：贴纸消息用自然语言描述（用户原话 + 表情包说明），其余沿用原文。
+  const text = user.modelText ?? user.text;
+  const intent = { turnId: user.id, text, visibleContent: user.visibleContent,
     ...(user.attachments?.length ? { attachments: user.attachments } : {}), ...(user.sticker ? { sticker: user.sticker } : {}) };
   const previous = database.db.prepare('SELECT payload_json,status FROM conversation_requests WHERE conversation_id=? AND request_id=?').get(id, user.id);
   if (previous) {
     const facts = JSON.parse(previous.payload_json as string);
-    if (previous.status === 'rejected' || !isDeepStrictEqual(facts.currentUser ?? facts, persisted(intent)))
+    // 贴纸模型的模型文本会随版本演进：判等时剥离，最多是展示差异，绝不阻塞 run。
+    if (previous.status === 'rejected' || !isDeepStrictEqual(withoutStickerModelText(facts.currentUser ?? facts), withoutStickerModelText(persisted(intent))))
       throw new ConversationStoreError('REQUEST_IDEMPOTENCY_CONFLICT');
   }
   const canonical = database.append(id, { id: `user:v1:${user.id}:r1`, kind: 'user', turnId: user.id, revision: 1, at: user.at,
-    payload: { text: user.text, ...(user.attachments?.length ? { attachments: user.attachments } : {}) } });
+    payload: { text, ...(user.attachments?.length ? { attachments: user.attachments } : {}) } });
   if (!previous) database.db.prepare("INSERT INTO conversation_requests(conversation_id,request_id,payload_json,status) VALUES(?,?,?,'admitted')").run(id, user.id, JSON.stringify(intent));
-  const patch = { ...(user.sticker ? { sticker: user.sticker } : {}), ...(user.visibleContent !== user.text ? { content: user.visibleContent } : {}) };
+  const patch = { ...(user.sticker ? { sticker: user.sticker } : {}), ...(user.visibleContent !== undefined && user.visibleContent !== text ? { content: user.visibleContent } : {}) };
   if (Object.keys(patch).length) {
     try {
       presentation(id, canonical.id, `pending:${user.id}`, patch, user.at);
@@ -118,10 +121,12 @@ function commitAdjustment(id: string, messageId: string, runId: string): ReturnT
     const result = chats.commitPendingAdjust(id, messageId, runId);
     if (result.ok && pending) {
       const canonicalId = `user:v1:${pending.id}:r1`;
+      // 模型侧文本：贴纸消息转成自然语言描述（与认领派发同源），其余沿用原文。
+      const text = chats.stickerModelText(pending) ?? pending.rawContent;
       database.append(id, { id: canonicalId, at: result.userMessage.at, kind: 'user', turnId: pending.id, revision: 1,
-        payload: { text: pending.rawContent, ...(pending.attachments?.length ? { attachments: pending.attachments } : {}) } });
+        payload: { text, ...(pending.attachments?.length ? { attachments: pending.attachments } : {}) } });
       const patch = { ...(pending.userSticker ? { sticker: pending.userSticker } : {}),
-        ...(pending.visibleContent !== pending.rawContent ? { content: pending.visibleContent } : {}) };
+        ...(pending.visibleContent !== text ? { content: pending.visibleContent } : {}) };
       if (Object.keys(patch).length) presentation(id, canonicalId, `adjust:${pending.id}`, patch, result.userMessage.at);
       const record = database.record(id)!;
       if (record.schemaVersion === 2) record.messageCount = reduceTranscriptProjection(database.entries(id, true)).messages.length;

@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
-import { ConversationDatabase, persisted } from "./conversation-database";
+import { ConversationDatabase, persisted, withoutStickerModelText, comparableRequestFacts } from "./conversation-database";
 import { ConversationStoreError, diagnosticHash } from "./conversation-store-error";
 import type { CreateHarnessRunInput, HarnessRunSession } from "../orchestrator/harness/run-store";
 export function importRuns(database: ConversationDatabase): void {
@@ -69,11 +69,12 @@ export function runCommand(database: ConversationDatabase, method: string, args:
         throw new ConversationStoreError('REQUEST_IDEMPOTENCY_CONFLICT');
       if (request && !request.dispatch_json && facts.currentUser) {
         const saved = JSON.parse(request.payload_json as string);
-        if (!isDeepStrictEqual(saved.currentUser ?? saved, facts.currentUser))
-          throw new ConversationStoreError('REQUEST_IDEMPOTENCY_CONFLICT', { requestIdHash: diagnosticHash(requestId), inputHash: diagnosticHash(facts.currentUser), existingHash: diagnosticHash(saved.currentUser ?? saved) });
+        // 贴纸消息的模型文本会随版本演进：判等时剥离，最多是展示差异，绝不阻塞 run。
+        if (!isDeepStrictEqual(withoutStickerModelText(saved.currentUser ?? saved), withoutStickerModelText(facts.currentUser)))
+          throw new ConversationStoreError('REQUEST_IDEMPOTENCY_CONFLICT', { requestIdHash: diagnosticHash(requestId), inputHash: diagnosticHash(withoutStickerModelText(facts.currentUser)), existingHash: diagnosticHash(withoutStickerModelText(saved.currentUser ?? saved)) });
       }
-      if (request?.dispatch_json && !isDeepStrictEqual(JSON.parse(request.dispatch_json as string), facts)) {
-        throw new ConversationStoreError("REQUEST_IDEMPOTENCY_CONFLICT", { requestIdHash: diagnosticHash(requestId), inputHash: diagnosticHash(facts), existingHash: diagnosticHash(JSON.parse(request.dispatch_json as string)) });
+      if (request?.dispatch_json && !isDeepStrictEqual(comparableRequestFacts(JSON.parse(request.dispatch_json as string)), comparableRequestFacts(facts))) {
+        throw new ConversationStoreError("REQUEST_IDEMPOTENCY_CONFLICT", { requestIdHash: diagnosticHash(requestId), inputHash: diagnosticHash(comparableRequestFacts(facts)), existingHash: diagnosticHash(comparableRequestFacts(JSON.parse(request.dispatch_json as string))) });
       }
       if (request?.run_id && (request.dispatch_json || request.status !== 'admitted')) {
         return { runId: request.run_id, status: request.status, duplicate: true, ...(request.error_code ? { error: request.error_code } : {}) };

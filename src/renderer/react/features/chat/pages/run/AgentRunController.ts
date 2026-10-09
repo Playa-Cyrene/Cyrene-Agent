@@ -63,6 +63,11 @@ export interface AgentRunInput {
   attachments: ComposerAttachment[];
   /** 原始用户文本对应的 UI 展示文本；表情包标记不进入模型 text。 */
   visibleContent?: string;
+  /**
+   * 模型侧文本（认领时由主进程计算）：贴纸消息为「用户原话 + 表情包说明」，
+   * 其余消息缺省。缺省时回退到投影会话里推导，保证旧路径行为不变。
+   */
+  modelText?: string;
   takeoverFromRunId?: string;
   /**
    * 待发队列认领派发：用户消息已由主进程认领写入历史（非本控制器追加）。
@@ -382,11 +387,15 @@ export class AgentRunController {
         currentUser: {
           turnId: this.input.userMessageId,
           text: (() => {
-            const message = this.input.session.messages.find((item) => item.id === this.input.userMessageId);
-            const content = message?.modelContext?.trim() || message?.content || "";
             const selectedElements = this.input.attachments
               .filter((attachment) => attachment.kind === "web-element" && attachment.element)
               .map((attachment) => formatBrowserElementSelection(attachment.element!));
+            // 认领派发时主进程已把权威模型文本交给我们（贴纸消息含自然语言说明），
+            // 直接用；旧路径缺省时回退投影会话推导。
+            const content = this.input.modelText ?? (() => {
+              const message = this.input.session.messages.find((item) => item.id === this.input.userMessageId);
+              return message?.modelContext?.trim() || message?.content || "";
+            })();
             return selectedElements.length > 0 ? [content, ...selectedElements].filter(Boolean).join("\n\n") : content;
           })(),
           visibleContent: this.input.visibleContent

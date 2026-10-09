@@ -138,6 +138,8 @@ describe("chats store database domain", () => {
         text: "原始输入",
         visibleContent: "展示输入",
         sticker: "wave",
+        // 贴纸消息的模型侧文本随快照冻结：wave 非内置，回退 id
+        modelText: "展示输入\n\n<internal_context>用户发送表情包：wave</internal_context>",
         attachments: [{ kind: "document", name: "notes.txt", filePath: "C:/notes.txt" }],
       },
     }));
