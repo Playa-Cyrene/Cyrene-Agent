@@ -1,4 +1,6 @@
 import { enqueueLLMTask } from "../llm-queue"
+import { readPendingTurns, writePendingTurns } from "./memory-pending-turns"
+import type { PendingTurnsFile } from "./memory-pending-turns"
 import { runReflectionAndCompression } from "./memory-compressor"
 import { entityGraph } from "./entity-graph"
 import type { ExtractedEntity } from "./entity-graph"
@@ -24,21 +26,58 @@ export interface MemorySchedulerDeps {
   runReflectionAndCompression: () => Promise<void>
   runResolverQueueOnce: () => Promise<unknown>
   runDecay: () => Promise<void>
+  /**
+   * 待蒸馏轮次的落盘读写。缺省即退化为旧的纯内存行为（单测可注入假实现）。
+   * 蒸馏每 MEMORY_JUDGE_INTERVAL 轮才跑一次，中间的轮次只活在 recentTurns 里；
+   * 不落盘的话，进程在两轮之间退出就会永久丢掉那些轮次的蒸馏机会。
+   */
+  loadPendingTurns?: () => PendingTurnsFile | null
+  savePendingTurns?: (turns: MemoryJudgeTurn[], seq: number) => void
 }
 
 export class MemoryScheduler {
   private recentTurns: Array<MemoryJudgeTurn & { seq: number }> = []
   private nextTurnSeq = 0
+  private pendingRestored = false
 
   constructor(private readonly deps: MemorySchedulerDeps) {}
 
+  /** 首次写入前把上次进程留下的缓冲读回来；读不动/读坏了都当作没有，不影响主流程。 */
+  private restorePendingTurnsOnce(): void {
+    if (this.pendingRestored) return
+    this.pendingRestored = true
+    const load = this.deps.loadPendingTurns
+    if (!load) return
+    try {
+      const saved = load()
+      if (!saved || saved.turns.length === 0) return
+      this.recentTurns = saved.turns.map((t, i) => ({ seq: i + 1, userInput: t.userInput, assistantReply: t.assistantReply }))
+      this.nextTurnSeq = Math.max(saved.seq, this.recentTurns.length)
+    } catch (e) {
+      console.warn("[PMRS/Scheduler] 待蒸馏轮次读回失败，按空缓冲继续", e)
+    }
+  }
+
+  private persistPendingTurns(): void {
+    const save = this.deps.savePendingTurns
+    if (!save) return
+    try {
+      save(this.recentTurns.map(({ userInput, assistantReply }) => ({ userInput, assistantReply })), this.nextTurnSeq)
+    } catch (e) {
+      console.warn("[PMRS/Scheduler] 待蒸馏轮次落盘失败，不影响主流程", e)
+    }
+  }
+
   scheduleMemoryWrite(userInput: string, assistantReply: string, conversationId?: string): void {
     if (!isMemoryEnabled()) return;
+    this.restorePendingTurnsOnce()
     const seq = ++this.nextTurnSeq
     this.recentTurns.push({ seq, userInput, assistantReply })
     if (this.recentTurns.length > MEMORY_JUDGE_CONTEXT_TURNS * 2) {
       this.recentTurns = this.recentTurns.slice(-MEMORY_JUDGE_CONTEXT_TURNS * 2)
     }
+    // 先落盘再排队：崩溃/退出发生在蒸馏跑起来之前时，这些轮次仍然留着
+    this.persistPendingTurns()
 
     this.deps.enqueueTask("MemoryMaintenance", async () => {
       await this.runQueuedMemoryWrite(seq, conversationId)
@@ -73,6 +112,9 @@ export class MemoryScheduler {
         console.error("[PMRS/Scheduler] Judge/Manager 执行失败，本轮仍会计数", err)
       }
     }
+
+    // 蒸馏之后缓冲内容可能变化（截断/消费），把最新状态同步回文件
+    this.persistPendingTurns()
 
     await this.deps.replaceL1Field("roundCount", newCount)
 
@@ -112,4 +154,6 @@ export const memoryScheduler = new MemoryScheduler({
   runReflectionAndCompression,
   runResolverQueueOnce,
   runDecay: () => memoryManager.runDecay(),
+  loadPendingTurns: readPendingTurns,
+  savePendingTurns: (turns, seq) => { writePendingTurns(turns, seq) },
 })
