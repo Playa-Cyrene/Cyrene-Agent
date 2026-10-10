@@ -41,4 +41,11 @@ toolRegistry.register(installMcpServerTool);
 logger.info(LogTag.BuiltinTools, "registered: fetch_url / download_file / run_shell / install_mcp_server");
 toolRegistry.register(weatherTool);
 toolRegistry.register(webSearchTool);
-toolRegistry.register(createPlayLive2DActionTool({ sendToLive2DWindow }));
+// 间接转发：本模块求值时就会执行下面的 register，而组合根（default-dependencies
+// 的 startCore）要到运行时才调用 setLive2dWindowSender。若这里直接传
+// `sendToLive2DWindow` 变量，工具会把当前的空实现永久存进 deps —— 之后再接线也
+// 换不掉，动作静默丢失且仍返回 ok:true。包一层箭头函数按调用时读最新 sender，
+// 注册与接线的先后顺序不再重要。
+toolRegistry.register(createPlayLive2DActionTool({
+  sendToLive2DWindow: (channel, payload) => sendToLive2DWindow(channel, payload),
+}));
