@@ -1,6 +1,8 @@
 # Startup animation assets
 
-`default.mp4` is the Seedance-generated Cyrene animation supplied by the contributor for this feature. It is the original 1280×720, 24 fps, 15.041667 second silent video; no model, reference images or other source assets are distributed here.
+`default.mp4` is the Seedance 2.0-generated Cyrene animation supplied by the contributor for this feature. It is the original 1280×720, 24 fps, 15.041667 second silent video; no model, reference images or other source assets are distributed here.
+
+素材提供者声明：默认视频使用 Seedance 2.0 生成，无侵权风险。
 
 SHA-256: `9ebb3f5204610f88d8e4c59052acbe098f08913ca7949dd2778f63c410a934d6`
 
