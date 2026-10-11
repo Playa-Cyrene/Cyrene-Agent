@@ -1,4 +1,5 @@
 import { app, BrowserWindow, shell } from "electron";
+import { registerStartupAnimationIpc } from "./startup-animation-ipc";
 import { IPC } from "../../shared/ipc-channels";
 import { createIpcScope, type IpcScope } from "../application/ipc-scope";
 import type { GeneralSettings } from "./general-settings";
@@ -45,6 +46,7 @@ const VISION_TEST_IMAGE_BASE64 =
 
 export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
   const ipc = deps.ipc ?? createIpcScope();
+  registerStartupAnimationIpc(ipc);
   const {
     getGeneralSettings,
     saveGeneralSettings,

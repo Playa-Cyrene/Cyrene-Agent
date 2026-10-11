@@ -36,6 +36,7 @@ latest.yml
 
 # Native screenshot helper is built locally and staged for electron-builder.
 resources/bin/*.exe
+resources/startup-animation/CyreneBoot.exe
 
 # mpv binary is downloaded locally and staged for electron-builder.
 resources/bin/mpv/

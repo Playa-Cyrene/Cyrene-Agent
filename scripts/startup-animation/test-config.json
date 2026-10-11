@@ -1,0 +1,49 @@
+{
+    "DisplayName":  "Cyrene Agent · 昔涟启动动画",
+    "Video":  "",
+    "AppLaunch":  "",
+    "AppArguments":  ".",
+    "WorkingDirectory":  "",
+    "ProcessPathContains":  "",
+    "ProcessNames":  [
+                         "CyreneSmokeTarget"
+                     ],
+    "HoldFrom":  11.5,
+    "HoldAt":  12,
+    "TransitionStart":  13.5,
+    "RevealEnd":  14.65,
+    "TransitionEnd":  15,
+    "MaxWaitSeconds":  90,
+    "Volume":  0,
+    "PlayerWidth":  1280,
+    "PlayerHeight":  720,
+    "MatchClientToPlayer":  true,
+    "AutoReplaceEntrypoints":  false,
+    "ScanAllLocalDrives":  false,
+    "ScreenFrames":  [
+                         {
+                             "Time":  13.5,
+                             "X":  0.01,
+                             "Y":  0.01,
+                             "Width":  0.98,
+                             "Height":  0.98
+                         },
+                         {
+                             "Time":  14.65,
+                             "X":  0,
+                             "Y":  0,
+                             "Width":  1,
+                             "Height":  1
+                         },
+                         {
+                             "Time":  15,
+                             "X":  0,
+                             "Y":  0,
+                             "Width":  1,
+                             "Height":  1
+                         }
+                     ],
+    "HoldStill":  true,
+    "FreezeAtEnd":  true,
+    "SharedSettingsPath":  ""
+}

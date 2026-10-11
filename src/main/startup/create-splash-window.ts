@@ -1,5 +1,6 @@
 import { app, BrowserWindow, screen } from "electron";
 import path from "node:path";
+import { startStartupAnimation } from "./startup-animation";
 
 export interface CreateSplashWindowContext {
   isDev: boolean;
@@ -16,6 +17,7 @@ const SPLASH_SIZE = 520;
  * 继续以聊天核心就绪条件推进），不让 Loading 问题阻塞启动。
  */
 export function createSplashWindow(ctx: CreateSplashWindowContext): BrowserWindow | null {
+  if (startStartupAnimation()) return null;
   try {
     const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().workAreaSize;
 

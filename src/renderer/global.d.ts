@@ -69,6 +69,7 @@ interface SettingsWindowApi {
   getToolCatalog: () => Promise<unknown>;
   getToolModeOverrides: () => Promise<unknown>;
   getGeneral: () => Promise<unknown>;
+  startupAnimation: import("../shared/startup-animation").StartupAnimationApi;
   setToolModeOverride: (toolId: string, mode: string, next: boolean) => Promise<unknown>;
   // MCP 服务器管理（设置页 MCP 面板用）
   addMcpServer: (config: import("./settings/shared/types").McpServerConfigView) => Promise<{ ok: boolean; toolIds?: string[]; error?: string }>;
