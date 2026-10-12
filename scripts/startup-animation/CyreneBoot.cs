@@ -126,6 +126,11 @@ namespace CyreneBoot {
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h,int how);
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint from,uint to,bool attach);
+  [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr h);
+  [DllImport("user32.dll")] public static extern IntPtr SetActiveWindow(IntPtr h);
+  [DllImport("user32.dll")] public static extern IntPtr SetFocus(IntPtr h);
+  [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
   [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h,IntPtr after,int x,int y,int w,int ht,uint flags);
   [DllImport("user32.dll")] public static extern IntPtr SendMessageTimeout(IntPtr h,uint msg,IntPtr w,IntPtr l,uint flags,uint ms,out IntPtr result);
   [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
@@ -140,6 +145,26 @@ namespace CyreneBoot {
    Bounds r;Point p=new Point();
    if(!GetClientRect(h,out r)||!ClientToScreen(h,ref p))return new Bounds();
    return new Bounds(p.X,p.Y,r.Width,r.Height);
+  }
+  public static bool FocusWindow(IntPtr h) {
+   if(!IsWindow(h))return false;
+   SetForegroundWindow(h);
+   if(GetForegroundWindow()==h) { SetFocus(h);return true; }
+   // Transfer activation while the old foreground HWND is still visible. Hiding
+   // it first lets Windows activate an unrelated window and denies our request.
+   IntPtr foreground=GetForegroundWindow();
+   uint pid,currentThread=GetCurrentThreadId();
+   uint foregroundThread=foreground==IntPtr.Zero?0:GetWindowThreadProcessId(foreground,out pid);
+   if(foregroundThread==0||foregroundThread==currentThread)return false;
+   bool attached=AttachThreadInput(currentThread,foregroundThread,true);
+   if(!attached)return false;
+   try {
+    BringWindowToTop(h);
+    SetForegroundWindow(h);
+    SetActiveWindow(h);
+    SetFocus(h);
+   } finally { AttachThreadInput(currentThread,foregroundThread,false); }
+   return GetForegroundWindow()==h;
   }
   public static bool Responsive(IntPtr h) {
    IntPtr result;
@@ -322,22 +347,18 @@ namespace CyreneBoot {
    if(thumbnail!=IntPtr.Zero) { Native.DwmUnregisterThumbnail(thumbnail);thumbnail=IntPtr.Zero; }
   }
   private void ConcealAppWindows() {
-   bool restoreFocus=false;
    foreach(IntPtr h in Native.AppWindows(cfg)) {
     uint pid;Native.GetWindowThreadProcessId(h,out pid);
     if(!concealed.ContainsKey(h)) { concealed[h]=pid;Log("app-window-held-until-video-end"); }
-    // Only reclaim focus lost to the Agent being concealed, not another app
-    // the user selected with Alt+Tab. Hidden foreground windows lose key input.
-    if(Native.GetForegroundWindow()==h)restoreFocus=true;
+    // Reclaim only from this Agent, before hiding its foreground window.
+    // Do not reactivate over another app selected by the user with Alt+Tab.
+    if(Native.GetForegroundWindow()==h)FocusPlayer();
     Native.ShowWindow(h,0);
    }
-   if(restoreFocus)FocusPlayer();
   }
   private void FocusPlayer() {
    if(closing||host==IntPtr.Zero)return;
-   Native.SetForegroundWindow(host);
-   Activate();
-   if(Native.GetForegroundWindow()==host)Keyboard.Focus(skip);
+   if(Native.FocusWindow(host)) { Activate();Keyboard.Focus(skip); }
    Log("player-focus="+(Native.GetForegroundWindow()==host));
   }
   private void RestoreAppWindows() {

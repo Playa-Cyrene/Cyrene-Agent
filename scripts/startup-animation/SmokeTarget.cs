@@ -3,6 +3,8 @@ using System.Drawing;
 using System.Windows.Forms;
 public static class SmokeTarget {
  [System.Runtime.InteropServices.DllImport("user32.dll")]static extern bool IsWindowVisible(IntPtr h);
+ [System.Runtime.InteropServices.DllImport("user32.dll")]static extern bool SetForegroundWindow(IntPtr h);
+ [System.Runtime.InteropServices.DllImport("user32.dll")]static extern IntPtr GetForegroundWindow();
  [STAThread] public static void Main(string[] args) {
   Application.EnableVisualStyles();
   if(args.Length>0&&args[0].StartsWith("--delay="))System.Threading.Thread.Sleep(Int32.Parse(args[0].Substring(8)));
@@ -11,6 +13,15 @@ public static class SmokeTarget {
   sidebar.Controls.Add(new Label { Text="CYRENE\n\nWindow handoff test",Dock=DockStyle.Fill,Padding=new Padding(28),Font=new Font("Segoe UI",17),ForeColor=Color.FromArgb(103,77,134) });
   form.Controls.Add(new Label { Text="Isolated test window\n\nNo user conversations or credentials are loaded.",Dock=DockStyle.Fill,TextAlign=ContentAlignment.MiddleCenter,Font=new Font("Segoe UI",18),ForeColor=Color.FromArgb(121,93,145) });
   form.Controls.Add(sidebar);
+  if(Array.IndexOf(args,"--focus-test")>=0) {
+   form.Shown+=delegate {
+    form.Activate();
+    SetForegroundWindow(form.Handle);
+    bool foreground=GetForegroundWindow()==form.Handle;
+    System.IO.File.WriteAllText(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"focus.txt"),
+     foreground?"target-took-focus":"foreground-unavailable");
+   };
+  }
   if(Array.IndexOf(args,"--visibility-test")>=0) {
    string report=System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"visibility.txt");
    System.IO.File.WriteAllText(report,"");

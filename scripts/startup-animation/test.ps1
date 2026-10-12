@@ -12,6 +12,7 @@ $cfg=Get-Content (Join-Path $PSScriptRoot 'test-config.json') -Raw -Encoding UTF
 $cfg.Video=Join-Path $project 'resources/startup-animation/default.mp4'
 $cfg.AppLaunch=$target
 $cfg.AppArguments=if($Slow){'--delay=24000'}elseif($Skip -or $PostedSkip){'--delay=2000'}else{'--visibility-test'}
+if($Skip){$cfg.AppArguments+=' --focus-test'}
 $cfg.WorkingDirectory=$qa
 $cfg.ProcessNames=@('CyreneSmokeTarget')
 $cfg.ProcessPathContains=$qa
@@ -26,6 +27,8 @@ if($Custom){
 [IO.File]::WriteAllText((Join-Path $qa 'launcher.json'),($cfg|ConvertTo-Json -Depth 10))
 $log=Join-Path $qa 'logs/launcher.log'
 if(Test-Path $log){[IO.File]::WriteAllText($log,'')}
+$focusReport=Join-Path $qa 'focus.txt'
+if($Skip){[IO.File]::WriteAllText($focusReport,'')}
 Add-Type @'
 using System;
 using System.Runtime.InteropServices;
@@ -72,6 +75,7 @@ try {
   if($messages -notmatch 'host-handle=(\d+)'){throw 'No animation window'}
   $animationHandle=[IntPtr][long]$Matches[1]
   if($Skip){
+   if([IO.File]::ReadAllText($focusReport) -ne 'target-took-focus'){throw 'Test target could not acquire foreground input. No real focus-transfer test was performed.'}
    if([HandoffCheck]::GetForegroundWindow() -ne $animationHandle){throw 'Animation has no foreground focus. Run on an interactive Windows desktop and check focus after Agent appears.'}
    # Send to the actual foreground input queue; PostMessage bypasses focus bugs.
    Add-Type -AssemblyName System.Windows.Forms
