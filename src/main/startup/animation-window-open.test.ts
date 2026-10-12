@@ -1,0 +1,46 @@
+import { EventEmitter } from "node:events";
+import type { BrowserWindow } from "electron";
+import { expect, it, vi } from "vitest";
+vi.mock("./startup-animation", () => ({ startStartupAnimation: vi.fn(), isStartupAnimationRunning: () => false }));
+import { createAnimationWindowOpenTracker, prepareAnimationWindowOpen } from "./animation-window-open";
+
+it("does not replay when a helper's restore event arrives after the helper exits", () => {
+  const play = vi.fn();
+  let playing = false;
+  const track = createAnimationWindowOpenTracker(play, () => playing);
+  const window = new EventEmitter();
+  track(window as BrowserWindow);
+  window.emit("show");
+  playing = true;
+  window.emit("hide");
+  playing = false;
+  window.emit("show");
+  expect(play).not.toHaveBeenCalled();
+  window.emit("hide"); window.emit("show");
+  expect(play).toHaveBeenCalledOnce();
+});
+
+it("distinguishes tray reopen from restore, skips first show and duplicate show events", () => {
+  const play = vi.fn();
+  const track = createAnimationWindowOpenTracker(play);
+  const window = Object.assign(new EventEmitter(), { isVisible: () => false, isMinimized: () => false });
+  track(window as unknown as BrowserWindow);
+  window.emit("show");
+  window.emit("show");
+  expect(play).not.toHaveBeenCalled();
+  window.emit("hide");
+  prepareAnimationWindowOpen(window as unknown as BrowserWindow, "tray");
+  window.emit("show");
+  expect(play).toHaveBeenLastCalledWith("tray");
+  window.emit("minimize");
+  window.emit("restore");
+  window.emit("show");
+  expect(play).toHaveBeenLastCalledWith("open");
+  expect(play).toHaveBeenCalledTimes(2);
+  window.emit("closed");
+  expect(window.listenerCount("show")).toBe(0);
+  const replacement = new EventEmitter();
+  track(replacement as BrowserWindow);
+  replacement.emit("show");
+  expect(play).toHaveBeenCalledTimes(3);
+});

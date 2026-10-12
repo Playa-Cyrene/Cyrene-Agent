@@ -7,6 +7,8 @@ import { loadGeneralSettings } from "../settings/settings-facade";
 import { getEffectiveUiTheme } from "../system-ui-theme";
 import { stopCall, setCallWindow } from "../call/call-manager";
 import { attachContextMenu } from "./context-menu";
+import { trackAnimationWindowOpen, prepareAnimationWindowOpen } from "../startup/animation-window-open";
+import type { AnimationOpenSource } from "../../shared/startup-animation";
 import { getWorkspaceInitialBounds } from "./workspace-window-bounds";
 import {
   callWindow,
@@ -27,7 +29,7 @@ import {
 export interface ReactChatWindowHandle {
   window: BrowserWindow;
   load(sessionId?: string): Promise<void>;
-  show(sessionId?: string): void;
+  show(sessionId?: string, source?: AnimationOpenSource): void;
 }
 
 export function persistedWindowState(
@@ -79,6 +81,7 @@ export function createReactChatWindowShell(): BrowserWindow {
     },
   });
   setReactChatWindow(window);
+  trackAnimationWindowOpen(window);
   attachContextMenu(window);
 
   if (rememberWindowState) {
@@ -162,9 +165,11 @@ export function createOnboardingBrowserWindow(): BrowserWindow {
 /**
  * 显示聊天窗口（不加载页面）；带 sessionId 时走会话分发。
  */
-export function showReactChatWindow(sessionId?: string): void {
+export function showReactChatWindow(sessionId?: string, source: AnimationOpenSource = "open"): void {
   const win = reactChatWindow;
   if (!win || win.isDestroyed()) return;
+  prepareAnimationWindowOpen(win, source);
+  if (win.isMinimized()) win.restore();
   win.show();
   win.focus();
   if (sessionId) dispatchOrQueueReactSession(sessionId);

@@ -369,6 +369,7 @@ const settingsApi = {
   startupAnimation: {
     get: () => ipcRenderer.invoke(IPC.STARTUP_ANIMATION_GET),
     setEnabled: (enabled: boolean) => ipcRenderer.invoke(IPC.STARTUP_ANIMATION_SET_ENABLED, enabled),
+    setMode: (mode: import("../shared/startup-animation").StartupAnimationMode) => ipcRenderer.invoke(IPC.STARTUP_ANIMATION_SET_MODE, mode),
     importVideo: () => ipcRenderer.invoke(IPC.STARTUP_ANIMATION_IMPORT),
     resetVideo: () => ipcRenderer.invoke(IPC.STARTUP_ANIMATION_RESET),
   },

@@ -23,8 +23,9 @@ using System.Windows.Threading;
 
 namespace CyreneBoot {
  public sealed class Config {
-  public Config() { AnimationEnabled=true; }
+  public Config() { AnimationEnabled=true; PlaybackMode="startup"; }
   public bool AnimationEnabled { get; set; }
+  public string PlaybackMode { get; set; }
   public string SharedSettingsPath { get; set; }
   public bool AttachOnly { get; set; }
   public string DisplayName { get; set; }
@@ -124,6 +125,7 @@ namespace CyreneBoot {
   [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr h,int index);
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h,int how);
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h,IntPtr after,int x,int y,int w,int ht,uint flags);
   [DllImport("user32.dll")] public static extern IntPtr SendMessageTimeout(IntPtr h,uint msg,IntPtr w,IntPtr l,uint flags,uint ms,out IntPtr result);
   [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
@@ -156,7 +158,7 @@ namespace CyreneBoot {
    return Math.Abs(actual.Left-desired.Left)<=2&&Math.Abs(actual.Top-desired.Top)<=2
     &&Math.Abs(actual.Width-desired.Width)<=2&&Math.Abs(actual.Height-desired.Height)<=2;
   }
-  public static List<IntPtr> AppWindows(Config cfg) {
+  public static HashSet<int> AppProcessIds(Config cfg) {
    HashSet<int> pids=new HashSet<int>();
    foreach(string name in cfg.ProcessNames)foreach(Process p in Process.GetProcessesByName(name)) {
     try {
@@ -169,6 +171,10 @@ namespace CyreneBoot {
      if(path.IndexOf(cfg.ProcessPathContains,StringComparison.OrdinalIgnoreCase)>=0)pids.Add(p.Id);
     } catch {} finally { p.Dispose(); }
    }
+   return pids;
+  }
+  public static List<IntPtr> AppWindows(Config cfg) {
+   HashSet<int> pids=AppProcessIds(cfg);
    List<IntPtr> windows=new List<IntPtr>();
    EnumWindows(delegate(IntPtr h,IntPtr unused) {
     uint pid;GetWindowThreadProcessId(h,out pid);
@@ -194,6 +200,7 @@ namespace CyreneBoot {
   private readonly string root;
   private readonly MediaElement media;
   private readonly TextBlock status;
+  private readonly Button skip;
   private readonly DispatcherTimer timer;
   private readonly Stopwatch wall=new Stopwatch();
   private IntPtr host,target,thumbnail,stableHandle,alignedHandle;
@@ -224,12 +231,15 @@ namespace CyreneBoot {
     Margin=new Thickness(20,20,20,38),FontSize=16,Foreground=new SolidColorBrush(Color.FromRgb(115,91,144)),
     Visibility=Visibility.Collapsed };
    grid.Children.Add(status);
-   Button skip=new Button { Content="跳过  Esc",HorizontalAlignment=HorizontalAlignment.Right,
+   skip=new Button { Content="跳过  Esc",HorizontalAlignment=HorizontalAlignment.Right,
     VerticalAlignment=VerticalAlignment.Top,Margin=new Thickness(16),Padding=new Thickness(11,5,11,5),
     Background=Brushes.White,Foreground=new SolidColorBrush(Color.FromRgb(118,97,135)),Opacity=.45 };
    skip.Click+=delegate { HandOff(); };
    skip.MouseEnter+=delegate { skip.Opacity=1; };skip.MouseLeave+=delegate { skip.Opacity=.45; };
    grid.Children.Add(skip);Content=grid;
+   // Topmost controls z-order, not keyboard focus. Give WPF a focused element too.
+   Activated+=delegate { if(!closing)Keyboard.Focus(skip); };
+   ContentRendered+=delegate { FocusPlayer(); };
    PreviewKeyDown+=delegate(object sender,KeyEventArgs e) { if(e.Key==Key.Escape) { e.Handled=true;HandOff(); } };
    SourceInitialized+=delegate {
     host=new WindowInteropHelper(this).Handle;
@@ -253,7 +263,7 @@ namespace CyreneBoot {
     }
     opened=true;media.Visibility=Visibility.Visible;Bounds actual=Native.ClientBounds(host);
     Log("media-opened player-client="+actual.Width+"x"+actual.Height+" at "+actual.Left+","+actual.Top);
-    Native.SetForegroundWindow(host);
+    FocusPlayer();
    };
    media.MediaFailed+=delegate(object sender,ExceptionRoutedEventArgs e) {
     Log("media-failed: "+e.ErrorException.Message);status.Text="视频无法播放，正在转入Cyrene Agent";status.Visibility=Visibility.Visible;
@@ -286,6 +296,7 @@ namespace CyreneBoot {
     ProcessStartInfo info=new ProcessStartInfo(cfg.AppLaunch,cfg.AppArguments??"") { UseShellExecute=false,WorkingDirectory=cfg.WorkingDirectory,CreateNoWindow=true };
     info.EnvironmentVariables.Remove("ELECTRON_RUN_AS_NODE");
     info.EnvironmentVariables["CYRENE_BOOT_ACTIVE"]="1";
+    info.EnvironmentVariables["CYRENE_BOOT_PID"]=Process.GetCurrentProcess().Id.ToString();
     launchedProcess=Process.Start(info);
     Log("app-launch-requested");
    } catch(Exception e) { Log("app-launch-failed: "+e.Message);status.Text="无法自动打开Cyrene Agent，按Esc退出";status.Visibility=Visibility.Visible; }
@@ -311,11 +322,23 @@ namespace CyreneBoot {
    if(thumbnail!=IntPtr.Zero) { Native.DwmUnregisterThumbnail(thumbnail);thumbnail=IntPtr.Zero; }
   }
   private void ConcealAppWindows() {
+   bool restoreFocus=false;
    foreach(IntPtr h in Native.AppWindows(cfg)) {
     uint pid;Native.GetWindowThreadProcessId(h,out pid);
     if(!concealed.ContainsKey(h)) { concealed[h]=pid;Log("app-window-held-until-video-end"); }
+    // Only reclaim focus lost to the Agent being concealed, not another app
+    // the user selected with Alt+Tab. Hidden foreground windows lose key input.
+    if(Native.GetForegroundWindow()==h)restoreFocus=true;
     Native.ShowWindow(h,0);
    }
+   if(restoreFocus)FocusPlayer();
+  }
+  private void FocusPlayer() {
+   if(closing||host==IntPtr.Zero)return;
+   Native.SetForegroundWindow(host);
+   Activate();
+   if(Native.GetForegroundWindow()==host)Keyboard.Focus(skip);
+   Log("player-focus="+(Native.GetForegroundWindow()==host));
   }
   private void RestoreAppWindows() {
    foreach(KeyValuePair<IntPtr,uint> item in concealed) {
@@ -450,8 +473,12 @@ namespace CyreneBoot {
    if(String.IsNullOrWhiteSpace(c.SharedSettingsPath)||!File.Exists(c.SharedSettingsPath))return;
    try {
     Dictionary<string,object> settings=new JavaScriptSerializer().Deserialize<Dictionary<string,object>>(File.ReadAllText(c.SharedSettingsPath));
-    object enabled,file;
+    object enabled,file,mode;
     if(settings.TryGetValue("enabled",out enabled)&&enabled is bool)c.AnimationEnabled=(bool)enabled;
+    if(settings.TryGetValue("mode",out mode)&&mode is string) {
+     c.PlaybackMode=(string)mode=="always"||(string)mode=="except-tray"?(string)mode:"startup";
+     if((string)mode=="off")c.AnimationEnabled=false;
+    }
     if(settings.TryGetValue("videoFile",out file)&&file is string
       &&System.Text.RegularExpressions.Regex.IsMatch((string)file,@"\A[a-fA-F0-9-]{36}\.mp4\z")) {
      string video=Path.Combine(Path.GetDirectoryName(c.SharedSettingsPath),(string)file);
@@ -545,6 +572,9 @@ namespace CyreneBoot {
      if(!owns)return 0;
      Config c=ReadConfig(root);
      if(!c.AnimationEnabled) { if(!c.AttachOnly)LaunchWithoutAnimation(c);return 0; }
+     // A desktop shortcut may target an already-running Agent (including hidden windows).
+     // Let Electron's single-instance handler reopen it without replaying startup-only media.
+     if(!c.AttachOnly&&c.PlaybackMode=="startup"&&Native.AppProcessIds(c).Count>0) { LaunchWithoutAnimation(c);return 0; }
      if(!File.Exists(Path.GetFullPath(Path.Combine(root,c.Video))))throw new Exception("未找到启动视频。请将 cyrene-boot.mp4 与 launcher 文件夹一起保留，或修改 launcher.json 的 Video 路径。");
      Application app=new Application();
      app.DispatcherUnhandledException+=delegate(object sender,DispatcherUnhandledExceptionEventArgs e) {

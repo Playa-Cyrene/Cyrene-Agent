@@ -1,4 +1,4 @@
-param([switch]$Slow,[switch]$Skip,[switch]$Custom,[switch]$Disabled,[switch]$Attach)
+param([switch]$Slow,[switch]$Skip,[switch]$PostedSkip,[switch]$Custom,[switch]$Disabled,[switch]$Attach)
 $ErrorActionPreference='Stop'
 $project=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 $qa=[IO.Path]::GetFullPath((Join-Path $project '.build-temp/startup-animation-qa'))
@@ -11,7 +11,7 @@ Copy-Item (Join-Path $project 'resources/startup-animation/CyreneBoot.exe') $qa 
 $cfg=Get-Content (Join-Path $PSScriptRoot 'test-config.json') -Raw -Encoding UTF8 | ConvertFrom-Json
 $cfg.Video=Join-Path $project 'resources/startup-animation/default.mp4'
 $cfg.AppLaunch=$target
-$cfg.AppArguments=if($Slow){'--delay=24000'}else{'--visibility-test'}
+$cfg.AppArguments=if($Slow){'--delay=24000'}elseif($Skip -or $PostedSkip){'--delay=2000'}else{'--visibility-test'}
 $cfg.WorkingDirectory=$qa
 $cfg.ProcessNames=@('CyreneSmokeTarget')
 $cfg.ProcessPathContains=$qa
@@ -30,14 +30,31 @@ Add-Type @'
 using System;
 using System.Runtime.InteropServices;
 public static class HandoffCheck {
+ delegate bool EnumProc(IntPtr h,IntPtr l);
+ [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc cb,IntPtr l);
+ [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h,out uint pid);
  [StructLayout(LayoutKind.Sequential)] public struct Rect { public int L,T,R,B; }
  [StructLayout(LayoutKind.Sequential)] public struct Point { public int X,Y; }
  [DllImport("user32.dll")] static extern bool GetClientRect(IntPtr h,out Rect r);
  [DllImport("user32.dll")] static extern bool ClientToScreen(IntPtr h,ref Point p);
  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+ [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
  [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h,int m,IntPtr w,IntPtr l);
  [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
  public static int[] Client(IntPtr h) { Rect r;Point p=new Point();GetClientRect(h,out r);ClientToScreen(h,ref p);return new int[]{p.X,p.Y,r.R-r.L,r.B-r.T}; }
+ // Process.MainWindowHandle may select a WinForms helper window after hide/show.
+ public static IntPtr MainWindow(int processId) {
+  IntPtr result=IntPtr.Zero;
+  EnumWindows(delegate(IntPtr h,IntPtr l) {
+   uint pid;GetWindowThreadProcessId(h,out pid);
+   if(pid==processId&&IsWindowVisible(h)) {
+    int[] bounds=Client(h);
+    if(bounds[2]>=600&&bounds[3]>=350){result=h;return false;}
+   }
+   return true;
+  },IntPtr.Zero);
+  return result;
+ }
 }
 '@
 $null=[HandoffCheck]::SetProcessDPIAware()
@@ -49,11 +66,20 @@ if($Attach){
 }
 $proc=Start-Process (Join-Path $qa 'CyreneBoot.exe') -WindowStyle Hidden -PassThru
 try {
- if($Skip){
+ if($Skip -or $PostedSkip){
   Start-Sleep -Seconds 4
   $messages=Get-Content $log -Raw
   if($messages -notmatch 'host-handle=(\d+)'){throw 'No animation window'}
-  $null=[HandoffCheck]::PostMessage([IntPtr][long]$Matches[1],0x100,[IntPtr]27,[IntPtr]65537)
+  $animationHandle=[IntPtr][long]$Matches[1]
+  if($Skip){
+   if([HandoffCheck]::GetForegroundWindow() -ne $animationHandle){throw 'Animation has no foreground focus. Run on an interactive Windows desktop and check focus after Agent appears.'}
+   # Send to the actual foreground input queue; PostMessage bypasses focus bugs.
+   Add-Type -AssemblyName System.Windows.Forms
+   [System.Windows.Forms.SendKeys]::SendWait('{ESC}')
+  }else{
+   # Message-only coverage for noninteractive environments, NOT a keyboard-focus test.
+   $null=[HandoffCheck]::PostMessage($animationHandle,0x100,[IntPtr]27,[IntPtr]65537)
+  }
  }
  if(-not $proc.WaitForExit(45000)){throw 'Animation did not exit automatically'}
  $watch.Stop()
@@ -61,7 +87,7 @@ try {
   Start-Sleep -Seconds 3
   $app=Get-Process CyreneSmokeTarget | Where-Object {$_.Path -eq $target} | Select-Object -First 1
   $app.Refresh()
-  $visible=[HandoffCheck]::IsWindowVisible($app.MainWindowHandle)
+  $visible=[HandoffCheck]::IsWindowVisible([HandoffCheck]::MainWindow($app.Id))
   $messages=if(Test-Path $log){[IO.File]::ReadAllText($log)}else{''}
   $ok=$proc.ExitCode -eq 0 -and $visible -and $watch.Elapsed.TotalSeconds -lt 5 -and -not $messages.Contains('media-opened')
   $report=@{ok=$ok;mode='disabled';visibleAfter=$visible;animationSkipped=(-not $messages.Contains('media-opened'));realAgentTested=$false}
@@ -73,21 +99,22 @@ try {
  $messages=Get-Content $log -Raw
  $app=Get-Process CyreneSmokeTarget | Where-Object {$_.Path -eq $target} | Select-Object -First 1
  $app.Refresh()
- $rect=[HandoffCheck]::Client($app.MainWindowHandle)
+ $appWindow=[HandoffCheck]::MainWindow($app.Id)
+ $rect=[HandoffCheck]::Client($appWindow)
  if($messages -notmatch 'started fixed-player=(\d+)x(\d+) at (-?\d+),(-?\d+)'){throw 'Missing player dimensions'}
  $expected=@([int]$Matches[3],[int]$Matches[4],[int]$Matches[1],[int]$Matches[2])
  $aligned=$true
  for($i=0;$i -lt 4;$i++){if([Math]::Abs($rect[$i]-$expected[$i]) -gt 2){$aligned=$false}}
- $visible=[HandoffCheck]::IsWindowVisible($app.MainWindowHandle)
+ $visible=[HandoffCheck]::IsWindowVisible($appWindow)
  $ok=$proc.ExitCode -eq 0 -and $aligned -and $visible -and $messages.Contains('handed-off-to-real-window')
- if($Skip){$ok=$ok -and $watch.Elapsed.TotalSeconds -lt 9}
+ if($Skip -or $PostedSkip){$ok=$ok -and $watch.Elapsed.TotalSeconds -lt 9}
  else{$ok=$ok -and $messages.Contains('frozen-at-final-frame') -and $watch.Elapsed.TotalSeconds -ge $(if($Custom){5}else{15})}
  if($Custom){$ok=$ok -and $watch.Elapsed.TotalSeconds -lt 12}
  if($Attach){$ok=$ok -and -not $messages.Contains('app-launch-requested')}
  if($Slow){$ok=$ok -and $messages.Contains('waiting-for-window')}
- elseif(-not $Skip -and -not $Custom){$ok=$ok -and ([IO.File]::ReadAllText((Join-Path $qa 'visibility.txt')).Contains('hidden-during-video'))}
- $mode=if($Attach){'attach'}elseif($Custom){'custom'}elseif($Skip){'skip'}elseif($Slow){'slow'}else{'full'}
- $report=[ordered]@{ok=$ok;mode=$mode;elapsedSeconds=[Math]::Round($watch.Elapsed.TotalSeconds,2);automaticExit=(-not $Skip);visibleAfter=$visible;clientBounds=$rect;expectedBounds=$expected;aligned=$aligned;realAgentTested=$false}
+ elseif(-not $Skip -and -not $PostedSkip -and -not $Custom){$ok=$ok -and ([IO.File]::ReadAllText((Join-Path $qa 'visibility.txt')).Contains('hidden-during-video'))}
+ $mode=if($Skip){'skip'}elseif($PostedSkip){'posted-skip'}elseif($Attach){'attach'}elseif($Custom){'custom'}elseif($Slow){'slow'}else{'full'}
+ $report=[ordered]@{ok=$ok;mode=$mode;elapsedSeconds=[Math]::Round($watch.Elapsed.TotalSeconds,2);automaticExit=(-not ($Skip -or $PostedSkip));keyboardFocusTested=[bool]$Skip;visibleAfter=$visible;clientBounds=$rect;expectedBounds=$expected;aligned=$aligned;realAgentTested=$false}
  $report|ConvertTo-Json|Set-Content (Join-Path $qa "handoff-$mode.json") -Encoding UTF8
  $report|ConvertTo-Json
  Write-Output $messages

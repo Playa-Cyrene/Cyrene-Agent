@@ -9,6 +9,7 @@ export function registerStartupAnimationIpc(ipc: IpcScope): void {
   let pending = false;
   ipc.handle(IPC.STARTUP_ANIMATION_GET, () => store.read());
   ipc.handle(IPC.STARTUP_ANIMATION_SET_ENABLED, (_event, enabled: unknown) => store.setEnabled(enabled));
+  ipc.handle(IPC.STARTUP_ANIMATION_SET_MODE, (_event, mode: unknown) => store.setMode(mode));
   ipc.handle(IPC.STARTUP_ANIMATION_RESET, () => {
     if (pending) throw new Error("请等待视频导入完成");
     return store.resetVideo();

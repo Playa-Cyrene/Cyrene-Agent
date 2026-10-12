@@ -19,8 +19,22 @@ beforeEach(() => { root = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-animatio
 afterEach(() => { fs.rmSync(root, { recursive: true, force: true }); });
 
 describe("startup animation preferences", () => {
+  it("migrates legacy preferences and persists all four modes", () => {
+    fs.mkdirSync(store.directory);
+    fs.writeFileSync(store.settingsPath, JSON.stringify({ enabled: true }));
+    expect(store.read().mode).toBe("startup");
+    fs.writeFileSync(store.settingsPath, JSON.stringify({ enabled: false }));
+    expect(store.read().mode).toBe("off");
+    for (const mode of ["off", "startup", "except-tray", "always"] as const) {
+      store.setMode(mode);
+      expect(new StartupAnimationStore(store.directory).read()).toMatchObject({ mode, enabled: mode !== "off" });
+      expect(store.resetVideo().mode).toBe(mode);
+    }
+    expect(() => store.setMode("unknown")).toThrow();
+    expect(store.read().mode).toBe("always");
+  });
   it("defaults on, persists false, and rejects non-boolean toggle values", () => {
-    expect(store.read()).toEqual({ enabled: true, videoFile: null, videoName: null });
+    expect(store.read()).toEqual({ enabled: true, mode: "startup", videoFile: null, videoName: null });
     store.setEnabled(false);
     expect(new StartupAnimationStore(store.directory).read().enabled).toBe(false);
     expect(() => store.setEnabled("false")).toThrow();
@@ -34,7 +48,7 @@ describe("startup animation preferences", () => {
     expect(fs.readFileSync(copied)).toEqual(fs.readFileSync(source));
     fs.unlinkSync(source);
     expect(store.read().videoName).toBe("my-video.mp4");
-    expect(store.resetVideo()).toEqual({ enabled: false, videoFile: null, videoName: null });
+    expect(store.resetVideo()).toEqual({ enabled: false, mode: "off", videoFile: null, videoName: null });
     expect(fs.existsSync(copied)).toBe(true); // Existing playback keeps its open media.
   });
   it("invalid or truncated imports leave the previous video untouched and clean the partial copy", async () => {
@@ -48,7 +62,7 @@ describe("startup animation preferences", () => {
   it("rejects paths in preference files and falls back when custom media is missing", () => {
     fs.mkdirSync(store.directory);
     fs.writeFileSync(store.settingsPath, JSON.stringify({ enabled: false, videoFile: "../secret.mp4", videoName: "bad" }));
-    expect(store.read()).toEqual({ enabled: false, videoFile: null, videoName: null });
+    expect(store.read()).toEqual({ enabled: false, mode: "off", videoFile: null, videoName: null });
     fs.writeFileSync(store.settingsPath, JSON.stringify({ videoFile: "12345678-1234-1234-1234-123456789012.mp4" }));
     expect(store.read().videoFile).toBeNull();
   });

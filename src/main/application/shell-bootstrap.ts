@@ -94,10 +94,10 @@ export async function startShell(deps: ShellDependencies): Promise<ShellResult> 
       }
       switch (request.kind) {
         case "chat":
-          await windowManager.openReactChatWindow(request.sessionId);
+          await windowManager.openReactChatWindow(request.sessionId, request.source);
           break;
         case "settings":
-          await windowManager.openSettings(request.section);
+          await windowManager.openSettings(request.section, request.source);
           break;
         case "music":
           windowManager.createMusicPlayerWindow();
@@ -112,7 +112,7 @@ export async function startShell(deps: ShellDependencies): Promise<ShellResult> 
 
   // 8. 托盘：所有功能窗口入口经过激活代理，退出菜单在应用层处理
   const tray = deps.createTray({
-    requestActivation: (request) => activation.request(request),
+    requestActivation: (request) => activation.request({ ...request, source: "tray" }),
     togglePetWindow: () => windowManager.togglePetWindow(),
   });
 

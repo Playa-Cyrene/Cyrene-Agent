@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Alert, Button } from "antd";
-import type { StartupAnimationSettings as AnimationSettings } from "../../../../shared/startup-animation";
-import { SettingsSwitch } from "../../components/ui/SettingsControls";
+import type { StartupAnimationSettings as AnimationSettings, StartupAnimationMode } from "../../../../shared/startup-animation";
+import { SettingsSegmented } from "../../components/ui/SettingsControls";
 import { useTranslation } from "../../i18n";
 
 export function StartupAnimationSettings() {
@@ -21,14 +21,14 @@ export function StartupAnimationSettings() {
     return () => { mounted.current = false; };
   }, [t]);
 
-  async function change(action: "toggle" | "import" | "reset", enabled?: boolean) {
+  async function change(action: "mode" | "import" | "reset", mode?: StartupAnimationMode) {
     if (locked.current) return;
     locked.current = true;
     setBusy(true); setError(""); setNotice("");
     try {
       const api = window.settings?.startupAnimation;
       if (!api) throw new Error(t("settingsPage.loadFailed"));
-      const value = action === "toggle" ? await api.setEnabled(Boolean(enabled))
+      const value = action === "mode" ? await api.setMode(mode!)
         : action === "import" ? await api.importVideo() : await api.resetVideo();
       if (mounted.current && value) {
         setSettings(value);
@@ -45,7 +45,12 @@ export function StartupAnimationSettings() {
   return <>
     <div className="cy-settings-row">
       <div className="cy-settings-row__copy"><strong>{t("settingsPage.general.startupAnimation")}</strong><span>{t("settingsPage.general.startupAnimationDescription")}</span></div>
-      <SettingsSwitch ariaLabel={t("settingsPage.general.startupAnimation")} checked={settings?.enabled ?? true} disabled={!settings || busy} loading={busy} onChange={(enabled) => void change("toggle", enabled)} />
+      <SettingsSegmented<StartupAnimationMode> aria-label={t("settingsPage.general.startupAnimation")} value={settings?.mode ?? "startup"} disabled={!settings || busy} onChange={(mode) => void change("mode", mode)} options={[
+        { label: t("settingsPage.general.animationOff"), value: "off" },
+        { label: t("settingsPage.general.animationStartup"), value: "startup" },
+        { label: t("settingsPage.general.animationExceptTray"), value: "except-tray" },
+        { label: t("settingsPage.general.animationAlways"), value: "always" },
+      ]} />
     </div>
     <div className="cy-settings-row">
       <div className="cy-settings-row__copy">

@@ -18,11 +18,13 @@ export class StartupAnimationStore {
       const input = JSON.parse(fs.readFileSync(this.settingsPath, "utf8"));
       const videoFile = typeof input.videoFile === "string" && managedName.test(input.videoFile)
         && fs.existsSync(path.join(this.directory, input.videoFile)) ? input.videoFile : null;
-      return { enabled: input.enabled !== false, videoFile,
+      const mode = input.enabled === false || input.mode === "off" ? "off"
+        : input.mode === "always" || input.mode === "except-tray" ? input.mode : "startup";
+      return { enabled: mode !== "off", mode, videoFile,
         videoName: videoFile && typeof input.videoName === "string" ? input.videoName.slice(0, 255) : null };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      return { enabled: true, videoFile: null, videoName: null };
+      return { enabled: true, mode: "startup", videoFile: null, videoName: null };
     }
   }
 
@@ -40,7 +42,14 @@ export class StartupAnimationStore {
 
   setEnabled(enabled: unknown): StartupAnimationSettings {
     if (typeof enabled !== "boolean") throw new Error("动画开关必须为布尔值");
-    return this.write({ ...this.read(), enabled });
+    const settings = this.read();
+    return this.setMode(enabled ? (settings.mode === "off" ? "startup" : settings.mode) : "off");
+  }
+
+  setMode(mode: unknown): StartupAnimationSettings {
+    if (mode !== "off" && mode !== "startup" && mode !== "except-tray" && mode !== "always") throw new Error("无效的动画播放模式");
+    // Keep enabled for older standalone launchers sharing this settings file.
+    return this.write({ ...this.read(), mode, enabled: mode !== "off" });
   }
 
   resetVideo(): StartupAnimationSettings {

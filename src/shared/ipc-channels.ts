@@ -139,6 +139,7 @@ export const IPC = {
   SETTINGS_GET_GENERAL: "settings:get-general",
   STARTUP_ANIMATION_GET: "settings:startup-animation:get",
   STARTUP_ANIMATION_SET_ENABLED: "settings:startup-animation:set-enabled",
+  STARTUP_ANIMATION_SET_MODE: "settings:startup-animation:set-mode",
   STARTUP_ANIMATION_IMPORT: "settings:startup-animation:import",
   STARTUP_ANIMATION_RESET: "settings:startup-animation:reset",
   SETTINGS_SAVE_GENERAL: "settings:save-general",

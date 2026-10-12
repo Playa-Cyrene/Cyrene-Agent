@@ -14,6 +14,7 @@ vi.mock("electron", () => ({ app: {
 } }));
 vi.mock("node:child_process", () => ({ spawn: mocks.spawn }));
 import { createStartupAnimationConfig, startStartupAnimation } from "./startup-animation";
+import { StartupAnimationStore } from "../settings/startup-animation-store";
 
 let root: string;
 beforeEach(() => {
@@ -34,6 +35,37 @@ it("creates portable packaged/development configurations that only attach", () =
 });
 
 describe.skipIf(process.platform !== "win32")("Windows animation lifecycle", () => {
+  it.each([
+    ["off", "startup", false], ["off", "open", false], ["off", "tray", false],
+    ["startup", "startup", true], ["startup", "open", false], ["startup", "tray", false],
+    ["except-tray", "startup", true], ["except-tray", "open", true], ["except-tray", "tray", false],
+    ["always", "startup", true], ["always", "open", true], ["always", "tray", true],
+  ] as const)("mode %s on %s: playback=%s", (mode, source, expected) => {
+    const media = path.join(root, "resources/startup-animation"); fs.mkdirSync(media, { recursive: true });
+    fs.writeFileSync(path.join(media, "CyreneBoot.exe"), "test"); fs.writeFileSync(path.join(media, "default.mp4"), "test");
+    new StartupAnimationStore(path.join(root, "data/startup-animation")).setMode(mode);
+    const child = Object.assign(new EventEmitter(), { unref: vi.fn(), kill: vi.fn(), exitCode: null, killed: false });
+    mocks.spawn.mockReturnValue(child);
+    expect(startStartupAnimation(source)).toBe(true);
+    expect(mocks.spawn).toHaveBeenCalledTimes(expected ? 1 : 0);
+    if (expected) {
+      // A helper hide/show/restore cycle must not recursively spawn another helper.
+      startStartupAnimation("open"); startStartupAnimation("tray");
+      expect(mocks.spawn).toHaveBeenCalledTimes(1);
+      child.emit("exit", 0);
+    }
+  });
+  it("external startup suppression does not suppress later every-open playback", () => {
+    const media = path.join(root, "resources/startup-animation"); fs.mkdirSync(media, { recursive: true });
+    fs.writeFileSync(path.join(media, "CyreneBoot.exe"), "test"); fs.writeFileSync(path.join(media, "default.mp4"), "test");
+    new StartupAnimationStore(path.join(root, "data/startup-animation")).setMode("always");
+    vi.stubEnv("CYRENE_BOOT_ACTIVE", "1");
+    const child = Object.assign(new EventEmitter(), { unref: vi.fn(), kill: vi.fn(), exitCode: null, killed: false });
+    mocks.spawn.mockReturnValue(child);
+    startStartupAnimation(); expect(mocks.spawn).not.toHaveBeenCalled();
+    startStartupAnimation("open"); expect(mocks.spawn).toHaveBeenCalledOnce();
+    child.emit("exit", 0);
+  });
   it("uses old splash when helper is absent and bypasses a second external animation", () => {
     expect(startStartupAnimation()).toBe(false);
     vi.stubEnv("CYRENE_BOOT_ACTIVE", "1");

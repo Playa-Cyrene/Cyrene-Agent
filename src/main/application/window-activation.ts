@@ -6,10 +6,10 @@
  * 注意：桌宠不接收通用主窗口激活请求，其可见性由 settings/toggle 路径管理。
  */
 
-export type WindowActivationRequest =
+export type WindowActivationRequest = (
   | { kind: "chat"; sessionId?: string }
   | { kind: "settings"; section?: string }
-  | { kind: "music" };
+  | { kind: "music" }) & { source?: "open" | "tray" };
 
 export interface WindowActivationActions {
   /** 激活被延迟到启动完成时，向用户提示“加载中”。 */

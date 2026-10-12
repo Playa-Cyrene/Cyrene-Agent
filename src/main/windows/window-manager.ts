@@ -16,6 +16,7 @@ import { createMusicPlayerWindow } from "./create-music-player-window";
 import { broadcastToAllWindows } from "./broadcast";
 import { PetWindowMoveController } from "../pet-window-movement";
 import { CURRENT_DISCLAIMER_VERSION } from "../../shared/disclaimer";
+import type { AnimationOpenSource } from "../../shared/startup-animation";
 
 const PET_WINDOW_RESOURCE_RELEASE_DELAY_MS = 30_000;
 
@@ -35,8 +36,8 @@ export interface WindowManager {
   /** 创建（或复用）未加载页面的聊天窗口壳；页面加载由显式 load() 驱动。 */
   createReactChatWindowShell(): ReactChatWindowHandle;
   /** 打开聊天窗口：必要时创建壳并加载页面，然后显示并分发会话。 */
-  openReactChatWindow(sessionId?: string): Promise<BrowserWindow>;
-  openSettings(section?: string): Promise<void>;
+  openReactChatWindow(sessionId?: string, source?: AnimationOpenSource): Promise<BrowserWindow>;
+  openSettings(section?: string, source?: AnimationOpenSource): Promise<void>;
   openScheduledTasks(): Promise<void>;
   createStickerManagerWindow(): void;
   createCallWindow(): void;
@@ -232,12 +233,12 @@ export function createWindowManager(options: WindowManagerOptions): WindowManage
           }
           return chatLoadPromise;
         },
-        show(sessionId?: string): void {
+        show(sessionId?: string, source?: AnimationOpenSource): void {
           if (!hasCurrentDisclaimerConsent()) {
             showOnboardingWindow();
             return;
           }
-          showReactChatWindow(sessionId);
+          showReactChatWindow(sessionId, source);
         },
       };
       chatShell = handle;
@@ -245,19 +246,19 @@ export function createWindowManager(options: WindowManagerOptions): WindowManage
       return handle;
     },
 
-    async openReactChatWindow(sessionId?: string): Promise<BrowserWindow> {
+    async openReactChatWindow(sessionId?: string, source?: AnimationOpenSource): Promise<BrowserWindow> {
       const handle = this.createReactChatWindowShell();
       if (!hasCurrentDisclaimerConsent()) {
         showOnboardingWindow();
         return handle.window;
       }
       await handle.load(sessionId);
-      handle.show(sessionId);
+      handle.show(sessionId, source);
       return handle.window;
     },
 
-    async openSettings(section = "appearance"): Promise<void> {
-      const window = await this.openReactChatWindow();
+    async openSettings(section = "appearance", source?: AnimationOpenSource): Promise<void> {
+      const window = await this.openReactChatWindow(undefined, source);
       window.webContents.send(IPC.SETTINGS_SWITCH_SECTION, section);
     },
     async openScheduledTasks(): Promise<void> {

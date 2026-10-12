@@ -3,6 +3,18 @@ import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import path from "node:path";
 import { StartupAnimationStore } from "../settings/startup-animation-store";
+import type { AnimationOpenSource } from "../../shared/startup-animation";
+
+let activeSession: object | undefined;
+
+export function isStartupAnimationRunning(): boolean {
+  if (activeSession) return true;
+  const externalPid = Number(process.env.CYRENE_BOOT_PID);
+  if (process.env.CYRENE_BOOT_ACTIVE === "1" && Number.isSafeInteger(externalPid) && externalPid > 0) {
+    try { process.kill(externalPid, 0); return true; } catch { /* external launcher already exited */ }
+  }
+  return false;
+}
 
 export interface StartupAnimationConfigInput {
   exe: string;
@@ -32,13 +44,16 @@ export function createStartupAnimationConfig(input: StartupAnimationConfigInput)
 }
 
 /** true 表示由外部动画接管（或用户关闭动画），跳过旧 splash。 */
-export function startStartupAnimation(): boolean {
+export function startStartupAnimation(reason: "startup" | AnimationOpenSource = "startup"): boolean {
   if (process.platform !== "win32") return false;
-  if (process.env.CYRENE_BOOT_ACTIVE === "1") return true;
+  if (reason === "startup" && process.env.CYRENE_BOOT_ACTIVE === "1") return true;
+  if (isStartupAnimationRunning()) return true;
   let directory: string | undefined;
   try {
     const store = new StartupAnimationStore(path.join(app.getPath("userData"), "startup-animation"));
-    if (!store.read().enabled) return true;
+    const settings = store.read();
+    if (settings.mode === "off" || (reason !== "startup" && settings.mode === "startup")
+      || (reason === "tray" && settings.mode === "except-tray")) return true;
     const mediaDirectory = app.isPackaged
       ? path.join(process.resourcesPath, "startup-animation")
       : path.join(app.getAppPath(), "resources", "startup-animation");
@@ -51,8 +66,11 @@ export function startStartupAnimation(): boolean {
       packaged: app.isPackaged, mediaDirectory, settingsPath: store.settingsPath });
     fs.writeFileSync(path.join(directory, "launcher.json"), JSON.stringify(config), "utf8");
     const child = spawn(helper, ["--config-dir", directory], { windowsHide: true, stdio: "ignore" });
+    const session = {};
+    activeSession = session;
     const sessionDirectory = directory;
     const cleanup = () => {
+      if (activeSession === session) activeSession = undefined;
       app.removeListener("will-quit", stop);
       // 日志供排错，仅清理配置，不删除媒体或其他会话。
       try { fs.rmSync(path.join(sessionDirectory, "launcher.json"), { force: true }); } catch { /* best effort */ }

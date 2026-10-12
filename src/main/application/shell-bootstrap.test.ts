@@ -110,7 +110,9 @@ describe("startShell", () => {
     await startShell(deps);
     const spy = vi.spyOn(deps.activation, "request");
     deps.fireTrayChat();
-    expect(spy).toHaveBeenCalledWith({ kind: "chat" });
+    expect(spy).toHaveBeenCalledWith({ kind: "chat", source: "tray" });
+    await deps.activation.markReady();
+    expect(deps.windowManager.openReactChatWindow).toHaveBeenCalledWith(undefined, "tray");
   });
 
   it("focuses Loading instead of opening windows before markReady", async () => {
@@ -130,7 +132,7 @@ describe("startShell", () => {
     expect(deps.windowManager.openReactChatWindow).not.toHaveBeenCalled();
 
     await deps.activation.markReady();
-    expect(deps.windowManager.openReactChatWindow).toHaveBeenCalledWith("s1");
+    expect(deps.windowManager.openReactChatWindow).toHaveBeenCalledWith("s1", undefined);
   });
 
   it("attaches Windows session-end handlers to the chat shell window", async () => {

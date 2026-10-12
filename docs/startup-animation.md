@@ -4,13 +4,17 @@ Windows 启动时播放昔涟动画，Agent 同时加载。动画播放期间暂
 
 ## 常规设置
 
-- **开机动画**：即时保存，下次启动生效。关闭后跳过动画。
+- **开机动画**：复用设置页的四档滑块选项，即时保存，下一次符合条件时生效。
+  - **关闭**：不播放。
+  - **仅启动时播放**：只在程序进程初始化时播放（默认；旧版开启设置自动迁移到这一档）。
+  - **除托盘外其余播放**：初始化、从最小化恢复或其他入口重新打开聊天窗口时播放；托盘菜单打开聊天或设置不播放。
+  - **每次播放**：以上入口均播放，包括托盘。
 - **导入视频**：原生文件选择器，支持 MP4（建议 H.264），最大 500 MB；复制到用户数据目录。移动原文件不影响播放。
-- **恢复默认**：切回随应用分发的昔涟动画，不改变开关。
+- **恢复默认**：切回随应用分发的昔涟动画，不改变播放模式。
 
-按钮、开关与其他常规设置共用控件及行布局；成功/错误提示放在视频行内部，保留下方设置行的分隔线。中、英、日文案同步。
+按钮、滑块选项与其他常规设置共用控件及行布局；成功/错误提示放在视频行内部，保留下方设置行的分隔线。中、英、日文案同步。窗口已经可见时切换页面或聚焦不触发动画；播放器自身的隐藏、显示交接也不重复播放。入口来源随激活请求传递，避免将普通恢复误判为托盘打开。
 
-设置路径：`<userData>/startup-animation/settings.json`，字段为 `enabled`、`videoFile`、`videoName`。视频文件名由主进程生成 UUID；IPC 不接受 renderer 指定的文件路径。导入检查大小和 MP4 容器结构，失败保留旧选择，取消不写入。不能仅凭容器检查保证 Windows 解码器支持所有 MP4 编码，因此建议 H.264；播放失败直接退出动画。
+设置路径：`<userData>/startup-animation/settings.json`，字段为 `mode`（`off` / `startup` / `except-tray` / `always`）、`enabled`（供旧启动器兼容）、`videoFile`、`videoName`。视频文件名由主进程生成 UUID；IPC 不接受 renderer 指定的文件路径。导入检查大小和 MP4 容器结构，失败保留旧选择，取消不写入。不能仅凭容器检查保证 Windows 解码器支持所有 MP4 编码，因此建议 H.264；播放失败直接退出动画。
 
 旧自定义副本保留，避免删除正在播放的文件。用户可在退出 Agent 后清理该目录中的不再使用的 `.mp4` 文件；默认视频位于应用资源目录，不会被导入覆盖。自定义文件丢失时回退默认片。关闭动画时仍可更换视频。
 
@@ -37,6 +41,8 @@ pnpm exec vitest run src/main/settings/startup-animation-store.test.ts src/main/
 pnpm run test:startup-animation
 pnpm run test:startup-animation -- -Slow
 pnpm run test:startup-animation -- -Skip
+# 非交互环境仅验证消息处理及交接，不代表真实键盘焦点测试通过
+pnpm run test:startup-animation -- -Attach -PostedSkip
 pnpm run test:startup-animation -- -Disabled
 pnpm run test:startup-animation -- -Attach -Slow
 # 自定义时长测试需要 PATH 中有 ffmpeg
@@ -44,5 +50,7 @@ pnpm run test:startup-animation -- -Custom
 ```
 
 原生测试使用独立 WinForms 窗口，检查真实 WPF 播放、播放时隐藏、自动退出、末帧等待和 Win32 客户区坐标；不加载用户对话。测试产物在忽略的 `.build-temp/startup-animation-qa` 下。
+
+动画显示时主动激活，并将 WPF 键盘焦点放到跳过按钮；Agent 在加载中成为前台窗口时，隐藏该窗口后恢复动画焦点。用户切换到其他应用时，不在轮询中抢回焦点，也不注册全局 Esc 快捷键。`-Skip` 需要交互式 Windows 桌面：目标延迟出现后，先检查动画是否持有前台焦点，再发送真实输入队列中的 Esc；`-PostedSkip` 仅验证定向窗口消息处理，不能证明物理键盘跳过可用。
 
 主窗口就绪是 Win32 可见/响应/稳定性启发式，不是 Agent 内部就绪事件。隐藏是轮询完成，窗口首次显示时可能有短暂闪现；不是主进程预显示屏障。首次启动可能交接到欢迎页。安装包和真实 Agent 完整启动需在普通 Windows 桌面环境进一步验证。
