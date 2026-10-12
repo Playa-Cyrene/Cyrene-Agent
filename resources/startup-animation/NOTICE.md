@@ -4,6 +4,8 @@
 
 素材提供者声明：默认视频使用 Seedance 2.0 生成，无侵权风险。
 
+音频备注：当前默认视频不含音频，后续版本可能加入音频。
+
 SHA-256: `9ebb3f5204610f88d8e4c59052acbe098f08913ca7949dd2778f63c410a934d6`
 
 Cyrene / 昔涟 and the depicted setting are characters and imagery from *Honkai: Star Rail*. Their underlying rights remain with their respective owners. This notice does not claim ownership of those characters or an official affiliation.
