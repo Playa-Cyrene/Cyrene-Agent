@@ -1317,7 +1317,7 @@
     "autoApply": "设置会自动应用",
     "general": {
       "startupAnimation": "开机动画",
-      "startupAnimationDescription": "选择初始化及重新打开窗口时的播放方式。除托盘外其余播放：从托盘打开聊天或设置不播放，其他打开方式仍播放。",
+      "startupAnimationDescription": "默认关闭并保留 Loading。启用后初始化时完整播放，重新打开时最多显示 1.2 秒过渡，不阻塞聊天。除托盘外其余播放：托盘打开聊天或设置不播放。",
       "animationOff": "关闭",
       "animationStartup": "仅启动时播放",
       "animationExceptTray": "除托盘外其余播放",

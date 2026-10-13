@@ -1341,7 +1341,7 @@
     "autoApply": "設定は自動的に適用されます",
     "general": {
       "startupAnimation": "起動アニメーション",
-      "startupAnimationDescription": "起動・再表示時の再生方法を選びます。「トレイ以外」はトレイからチャットや設定を開く場合のみ再生しません。",
+      "startupAnimationDescription": "初期設定はオフで、従来の Loading を表示します。有効時は起動時に全編を再生し、再表示時は最大1.2秒の演出のみでチャットを妨げません。「トレイ以外」はトレイからのチャット・設定表示では再生しません。",
       "animationExceptTray": "トレイ以外",
       "animationOff": "オフ",
       "animationStartup": "起動時のみ",

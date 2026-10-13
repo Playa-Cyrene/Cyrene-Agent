@@ -1317,7 +1317,7 @@
     "autoApply": "Settings are applied automatically",
     "general": {
       "startupAnimation": "Startup animation",
-      "startupAnimationDescription": "Choose when to play on startup and reopening. Except tray skips playback when opening chat or settings from the tray.",
+      "startupAnimationDescription": "Off by default, keeping Loading. When enabled, startup plays the full video; reopening shows a non-blocking transition for up to 1.2 seconds. Except tray skips chat/settings opened from the tray.",
       "animationExceptTray": "Except tray",
       "animationOff": "Off",
       "animationStartup": "On startup",

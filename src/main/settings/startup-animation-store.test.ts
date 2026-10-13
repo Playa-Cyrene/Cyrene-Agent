@@ -33,8 +33,8 @@ describe("startup animation preferences", () => {
     expect(() => store.setMode("unknown")).toThrow();
     expect(store.read().mode).toBe("always");
   });
-  it("defaults on, persists false, and rejects non-boolean toggle values", () => {
-    expect(store.read()).toEqual({ enabled: true, mode: "startup", videoFile: null, videoName: null });
+  it("defaults off, persists false, and rejects non-boolean toggle values", () => {
+    expect(store.read()).toEqual({ enabled: false, mode: "off", videoFile: null, videoName: null });
     store.setEnabled(false);
     expect(new StartupAnimationStore(store.directory).read().enabled).toBe(false);
     expect(() => store.setEnabled("false")).toThrow();

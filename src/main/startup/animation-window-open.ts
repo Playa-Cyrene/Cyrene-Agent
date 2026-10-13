@@ -1,5 +1,5 @@
 import type { BrowserWindow } from "electron";
-import { startStartupAnimation, isStartupAnimationRunning } from "./startup-animation";
+import { startStartupAnimation } from "./startup-animation";
 import type { AnimationOpenSource } from "../../shared/startup-animation";
 
 const openSources = new WeakMap<BrowserWindow, AnimationOpenSource>();
@@ -9,24 +9,21 @@ export function prepareAnimationWindowOpen(window: BrowserWindow, source: Animat
 
 /** Track user-facing chat visibility, not focus changes or navigation inside the UI. */
 export function createAnimationWindowOpenTracker(
-  play: (source: AnimationOpenSource) => unknown = startStartupAnimation,
-  isPlaying = isStartupAnimationRunning,
+  play: (source: AnimationOpenSource, owner: BrowserWindow) => unknown = (reason, owner) => startStartupAnimation({ reason, owner }),
 ) {
   let firstWindowShown = false;
   return (window: BrowserWindow): void => {
     let visible = false;
-    let concealedByAnimation = false;
     const onShow = () => {
       if (visible) return;
       visible = true;
       const source = openSources.get(window) ?? "open";
       openSources.delete(window);
       // The first presentation belongs to process initialization, already handled by splash.
-      if (firstWindowShown && !concealedByAnimation) play(source);
-      concealedByAnimation = false;
+      if (firstWindowShown) play(source, window);
       firstWindowShown = true;
     };
-    const onHide = () => { visible = false; concealedByAnimation = isPlaying(); };
+    const onHide = () => { visible = false; };
     window.on("show", onShow);
     window.on("restore", onShow);
     window.on("hide", onHide);

@@ -63,9 +63,6 @@ jobs:
       - name: Build screenshot helper (Rust, --locked)
         run: pnpm run build:screenshot-helper
 
-      - name: Build startup animation helper
-        run: pnpm run build:startup-animation
-
       # 两个脚本自带 sha256 清单校验（vendor/*-manifest.json），缓存命中则跳过下载
       - name: Prepare MinGit
         run: pnpm run prepare:mingit

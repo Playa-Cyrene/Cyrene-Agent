@@ -17,7 +17,12 @@ const SPLASH_SIZE = 520;
  * 继续以聊天核心就绪条件推进），不让 Loading 问题阻塞启动。
  */
 export function createSplashWindow(ctx: CreateSplashWindowContext): BrowserWindow | null {
-  if (startStartupAnimation()) return null;
+  const animation = startStartupAnimation({
+    fallback: (window) => showLoading(window, ctx),
+    onShown: () => ctx.onShown?.((ctx.now ?? (() => performance.now()))()),
+  });
+  if (animation.status === "starting") return animation.window;
+  if (animation.status === "already-running") return null;
   try {
     const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().workAreaSize;
 
@@ -43,35 +48,30 @@ export function createSplashWindow(ctx: CreateSplashWindowContext): BrowserWindo
       },
     });
 
-    window.setIgnoreMouseEvents(true);
-
-    if (ctx.isDev) {
-      // Vite dev server 会把 public 目录下的文件挂在根路径
-      window.loadURL("http://localhost:5173/splash.html").catch((err) => {
-        console.error("[Splash] Failed to load dev URL:", err);
-      });
-    } else {
-      window.loadFile(path.join(app.getAppPath(), "dist", "renderer", "splash.html")).catch((err) => {
-        console.error("[Splash] Failed to load splash.html:", err);
-      });
-    }
-
-    window.once("ready-to-show", () => {
-      if (!window.isDestroyed()) {
-        window.show();
-        window.focus();
-        // 最短展示时长从实际 show() 时刻起算
-        try {
-          ctx.onShown?.((ctx.now ?? (() => performance.now()))());
-        } catch (err) {
-          console.error("[Splash] onShown callback failed:", err);
-        }
-      }
-    });
+    showLoading(window, ctx);
 
     return window;
   } catch (error) {
     console.error("[Splash] Failed to create splash window:", error);
     return null;
   }
+}
+
+/** Also used for asynchronous video/load failure; retains the original reveal-owned window. */
+function showLoading(window: BrowserWindow, ctx: CreateSplashWindowContext): void {
+  if (window.isDestroyed()) return;
+  const area = screen.getPrimaryDisplay().workArea;
+  window.setBounds({ x: area.x + Math.round((area.width - SPLASH_SIZE) / 2),
+    y: area.y + Math.round((area.height - SPLASH_SIZE) / 2), width: SPLASH_SIZE, height: SPLASH_SIZE });
+  window.setIgnoreMouseEvents(true);
+  const show = () => {
+    if (window.isDestroyed()) return;
+    // Fallback must not steal focus after the user switched to another app.
+    window.showInactive();
+    ctx.onShown?.((ctx.now ?? (() => performance.now()))());
+  };
+  const loaded = ctx.isDev ? window.loadURL("http://localhost:5173/splash.html")
+    : window.loadFile(path.join(app.getAppPath(), "dist", "renderer", "splash.html"));
+  // ready-to-show may already have fired for the video page; use this navigation's completion.
+  void loaded.then(show).catch((error) => console.error("[Splash] Failed to load Loading:", error));
 }

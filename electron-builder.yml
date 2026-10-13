@@ -54,10 +54,8 @@ extraResources:
   - from: resources/startup-animation
     to: startup-animation
     filter:
-      - "CyreneBoot.exe"
       - "default.mp4"
       - "NOTICE.md"
-      - "LICENSE-DragonCodexBoot"
   - from: resources/bin/cyrene-screenshot.exe
     to: bin/cyrene-screenshot.exe
   - from: resources/bin/mpv

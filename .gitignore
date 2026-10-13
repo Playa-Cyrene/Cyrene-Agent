@@ -14,6 +14,7 @@ dist/renderer/settings/index.html
 dist/renderer/sidebar/index.html
 dist/renderer/sticker-manager/index.html
 dist/renderer/tasks/index.html
+dist/renderer/startup-animation.html
 dist/renderer/index.html
 dist/renderer/react/index.html
 dist/renderer/live2dcubismcore.min.js
@@ -36,7 +37,6 @@ latest.yml
 
 # Native screenshot helper is built locally and staged for electron-builder.
 resources/bin/*.exe
-resources/startup-animation/CyreneBoot.exe
 
 # mpv binary is downloaded locally and staged for electron-builder.
 resources/bin/mpv/

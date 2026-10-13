@@ -6,7 +6,7 @@ import type { StartupAnimationSettings } from "../../shared/startup-animation";
 export const MAX_STARTUP_VIDEO_BYTES = 500 * 1024 * 1024;
 const managedName = /^[a-f0-9-]{36}\.mp4$/i;
 
-/** Local copied media and settings shared with the animation launcher. */
+/** Local copied media and preferences for the app-owned animation window. */
 export class StartupAnimationStore {
   readonly settingsPath: string;
   constructor(readonly directory: string) {
@@ -19,12 +19,13 @@ export class StartupAnimationStore {
       const videoFile = typeof input.videoFile === "string" && managedName.test(input.videoFile)
         && fs.existsSync(path.join(this.directory, input.videoFile)) ? input.videoFile : null;
       const mode = input.enabled === false || input.mode === "off" ? "off"
-        : input.mode === "always" || input.mode === "except-tray" ? input.mode : "startup";
+        : input.mode === "always" || input.mode === "except-tray" || input.mode === "startup" ? input.mode
+        : input.mode === undefined && input.enabled === true ? "startup" : "off";
       return { enabled: mode !== "off", mode, videoFile,
         videoName: videoFile && typeof input.videoName === "string" ? input.videoName.slice(0, 255) : null };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      return { enabled: true, mode: "startup", videoFile: null, videoName: null };
+      return { enabled: false, mode: "off", videoFile: null, videoName: null };
     }
   }
 
@@ -53,7 +54,7 @@ export class StartupAnimationStore {
   }
 
   resetVideo(): StartupAnimationSettings {
-    // Retain previous copies: a running launcher may still be reading one.
+    // Retain previous copies: a running player may still be reading one.
     return this.write({ ...this.read(), videoFile: null, videoName: null });
   }
 

@@ -1,7 +1,10 @@
+import { getStartupPresentation, type AnimationBounds } from "./startup-animation-lifecycle";
+
 export interface StartupWindowLike {
   close(): void;
   isDestroyed(): boolean;
   show(): void;
+  setBounds?(bounds: AnimationBounds): void;
 }
 
 export interface RevealStartupWindowsOptions {
@@ -25,6 +28,20 @@ export interface RevealStartupWindowsOptions {
  * 桌宠不属于通用 reveal：其创建与显示由启动编排器按 petVisible 单独处理。
  */
 export async function revealStartupWindows(options: RevealStartupWindowsOptions): Promise<void> {
+  const animation = getStartupPresentation(options.splashWindow);
+  if (animation) {
+    // core-bootstrap only reaches this barrier after the application's real ready event.
+    if (await animation.finished === "cancelled") return;
+    const target = options.showOnboardingWindow && options.onboardingWindow && !options.onboardingWindow.isDestroyed()
+      ? options.onboardingWindow : options.chatWindow;
+    if (!target.isDestroyed()) {
+      const bounds = animation.getBounds();
+      if (bounds && target === options.chatWindow) target.setBounds?.(bounds);
+      target.show();
+    }
+    if (options.splashWindow && !options.splashWindow.isDestroyed()) options.splashWindow.close();
+    return;
+  }
   const now = options.now ?? (() => performance.now());
   const sleep = options.sleep ?? ((ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
 

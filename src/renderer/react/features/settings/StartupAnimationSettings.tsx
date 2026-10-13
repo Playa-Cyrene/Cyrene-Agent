@@ -45,7 +45,7 @@ export function StartupAnimationSettings() {
   return <>
     <div className="cy-settings-row">
       <div className="cy-settings-row__copy"><strong>{t("settingsPage.general.startupAnimation")}</strong><span>{t("settingsPage.general.startupAnimationDescription")}</span></div>
-      <SettingsSegmented<StartupAnimationMode> aria-label={t("settingsPage.general.startupAnimation")} value={settings?.mode ?? "startup"} disabled={!settings || busy} onChange={(mode) => void change("mode", mode)} options={[
+      <SettingsSegmented<StartupAnimationMode> aria-label={t("settingsPage.general.startupAnimation")} value={settings?.mode ?? "off"} disabled={!settings || busy} onChange={(mode) => void change("mode", mode)} options={[
         { label: t("settingsPage.general.animationOff"), value: "off" },
         { label: t("settingsPage.general.animationStartup"), value: "startup" },
         { label: t("settingsPage.general.animationExceptTray"), value: "except-tray" },

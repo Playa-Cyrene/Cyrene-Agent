@@ -1,89 +1,159 @@
-import { app } from "electron";
-import { spawn } from "node:child_process";
+import { app, BrowserWindow, screen } from "electron";
 import * as fs from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { StartupAnimationStore } from "../settings/startup-animation-store";
-import type { AnimationOpenSource } from "../../shared/startup-animation";
+import type { AnimationOpenSource, StartupAnimationMode } from "../../shared/startup-animation";
+import { registerStartupPresentation, type AnimationOutcome } from "./startup-animation-lifecycle";
 
-let activeSession: object | undefined;
+export const ANIMATION_LOAD_TIMEOUT_MS = 5000;
+export const ANIMATION_PLAYBACK_TIMEOUT_MS = 90000;
+export const ANIMATION_REOPEN_MS = 1200;
+type AnimationReason = "startup" | AnimationOpenSource;
+export type AnimationState = "loading" | "playing" | "holding" | AnimationOutcome;
+export type AnimationStartResult =
+  | { status: "skipped"; reason: "disabled" | "mode" | "unavailable" }
+  | { status: "already-running" }
+  | { status: "starting"; window: BrowserWindow; finished: Promise<AnimationOutcome>; getState(): AnimationState };
 
-export function isStartupAnimationRunning(): boolean {
-  if (activeSession) return true;
-  const externalPid = Number(process.env.CYRENE_BOOT_PID);
-  if (process.env.CYRENE_BOOT_ACTIVE === "1" && Number.isSafeInteger(externalPid) && externalPid > 0) {
-    try { process.kill(externalPid, 0); return true; } catch { /* external launcher already exited */ }
-  }
-  return false;
+export function shouldPlayAnimation(mode: StartupAnimationMode, reason: AnimationReason): boolean {
+  return mode !== "off" && (reason === "startup" || (mode !== "startup" && (reason !== "tray" || mode === "always")));
 }
 
-export interface StartupAnimationConfigInput {
-  exe: string;
-  appPath: string;
-  packaged: boolean;
-  mediaDirectory: string;
-  settingsPath: string;
+let activeWindow: BrowserWindow | undefined;
+export function isStartupAnimationRunning(): boolean { return !!activeWindow; }
+export interface AnimationStartOptions {
+  reason?: AnimationReason;
+  owner?: BrowserWindow;
+  onShown?(): void;
+  /** Reuse this startup window for Loading, so the reveal barrier always owns it. */
+  fallback?(window: BrowserWindow): void;
 }
 
-/** 附着到当前进程，不再次启动 Electron；配置不包含对话或凭据。 */
-export function createStartupAnimationConfig(input: StartupAnimationConfigInput) {
-  return {
-    DisplayName: "Cyrene Agent", Video: path.join(input.mediaDirectory, "default.mp4"),
-    AppLaunch: input.exe, AppArguments: input.packaged ? "" : ".",
-    WorkingDirectory: input.packaged ? path.dirname(input.exe) : input.appPath,
-    ProcessPathContains: input.exe, ProcessNames: [path.basename(input.exe, ".exe")],
-    SharedSettingsPath: input.settingsPath, AttachOnly: true,
-    FreezeAtEnd: true, HoldStill: true, HoldFrom: 11.5, HoldAt: 12,
-    TransitionStart: 13.5, RevealEnd: 14.65, TransitionEnd: 15,
-    MaxWaitSeconds: 90, Volume: 0, PlayerWidth: 1280, PlayerHeight: 720,
-    MatchClientToPlayer: true,
-    ScreenFrames: [
-      { Time: 13.5, X: 0, Y: 0, Width: 1, Height: 1 },
-      { Time: 15, X: 0, Y: 0, Width: 1, Height: 1 },
-    ],
-  };
-}
-
-/** true 表示由外部动画接管（或用户关闭动画），跳过旧 splash。 */
-export function startStartupAnimation(reason: "startup" | AnimationOpenSource = "startup"): boolean {
-  if (process.platform !== "win32") return false;
-  if (reason === "startup" && process.env.CYRENE_BOOT_ACTIVE === "1") return true;
-  if (isStartupAnimationRunning()) return true;
-  let directory: string | undefined;
+/** Initialization success arrives asynchronously from video.play(), never from window construction. */
+export function startStartupAnimation(options: AnimationStartOptions = {}): AnimationStartResult {
+  const reason = options.reason ?? "startup";
+  if (activeWindow) return { status: "already-running" };
+  let window: BrowserWindow;
+  let video: string;
   try {
     const store = new StartupAnimationStore(path.join(app.getPath("userData"), "startup-animation"));
     const settings = store.read();
-    if (settings.mode === "off" || (reason !== "startup" && settings.mode === "startup")
-      || (reason === "tray" && settings.mode === "except-tray")) return true;
-    const mediaDirectory = app.isPackaged
-      ? path.join(process.resourcesPath, "startup-animation")
+    if (!shouldPlayAnimation(settings.mode, reason)) {
+      return { status: "skipped", reason: settings.mode === "off" ? "disabled" : "mode" };
+    }
+    const mediaDirectory = app.isPackaged ? path.join(process.resourcesPath, "startup-animation")
       : path.join(app.getAppPath(), "resources", "startup-animation");
-    const helper = path.join(mediaDirectory, "CyreneBoot.exe");
-    // 源码开发环境未构建 helper 时保留现有启动流程，不阻塞主窗口。
-    if (!fs.existsSync(helper) || !fs.existsSync(path.join(mediaDirectory, "default.mp4"))) return false;
-    fs.mkdirSync(store.directory, { recursive: true });
-    directory = fs.mkdtempSync(path.join(store.directory, "session-"));
-    const config = createStartupAnimationConfig({ exe: process.execPath, appPath: app.getAppPath(),
-      packaged: app.isPackaged, mediaDirectory, settingsPath: store.settingsPath });
-    fs.writeFileSync(path.join(directory, "launcher.json"), JSON.stringify(config), "utf8");
-    const child = spawn(helper, ["--config-dir", directory], { windowsHide: true, stdio: "ignore" });
-    const session = {};
-    activeSession = session;
-    const sessionDirectory = directory;
-    const cleanup = () => {
-      if (activeSession === session) activeSession = undefined;
-      app.removeListener("will-quit", stop);
-      // 日志供排错，仅清理配置，不删除媒体或其他会话。
-      try { fs.rmSync(path.join(sessionDirectory, "launcher.json"), { force: true }); } catch { /* best effort */ }
-    };
-    const stop = () => { if (child.exitCode === null && !child.killed) child.kill(); };
-    app.once("will-quit", stop);
-    child.once("error", (error) => { console.warn("[StartupAnimation] helper unavailable:", error); cleanup(); });
-    child.once("exit", cleanup);
-    child.unref();
-    return true;
+    video = settings.videoFile ? path.join(store.directory, settings.videoFile) : path.join(mediaDirectory, "default.mp4");
+    if (!fs.existsSync(video)) return { status: "skipped", reason: "unavailable" };
+    const workArea = screen.getPrimaryDisplay().workArea;
+    const width = Math.min(1280, workArea.width);
+    const height = Math.min(720, workArea.height);
+    const owner = options.owner;
+    window = new BrowserWindow({
+      ...(owner ? { parent: owner, ...owner.getBounds() } : {
+        width, height, x: workArea.x + Math.round((workArea.width - width) / 2),
+        y: workArea.y + Math.round((workArea.height - height) / 2),
+      }),
+      title: "Cyrene", frame: false, show: false, backgroundColor: "#ffffff",
+      resizable: false, minimizable: false, maximizable: false, skipTaskbar: true,
+      focusable: reason === "startup",
+      webPreferences: {
+        preload: path.join(app.getAppPath(), "dist", "preload", "preload", "startup-animation.js"),
+        nodeIntegration: false, contextIsolation: true, sandbox: true,
+      },
+    });
   } catch (error) {
-    if (directory) { try { fs.rmSync(path.join(directory, "launcher.json"), { force: true }); } catch { /* best effort */ } }
-    console.warn("[StartupAnimation] falling back to splash:", error);
-    return false;
+    console.warn("[StartupAnimation] unavailable; using Loading", error);
+    return { status: "skipped", reason: "unavailable" };
   }
+
+  activeWindow = window;
+  let state: AnimationState = "loading";
+  let settled = false;
+  let fallbackShown = false;
+  let shown = false;
+  let resolve!: (outcome: AnimationOutcome) => void;
+  const finished = new Promise<AnimationOutcome>((done) => { resolve = done; });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const clearTimer = () => { if (timer) clearTimeout(timer); timer = undefined; };
+  const settle = (outcome: AnimationOutcome) => {
+    clearTimer();
+    if (!settled) { settled = true; resolve(outcome); }
+  };
+  const removePlaybackListeners = () => {
+    window.webContents.ipc.removeHandler("startup-animation:config");
+    window.webContents.ipc.removeListener("startup-animation:event", onMessage);
+    window.webContents.removeListener("before-input-event", onKey);
+    window.webContents.removeListener("render-process-gone", onFailure);
+    options.owner?.webContents.removeListener("before-input-event", onKey);
+    options.owner?.removeListener("hide", closeOverlay);
+    options.owner?.removeListener("minimize", closeOverlay);
+    options.owner?.removeListener("closed", closeOverlay);
+  };
+  const fallback = (outcome: "failed" | "skipped") => {
+    if (fallbackShown || window.isDestroyed()) return;
+    fallbackShown = true;
+    state = outcome;
+    settle(outcome);
+    removePlaybackListeners();
+    if (reason === "startup" && options.fallback) {
+      try { options.fallback(window); } catch { window.close(); }
+    } else window.close();
+  };
+  const onFailure = () => fallback("failed");
+  const onKey = (event: Electron.Event, input: Electron.Input) => {
+    if (input.type === "keyDown" && input.key === "Escape") { event.preventDefault(); fallback("skipped"); }
+  };
+  const closeOverlay = () => { if (!window.isDestroyed()) window.close(); };
+  const onMessage = (event: Electron.IpcMainEvent, message: unknown) => {
+    if (event.senderFrame !== window.webContents.mainFrame || fallbackShown || window.isDestroyed()) return;
+    if (message === "playing" && state === "loading") {
+      state = "playing";
+      if (reason === "startup") {
+        clearTimer();
+        timer = setTimeout(onFailure, ANIMATION_PLAYBACK_TIMEOUT_MS);
+        window.show();
+      } else { window.setIgnoreMouseEvents(true); window.showInactive(); }
+      shown = true;
+      options.onShown?.();
+    } else if (message === "ended" && state === "playing") {
+      state = reason === "startup" ? "holding" : "completed";
+      settle("completed");
+      if (reason !== "startup") closeOverlay();
+    } else if (message === "skip") fallback("skipped");
+    else if (message === "failed") onFailure();
+  };
+  const onQuit = () => { state = "cancelled"; settle("cancelled"); closeOverlay(); };
+  window.webContents.ipc.handle("startup-animation:config", (event) => {
+    if (event.senderFrame !== window.webContents.mainFrame || fallbackShown) throw new Error("Invalid animation sender");
+    return { video: pathToFileURL(video).href, reopen: reason !== "startup" };
+  });
+  window.webContents.ipc.on("startup-animation:event", onMessage);
+  window.webContents.on("before-input-event", onKey);
+  window.webContents.on("render-process-gone", onFailure);
+  window.webContents.on("will-navigate", (event) => event.preventDefault());
+  window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  options.owner?.webContents.on("before-input-event", onKey);
+  options.owner?.on("hide", closeOverlay);
+  options.owner?.on("minimize", closeOverlay);
+  options.owner?.on("closed", closeOverlay);
+  app.once("before-quit", onQuit);
+  window.once("closed", () => {
+    settle(state === "cancelled" ? "cancelled" : "skipped");
+    removePlaybackListeners();
+    app.removeListener("before-quit", onQuit);
+    if (activeWindow === window) activeWindow = undefined;
+  });
+  if (reason === "startup") registerStartupPresentation(window, {
+    finished,
+    getBounds: () => shown && !fallbackShown && !window.isDestroyed() ? window.getBounds() : undefined,
+  });
+  // A reopen costs at most 1.2s total, including loading; chat remains visible throughout.
+  timer = setTimeout(reason === "startup" ? onFailure : () => {
+    state = "completed"; settle("completed"); closeOverlay();
+  }, reason === "startup" ? ANIMATION_LOAD_TIMEOUT_MS : ANIMATION_REOPEN_MS);
+  const page = path.join(app.getAppPath(), app.isPackaged ? "dist/renderer" : "src/renderer/public", "startup-animation.html");
+  try { void window.loadFile(page).catch(onFailure); } catch { onFailure(); }
+  return { status: "starting", window, finished, getState: () => state };
 }
