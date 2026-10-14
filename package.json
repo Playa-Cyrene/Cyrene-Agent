@@ -136,7 +136,7 @@
     "@ai-sdk/openai-compatible": "3.0.62",
     "@anthropic-ai/sandbox-runtime": "^0.0.71",
     "@anthropic-ai/sdk": "^0.126.0",
-    "@ast-grep/napi": "^0.45.1",
+    "@ast-grep/napi": "^0.45.3",
     "@googleapis/gmail": "^22.0.1",
     "@lancedb/lancedb": "^0.30.0",
     "@larksuiteoapi/node-sdk": "^1.68.0",
