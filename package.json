@@ -121,7 +121,7 @@
     "streamdown": "^2.6.0",
     "tailwind-merge": "^3.7.0",
     "tailwindcss": "^4.3.3",
-    "ts-json-schema-generator": "^1.5.1",
+    "ts-json-schema-generator": "^2.9.0",
     "typescript": "^6.0.3",
     "unified": "^11.0.5",
     "vite": "8.3.0",
