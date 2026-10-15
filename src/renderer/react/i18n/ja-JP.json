@@ -893,6 +893,12 @@
     "noReadableContent": "このメッセージには読み上げ可能な内容がありません"
   },
   "settingsPage": {
+    "search": {
+      "placeholder": "設定を検索",
+      "empty": "一致する設定がありません",
+      "clear": "検索内容を消去",
+      "close": "検索を終了"
+    },
       "knowledgeBase": {
         "title": "ナレッジベース",
         "description": "ローカル資料を管理し、元のファイルから検索・参照します。",

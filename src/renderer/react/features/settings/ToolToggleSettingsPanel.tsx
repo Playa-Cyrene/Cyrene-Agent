@@ -308,7 +308,7 @@ export function ToolToggleSettingsPanel() {
             {visibleTools.map((tool) => {
               const isOn = isToolOn(tool, tab, overrides);
               return (
-                <div key={tool.id} className={"tool-card" + (isOn ? "" : " is-off")}>
+                <div key={tool.id} data-settings-search-kind="tool" data-settings-search-id={tool.id} className={"tool-card" + (isOn ? "" : " is-off")}>
                   <ToolIcon toolId={tool.id} />
                   <div className="tool-card__body">
                     <div className="tool-card__name">

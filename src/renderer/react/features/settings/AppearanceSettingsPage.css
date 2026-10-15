@@ -43,22 +43,26 @@
 }
 
 .cy-settings-sidebar__nav,
+.cy-settings-search__results,
 .cy-settings-content {
   scrollbar-color: var(--rb-border-strong, var(--rb-border-default)) transparent;
   scrollbar-width: thin;
 }
 
 .cy-settings-sidebar__nav::-webkit-scrollbar,
+.cy-settings-search__results::-webkit-scrollbar,
 .cy-settings-content::-webkit-scrollbar {
   width: 12px;
 }
 
 .cy-settings-sidebar__nav::-webkit-scrollbar-track,
+.cy-settings-search__results::-webkit-scrollbar-track,
 .cy-settings-content::-webkit-scrollbar-track {
   background: transparent;
 }
 
 .cy-settings-sidebar__nav::-webkit-scrollbar-thumb,
+.cy-settings-search__results::-webkit-scrollbar-thumb,
 .cy-settings-content::-webkit-scrollbar-thumb {
   min-height: 32px;
   border: 3px solid transparent;

@@ -628,7 +628,7 @@ export function PluginModePanel({ api: providedApi }: PluginModePanelProps) {
                     ? t("pluginPanel.disable")
                     : t("pluginPanel.enable");
                 return (
-                  <Card as="article" className={`plugin-card-ui is-${plugin.status}`} key={plugin.id}>
+                  <Card as="article" data-settings-search-kind="plugin" data-settings-search-id={plugin.id} className={`plugin-card-ui is-${plugin.status}`} key={plugin.id}>
                     <div className="plugin-card-ui__main">
                       <span className="plugin-card-ui__icon" aria-hidden="true">
                         {plugin.icon

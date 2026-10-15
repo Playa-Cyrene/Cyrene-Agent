@@ -877,6 +877,12 @@
     "noReadableContent": "这条消息没有可朗读的内容"
   },
   "settingsPage": {
+    "search": {
+      "placeholder": "搜索设置项",
+      "empty": "没有匹配的设置项",
+      "clear": "清空搜索内容",
+      "close": "退出搜索"
+    },
       "knowledgeBase": {
         "title": "知识库",
         "description": "管理本地资料集，按原文件路径检索和引用内容。",

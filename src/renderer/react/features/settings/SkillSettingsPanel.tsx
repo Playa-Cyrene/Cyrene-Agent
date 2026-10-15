@@ -331,7 +331,7 @@ export function SkillSettingsPanel() {
             {visibleSkills.map((skill) => {
               const isOn = isVisibleForMode(skill, tab, overrides);
               return (
-                <div key={skill.id} className={"skill-card" + (isOn ? "" : " is-off")}>
+                <div key={skill.id} data-settings-search-kind="skill" data-settings-search-id={skill.id} className={"skill-card" + (isOn ? "" : " is-off")}>
                   <div className="skill-card__top">
                     <SkillIcon skillId={skill.id} name={skill.name} />
                     <div className="skill-card__body">

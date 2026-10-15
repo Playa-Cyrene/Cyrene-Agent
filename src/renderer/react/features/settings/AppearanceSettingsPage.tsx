@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { Alert, Button, Spin } from "antd";
-import { ArrowLeft, AudioLines, BarChart3, BookOpen, Bot, Boxes, Brain, FileText, Globe, Headphones, Heart, Monitor, Palette, Power, Puzzle, Settings2, Smartphone, Sparkles, Type, Wrench } from "lucide-react";
-import { MCP } from "@lobehub/icons";
+import { ArrowLeft, Monitor, Type } from "lucide-react";
+import { SETTINGS_NAV_GROUPS } from "./settingsNavItems";
 import packageJson from "../../../../../package.json";
 import { normalizeUiThemeChoice, type UiThemeChoice } from "../../../../shared/ui-theme";
 import {
@@ -12,6 +12,7 @@ import {
 } from "../../../../shared/message-typography";
 import { useTranslation } from "../../i18n";
 import { useCyreneAvatar } from "../../hooks/useCyreneAvatar";
+import { SettingsSearch } from "./SettingsSearch";
 import { applyMessageTypography } from "../../../ui/message-typography";
 import { applyUiThemeChoice } from "../../../ui/theme";
 import { WindowControls } from "../../components/ui/WindowControls";
@@ -121,6 +122,8 @@ export function AppearanceSettingsPage({ section, onSelectSection, onBackToWorks
   const [avatarBusy, setAvatarBusy] = useState(false);
   // 昔涟消息字体：ref 记住最新值，松手保存时不依赖可能过期的渲染闭包
   const typographyRef = useRef<MessageTypography>(DEFAULT_MESSAGE_TYPOGRAPHY);
+  // 搜索只定位当前设置内容区，避免命中侧栏结果里的同名标签。
+  const contentRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     let disposed = false;
@@ -252,31 +255,16 @@ export function AppearanceSettingsPage({ section, onSelectSection, onBackToWorks
         <Button className="cy-settings-back" type="text" icon={<ArrowLeft size={16} />} onClick={onBackToWorkspace}>
           {t("settingsPage.backToWorkspace")}
         </Button>
+        <SettingsSearch section={section} onSelectSection={onSelectSection} getContentRoot={() => contentRef.current} />
         <nav className="cy-settings-sidebar__nav" aria-label={t("settingsPage.navigation")}>
-        <div className="cy-settings-sidebar__group-title">{t("settingsPage.basicSettings")}</div>
-        <SettingsNavItem section="general" currentSection={section} icon={<Settings2 size={18} strokeWidth={1.8} />} label={t("settingsPage.general.title")} onSelect={onSelectSection} />
-        <SettingsNavItem section="appearance" currentSection={section} icon={<Palette size={18} strokeWidth={1.8} />} label={t("settingsPage.appearance")} onSelect={onSelectSection} />
-        <SettingsNavItem section="preferences" currentSection={section} icon={<Monitor size={18} strokeWidth={1.8} />} label={t("settingsPage.preferencesLabel")} onSelect={onSelectSection} />
-        <SettingsNavItem section="models" currentSection={section} icon={<Boxes size={18} strokeWidth={1.8} />} label={t("settingsPage.modelSettings.title")} onSelect={onSelectSection} />
-        <SettingsNavItem section="usage" currentSection={section} icon={<BarChart3 size={18} strokeWidth={1.8} />} label={t("settingsPage.usage.title")} onSelect={onSelectSection} />
-        <SettingsNavItem section="browser" currentSection={section} icon={<Globe size={18} strokeWidth={1.8} />} label={t("settingsPage.browserControl.navLabel")} onSelect={onSelectSection} />
-        <div className="cy-settings-sidebar__group-title cy-settings-sidebar__group-title--spaced">{t("settingsPage.agentAbilities")}</div>
-        <SettingsNavItem section="toolToggle" currentSection={section} icon={<Power size={18} strokeWidth={1.8} />} label={t("settingsPage.toolToggle.title")} onSelect={onSelectSection} />
-        <SettingsNavItem section="tools" currentSection={section} icon={<Wrench size={18} strokeWidth={1.8} />} label={t("settingsPage.tools.title")} onSelect={onSelectSection} />
-        <SettingsNavItem section="subagents" currentSection={section} icon={<Bot size={18} strokeWidth={1.8} />} label={t("settingsPage.subagents.title")} onSelect={onSelectSection} />
-        <SettingsNavItem section="plugins" currentSection={section} icon={<Puzzle size={18} strokeWidth={1.8} />} label={t("pluginPanel.title")} onSelect={onSelectSection} />
-        <SettingsNavItem section="mcp" currentSection={section} icon={<MCP size={18} />} label={t("settingsPage.mcp.menuLabel")} onSelect={onSelectSection} />
-        <SettingsNavItem section="memory" currentSection={section} icon={<Brain size={18} strokeWidth={1.8} />} label={t("settingsPage.memory.title")} onSelect={onSelectSection} />
-        <SettingsNavItem section="knowledge" currentSection={section} icon={<BookOpen size={18} strokeWidth={1.8} />} label={t("settingsPage.knowledgeBase.title")} onSelect={onSelectSection} />
-        <SettingsNavItem section="cyrene" currentSection={section} icon={<Heart size={18} strokeWidth={1.8} />} label={t("settingsPage.cyrene.title")} onSelect={onSelectSection} />
-        <SettingsNavItem section="skill" currentSection={section} icon={<Sparkles size={18} strokeWidth={1.8} />} label={t("settingsPage.skill.title")} onSelect={onSelectSection} />
-        <div className="cy-settings-sidebar__group-title cy-settings-sidebar__group-title--spaced">{t("settingsPage.externalChannels")}</div>
-        <SettingsNavItem section="channels" currentSection={section} icon={<Smartphone size={18} strokeWidth={1.8} />} label={t("settingsPage.channels.title")} onSelect={onSelectSection} />
-        <div className="cy-settings-sidebar__group-title cy-settings-sidebar__group-title--spaced">{t("settingsPage.voiceAbilities")}</div>
-        <SettingsNavItem section="tts" currentSection={section} icon={<AudioLines size={18} strokeWidth={1.8} />} label={t("settingsPage.tts.title")} onSelect={onSelectSection} />
-        <SettingsNavItem section="asr" currentSection={section} icon={<Headphones size={18} strokeWidth={1.8} />} label={t("settingsPage.asr.title")} onSelect={onSelectSection} />
-        <div className="cy-settings-sidebar__group-title cy-settings-sidebar__group-title--spaced">{t("settingsPage.usageNotice")}</div>
-        <SettingsNavItem section="disclaimer" currentSection={section} icon={<FileText size={18} strokeWidth={1.8} />} label={t("settingsPage.disclaimer.navLabel")} onSelect={onSelectSection} />
+        {SETTINGS_NAV_GROUPS.map((group, groupIndex) => (
+          <Fragment key={group.titleKey}>
+            <div className={`cy-settings-sidebar__group-title${groupIndex > 0 ? " cy-settings-sidebar__group-title--spaced" : ""}`}>{t(group.titleKey)}</div>
+            {group.items.map((item) => (
+              <SettingsNavItem key={item.section} section={item.section} currentSection={section} icon={item.icon} label={t(item.labelKey)} onSelect={onSelectSection} />
+            ))}
+          </Fragment>
+        ))}
         </nav>
         <div className="cy-settings-sidebar__footer">
           v{packageJson.version}
@@ -284,7 +272,7 @@ export function AppearanceSettingsPage({ section, onSelectSection, onBackToWorks
         </div>
       </aside>
 
-      <main className="cy-workspace is-empty cy-settings-content">
+      <main className="cy-workspace is-empty cy-settings-content" ref={contentRef}>
         <div className={`cy-settings-content__inner${section === "knowledge" ? " is-knowledge-settings" : ""}`}>
           {section === "browser" ? <BrowserControlSettingsPanel /> : section === "preferences" ? <PreferencesSettingsPanel /> : section === "models" ? <ModelSettingsPanel /> : section === "usage" ? <UsageStatsPanel /> : section === "general" ? <GeneralSettingsPanel /> : section === "toolToggle" ? <ToolToggleSettingsPanel /> : section === "tools" ? <ToolSettingsPanel musicSettingsNavigation={musicSettingsNavigation} /> : section === "subagents" ? <SubagentSettingsPanel /> : section === "plugins" ? <PluginSettingsPanel /> : section === "memory" ? <MemorySettingsPanel /> : section === "knowledge" ? <KnowledgeBaseSettingsPanel /> : section === "cyrene" ? <CyreneSettingsPanel /> : section === "skill" ? <SkillSettingsPanel /> : section === "asr" ? <AsrSettingsPanel /> : section === "tts" ? <TtsSettingsPanel /> : section === "mcp" ? <McpSettingsPanel /> : section === "channels" ? <ChannelsSettingsPanel /> : section === "disclaimer" ? <DisclaimerSettingsPanel /> : <>
             <h1>{t("settingsPage.appearance")}</h1>

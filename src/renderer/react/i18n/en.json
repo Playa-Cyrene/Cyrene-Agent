@@ -877,6 +877,12 @@
     "noReadableContent": "This message has nothing to read aloud"
   },
   "settingsPage": {
+    "search": {
+      "placeholder": "Search settings",
+      "empty": "No matching settings",
+      "clear": "Clear search",
+      "close": "Exit search"
+    },
       "knowledgeBase": {
         "title": "Knowledge Base",
         "description": "Manage local collections and search content at its original file path.",

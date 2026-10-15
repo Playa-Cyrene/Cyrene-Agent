@@ -1,0 +1,224 @@
+/* 设置页搜索：药丸输入框 + 圆形关闭按钮 + 分组结果卡。
+   动效时长与 SettingsSearch.tsx 里的 MOVE_MS / SCROLL_MS / FLASH_* 保持一致。 */
+
+/* 进入搜索态时侧栏其余内容立刻让位（框的位移由 FLIP 动画补，不做整体淡出） */
+.cy-settings-sidebar:has(> .cy-settings-search.is-active) > .cy-settings-brand,
+.cy-settings-sidebar:has(> .cy-settings-search.is-active) > .cy-settings-back,
+.cy-settings-sidebar:has(> .cy-settings-search.is-active) > .cy-settings-sidebar__nav,
+.cy-settings-sidebar:has(> .cy-settings-search.is-active) > .cy-settings-sidebar__footer {
+  display: none;
+}
+
+/* 返回按钮自带 `margin: 4px 0 24px`（AppearanceSettingsPage.css，且它的 CSS 比本文件后注入），
+   会把搜索框顶远；这里用更高优先级压掉下边距，让框贴着它，间距统一由搜索框自己控制。 */
+.cy-settings-page .cy-settings-sidebar .cy-settings-back.ant-btn {
+  margin-bottom: 0;
+}
+
+.cy-settings-search {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  margin: 10px;
+}
+
+/* 搜索态下用 flex 分配剩余高度，避免固定视口偏移与侧栏真实高度不符、裁掉末行。 */
+.cy-settings-search.is-active {
+  flex: 1;
+}
+
+.cy-settings-search__bar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  will-change: transform;
+}
+
+.cy-settings-search__field {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+  height: 36px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--rb-bg-2);
+  box-sizing: border-box;
+}
+
+.cy-settings-search__icon {
+  flex: none;
+  color: var(--rb-text-muted);
+}
+
+.cy-settings-search__input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--rb-text-body-em);
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1;
+  outline: none;
+}
+
+.cy-settings-search__input::placeholder {
+  color: var(--rb-text-muted);
+}
+
+.cy-settings-search__clear {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 17px;
+  height: 17px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: var(--rb-text-faint);
+  color: #fff;
+  cursor: pointer;
+}
+
+/* 圆形关闭按钮与输入框等高，让收缩后的右侧仍保持相同的圆角轮廓。 */
+.cy-settings-search__close {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 0;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: var(--rb-bg-3);
+  color: var(--rb-text-body-em);
+  cursor: pointer;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+  transition: width 300ms cubic-bezier(.4,0,.2,1), opacity 200ms cubic-bezier(.4,0,.2,1);
+}
+
+.cy-settings-search__close.is-active {
+  width: 36px;
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.cy-settings-search__close:hover {
+  background: var(--rb-border-default);
+}
+
+.cy-settings-search__results {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+  padding-bottom: 12px;
+  overflow-y: auto;
+}
+
+.cy-settings-search__group-card {
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+  border-radius: 14px;
+  background: var(--rb-card-bg);
+  box-shadow: var(--rb-shadow-card);
+}
+
+/* 行高固定：说明文案有无都不改变整体高度，名称与说明一起垂直居中 */
+.cy-settings-search__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 56px;
+  box-sizing: border-box;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cy-settings-search__item.is-active {
+  background: var(--rb-surface-hover);
+}
+
+.cy-settings-search__item-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  color: var(--rb-text-secondary);
+}
+
+.cy-settings-search__item-text {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
+}
+
+.cy-settings-search__item-label {
+  overflow: hidden;
+  color: var(--rb-text-body-em);
+  font-size: 14px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cy-settings-search__item-detail {
+  overflow: hidden;
+  color: var(--rb-text-muted);
+  font-size: 12px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 命中的文字用稍亮于主色的粉色标注 */
+.cy-settings-search__mark {
+  background: transparent;
+  color: color-mix(in srgb, var(--rb-accent) 72%, #fff);
+  font-weight: 600;
+}
+
+.cy-settings-search__empty {
+  padding: 12px 10px;
+  color: var(--rb-text-muted);
+  font-size: 13px;
+  text-align: center;
+}
+
+/* 到位后闪烁 3 次：整条设置项的底色变深灰 0.4s、再花 0.2s 变回。
+   host 类常驻提供过渡；只改行自身底色，行里的图片/开关等保持原样。 */
+.cy-settings-search-flash-host {
+  transition: background-color 200ms ease-out;
+}
+
+.cy-settings-search-flash {
+  background-color: var(--rb-border-strong) !important;
+  border-radius: var(--rb-radius-sm);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cy-settings-search__close,
+  .cy-settings-search-flash-host,
+  .cy-settings-search-flash-host :not(img, canvas, video, picture, iframe) {
+    transition: none;
+  }
+}
