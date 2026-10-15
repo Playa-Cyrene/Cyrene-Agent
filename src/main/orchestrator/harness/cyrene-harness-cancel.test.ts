@@ -55,6 +55,12 @@ const { fakeAdapter, fakeStreamChatWithSdk, recordUsage, recordRequest } = vi.ho
 vi.mock("../vendors", () => ({
   getAdapterForConfig: vi.fn(() => fakeAdapter),
   streamChatWithSdk: fakeStreamChatWithSdk,
+  generateChatWithAiSdk: async (input: { adapter: typeof fakeAdapter; request: unknown; signal?: AbortSignal }) => {
+    const http = input.adapter.buildRequest(input.request);
+    const response = await fetch(http.url, { method: "POST", headers: http.headers, body: http.body, signal: input.signal });
+    if (!response.ok) throw new Error(`模型请求失败：HTTP ${response.status}`);
+    return input.adapter.parseResponse(await response.json());
+  },
   resolveTransport: vi.fn(() => "openai"),
 }));
 

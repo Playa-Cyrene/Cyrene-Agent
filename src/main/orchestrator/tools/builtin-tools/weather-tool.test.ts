@@ -1,8 +1,8 @@
 // weather 工具缓存行为测试：城市解析缓存 24h + 天气结果缓存 30 分钟，
-// 缓存命中时天气卡片照常回调。全部用 stub 的 fetch 桩，不发真实网络请求。
+// 全部用 stub 的 fetch 桩，不发真实网络请求。
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { clearWeatherCaches, setWeatherConfig, weatherTool, type WeatherCardData } from "./weather-tool";
+import { clearWeatherCaches, setWeatherConfig, weatherTool } from "./weather-tool";
 
 /** 构造 fetch Response 形状的桩 */
 function makeResp(json: unknown): Response {
@@ -31,16 +31,12 @@ const OM_FORECAST = {
   },
 };
 
-let cards: WeatherCardData[] = [];
-
 beforeEach(() => {
   clearWeatherCaches();
-  cards = [];
   setWeatherConfig(
     () => "上海",
     () => "open-meteo",
     () => "",
-    (card) => { cards.push(card); },
     () => true,
   );
 });
@@ -63,19 +59,16 @@ function stubOpenMeteo() {
 }
 
 describe("weather 结果缓存", () => {
-  it("同城市两次：解析 + 预报各只请求一次，第二次带 cached 标注，卡片照常回调", async () => {
+  it("同城市两次：解析 + 预报各只请求一次，第二次返回 cached 标注", async () => {
     const fetchCalls = stubOpenMeteo();
 
     const first = JSON.parse(await weatherTool.execute({ city: "上海" })) as Record<string, unknown>;
     expect(first.cached).toBeUndefined();
-    expect(cards).toHaveLength(1);
 
     const second = JSON.parse(await weatherTool.execute({ city: "上海" })) as Record<string, unknown>;
     expect(fetchCalls).toHaveLength(2); // geocoding 1 次 + forecast 1 次，没有新请求
     expect(second.cached).toBe(true);
     expect(typeof second.cachedAt).toBe("string");
-    // 缓存命中也要发卡片，天气卡片不因缓存消失
-    expect(cards).toHaveLength(2);
   });
 
   it("不同城市各自请求", async () => {

@@ -20,12 +20,12 @@ export function normalizeGeneratedTitle(raw: string): string | null {
 }
 
 export interface ConversationTitleService {
-  schedule(input: { sessionId: string; userMessageId: string; text: string }): boolean;
+  schedule(input: { sessionId: string; userMessageId: string; text: string }): Promise<boolean>;
 }
 
 export interface ConversationTitleServiceDependencies {
-  getSession(sessionId: string): ChatSession | null;
-  setGeneratedTitle(sessionId: string, userMessageId: string, title: string): boolean;
+  getSession(sessionId: string): (ChatSession | null) | Promise<ChatSession | null>;
+  setGeneratedTitle(sessionId: string, userMessageId: string, title: string): (boolean) | Promise<boolean>;
   resolveSettings(session: ChatSession): ModelSettings;
   isPrimaryModelBusy?(): boolean;
   llmClient: Pick<LlmClient, "chatNonStream">;
@@ -38,14 +38,14 @@ export function createConversationTitleService(
 ): ConversationTitleService {
   const attemptedSessions = new Set<string>();
 
-  function enqueueWhenIdle(input: { sessionId: string; userMessageId: string; text: string }): void {
-    if (!deps.getSession(input.sessionId)) return;
+  async function enqueueWhenIdle(input: { sessionId: string; userMessageId: string; text: string }): Promise<void> {
+    if (!(await deps.getSession(input.sessionId))) return;
     if (deps.isPrimaryModelBusy?.()) {
-      setTimeout(() => enqueueWhenIdle(input), TITLE_GENERATION_DELAY_MS);
+      setTimeout(() => { void enqueueWhenIdle(input).catch(error => console.warn("[ConversationTitle] 读取会话失败:", error)); }, TITLE_GENERATION_DELAY_MS);
       return;
     }
     void deps.enqueueTask(`会话标题:${input.sessionId}`, async () => {
-      const latest = deps.getSession(input.sessionId);
+      const latest = (await deps.getSession(input.sessionId));
       if (!latest || latest.titleIsCustom) return;
       const settings = deps.resolveSettings(latest);
       if (!settings.baseUrl || !settings.model) return;
@@ -62,7 +62,7 @@ export function createConversationTitleService(
         { maxTokens: 32 },
       );
       const title = normalizeGeneratedTitle(response.text);
-      if (title && deps.setGeneratedTitle(input.sessionId, input.userMessageId, title)) {
+      if (title && (await deps.setGeneratedTitle(input.sessionId, input.userMessageId, title))) {
         deps.onTitleChanged(input.sessionId);
       }
     }).catch((error) => {
@@ -71,9 +71,9 @@ export function createConversationTitleService(
   }
 
   return {
-    schedule(input): boolean {
+    async schedule(input): Promise<boolean> {
       if (attemptedSessions.has(input.sessionId)) return false;
-      const current = deps.getSession(input.sessionId);
+      const current = (await deps.getSession(input.sessionId));
       const firstUserMessage = current?.messages.find(
         (message) => message.role === "user" && message.content.trim(),
       );
@@ -82,7 +82,7 @@ export function createConversationTitleService(
       }
 
       attemptedSessions.add(input.sessionId);
-      setTimeout(() => enqueueWhenIdle(input), TITLE_GENERATION_DELAY_MS);
+      setTimeout(() => { void enqueueWhenIdle(input).catch(error => console.warn("[ConversationTitle] 读取会话失败:", error)); }, TITLE_GENERATION_DELAY_MS);
       return true;
     },
   };

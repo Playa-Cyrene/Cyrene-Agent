@@ -25,13 +25,13 @@ export function resolveChannelConversationTarget(
 
 export interface ChannelContext {
   /** 解析一次绑定并生成本条消息使用的上下文快照。 */
-  resolveDispatchContext(sessionId: string): DispatchContext;
+  resolveDispatchContext(sessionId: string): DispatchContext | Promise<DispatchContext>;
   /** 迁移旧历史键并记录会话与原始发送者的关系。 */
   recordIncomingSession(msg: IncomingMessage, context: DispatchContext): void;
 }
 
 export interface CreateChannelContextOptions {
-  resolveBoundConversationId?: (sessionId: string) => string | null;
+  resolveBoundConversationId?: (sessionId: string) => string | null | Promise<string | null>;
   migrateHistory: (fromSessionId: string, toSessionId: string) => void;
 }
 
@@ -74,10 +74,10 @@ export function createChannelContext(
   options: CreateChannelContextOptions,
 ): ChannelContext {
   return {
-    resolveDispatchContext(sessionId): DispatchContext {
+    async resolveDispatchContext(sessionId): Promise<DispatchContext> {
       let requestedBoundConversationId: string | null = null;
       try {
-        requestedBoundConversationId = options.resolveBoundConversationId?.(sessionId) ?? null;
+        requestedBoundConversationId = (await options.resolveBoundConversationId?.(sessionId)) ?? null;
       } catch (err) {
         // 绑定存储故障不能阻断渠道消息，当前消息退回独立渠道上下文。
         console.warn(LOG, "绑定查询失败，继续使用渠道上下文:", err);

@@ -34,6 +34,7 @@ import {
   type ShellJobSnapshot,
   type ShellSpawnSpec,
 } from "./shell-job-manager";
+import { closeConversationDatabases } from "../../../storage/conversation-database-client";
 import { toolRegistry } from "../registry/tool-registry";
 
 let tmpDir: string;
@@ -111,9 +112,10 @@ beforeAll(() => {
   (globalThis as Record<string, unknown>).__shellJobTestUserData = tmpDir;
 });
 
-afterAll(() => {
+afterAll(async () => {
   // 兜底收尸：断言失败提前退出时仍终止所有运行中的任务
-  disposeAllShellJobs();
+  await disposeAllShellJobs();
+  await closeConversationDatabases();
   try {
     fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   } catch {
@@ -135,19 +137,19 @@ describe("clampWaitMs（纯函数）", () => {
 describe("shell-job-manager 状态机与护栏（真实进程）", () => {
   it("启动即返回：running + pid + 日志文件已创建", async () => {
     const script = writeScript("sleeper-01.cjs", "setInterval(() => {}, 1000);");
-    const { jobId, logFile } = start(script, { totalMs: 60_000 });
+    const { jobId, logFile } = await start(script, { totalMs: 60_000 });
     const snap = await waitForShellJob(jobId, 0);
     expect(snap?.status).toBe("running");
     expect(snap?.exitCode).toBeNull();
     expect(snap?.pid).toBeGreaterThan(0);
     expect(fs.existsSync(logFile)).toBe(true);
-    stopShellJob(jobId);
+    await stopShellJob(jobId);
     await waitPidsDead([snap?.pid ?? null]);
   }, 15_000);
 
   it("阻塞等待自然退出：任务先结束提前返回 exited + exitCode=0 + tail 含输出", async () => {
     const script = writeScript("echo-once.cjs", 'console.log("hello-job");');
-    const { jobId } = start(script);
+    const { jobId } = await start(script);
     const begin = Date.now();
     const snap = await waitForShellJob(jobId, 15_000);
     const elapsed = Date.now() - begin;
@@ -162,20 +164,20 @@ describe("shell-job-manager 状态机与护栏（真实进程）", () => {
 
   it("wait_ms 到期任务仍在跑：返回 running 快照，不悬挂", async () => {
     const script = writeScript("sleeper-10.cjs", "setInterval(() => {}, 1000);");
-    const { jobId } = start(script, { totalMs: 60_000 });
+    const { jobId } = await start(script, { totalMs: 60_000 });
     const begin = Date.now();
     const snap = await waitForShellJob(jobId, 500);
     const elapsed = Date.now() - begin;
     expect(snap?.status).toBe("running");
     expect(elapsed).toBeGreaterThanOrEqual(450);
     expect(elapsed).toBeLessThan(5_000);
-    stopShellJob(jobId);
+    await stopShellJob(jobId);
     await waitPidsDead([snap?.pid ?? null]);
   }, 15_000);
 
   it("用户取消（signal abort）：立即返回当前快照，不等满 wait_ms", async () => {
     const script = writeScript("sleeper-20.cjs", "setInterval(() => {}, 1000);");
-    const { jobId } = start(script, { totalMs: 60_000 });
+    const { jobId } = await start(script, { totalMs: 60_000 });
     const controller = new AbortController();
     setTimeout(() => controller.abort(), 300);
     const begin = Date.now();
@@ -183,7 +185,7 @@ describe("shell-job-manager 状态机与护栏（真实进程）", () => {
     const elapsed = Date.now() - begin;
     expect(snap?.status).toBe("running");
     expect(elapsed).toBeLessThan(5_000);
-    stopShellJob(jobId);
+    await stopShellJob(jobId);
     await waitPidsDead([snap?.pid ?? null]);
   }, 15_000);
 
@@ -195,7 +197,7 @@ describe("shell-job-manager 状态机与护栏（真实进程）", () => {
       'console.log("child-pid:" + child.pid);',
       "setInterval(() => {}, 1000);",
     ].join("\n"));
-    const { jobId } = start(script, { totalMs: 60_000 });
+    const { jobId } = await start(script, { totalMs: 60_000 });
     // 等两个 pid 行落盘（孙进程由脚本负责拉起）
     const snap = await snapshotEventually(jobId, (s) => s.tail.includes("child-pid:"), 10_000);
     const parentPid = snap.pid;
@@ -205,7 +207,7 @@ describe("shell-job-manager 状态机与护栏（真实进程）", () => {
     expect(isPidAlive(parentPid)).toBe(true);
     expect(isPidAlive(childPid)).toBe(true);
 
-    const stopped = stopShellJob(jobId);
+    const stopped = await stopShellJob(jobId);
     expect(stopped?.status).toBe("stopped");
     expect(stopped?.exitCode).toBeNull();
     await waitPidsDead([parentPid, childPid]);
@@ -214,18 +216,18 @@ describe("shell-job-manager 状态机与护栏（真实进程）", () => {
   it("终态不可变 + stop 幂等：已 exited 的任务 stop 后仍 exited；running 任务重复 stop 均 stopped", async () => {
     // 短命令先自然退出，再 stop → 状态保持 exited（迟到操作不覆盖终态）
     const quick = writeScript("quick.cjs", 'console.log("quick");');
-    const { jobId: quickId } = start(quick);
+    const { jobId: quickId } = await start(quick);
     const exited = await snapshotEventually(quickId, (s) => s.status === "exited", 10_000);
     expect(exited.exitCode).toBe(0);
-    const afterStop = stopShellJob(quickId);
+    const afterStop = await stopShellJob(quickId);
     expect(afterStop?.status).toBe("exited");
 
     // running 任务连续 stop 两次 → 都是 stopped，第二次是幂等返回
     const sleeper = writeScript("sleeper-30.cjs", "setInterval(() => {}, 1000);");
-    const { jobId: sleepId } = start(sleeper, { totalMs: 60_000 });
-    const first = stopShellJob(sleepId);
+    const { jobId: sleepId } = await start(sleeper, { totalMs: 60_000 });
+    const first = await stopShellJob(sleepId);
     expect(first?.status).toBe("stopped");
-    const second = stopShellJob(sleepId);
+    const second = await stopShellJob(sleepId);
     expect(second?.status).toBe("stopped");
     await waitPidsDead([first?.pid ?? null]);
   }, 20_000);
@@ -236,7 +238,7 @@ describe("shell-job-manager 状态机与护栏（真实进程）", () => {
       'setInterval(() => { process.stdout.write(chunk + "\\n"); }, 10);',
     ].join("\n"));
     // 注入 4KB 上限：与生产 64MB 走同一代码路径
-    const { jobId } = start(script, { totalMs: 60_000, logMaxBytes: 4096 });
+    const { jobId } = await start(script, { totalMs: 60_000, logMaxBytes: 4096 });
     const snap = await snapshotEventually(jobId, (s) => s.status === "failed", 10_000);
     expect(snap.reason).toBe("output_limit_exceeded");
     expect(snap.totalBytes).toBeGreaterThanOrEqual(4096);
@@ -245,7 +247,7 @@ describe("shell-job-manager 状态机与护栏（真实进程）", () => {
 
   it("执行上限到期：强制终止并判 timed_out（reason=total_timeout_exceeded）", async () => {
     const script = writeScript("sleeper-60.cjs", "setInterval(() => {}, 1000);");
-    const { jobId } = start(script, { totalMs: 1200 });
+    const { jobId } = await start(script, { totalMs: 1200 });
     const snap = await snapshotEventually(jobId, (s) => s.status === "timed_out", 10_000);
     expect(snap.reason).toBe("total_timeout_exceeded");
     expect(snap.exitCode).toBeNull();
@@ -254,7 +256,7 @@ describe("shell-job-manager 状态机与护栏（真实进程）", () => {
 
   it("未知 jobId：wait 与 stop 均返回 null", async () => {
     expect(await waitForShellJob("job-19700101-000000-999", 0)).toBeNull();
-    expect(stopShellJob("job-19700101-000000-999")).toBeNull();
+    expect(await stopShellJob("job-19700101-000000-999")).toBeNull();
   });
 });
 

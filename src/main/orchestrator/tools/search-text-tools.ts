@@ -6,7 +6,7 @@
 // - 名字和描述明确声明为"文本搜索"，避免误导模型
 //
 // 安全约束：
-// - 工作区根目录限制（路径逃逸检测）
+// - 文件访问范围跟随当前权限档位
 // - 忽略 .git、node_modules、构建产物
 // - 结果数量和上下文长度限制
 // - AbortSignal 和超时支持
@@ -15,6 +15,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { toolRegistry, type ToolEffectKind, type VerificationPolicy } from "./registry/tool-registry";
 import type { ToolContext } from "./registry/tool-context";
+import { formatFileAccessPath, resolveFileAccessPath } from "./file-access";
 
 const LOG_PREFIX = "[SearchText]";
 
@@ -52,13 +53,6 @@ const IGNORED_EXTS = new Set([
 ]);
 
 // ── 路径安全 ──────────────────────────────────────────────
-
-/** 确保路径在工作区根目录内（防止路径逃逸） */
-function isWithinWorkspace(filePath: string, workspaceRoot: string): boolean {
-  const resolved = path.resolve(workspaceRoot, filePath);
-  const normalizedRoot = path.normalize(workspaceRoot);
-  return resolved.startsWith(normalizedRoot + path.sep) || resolved === normalizedRoot;
-}
 
 /** 检查文件是否应被忽略 */
 function shouldIgnoreFile(filePath: string): boolean {
@@ -199,6 +193,7 @@ function walkDir(
   fileExtension: string | undefined,
   signal?: AbortSignal,
   skippedDirs?: Set<string>,
+  ctx?: ToolContext,
 ): SearchMatch[] {
   const allMatches: SearchMatch[] = [];
 
@@ -216,29 +211,33 @@ function walkDir(
     for (const entry of entries) {
       if (signal?.aborted) return;
       if (allMatches.length >= maxMatches) return;
+      if (entry.isDirectory() && shouldIgnoreDir(entry.name)) {
+        skippedDirs?.add(entry.name);
+        continue;
+      }
+      if (!entry.isDirectory() && !entry.isFile()) continue;
+      if (entry.isFile() && (shouldIgnoreFile(entry.name)
+        || (fileExtension && path.extname(entry.name).toLowerCase() !== `.${fileExtension}`))) continue;
 
       const fullPath = path.join(currentDir, entry.name);
-      const relativePath = path.relative(workspaceRoot, fullPath).split(path.sep).join("/");
+      const access = resolveFileAccessPath(fullPath, "read", ctx);
+      if (!access.ok) continue;
+      const relativePath = formatFileAccessPath(access.path, workspaceRoot);
+      const filterPath = path.isAbsolute(relativePath) ? path.relative(dir, fullPath).split(path.sep).join("/") : relativePath;
 
       if (entry.isDirectory()) {
-        if (shouldIgnoreDir(entry.name)) {
-          skippedDirs?.add(entry.name);
-        } else {
-          walk(fullPath);
-        }
+        walk(access.path);
       } else if (entry.isFile()) {
-        if (shouldIgnoreFile(entry.name)) continue;
-        if (fileExtension && path.extname(entry.name).toLowerCase() !== `.${fileExtension}`) continue;
 
         // 文件 glob 过滤
         if (fileGlobs && fileGlobs.length > 0) {
-          const matchesAny = fileGlobs.some(g => matchesGlob(relativePath, g));
+          const matchesAny = fileGlobs.some(g => matchesGlob(filterPath, g));
           if (!matchesAny) continue;
         }
 
         const remaining = maxMatches - allMatches.length;
         const fileMatches = searchInFile(
-          fullPath, relativePath, query, mode, caseSensitive,
+          access.path, relativePath, query, mode, caseSensitive,
           contextLines, maxMatches, remaining, signal,
         );
         allMatches.push(...fileMatches);
@@ -286,39 +285,41 @@ async function executeSearchText(args: Record<string, unknown>, ctx?: ToolContex
   });
 
   try {
-    const searchPromise = (async (): Promise<SearchResult & { searchType?: string; message?: string; rejectedPaths?: string[]; skippedDirs?: string[] }> => {
+    const searchPromise = (async (): Promise<SearchResult & { success?: boolean; errorCode?: string; category?: string; error?: string; searchType?: string; message?: string; rejectedPaths?: string[]; skippedDirs?: string[] }> => {
       const allMatches: SearchMatch[] = [];
       const rejectedPaths: string[] = [];
       const skippedDirs = new Set<string>();
+      let accessiblePaths = 0;
 
       for (const p of paths) {
         if (signal?.aborted) break;
         if (allMatches.length >= maxMatches) break;
 
-        const resolvedPath = path.resolve(workspaceRoot, p);
-
-        // 路径逃逸检测
-        if (!isWithinWorkspace(resolvedPath, workspaceRoot)) {
-          console.warn(LOG_PREFIX, "路径逃逸检测拒绝:", p);
+        const access = resolveFileAccessPath(path.resolve(workspaceRoot, p), "read", ctx);
+        if (!access.ok) {
+          console.warn(LOG_PREFIX, "文件权限拒绝:", p);
           rejectedPaths.push(p);
           continue;
         }
+        const resolvedPath = access.path;
 
         const stat = safeStat(resolvedPath);
         if (!stat) continue;
+        accessiblePaths++;
 
         if (stat.isDirectory()) {
           const dirMatches = walkDir(
             resolvedPath, workspaceRoot, query, mode, caseSensitive,
-            contextLines, maxMatches - allMatches.length, fileGlobs, fileExtension, signal, skippedDirs,
+            contextLines, maxMatches - allMatches.length, fileGlobs, fileExtension, signal, skippedDirs, ctx,
           );
           allMatches.push(...dirMatches);
         } else if (stat.isFile()) {
-          const relativePath = path.relative(workspaceRoot, resolvedPath).split(path.sep).join("/");
+          const relativePath = formatFileAccessPath(resolvedPath, workspaceRoot);
+          const filterPath = path.isAbsolute(relativePath) ? path.basename(resolvedPath) : relativePath;
           if (!shouldIgnoreFile(path.basename(resolvedPath))) {
             if (fileExtension && path.extname(resolvedPath).toLowerCase() !== `.${fileExtension}`) continue;
             if (fileGlobs && fileGlobs.length > 0) {
-              const matchesAny = fileGlobs.some(g => matchesGlob(relativePath, g));
+              const matchesAny = fileGlobs.some(g => matchesGlob(filterPath, g));
               if (!matchesAny) continue;
             }
             const fileMatches = searchInFile(
@@ -332,10 +333,11 @@ async function executeSearchText(args: Record<string, unknown>, ctx?: ToolContex
 
       // 根据搜索结果生成明确的 message
       let message: string | undefined;
-      if (rejectedPaths.length > 0 && allMatches.length === 0) {
-        message = `路径 ${rejectedPaths.join(", ")} 在工作区外被拒绝，搜索未执行。Grep 只能搜索工作区内文件。要确认工作区外文件是否存在，请用 Glob 或 run_shell。`;
+      const deniedAll = rejectedPaths.length > 0 && accessiblePaths === 0;
+      if (deniedAll) {
+        message = `当前权限不允许访问路径 ${rejectedPaths.join(", ")}，搜索未执行。请检查主代理当前的文件权限档位。`;
       } else if (rejectedPaths.length > 0) {
-        message = `路径 ${rejectedPaths.join(", ")} 在工作区外被拒绝，已跳过。`;
+        message = `当前权限不允许访问路径 ${rejectedPaths.join(", ")}，已跳过。`;
       } else if (allMatches.length === 0) {
         message = "未找到匹配内容。这不代表目标文件不存在——Grep 搜索的是文件内容，不是文件名。要查找文件请用 Glob。";
       }
@@ -345,6 +347,7 @@ async function executeSearchText(args: Record<string, unknown>, ctx?: ToolContex
       }
 
       return {
+        ...(deniedAll ? { success: false, errorCode: "PERMISSION_DENIED", category: "permission_denied", error: message } : {}),
         matches: allMatches.slice(0, maxMatches),
         totalMatches: allMatches.length,
         returnedMatches: Math.min(allMatches.length, maxMatches),
@@ -392,7 +395,7 @@ export function registerSearchTextTool(): void {
       "fileGlobs（可选，文件过滤如 '*.ts' 自动扩展为 '**/*.ts'），" +
       "maxMatches（可选，最多返回数），contextLines（可选，上下文行数），caseSensitive（可选，区分大小写）。",
     enabled: true,
-    risk: "safe",
+    risk: "fs-read",
     modes: ["code", "work"],
     effectKind: "read" as const,
     isConcurrencySafe: () => true,

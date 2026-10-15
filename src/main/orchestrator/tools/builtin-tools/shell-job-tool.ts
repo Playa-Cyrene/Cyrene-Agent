@@ -18,7 +18,7 @@ const STATUS_HINTS: Record<string, string> = {
   exited: "任务已自然退出。exitCode=0 成功；非 0 失败，tail 里有错误输出。",
   timed_out: "任务超过执行上限被强制终止。",
   stopped: "任务被用户/应用主动终止。",
-  failed: "任务异常终止（输出超 64MB 上限或 spawn 失败），见 reason 字段。",
+  failed: "任务异常或执行结果无法确认，见 reason 字段。",
 };
 
 export const shellJobTool: ToolDefinition = {
@@ -31,7 +31,8 @@ export const shellJobTool: ToolDefinition = {
     "- 需要等一个后台命令出结果再继续 → action=status + wait_ms（阻塞等待，任务到终态提前返回）\n" +
     "- 后台任务卡死/不再需要 → action=stop（幂等，已终止的任务直接返回终态）\n\n" +
     "状态含义（五态）：running=执行中 / exited=自然退出（看 exitCode）/ timed_out=超时终止 / " +
-    "stopped=主动终止 / failed=异常终止（输出超限或启动失败，看 reason）。\n\n" +
+    "stopped=主动终止 / failed=异常或结果未知（看 reason）。\n" +
+    "重启后 reason=app_restarted_execution_unknown 表示无法确认原命令的执行结果，不代表命令没有执行；先核对实际结果，不要直接重跑。\n\n" +
     "判活技巧：status 返回 totalBytes（累计输出字节数）+ tail（日志最后 8KB）。" +
     "两次查询 totalBytes 有增量说明任务真在跑；长时间零增量且任务本应持续输出则可能卡死。\n" +
     "完整日志在 run_shell 返回的 logFile 路径，需要全文时用 Read 读取。\n\n" +
@@ -80,12 +81,12 @@ export const shellJobTool: ToolDefinition = {
     }
 
     if (action === "stop") {
-      const snap = stopShellJob(jobId);
+      const snap = await stopShellJob(jobId);
       if (!snap) {
         logger.warn(LogTag.BuiltinTools, `[shell_job] stop unknown job: ${jobId}`);
         return JSON.stringify({
           action, jobId, errorCode: "JOB_NOT_FOUND",
-          error: `未找到任务 ${jobId}。任务可能来自其他应用会话（后台任务注册表不跨重启存活），请用 run_shell 重新启动命令。`,
+          error: `未找到任务 ${jobId}。任务可能已过保留期，或来自升级前未保存的注册表。请先确认原命令是否已执行，避免重复操作。`,
           exitCode: -1, stdout: "",
           stderr: `[JOB_NOT_FOUND] 未找到任务 ${jobId}`,
         });
@@ -102,14 +103,14 @@ export const shellJobTool: ToolDefinition = {
       });
     }
 
-    // status：wait_ms 钳制（缺省 0=立即返回），signal 中止（用户取消本轮）提前返回当前快照
+    // status：wait_ms 钳制；取消时内存任务返回快照，历史查询抛出取消错误。
     const waitMs = clampWaitMs(args.wait_ms);
     const snap = await waitForShellJob(jobId, waitMs, context?.signal);
     if (!snap) {
       logger.warn(LogTag.BuiltinTools, `[shell_job] status unknown job: ${jobId}`);
       return JSON.stringify({
         action, jobId, errorCode: "JOB_NOT_FOUND",
-        error: `未找到任务 ${jobId}。任务可能来自其他应用会话（后台任务注册表不跨重启存活），请用 run_shell 重新启动命令。`,
+        error: `未找到任务 ${jobId}。任务可能已过保留期，或来自升级前未保存的注册表。请先确认原命令是否已执行，避免重复操作。`,
         exitCode: -1, stdout: "",
         stderr: `[JOB_NOT_FOUND] 未找到任务 ${jobId}`,
       });
@@ -123,7 +124,9 @@ export const shellJobTool: ToolDefinition = {
       totalBytes: snap.totalBytes, logFile: snap.logFile,
       command: snap.command, shell: snap.shell,
       startedAt: snap.startedAt, durationMs: snap.durationMs,
-      statusHint: STATUS_HINTS[snap.status] ?? "",
+      statusHint: snap.reason === "app_restarted_execution_unknown"
+        ? "应用重启后无法确认执行结果。durationMs 截至恢复检查时间，不是实际执行耗时；先核对实际结果，不要直接重跑命令。"
+        : STATUS_HINTS[snap.status] ?? "",
       tail: snap.tail,
     });
   },

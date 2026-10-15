@@ -6,6 +6,7 @@ import type { PluginManagementApi, PluginPanelApi } from "../shared/plugin-manag
 import type { MomentsApi } from "../shared/moments-types";
 import type { WorkspaceListResult, WorkspaceReadResult } from "../shared/workspace-files-types";
 import type { OpenInAppListResult, OpenInAppOpenResult } from "../shared/open-in-app-types";
+import type { SkillSuggestionItem, SkillSuggestionMode } from "../shared/skill-suggestions";
 
 interface SystemApi {
   openExternal: (url: string) => Promise<{ ok: boolean; error?: string }>;
@@ -39,8 +40,12 @@ interface ChatWindowApi {
   toggleMaximize: () => void;
   /** 已启用的贴纸列表（主进程返回 { id, src } 结构） */
   getEnabledStickers: () => Promise<Array<{ id: string; src: string }>>;
+  /** 重新扫描并读取当前会话模式下可调用的 slash 技能。 */
+  getSkillSuggestions: (mode: SkillSuggestionMode) => Promise<SkillSuggestionItem[]>;
   /** 读取本地图片并转为 dataUrl 预览；失败返回 ok=false + error */
   getImagePreview: (filePath: string) => Promise<{ ok: boolean; dataUrl?: string; error?: string }>;
+  /** 通过系统保存对话框导出模型生成的图片。 */
+  saveGeneratedImage: (filePath: string, name: string) => Promise<{ ok: boolean; cancelled?: boolean; error?: string }>;
   /** 主进程通用设置（只声明渲染端读取的字段） */
   getGeneralSettings: () => Promise<{
     language?: string;
@@ -88,6 +93,7 @@ interface SettingsWindowApi {
     apiKey: string;
     explicitTransport?: import("../shared/api-endpoint").ApiTransport;
     reasoning?: import("../shared/reasoning").ReasoningPreference;
+    imageGeneration?: { enabled: boolean; model: string };
     contextWindowTokens?: number;
     multimodal?: boolean;
     modelOptions?: Record<string, { contextWindowTokens?: number; multimodal?: boolean }>;
@@ -103,6 +109,7 @@ interface SettingsWindowApi {
     apiKey: string;
     explicitTransport?: import("../shared/api-endpoint").ApiTransport;
     reasoning?: import("../shared/reasoning").ReasoningPreference;
+    imageGeneration?: { enabled: boolean; model: string };
     contextWindowTokens?: number;
     multimodal?: boolean;
     modelOptions?: Record<string, { contextWindowTokens?: number; multimodal?: boolean }>;
@@ -139,6 +146,23 @@ interface SettingsWindowApi {
   testVision: (config: { baseUrl: string; apiKey: string; model: string }) => Promise<{ ok: boolean; latency?: number; sample?: string; error?: string }>;
   getTimeoutSettings: () => Promise<import("../shared/timeout-types").TimeoutSettings>;
   saveTimeoutSettings: (config: Partial<import("../shared/timeout-types").TimeoutSettings>) => Promise<import("../shared/timeout-types").TimeoutSettings>;
+}
+
+interface GmailWindowApi {
+  getStatus: () => Promise<import("../shared/gmail-types").GmailAccountStatus>;
+  getClientConfig: () => Promise<import("../shared/gmail-types").GmailClientConfigStatus>;
+  saveClientConfig: (clientId: string, clientSecret: string) => Promise<import("../shared/gmail-types").GmailClientConfigStatus>;
+  beginAuthorization: () => Promise<{ flowId: string }>;
+  waitForAuthorization: (flowId: string) => Promise<import("../shared/gmail-types").GmailAccountStatus>;
+  cancelAuthorization: (flowId: string) => Promise<import("../shared/gmail-types").GmailAccountStatus>;
+  disconnect: () => Promise<import("../shared/gmail-types").GmailAccountStatus>;
+}
+
+interface MailDraftWindowApi {
+  update: (card: import("../shared/mail-draft-card").MailDraftCardData) => Promise<{ ok: boolean; card?: import("../shared/mail-draft-card").MailDraftCardData; error?: string }>;
+  delete: (card: import("../shared/mail-draft-card").MailDraftCardData) => Promise<{ ok: boolean; status?: "deleted"; error?: string }>;
+  send: (card: import("../shared/mail-draft-card").MailDraftCardData) => Promise<{ ok: boolean; status?: import("../shared/mail-draft-card").MailDraftStatus; card?: import("../shared/mail-draft-card").MailDraftCardData; error?: string }>;
+  pickAttachments: () => Promise<{ ok: boolean; attachments: import("../shared/mail-draft-card").MailAttachmentRef[] }>;
 }
 
 interface BrowserPanelApi {
@@ -185,6 +209,8 @@ declare global {
     toast?: ToastRendererApi;
     chat?: ChatWindowApi;
     settings?: SettingsWindowApi;
+    gmail?: GmailWindowApi;
+    mailDrafts?: MailDraftWindowApi;
     browserPanel?: BrowserPanelApi;
     learnExamPage: import("../../shared/learn-exam").LearnExamPageApi;
     memoryPanel?: import("./settings/shared/types").MemoryPanelApi;

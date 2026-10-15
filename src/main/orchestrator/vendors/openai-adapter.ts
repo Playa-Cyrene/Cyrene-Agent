@@ -2,7 +2,7 @@
 // 请求体协议：POST {baseUrl}/chat/completions，messages + tools[].type=function
 import {
   ChatMessage, ChatRequest, ChatResponse, ChatVendorAdapter,
-  HttpRequest, ProviderCapability, StreamChunk, StreamEvent,
+  HttpRequest, ModelMessageOrigin, ProviderCapability, StreamChunk, StreamEvent,
   TestConnectionResult, ToolCall, ToolExecutionResult, VendorConfig,
 } from "./types";
 import { authHeaderFor } from "./auth";
@@ -13,12 +13,14 @@ import { resolveAutomaticToolChoicePolicy, resolveToolChoicePolicy } from "./too
 import { getVendorRuntimeSettings } from "./runtime-settings";
 import { resolveApiEndpoint } from "../../../shared/api-endpoint";
 import { buildStableCacheFingerprint } from "../prompt-layers";
+import { contentText, legacyDeepSeekReasoning, modelMessageOrigin, readAssistantReplay, recoverPortableMessage } from "./model-history";
 
 /** 把统一消息翻译成 OpenAI wire messages。 */
-function toWireMessages(messages: ChatMessage[]): unknown[] {
-  return messages.map(m => {
-    if (m.role === "system") return { role: "system", content: m.content ?? "" };
-    if (m.role === "user") return { role: "user", content: m.content ?? "" };
+function toWireMessages(messages: ChatMessage[], origin: ModelMessageOrigin, replayReasoning: boolean): unknown[] {
+  return messages.flatMap<unknown>(original => {
+    const m = recoverPortableMessage(original);
+    if (m.role === "system") return [{ role: "system", content: m.content ?? "" }];
+    if (m.role === "user") return [{ role: "user", content: m.content ?? "" }];
     if (m.role === "tool") {
       const wire: Record<string, unknown> = {
         role: "tool",
@@ -26,10 +28,17 @@ function toWireMessages(messages: ChatMessage[]): unknown[] {
         content: m.content ?? "",
       };
       if (m.name) wire.name = m.name;
-      return wire;
+      return [wire];
     }
+    // 不把中断遗留的纯思考记录编码成 content:null 的空 assistant。
+    if (!contentText(m.content) && !m.toolCalls?.length) return [];
     // assistant：回传 content + tool_calls（OpenAI 多轮要求 assistant 消息带 tool_calls）
-    const wire: Record<string, unknown> = { role: "assistant", content: m.content || null };
+    const wire: Record<string, unknown> = { role: "assistant", content: m.content || (origin.provider === "deepseek" ? "" : null) };
+    if (replayReasoning) {
+      const reasoning = readAssistantReplay(m, origin)?.filter(part => part.type === "reasoning")
+        .map(part => part.text).join("") ?? legacyDeepSeekReasoning(m, origin) ?? "";
+      if (reasoning) wire.reasoning_content = reasoning;
+    }
     if (m.toolCalls && m.toolCalls.length > 0) {
       wire.tool_calls = m.toolCalls.map(tc => ({
         id: tc.id,
@@ -37,7 +46,7 @@ function toWireMessages(messages: ChatMessage[]): unknown[] {
         function: { name: tc.name, arguments: tc.arguments },
       }));
     }
-    return wire;
+    return [wire];
   });
 }
 
@@ -54,9 +63,11 @@ export class OpenAICompatAdapter implements ChatVendorAdapter {
   constructor(public readonly id: string, public capability: ProviderCapability) {}
 
   buildRequest(req: ChatRequest, cfg: VendorConfig): HttpRequest {
+    const url = resolveApiEndpoint(cfg.baseUrl, "openai").url;
+    const origin = modelMessageOrigin(this, { ...cfg, model: req.model });
     const body: Record<string, unknown> = {
       model: req.model,
-      messages: toWireMessages(req.messages),
+      messages: toWireMessages(req.messages, origin, new URL(url).hostname !== "api.openai.com"),
       stream: req.stream ?? false,
     };
     // OpenAI 流式协议默认不返回 usage；显式开启 include_usage 让最后一个 chunk 带 usage。
@@ -133,7 +144,7 @@ export class OpenAICompatAdapter implements ChatVendorAdapter {
     );
     const wireBody = applyManualReasoningBody(finalBody, manualReasoning, cfg.reasoning ?? { mode: "auto" });
     return {
-      url: resolveApiEndpoint(cfg.baseUrl, "openai").url,
+      url,
       method: "POST",
       headers: {
         "Content-Type": "application/json",

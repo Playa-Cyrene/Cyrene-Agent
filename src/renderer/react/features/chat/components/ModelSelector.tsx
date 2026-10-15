@@ -20,22 +20,25 @@ interface ModelCatalogApi {
 }
 
 /**
- * 对话页两级选择器：档案下拉（凭证 + 清单）+ 模型子下拉（会话级当前模型）。
- * 子下拉仅在选中档案清单长度 > 1 且存在可写会话（onSelectModel 已传）时显示；
+ * 对话页两级选择器：档案下拉（凭证 + 清单）+ 模型子下拉（当前模型）。
+ * 子下拉仅在选中档案清单长度 > 1 且存在模型选择回调时显示；
  * 当前项 = effectiveSessionModel（raw 失效值不显示，Invariant C），解析一律走
  * shared/session-model 唯一语义源，不在组件内手写。
  */
 export function ModelSelector({
+  hasSession = true,
   activeProfileId,
   sessionModel,
   onSelect,
   onSelectModel,
 }: {
+  /** 是否已有会话；欢迎页将默认档案视为显式选择，允许显示暂存模型。 */
+  hasSession?: boolean;
   activeProfileId?: string;
   /** 会话 raw model（仅用于解析 effective；legacy 会话为 undefined = 跟随档案默认）。 */
   sessionModel?: string;
   onSelect: (id: string) => void;
-  /** 会话级切模型回调；未传 = 欢迎页（无会话可写）→ 不显示子下拉。 */
+  /** 模型选择回调；未传时不显示子下拉。 */
   onSelectModel?: (model: string) => void;
 }) {
   const { t } = useTranslation();
@@ -50,14 +53,15 @@ export function ModelSelector({
   };
   useEffect(() => { void load(); }, []);
   const active = profiles.find((item) => item.id === activeProfileId) ?? profiles.find((item) => item.id === defaultProfileId) ?? profiles[0];
+  const bindingProfileId = activeProfileId ?? (!hasSession ? defaultProfileId ?? profiles[0]?.id : undefined);
   // effective 解析吃 binding 不吃裸 profile：stale 绑定/失效 raw 值都回退档案默认
   const binding = resolveSessionProfileBinding(
     { modelProfiles: profiles, defaultModelProfileId: defaultProfileId },
-    { modelProfileId: activeProfileId, model: sessionModel },
+    { modelProfileId: bindingProfileId, model: sessionModel },
   );
   const selectable = binding.profile ? getProfileSelectableModels(binding.profile) : [];
   const effectiveModel = binding.profile
-    ? resolveEffectiveSessionModel({ modelProfileId: activeProfileId, model: sessionModel }, binding)
+    ? resolveEffectiveSessionModel({ modelProfileId: bindingProfileId, model: sessionModel }, binding)
     : undefined;
   const showModelMenu = !!onSelectModel && selectable.length > 1;
   return (

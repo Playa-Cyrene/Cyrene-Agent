@@ -20,6 +20,9 @@ import type { TtsSessionService } from "../tts/tts-session-service";
 import type { ProactiveLifecycle } from "../proactive/proactive-lifecycle";
 import type { GitService } from "../code-git/git-service";
 import type { LspManager } from "../lsp/manager";
+import type { GmailAuthService } from "../email/gmail-auth-service";
+import type { GmailService } from "../email/gmail-service";
+import type { MailAttachmentStore } from "../email/mail-attachment-store";
 import type { ScreenshotService } from "../screenshot/screenshot-lifecycle";
 import type { MusicBootstrap } from "../music/bootstrap";
 import type { AppUpdateService } from "../updater/app-update-service";
@@ -43,6 +46,9 @@ export interface CoreServices {
   proactive: ProactiveLifecycle;
   git: GitService;
   lsp: LspManager;
+  gmailAuth: GmailAuthService;
+  gmail: GmailService;
+  mailAttachmentStore: MailAttachmentStore;
   screenshot: ScreenshotService;
   music: MusicBootstrap;
   update: AppUpdateService;
@@ -82,7 +88,7 @@ export interface CoreDependencies {
   /** 必须在内置渠道适配器注册完成后调用；scheduler 先于本步完成 initialize。 */
   startPlugins(services: CoreServices, scheduler: SchedulerSubsystem, runtime: AgentRuntime): Promise<PluginManager>;
   createScheduler(runtime: AgentRuntime, services: CoreServices): SchedulerSubsystem;
-  registerCoreIpc(input: RegisterCoreIpcInput): void;
+  registerCoreIpc(input: RegisterCoreIpcInput): void | Promise<void>;
   /** 组合根装配提醒中心：注册 toast IPC、订阅事件总线、预创建隐藏窗口。 */
   wireToastCenter(input: { ipc: IpcScope; windowManager: WindowManager }): void;
   loadGeneralSettings(): GeneralSettings;
@@ -164,7 +170,7 @@ export async function startCore(deps: CoreDependencies): Promise<CoreResult> {
   const plugins = await timedStep("startPlugins", () => deps.startPlugins(services, scheduler, runtime));
 
   // 注册聊天渲染进程可能调用的全部 IPC 处理器 —— 必须先于 chat.load()
-  deps.registerCoreIpc({ ipc: shell.ipc, runtime, services, channels, scheduler });
+  await deps.registerCoreIpc({ ipc: shell.ipc, runtime, services, channels, scheduler });
 
   // 提醒中心装配：IPC 注册先于 toast 窗口预加载（渲染页加载即可能 invoke getAll）
   deps.wireToastCenter({ ipc: shell.ipc, windowManager: shell.windowManager });
@@ -224,6 +230,16 @@ export async function startCore(deps: CoreDependencies): Promise<CoreResult> {
     id: "music",
     phase: "stopLocalResources",
     dispose: async () => { await services.music.shutdown(); },
+  });
+  shutdown.register({
+    id: "gmail-auth",
+    phase: "stopLocalResources",
+    dispose: async () => { await services.gmailAuth.shutdown(); },
+  });
+  shutdown.register({
+    id: "mail-attachments",
+    phase: "stopLocalResources",
+    dispose: async () => { services.mailAttachmentStore.clear(); },
   });
 
   readiness.transition("core-ready");

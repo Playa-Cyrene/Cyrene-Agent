@@ -7,6 +7,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ToolContext } from "./registry/tool-context";
 import { toolRegistry, type ToolDefinition } from "./registry/tool-registry";
+import { formatFileAccessPath, resolveFileAccessPath, type FileAccessOperation } from "./file-access";
 
 const MAX_GLOB_RESULTS = 100;
 const MAX_GREP_RESULTS = 100;
@@ -62,7 +63,7 @@ export function registerZCodeFileTools(legacy: {
       }, context);
       try {
         const parsed = JSON.parse(output) as { success?: boolean; error?: string; content?: string };
-        if (parsed.success === false) return parsed.error ?? output;
+        if (parsed.success === false) return output;
         return parsed.content ?? output;
       } catch {
         return output;
@@ -93,7 +94,7 @@ export function registerZCodeFileTools(legacy: {
     },
     needsContext: true,
     execute: async (args, context) => {
-      const filePath = requireAbsolutePath(args.file_path, context);
+      const filePath = requireAbsolutePath(args.file_path, context, "write");
       if (!filePath.ok) return filePath.message;
       const output = await legacy.write.execute({ path: filePath.path, content: String(args.content ?? "") }, context);
       return renameResultTool(output, "Write");
@@ -123,7 +124,7 @@ export function registerZCodeFileTools(legacy: {
       required: ["file_path", "old_string", "new_string"],
     },
     execute: async (args, context) => {
-      const filePath = requireAbsolutePath(args.file_path, context);
+      const filePath = requireAbsolutePath(args.file_path, context, "write");
       if (!filePath.ok) return filePath.message;
       const oldString = String(args.old_string ?? "");
       const newString = String(args.new_string ?? "");
@@ -219,17 +220,16 @@ export function registerZCodeFileTools(legacy: {
 function requireAbsolutePath(
   raw: unknown,
   context?: ToolContext,
+  operation: FileAccessOperation = "read",
 ): { ok: true; path: string } | { ok: false; message: string } {
   const input = typeof raw === "string" ? raw.trim() : "";
   if (!input || !path.isAbsolute(input)) {
-    return { ok: false, message: "file_path must be an absolute path." };
+    return { ok: false, message: JSON.stringify({ success: false, errorCode: "INVALID_INPUT", error: "file_path must be an absolute path." }) };
   }
-  const resolved = path.resolve(input);
-  const workspaceRoot = context?.resolvedWorkspaceRoot ? path.resolve(context.resolvedWorkspaceRoot) : undefined;
-  if (workspaceRoot && !isWithin(resolved, workspaceRoot)) {
-    return { ok: false, message: "The path is outside the current workspace." };
-  }
-  return { ok: true, path: resolved };
+  const access = resolveFileAccessPath(input, operation, context);
+  return access.ok ? access : { ok: false, message: JSON.stringify({
+    success: false, errorCode: "PERMISSION_DENIED", category: "permission_denied", error: access.message,
+  }) };
 }
 
 async function executeGlob(args: Record<string, unknown>, context?: ToolContext): Promise<string> {
@@ -238,11 +238,14 @@ async function executeGlob(args: Record<string, unknown>, context?: ToolContext)
     return JSON.stringify({ success: false, errorCode: "INVALID_PATTERN", error: "pattern must be a relative glob without '..'." });
   }
   const workspaceRoot = context?.resolvedWorkspaceRoot ? path.resolve(context.resolvedWorkspaceRoot) : process.cwd();
-  const requestedRoot = typeof args.path === "string" && args.path.trim()
+  const requestedPath = typeof args.path === "string" && args.path.trim()
     ? path.resolve(workspaceRoot, args.path)
     : workspaceRoot;
-  if (!isWithin(requestedRoot, workspaceRoot) || !fs.existsSync(requestedRoot) || !fs.statSync(requestedRoot).isDirectory()) {
-    return JSON.stringify({ success: false, errorCode: "INVALID_PATH", error: "path must be a directory inside the current workspace." });
+  const access = resolveFileAccessPath(requestedPath, "read", context);
+  if (!access.ok) return JSON.stringify({ success: false, errorCode: "PERMISSION_DENIED", category: "permission_denied", error: access.message });
+  const requestedRoot = access.path;
+  if (!fs.existsSync(requestedRoot) || !fs.statSync(requestedRoot).isDirectory()) {
+    return JSON.stringify({ success: false, errorCode: "INVALID_PATH", error: "path must be an accessible directory." });
   }
   const startedAt = Date.now();
   const filenames: Array<{ path: string; mtimeMs: number }> = [];
@@ -254,10 +257,11 @@ async function executeGlob(args: Record<string, unknown>, context?: ToolContext)
       exclude: (entry) => entry.split(/[\\/]/).some((part) => OMIT_GLOB_SEGMENTS.has(part)),
     })) {
       const absolute = path.resolve(requestedRoot, match);
-      if (!isWithin(absolute, workspaceRoot)) continue;
+      const matchAccess = resolveFileAccessPath(absolute, "read", context);
+      if (!matchAccess.ok) continue;
       let stat: fs.Stats;
       try {
-        stat = await fs.promises.stat(absolute);
+        stat = await fs.promises.stat(matchAccess.path);
       } catch {
         continue;
       }
@@ -267,7 +271,7 @@ async function executeGlob(args: Record<string, unknown>, context?: ToolContext)
         break;
       }
       filenames.push({
-        path: path.relative(workspaceRoot, absolute).split(path.sep).join("/"),
+        path: formatFileAccessPath(matchAccess.path, workspaceRoot),
         mtimeMs: stat.mtimeMs,
       });
     }
@@ -314,12 +318,13 @@ async function executeGrep(
     contextLines: Math.max(contextLines, beforeCount, afterCount),
     caseSensitive: args["-i"] !== true,
   }, context);
-  let result: { matches?: Array<{ path: string; line: number; preview: string; before: string[]; after: string[] }>; totalMatches?: number; truncated?: boolean };
+  let result: { success?: boolean; error?: string; message?: string; rejectedPaths?: string[]; matches?: Array<{ path: string; line: number; preview: string; before: string[]; after: string[] }>; totalMatches?: number; truncated?: boolean };
   try {
     result = JSON.parse(output);
   } catch {
     return output;
   }
+  if (result.success === false) return output;
   const matches = result.matches ?? [];
   const visibleMatches = matches.slice(offset, offset + limit);
   const fileMatches = new Map<string, number>();
@@ -355,12 +360,9 @@ async function executeGrep(
     truncated: result.truncated === true,
     appliedLimit: limit,
     appliedOffset: offset,
+    ...(result.message ? { message: result.message } : {}),
+    ...(result.rejectedPaths?.length ? { rejectedPaths: result.rejectedPaths } : {}),
   });
-}
-
-function isWithin(target: string, root: string): boolean {
-  const relative = path.relative(root, target);
-  return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative));
 }
 
 function renameResultTool(output: string, toolName: string): string {

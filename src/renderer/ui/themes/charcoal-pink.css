@@ -8,6 +8,7 @@
   --rb-surface-hover: #303030;
   --rb-surface-active: #3a232c;
   --rb-surface-soft: #252525;
+  --rb-surface-secondary: var(--rb-surface-soft);
   --rb-code-bg: #252525;
   --rb-diff-bg: #1b1b1b;
   --rb-diff-add-bg: #183424;

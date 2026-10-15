@@ -191,6 +191,18 @@ export function AskUserPanel({
             disabled={disabled}
             placeholder={current.freeTextPlaceholder ?? t("interaction.customAnswerPlaceholder")}
             onChange={(event) => setDrafts((values) => updateAskCustomText(values, current.id, event.target.value))}
+            onKeyDown={(event) => {
+              if (event.key !== "Enter" || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229
+                || event.repeat || event.shiftKey || event.ctrlKey || event.altKey || event.metaKey) return;
+              event.preventDefault();
+              event.stopPropagation();
+              if (disabled || !isAskComplete([current], drafts)) return;
+              if (page < questions.length - 1) {
+                setPage((value) => value + 1);
+              } else {
+                submit();
+              }
+            }}
           />
         </label>
       )}

@@ -9,6 +9,8 @@ vi.mock("@ant-design/x", () => ({
     senderProps = props;
     return null;
   },
+  Suggestion: ({ children }: { children: (props: { onTrigger: () => void; onKeyDown: () => void; open: boolean }) => unknown }) =>
+    children({ onTrigger: () => undefined, onKeyDown: () => undefined, open: false }),
 }));
 
 vi.mock("antd", () => ({

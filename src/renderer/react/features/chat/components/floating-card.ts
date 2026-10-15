@@ -4,12 +4,13 @@ export interface FloatingCardPosition { x: number; y: number }
 
 export function clampFloatingCardPosition(
   position: FloatingCardPosition,
-  card: { width: number; minVisibleHeight: number },
+  card: { width: number; minVisibleHeight: number; minTop?: number },
   viewport: { width: number; height: number },
 ): FloatingCardPosition {
+  const minTop = Math.min(Math.max(0, card.minTop ?? 0), Math.max(0, viewport.height - card.minVisibleHeight));
   return {
     x: Math.min(Math.max(0, position.x), Math.max(0, viewport.width - card.width)),
-    y: Math.min(Math.max(0, position.y), Math.max(0, viewport.height - card.minVisibleHeight)),
+    y: Math.min(Math.max(minTop, position.y), Math.max(minTop, viewport.height - card.minVisibleHeight)),
   };
 }
 
@@ -21,6 +22,9 @@ export function useFloatingCard(options: { width: number; top?: number; right?: 
       ? { width: container.clientWidth, height: container.clientHeight }
       : { width: window.innerWidth, height: window.innerHeight };
   };
+  const getMinTop = () => containerRef?.current
+    ?.querySelector<HTMLElement>(".cy-workspace-titlebar")
+    ?.offsetHeight ?? 0;
   const [collapsed, setCollapsed] = useState(false);
   const [position, setPosition] = useState<FloatingCardPosition>({
     x: typeof window !== "undefined" ? getViewport().width - width - right : 0,
@@ -39,11 +43,17 @@ export function useFloatingCard(options: { width: number; top?: number; right?: 
     const container = containerRef.current;
     const updateBounds = () => {
       const viewport = getViewport();
-      setPosition((current) => clampFloatingCardPosition(current, { width, minVisibleHeight: 48 }, viewport));
+      setPosition((current) => clampFloatingCardPosition(current, {
+        width,
+        minVisibleHeight: 48,
+        minTop: getMinTop(),
+      }, viewport));
     };
     updateBounds();
     const observer = new ResizeObserver(updateBounds);
     observer.observe(container);
+    const titlebar = container.querySelector<HTMLElement>(".cy-workspace-titlebar");
+    if (titlebar) observer.observe(titlebar);
     return () => observer.disconnect();
   }, [containerRef, width]);
 
@@ -57,7 +67,11 @@ export function useFloatingCard(options: { width: number; top?: number; right?: 
       setPosition(clampFloatingCardPosition({
         x: drag.initialX + dx,
         y: drag.initialY + dy,
-      }, { width, minVisibleHeight: 48 }, getViewport()));
+      }, {
+        width,
+        minVisibleHeight: 48,
+        minTop: getMinTop(),
+      }, getViewport()));
     };
     const handleUp = () => {
       dragRef.current = null;

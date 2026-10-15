@@ -32,7 +32,7 @@ export interface CrashReconciliationResult {
 
 /** 纯函数依赖：注入 store 接口便于单元测试，不绑定磁盘实现。 */
 export interface CrashReconciliationDeps {
-  runStore: { listInterruptedRuns(conversationId?: string): HarnessRunSession[] };
+  runStore: { refresh?(): Promise<void>; listInterruptedRuns(conversationId?: string): HarnessRunSession[] };
   transcriptStore: Pick<ConversationTranscriptStore, "read" | "append">;
   now?: () => number;
 }
@@ -49,9 +49,11 @@ export async function reconcileCrashedInterruptions(
   conversationId?: string,
 ): Promise<CrashReconciliationResult> {
   const { runStore, transcriptStore, now = Date.now } = deps;
+  await runStore.refresh?.();
   let written = 0;
   let skipped = 0;
   for (const run of runStore.listInterruptedRuns(conversationId)) {
+    try {
     const snapshot = await transcriptStore.read(run.conversationId);
     const hasBoundary = snapshot.entries.some(
       (entry) => entry.kind === "interruption" && entry.runId === run.runId,
@@ -78,6 +80,10 @@ export async function reconcileCrashedInterruptions(
       );
       if (!wasCommitted) throw error;
       skipped += 1;
+    }
+    } catch (error) {
+      if (conversationId) throw error;
+      console.warn('[conversation-store] 单个运行崩溃对账失败，继续处理其他会话:', run.runId, error);
     }
   }
   return { written, skipped };

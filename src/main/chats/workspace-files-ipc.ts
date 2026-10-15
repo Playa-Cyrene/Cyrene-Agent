@@ -132,7 +132,7 @@ export async function resolveSessionWorkspaceFile(
   sessionId: string,
   relPath: string,
 ): Promise<{ ok: true; absPath: string } | { ok: false; code: "NO_WORKSPACE" | "NOT_FOUND" | "OUT_OF_ROOT" }> {
-  const binding = chatsStore.getWorkspaceBinding(sessionId);
+  const binding = (await chatsStore.getWorkspaceBinding(sessionId));
   if (!binding) return { ok: false, code: "NO_WORKSPACE" };
   try {
     const resolved = await resolveWithinRoot(binding.workspaceRoot, relPath);
@@ -146,16 +146,16 @@ export async function resolveSessionWorkspaceFile(
 export function registerWorkspaceFilesIpc(ipcOption?: IpcScope): void {
   const ipc = ipcOption ?? createIpcScope();
 
-  ipc.handle(IPC.WORKSPACE_FILES_LIST, (_event, payload: { sessionId?: string; relPath?: string }) => {
+  ipc.handle(IPC.WORKSPACE_FILES_LIST, async (_event, payload: { sessionId?: string; relPath?: string }) => {
     if (!payload?.sessionId) return { ok: false as const, code: "NO_WORKSPACE" as const };
-    const binding = chatsStore.getWorkspaceBinding(payload.sessionId);
+    const binding = (await chatsStore.getWorkspaceBinding(payload.sessionId));
     if (!binding) return { ok: false as const, code: "NO_WORKSPACE" as const };
     return listDirectory(binding.workspaceRoot, payload.relPath ?? "");
   });
 
-  ipc.handle(IPC.WORKSPACE_FILES_READ, (_event, payload: { sessionId?: string; relPath?: string }) => {
+  ipc.handle(IPC.WORKSPACE_FILES_READ, async (_event, payload: { sessionId?: string; relPath?: string }) => {
     if (!payload?.sessionId) return { ok: false as const, code: "NO_WORKSPACE" as const };
-    const binding = chatsStore.getWorkspaceBinding(payload.sessionId);
+    const binding = (await chatsStore.getWorkspaceBinding(payload.sessionId));
     if (!binding) return { ok: false as const, code: "NO_WORKSPACE" as const };
     return readFile(binding.workspaceRoot, payload.relPath ?? "");
   });

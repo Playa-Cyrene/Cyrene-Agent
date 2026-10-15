@@ -79,11 +79,11 @@ export function createProactiveLifecycle(options: ProactiveLifecycleOptions): Pr
   }
 
   async function getProactiveHistories(): Promise<{ ordinary: ProactiveHistoryTurn[]; proactive: ProactiveHistoryTurn[] }> {
-    const ordinaryMeta = chatsStore.listSessions().find((session) => session.purpose !== "proactive-chat");
+    const ordinaryMeta = (await chatsStore.listSessions()).find((session) => session.purpose !== "proactive-chat");
     const [ordinaryProjection, proactiveProjection] = await Promise.all([
       ordinaryMeta ? conversationJournal.readProjection(ordinaryMeta.id) : Promise.resolve(null),
-      (chatsStore.listSessions().find((session) => session.purpose === "proactive-chat")
-        ? conversationJournal.readProjection(chatsStore.listSessions().find((session) => session.purpose === "proactive-chat")!.id)
+      ((await chatsStore.listSessions()).find((session) => session.purpose === "proactive-chat")
+        ? conversationJournal.readProjection((await chatsStore.listSessions()).find((session) => session.purpose === "proactive-chat")!.id)
         : Promise.resolve(null)),
     ]);
     return {
@@ -182,31 +182,26 @@ export function createProactiveLifecycle(options: ProactiveLifecycleOptions): Pr
     if (!initialDecision.allowed) return { kind: "cancelled", reason: initialDecision.reason };
     if (!input.intentId) return { kind: "cancelled", reason: "durable_intent_required" };
 
-    const session = chatsStore.getOrCreateSessionByPurpose("proactive-chat", {
+    const session = (await chatsStore.getOrCreateSessionByPurpose("proactive-chat", {
       title: "昔涟的主动消息",
       identityId: null,
-    });
+    }));
     // Stable business identity makes a retry after a derived snapshot failure
     // resolve the same canonical assistant entry instead of duplicating it.
     const commitKey = input.intentId;
     const runId = commitKey;
     const intentAt = input.intentAt ?? 0;
     const sink = conversationJournal.createRunSink({ conversationId: session.id, runId });
-    try {
-      const assistantEntryId = await sink.appendAssistant({
-        message: { role: "assistant", content: input.text },
-        roundId: "proactive",
-      });
-      await conversationJournal.appendPresentationNext(
-        session.id,
-        assistantEntryId,
-        `${commitKey}:presentation`,
-        { content: input.text, runSnapshot: { runId, status: "terminal", updatedAt: intentAt } },
-      );
-      await sink.checkpoint();
-    } catch (error) {
-      throw error;
-    }
+    const assistantEntryId = await sink.appendAssistant({
+      message: { role: "assistant", content: input.text },
+      roundId: "proactive",
+    });
+    await conversationJournal.appendPresentationNext(
+      session.id,
+      assistantEntryId,
+      `${commitKey}:presentation`,
+      { content: input.text, runSnapshot: { runId, status: "terminal", updatedAt: intentAt } },
+    );
     broadcastChatsChanged();
 
     // 文本已落库；上次落库后没有 panel/show 步骤要做（opener 气泡已被移除，fallback 路径没有了）。

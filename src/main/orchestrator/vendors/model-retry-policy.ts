@@ -57,7 +57,7 @@ export function readRetryAfterMs(headersOrError: unknown, nowMs = Date.now()): n
 
     const directMs = record.retryAfterMs;
     if (typeof directMs === "number" && Number.isFinite(directMs) && directMs >= 0) return directMs;
-    const headerValue = readHeader(record.headers);
+    const headerValue = readHeader(record.headers) ?? readHeader(record.responseHeaders);
     if (headerValue) {
       const parsed = parseRetryAfter(headerValue, nowMs);
       if (parsed !== undefined) return parsed;

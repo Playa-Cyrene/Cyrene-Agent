@@ -6,6 +6,9 @@ import type { ReasoningPreference } from "../../../shared/reasoning";
 import type { ManualReasoningConfig } from "../../../shared/manual-reasoning";
 import type { PromptLayerMetadata } from "../prompt-layers";
 import type { ProviderCapability, Transport } from "../../../shared/vendor-registry/types";
+import type { AssistantContent } from "ai";
+import type { GeneratedImageOutput } from "../../../shared/generated-image";
+import type { GeneratedImageAttachment } from "../../../shared/generated-image";
 
 // 厂商能力系类型已迁入 shared/vendor-registry/types（厂商注册表的类型事实源）；
 // 此处 re-export 保持既有 import 路径（./types）不变，调用方零改动。
@@ -36,6 +39,8 @@ export interface VendorConfig {
   reasoning?: ReasoningPreference;
   /** 当前模型在档案中显式配置的推理规则。 */
   manualReasoning?: ManualReasoningConfig;
+  /** 仅主会话调用使用；摘要等辅助请求不读取此配置。 */
+  imageGeneration?: { enabled: boolean; model: string };
 }
 
 export type OpenAIContentBlock =
@@ -51,10 +56,27 @@ export interface ToolCall {
   arguments: string; // JSON 字符串，沿用 OpenAI 习惯
 }
 
+/** 只在来源完全匹配时回放；摘要和跨模型请求使用通用消息内容。 */
+export interface ModelMessageOrigin {
+  transport: Transport;
+  provider: string;
+  model: string;
+  /** 规范化端点的摘要，不保存含认证参数的地址。 */
+  endpoint: string;
+  /** 高熵凭证的摘要；换账号或密钥后不继续回放旧签名。 */
+  credentialScope: string;
+}
+
+export interface ProviderReplay {
+  version: 1;
+  origin: ModelMessageOrigin;
+  /** SDK 规范化后的有序内容；与通用内容分开持久化，升级时可独立迁移。 */
+  content: Exclude<AssistantContent, string>;
+}
+
 /**
- * 统一消息结构。两个 transport 各自只读自己需要的字段，调度层透传。
- * - OpenAI transport 读 content / toolCalls / toolCallId / name
- * - Anthropic transport 额外读 thinking / rawAssistant（多轮必须原样回传 content block 数组）
+ * 通用正文和工具语义是历史事实来源；调度层透传带来源的重放补充数据。
+ * 模型执行入口和旧适配器按目标来源投影请求；新版私有内容只在来源匹配时回传。
  */
 export interface ChatMessage {
   role: "system" | "user" | "assistant" | "tool";
@@ -66,8 +88,11 @@ export interface ChatMessage {
   name?: string;
   /** 思考/推理纯文本（reasoning_content / thinking block 抽出来）。 */
   thinking?: string;
-  /** Anthropic 多轮必须原样回传 assistant.content block 数组；OpenAI transport 不读。 */
+  /** 旧历史兼容输入。无来源原始数据不得直接发送给厂商。 */
   rawAssistant?: unknown;
+  providerReplay?: ProviderReplay;
+  /** 已落盘的模型生成图片引用；编码数据不得出现在此字段。 */
+  attachments?: GeneratedImageAttachment[];
   /** 仅供本地 transcript / UI 使用；Adapter 序列化时不得发送。 */
   visibility?: "user" | "internal";
   /** 仅供本地持久化和去重使用；Adapter 序列化时不得发送。 */
@@ -130,6 +155,8 @@ export interface ChatRequest {
   extraBody?: Record<string, unknown>;
   /** 仅供本地缓存键与诊断使用，Adapter 不得将该字段直接发给厂商。 */
   promptLayers?: PromptLayerMetadata;
+  /** 仅主会话可设置；摘要、标题等辅助请求保持缺省关闭。 */
+  imageGeneration?: { enabled: boolean; model: string };
 }
 
 /**
@@ -182,6 +209,8 @@ export interface ChatResponse {
   /** API 返回的 token 用量（OpenAI: prompt_tokens/completion_tokens；Anthropic: input_tokens/output_tokens）。
    *  未上报时为 undefined，由调用方兜底。 */
   usage?: { input: number; output: number; cachedInput?: number; cacheCreation?: number };
+  /** 主进程临时数据，提交到权威轨迹前必须先落盘并剥离编码。 */
+  generatedImages?: GeneratedImageOutput[];
 }
 
 export interface HttpRequest {

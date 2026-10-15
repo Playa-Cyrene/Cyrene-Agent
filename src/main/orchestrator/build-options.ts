@@ -22,7 +22,7 @@
 // 这些全部塞到 BuildOptionsDeps 里。dispatcher / agent-runtime 通过
 // buildBuildOptionsDeps()（agent-runtime.ts）注入同一份 deps，保证口径一致。
 import { existsSync } from "fs";
-import { basename } from "path";
+import { basename, resolve } from "path";
 import {
   resolveExecutionMode,
   type CyreneRunOptions,
@@ -66,8 +66,12 @@ import { policyFor, type ToolRiskLevel } from "../permission-policy";
 import { resolveTranscriptRetainTokens, type MaterializedTranscript } from "./conversation-transcript-context";
 import type { UncertainEffect } from "./harness/types";
 import { DEFAULT_HARNESS_CONFIG } from "./harness/types";
+import { resolveCompactionTriggerTokens } from "./harness/compaction";
 import { estimateMessageTokens } from "./context-manager";
-import { createTranscriptCompactionRequiredError } from "./conversation-transcript-compactor";
+import {
+  createTranscriptCompactionRequiredError,
+  type TranscriptCompactionModelSettings,
+} from "./conversation-transcript-compactor";
 import { MAX_PARALLEL_TOOL_CALLS } from "../../shared/task-session";
 import { normalizeMemoryMode } from "../memory/memory-mode";
 
@@ -138,6 +142,9 @@ export interface BuildOptionsDeps {
     conversationId: string;
     trigger: "automatic" | "manual";
     retainTokens: number;
+    modelSettings: TranscriptCompactionModelSettings;
+    transientMessages?: ChatMessage[];
+    signal?: AbortSignal;
   }) => Promise<unknown>;
   chatRequestTimeoutMs: number;
   captionImageForFallback?: (filePath: string) => Promise<{ ok: boolean; caption?: string; error?: string }>;
@@ -169,7 +176,7 @@ export interface BuildOptionsDeps {
    * 获取对话的工作区绑定（来自 Conversation Workspace Binding）。
    * 返回 undefined 表示当前对话未绑定工作区。
    */
-  getWorkspaceBinding?: (conversationId: string) => { workspaceRoot: string; displayName: string; boundAt: number } | undefined;
+  getWorkspaceBinding?: (conversationId: string) => ({ workspaceRoot: string; displayName: string; boundAt: number } | undefined) | Promise<{ workspaceRoot: string; displayName: string; boundAt: number } | undefined>;
   /** 构建已启用插件贡献的每轮动态提示词；失败时调用方应降级为空内容。 */
   buildPluginPromptContext?: (input: {
     source: "conversation" | "plugin-agent";
@@ -191,7 +198,7 @@ export type BuildOptionsInput = AguiRunInput;
 /** onRunFinished 副作用所需的 deps（与 BuildOptionsDeps 部分重叠） */
 export interface OnRunFinishedDeps {
   loadModelSettings: () => ModelSettingsLite;
-  scheduleMemoryWrite: (userText: string, reply: string, conversationId?: string) => void;
+  scheduleMemoryWrite: (userText: string, reply: string, conversationId?: string, source?: { userTurnId: string; assistantEntryId: string }) => void | Promise<void>;
   scheduleSummaryTurn?: (input: {
     conversationId: string;
     assistantEntryId: string;
@@ -236,6 +243,7 @@ export interface ModelSettingsLite {
   model: string;
   apiKey: string;
   explicitTransport?: "openai" | "anthropic" | "responses" | "auto";
+  imageGeneration?: { enabled: boolean; model: string };
   /** 顶层 reasoning 镜像（来自 perProvider[currentProvider].reasoning）。adapter 直接读。 */
   reasoning?: import("../../shared/reasoning").ReasoningPreference;
   manualReasoning?: import("../../shared/manual-reasoning").ManualReasoningConfig;
@@ -364,6 +372,24 @@ function withAttachmentPathReferences(
     content: `${text}${text ? "\n\n" : ""}【本轮附件路径】\n${pathList}`,
   };
   return next;
+}
+
+/** 本轮图片优先；渠道等旧入口回退 imageAttachments，统一供四条视觉路径消费。 */
+function resolveImageAttachments(input: AguiRunInput): NonNullable<AguiRunInput["imageAttachments"]> {
+  const currentImages = input.currentUser?.attachments?.flatMap((attachment) => {
+    if (attachment.kind !== "image" || typeof attachment.filePath !== "string" || !attachment.filePath.trim()) return [];
+    return [{ name: attachment.name, filePath: attachment.filePath, mime: attachment.mime }];
+  }) ?? [];
+  const images = currentImages.length > 0 ? currentImages : input.imageAttachments ?? [];
+  const seen = new Set<string>();
+  return images.filter((image) => {
+    if (typeof image?.filePath !== "string" || !image.filePath.trim() || typeof image.name !== "string") return false;
+    const normalizedPath = resolve(image.filePath);
+    const key = process.platform === "win32" ? normalizedPath.toLowerCase() : normalizedPath;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function withDirectImageAttachments(messages: ChatMessage[], input: AguiRunInput): ChatMessage[] {
@@ -594,24 +620,23 @@ export async function buildAgentRunOptions(
   // 预算检查对传入与自建上下文一视同仁：长会话无论从桌面还是渠道入口进入，
   // 都必须先提交自动压缩检查点，再重读 journal 作为最终上下文。
   if (input.currentUser && input.sessionId && transcriptContext) {
-    const usableInputBudget = contextWindowTokens
-      - DEFAULT_HARNESS_CONFIG.reservedOutputTokens
-      - DEFAULT_HARNESS_CONFIG.safetyMarginTokens;
+    const compactionTriggerTokens = resolveCompactionTriggerTokens(contextWindowTokens);
     const estimatedMessages = estimateMessageTokens(transcriptContext.messages);
-    if (estimatedMessages >= usableInputBudget * DEFAULT_HARNESS_CONFIG.compactionThreshold) {
+    if (estimatedMessages >= compactionTriggerTokens) {
       if (!deps.compactTranscript) throw new Error("TRANSCRIPT_COMPACTION_REQUIRED");
       try {
         await deps.compactTranscript({
           conversationId: input.sessionId,
           trigger: "automatic",
           retainTokens: Math.max(1, Math.floor(contextWindowTokens * DEFAULT_HARNESS_CONFIG.compactionRetainRatio)),
+          modelSettings: settings,
         });
       } catch (error) {
         console.error("[BuildOptions] transcript compaction failed", error);
         throw createTranscriptCompactionRequiredError(error);
       }
       transcriptContext = await requireBuildModelContext(deps)(input.sessionId, retainTokens);
-      if (estimateMessageTokens(transcriptContext.messages) >= usableInputBudget * DEFAULT_HARNESS_CONFIG.compactionThreshold) {
+      if (estimateMessageTokens(transcriptContext.messages) >= compactionTriggerTokens) {
         throw createTranscriptCompactionRequiredError();
       }
     }
@@ -648,7 +673,7 @@ export async function buildAgentRunOptions(
     ? undefined
     : (input.workspaceBindingSessionId ?? conversationId);
   const workspaceBinding = workspaceBindingSessionId
-    ? deps.getWorkspaceBinding?.(workspaceBindingSessionId)
+    ? (await deps.getWorkspaceBinding?.(workspaceBindingSessionId))
     : undefined;
   const resolvedWorkspaceRoot = workspaceBinding?.workspaceRoot;
   const workspaceMeta = resolvedWorkspaceRoot ? readWorkspaceMeta(resolvedWorkspaceRoot) : undefined;
@@ -1011,7 +1036,7 @@ export async function buildAgentRunOptions(
   const directVisionOk = imageRoute.mode === "direct";
   // [image-send] 链路日志①：直发判定。图片"传不过去"先看这条——
   // direct=false 时图片走 caption 降级/文本占位，根本不会以 image 块发给主模型。
-  const imageInput = hasFileAttachments ? { ...input, imageAttachments: undefined } : input;
+  const imageInput = { ...input, imageAttachments: resolveImageAttachments(input) };
   if (imageInput.imageAttachments?.length) {
     console.log("[image-send] 直发判定:", {
       provider: settings.provider,
@@ -1056,6 +1081,7 @@ export async function buildAgentRunOptions(
         model: settings.model,
         apiKey: settings.apiKey,
         explicitTransport: settings.explicitTransport,
+        imageGeneration: settings.imageGeneration,
         reasoning: settings.reasoning,
         manualReasoning: settings.manualReasoning,
         contextWindowTokens: settings.contextWindowTokens ?? 256000,
@@ -1067,6 +1093,20 @@ export async function buildAgentRunOptions(
       messages: fcMessages,
       cleanMessages: cleanFcMessages,
       conversationId,
+      assistantTurnId: input.assistantTurnId,
+      ...(input.sessionId && deps.compactTranscript && deps.buildModelContext ? {
+        compactTranscript: async ({ retainTokens: tailTokens, transientMessages, signal }) => {
+          await deps.compactTranscript!({
+            conversationId: input.sessionId!,
+            trigger: "automatic",
+            retainTokens: tailTokens,
+            modelSettings: settings,
+            transientMessages,
+            signal,
+          });
+          return (await requireBuildModelContext(deps)(input.sessionId!, tailTokens)).messages;
+        },
+      } : {}),
       executionMode,
       originalQuery: latestUserText,
       contextualizedQuery,
@@ -1131,6 +1171,8 @@ export async function onAgentRunFinished(
     mode?: string;
     assistantEntryId?: string;
     userTurnId?: string;
+    /** Vector-memory provenance only; does not change Summary/Wiki dispatch. */
+    vectorMemorySource?: { userTurnId: string; assistantEntryId: string };
   },
 ): Promise<{ sticker: string | null }> {
   const chatContent = result.reply;
@@ -1169,7 +1211,8 @@ export async function onAgentRunFinished(
       assistantText: chatContent,
     });
   } else if (memoryMode === "vector" && !socialContext) {
-    deps.scheduleMemoryWrite(sideEffectUserText, chatContent, conversationId);
+    await deps.scheduleMemoryWrite(sideEffectUserText, chatContent, conversationId,
+      finishedContext?.vectorMemorySource);
   }
 
   // 朋友圈主动发帖评估：输入是事件产生时冻结的快照（runId/source/mode 由 agent-runtime 透传）

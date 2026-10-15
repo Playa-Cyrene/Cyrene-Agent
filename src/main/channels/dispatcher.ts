@@ -56,6 +56,7 @@ export interface ChannelConversationJournal {
     attachments?: Array<{ kind: "image" | "document"; name: string; filePath: string; mime?: string; caption?: string }>;
   }): Promise<{ id: string }>;
   appendPresentation(conversationId: string, messageId: string, patchRevision: number, patch: Record<string, unknown>): Promise<unknown>;
+  appendPresentationNext?(conversationId: string, messageId: string, mutationKey: string, patch: Record<string, unknown>): Promise<unknown>;
   buildModelContext(conversationId: string): Promise<MaterializedTranscript>;
   getChannelTurnState?(conversationId: string, input: {
     userTurnId: string;
@@ -172,7 +173,7 @@ export class ChannelDispatcher {
         console.warn(LOG, "observeExternalChat 失败（继续处理消息）:", err);
       }
 
-      const context = this.deps.context.resolveDispatchContext(sessionId);
+      const context = await this.deps.context.resolveDispatchContext(sessionId);
       const execute = () => this.processIncoming(msg, context);
       return context.boundConversationId
         ? this.deps.queue.run(`conversation:${context.boundConversationId}`, execute)
@@ -233,14 +234,18 @@ export class ChannelDispatcher {
       }
       return null;
     }
-    await journal.appendPresentation(target.conversationId, userEntry.id, 1, {
+    const userPresentation = {
       content: msg.text,
       channelSource: {
         channel: msg.channel,
         chatType: msg.chatType ?? "private",
         ...(msg.senderName ? { senderName: msg.senderName } : {}),
       },
-    });
+    } as const;
+    try {
+      if (journal.appendPresentationNext) await journal.appendPresentationNext(target.conversationId, userEntry.id, "channel:user:delivery", userPresentation);
+      else await journal.appendPresentation(target.conversationId, userEntry.id, 1, userPresentation);
+    } catch (error) { console.warn(LOG, "渠道用户展示更新失败:", error); }
     const modelContext = await journal.buildModelContext(target.conversationId);
     const transcriptSink = journal.createRunSink({
       conversationId: target.conversationId,
@@ -319,7 +324,7 @@ export class ChannelDispatcher {
 
       const assistantEntryId = transcriptSink.getLastAssistantEntryId?.();
       if (assistantEntryId) {
-        await journal.appendPresentation(target.conversationId, assistantEntryId, 1, {
+        const assistantPresentation = {
           content: prepared.assistantText,
           channelSource: {
             channel: msg.channel,
@@ -328,7 +333,11 @@ export class ChannelDispatcher {
           },
           ...(result.sticker && prepared.message.parts.some((part) => part.kind === "sticker")
             ? { sticker: result.sticker } : {}),
-        });
+        } as const;
+        try {
+          if (journal.appendPresentationNext) await journal.appendPresentationNext(target.conversationId, assistantEntryId, "channel:assistant:delivery", assistantPresentation);
+          else await journal.appendPresentation(target.conversationId, assistantEntryId, 1, assistantPresentation);
+        } catch (error) { console.warn(LOG, "渠道回复展示更新失败:", error); }
       }
       try {
         await journal.appendDeliveryReceipt(target.conversationId, {

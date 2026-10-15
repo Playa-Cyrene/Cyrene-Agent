@@ -15,7 +15,6 @@
 - [ ] 回答过程中 reasoning 折叠区实时展开、结束后可折叠
 - [ ] run 阶段指示（understanding → responding → executing 等）随事件流转
 - [ ] 表情包 sticker 正常显示（用户发送 + 模型回复）
-- [ ] 天气卡片正常渲染（若有触发条件）
 - [ ] 上下文容量圆环：run 中实时刷新、run 结束为终态值
 - [ ] 「正在压缩上下文」提示出现与消失（RUN_STARTED 复位）
 

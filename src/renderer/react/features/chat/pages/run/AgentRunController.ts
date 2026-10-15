@@ -11,8 +11,10 @@ import type {
   TaskDelegationDisplayRecord,
   ToolExecutionRecord,
 } from "../../../../../../shared/chat-types";
+import type { GeneratedImageAttachment } from "../../../../../../shared/generated-image";
 import { isContextUsageSnapshot, type ContextUsageSnapshot } from "../../../../../../shared/context-usage";
 import type { TodoItem } from "../../../../../../shared/todo-types";
+import { normalizeMailDraftCardData, type MailDraftCardData } from "../../../../../../shared/mail-draft-card";
 import { isModelFailureInfo, type ModelFailureInfo } from "../../../../../../shared/model-error";
 import type { ModelRetryStatus } from "../../../../../../shared/model-retry";
 import type { ChatMessageItem } from "../../components/ChatMessageList";
@@ -32,7 +34,7 @@ import { applyAgentRoundBoundary, createRoundProcessMessage } from "../../compon
 import { applyTaskDelegationEvent, normalizeTaskDelegationEvent } from "../../components/task-delegations";
 import { getCharacterName, t } from "../../../../i18n";
 import type { AguiApi, AguiEvent, CandidateTextEventValue, ChatStoreApi } from "../chat-page-bridge";
-import { normalizeWeatherData, parseSessionRunActiveError, stageForStep } from "../chat-page-normalizers";
+import { parseSessionRunActiveError, stageForStep } from "../chat-page-normalizers";
 import { RunEventGate } from "../run-event-gate";
 import { applyVisibleOutput, normalizeShellOutputEvent } from "./command-output";
 import {
@@ -61,6 +63,11 @@ export interface AgentRunInput {
   attachments: ComposerAttachment[];
   /** 原始用户文本对应的 UI 展示文本；表情包标记不进入模型 text。 */
   visibleContent?: string;
+  /**
+   * 模型侧文本（认领时由主进程计算）：贴纸消息为「用户原话 + 表情包说明」，
+   * 其余消息缺省。缺省时回退到投影会话里推导，保证旧路径行为不变。
+   */
+  modelText?: string;
   takeoverFromRunId?: string;
   /**
    * 待发队列认领派发：用户消息已由主进程认领写入历史（非本控制器追加）。
@@ -85,6 +92,9 @@ export type PlanReviewUpdate =
  * 新增成员前优先考虑合并语义相近的通知。
  */
 export interface AgentRunHost {
+  /** 插话边界补用户消息与新的助手消息段；沿用当前 run。 */
+  appendMessages?(sessionId: string, messages: ChatMessageItem[]): void;
+  onAssistantSegment?(previousId: string, nextId: string): void;
   /** 消息视图补丁：流式内容、推理块、工具执行记录等全部经此写入。 */
   patchMessage(sessionId: string, messageId: string, patch: Partial<ChatMessageItem>): void;
   /** 展示 composer 交互卡（审批请求 / ask 选择卡）。 */
@@ -176,6 +186,7 @@ function buildPresentationCheckpointPatch(
   if (current.runActivity && !sameJson(previous?.runActivity, current.runActivity)) patch.runActivity = current.runActivity;
   if (current.contextUsage && !sameJson(previous?.contextUsage, current.contextUsage)) patch.contextUsage = current.contextUsage;
   if (current.sticker !== undefined && current.sticker !== previous?.sticker) patch.sticker = current.sticker;
+  if (current.emailDraftCards && !sameJson(previous?.emailDraftCards ?? [], current.emailDraftCards)) patch.emailDraftCards = current.emailDraftCards;
   return Object.keys(patch).length ? patch : undefined;
 }
 
@@ -253,6 +264,8 @@ function normalizeModelRetryStatus(value: unknown): ModelRetryStatus | undefined
 export class AgentRunController {
   private readonly input: AgentRunInput;
   private readonly deps: AgentRunDeps;
+  /** 插话边界等待旧段渐显及检查点完成，后续事件仍按到达顺序处理。 */
+  private eventChain: Promise<void> | undefined;
 
   // —— 流式累积状态 ——
   private streamContent = "";
@@ -286,12 +299,14 @@ export class AgentRunController {
   private pendingCandidateClassification: { processId: string; content: string } | undefined;
   private sticker: string | null = null;
   private toolExecutions: ToolExecutionRecord[] = [];
+  private emailDraftCards: MailDraftCardData[] = [];
   private runStarted = false;
   /** run 已被主进程接受（ack 成功）：false 时 onRunFinished 携带 queuePaused 暂停队列消费。 */
   private runAccepted = false;
   private runActivity: RunActivityRecord | undefined;
   private currentTodos: TodoItem[] = [];
   private persistedFinalContent = "";
+  private generatedImageAttachments: GeneratedImageAttachment[] = [];
   /** 上下文容量快照：preRequest 每轮实时覆盖（纯内存），terminal 随 checkpoint 落盘。 */
   private contextUsage: ContextUsageSnapshot | undefined;
   private assistantAt = 0;
@@ -303,11 +318,12 @@ export class AgentRunController {
   private readonly activeReasoningStarts = new Map<string, number>();
   private currentReasoningId: string | undefined;
   private earlyTtsQueue: EarlyTtsPlaybackQueue | undefined;
+  private earlyTtsSplitMode: EarlyTtsSplitMode = "sentence";
   private resolveTerminal!: (error?: Error) => void;
   private readonly terminal: Promise<Error | undefined>;
 
   constructor(input: AgentRunInput, deps: AgentRunDeps) {
-    this.input = input;
+    this.input = { ...input };
     this.deps = deps;
     this.terminal = new Promise<Error | undefined>((resolve) => {
       this.resolveTerminal = resolve;
@@ -346,19 +362,6 @@ export class AgentRunController {
         void this.checkpointRun(status, true);
       },
     };
-    try {
-      await this.checkpointRun("running", true, true);
-    } catch (error) {
-      const checkpointCallbacks = { ...this.deps.registries.checkpointTriggers.current };
-      delete checkpointCallbacks[this.input.sessionId];
-      this.deps.registries.checkpointTriggers.current = checkpointCallbacks;
-      const activeRuns = { ...this.deps.registries.activeRuns.current };
-      delete activeRuns[this.input.sessionId];
-      this.deps.registries.activeRuns.current = activeRuns;
-      this.deps.host.setModeBusy(this.input.targetMode, false);
-      this.deps.host.onRunFinished({ mode: this.input.targetMode, sessionId: this.input.sessionId, queuePaused: true });
-      throw error;
-    }
 
     const eventGate = new RunEventGate<AguiEvent>();
     const off = api.onEvent((event) => {
@@ -372,6 +375,7 @@ export class AgentRunController {
         general?.ttsEarlyReadSplitEnabled,
         general?.ttsEarlyReadSplitMode,
       );
+      this.earlyTtsSplitMode = splitMode;
       this.earlyTtsQueue = this.deps.host.earlyTts.start(
         this.input.targetMode,
         this.input.sessionId,
@@ -383,11 +387,15 @@ export class AgentRunController {
         currentUser: {
           turnId: this.input.userMessageId,
           text: (() => {
-            const message = this.input.session.messages.find((item) => item.id === this.input.userMessageId);
-            const content = message?.modelContext?.trim() || message?.content || "";
             const selectedElements = this.input.attachments
               .filter((attachment) => attachment.kind === "web-element" && attachment.element)
               .map((attachment) => formatBrowserElementSelection(attachment.element!));
+            // 认领派发时主进程已把权威模型文本交给我们（贴纸消息含自然语言说明），
+            // 直接用；旧路径缺省时回退投影会话推导。
+            const content = this.input.modelText ?? (() => {
+              const message = this.input.session.messages.find((item) => item.id === this.input.userMessageId);
+              return message?.modelContext?.trim() || message?.content || "";
+            })();
             return selectedElements.length > 0 ? [content, ...selectedElements].filter(Boolean).join("\n\n") : content;
           })(),
           visibleContent: this.input.visibleContent
@@ -454,6 +462,14 @@ export class AgentRunController {
           );
         }
       }
+      if (ack.duplicate && ack.status === "completed") {
+        const session = await store.get(this.input.sessionId);
+        const message = session?.messages.find(item => item.id === this.input.assistantId);
+        const { role: _role, ...fields } = message ?? {};
+        this.deps.host.patchMessage(this.input.sessionId, this.input.assistantId, { ...fields, loading: false, streaming: false, waitingForFirstEvent: false });
+        this.earlyTtsQueue?.cancel();
+        return;
+      }
       // 新 run 已被主进程接受：同会话旧的守卫冲突操作卡（若有）不再有效
       this.deps.host.clearTakeover(this.input.sessionId);
       // 立即把 ack.runId 写入注册表，让 cancel 在 RUN_STARTED 事件到达前也能找到正确的 runId。
@@ -468,7 +484,7 @@ export class AgentRunController {
           },
         };
         for (const accepted of eventGate.bind(ack.runId)) this.handleEvent(accepted);
-        await this.checkpointRun("running", true, true);
+        await this.checkpointRun("running", true);
         if (this.deps.registries.cancelRequestedSessions.current.delete(this.input.sessionId)) {
           await api.cancel(ack.runId);
         }
@@ -608,6 +624,16 @@ export class AgentRunController {
     if (runId) this.deps.api?.reportRunPersisted?.({ runId, finalMessageId: this.input.assistantId });
   }
 
+  /** Card actions from the user and card presentation events share this run-local source of truth. */
+  updateEmailDraftCard(card: MailDraftCardData): void {
+    const existing = this.emailDraftCards.findIndex((item) => item.id === card.id);
+    this.emailDraftCards = existing < 0
+      ? [...this.emailDraftCards, card]
+      : this.emailDraftCards.map((item, index) => index === existing ? card : item);
+    this.deps.host.patchMessage(this.input.sessionId, this.input.assistantId, { emailDraftCards: this.emailDraftCards });
+    void this.checkpointRun(this.terminalStatus ? "terminal" : "running", true);
+  }
+
   /** 构建当前内存展示状态；写入时只提交相对上次成功检查点的差量。 */
   private buildCheckpoint(status: "running" | "waiting_user" | "terminal"): ChatMessage {
     return {
@@ -623,6 +649,7 @@ export class AgentRunController {
       at: this.assistantAt,
       sticker: this.sticker,
       toolExecutions: this.toolExecutions,
+      emailDraftCards: this.emailDraftCards,
       contextUsage: this.contextUsage,
       runSnapshot: {
         ...(this.deps.registries.activeRuns.current[this.input.sessionId]?.runId
@@ -638,7 +665,7 @@ export class AgentRunController {
   }
 
   /** 把展示差量写入会话轨迹；幂等键短小，串行顺序沿用 run 内事件顺序。 */
-  private writeCheckpoint(status: "running" | "waiting_user" | "terminal", required = false): Promise<boolean> {
+  private writeCheckpoint(status: "running" | "waiting_user" | "terminal"): Promise<boolean> {
     const snapshot = this.buildCheckpoint(status);
     this.checkpointChain = this.checkpointChain
       .catch((error) => {
@@ -646,16 +673,17 @@ export class AgentRunController {
         return false;
       })
       .then(async () => {
-        const patch = buildPresentationCheckpointPatch(this.persistedCheckpoint, snapshot, status);
+        const previous = this.persistedCheckpoint?.id === snapshot.id ? this.persistedCheckpoint : undefined;
+        const patch = buildPresentationCheckpointPatch(previous, snapshot, status);
         if (!patch) {
           this.persistedCheckpoint = snapshot;
           return true;
         }
-        const mutationKey = `run:${this.input.assistantId}:${this.checkpointRunToken}:p${++this.checkpointMutationSequence}`;
+        const mutationKey = `run:${snapshot.id}:${this.checkpointRunToken}:p${++this.checkpointMutationSequence}`;
         try {
           const result = await this.deps.store!.checkpointPresentation(
             this.input.sessionId,
-            this.input.assistantId,
+            snapshot.id,
             mutationKey,
             patch,
           );
@@ -664,7 +692,6 @@ export class AgentRunController {
           return true;
         } catch (error) {
           console.error("[AgentRunController] presentation checkpoint failed:", error);
-          if (required || status === "terminal") throw error;
           return false;
         }
       });
@@ -678,13 +705,12 @@ export class AgentRunController {
   private checkpointRun(
     status: "running" | "waiting_user" | "terminal",
     immediate = false,
-    required = false,
   ): Promise<boolean> {
     if (this.checkpointTimer !== undefined) {
       window.clearTimeout(this.checkpointTimer);
       this.checkpointTimer = undefined;
     }
-    if (immediate) return this.writeCheckpoint(status, required);
+    if (immediate) return this.writeCheckpoint(status);
     this.checkpointTimer = window.setTimeout(() => {
       this.checkpointTimer = undefined;
       void this.writeCheckpoint(status);
@@ -935,6 +961,7 @@ export class AgentRunController {
         };
       }
       this.activeReasoningStarts.clear();
+      this.updateActiveReasoningStart();
       this.runActivity = {
         ...(this.runActivity ?? { startedAt: completedAt, reasoningMs: 0 }),
         completedAt,
@@ -970,9 +997,111 @@ export class AgentRunController {
     void this.checkpointRun("running");
   }
 
+  private handleEvent(event: AguiEvent): void {
+    if (event.type === "CUSTOM" && event.name === "cyrene.run.adjustment") {
+      this.eventChain = (this.eventChain ?? Promise.resolve()).then(async () => {
+        await this.revealChain;
+        await this.beginAdjustmentSegment(event.value);
+      });
+    } else if (this.eventChain) {
+      this.eventChain = this.eventChain.then(() => this.reduceEvent(event));
+    } else this.reduceEvent(event);
+    // 展示处理异常不能让终态 promise 永久悬挂。
+    if (this.eventChain) this.eventChain = this.eventChain.catch((error) => {
+      this.resolveTerminal(error instanceof Error ? error : new Error(String(error)));
+    });
+  }
+
+  private async beginAdjustmentSegment(value: unknown): Promise<void> {
+    const adjustment = value as { messages?: unknown; assistantMessageId?: unknown } | null;
+    if (!adjustment || typeof adjustment.assistantMessageId !== "string" || !adjustment.assistantMessageId
+      || !Array.isArray(adjustment.messages) || !adjustment.messages.length
+      || adjustment.assistantMessageId === this.input.assistantId) return;
+    const users: ChatMessageItem[] = adjustment.messages.flatMap((entry) => {
+      const item = entry as { id?: unknown; rawContent?: unknown; userMessage?: ChatMessage } | null;
+      if (!item || typeof item.id !== "string" || typeof item.rawContent !== "string") return [];
+      const user = item.userMessage;
+      return [{ id: item.id, role: "user" as const, content: user?.content ?? item.rawContent,
+        ...(user?.sticker ? { sticker: user.sticker } : {}), ...(user?.at ? { at: user.at } : {}) }];
+    });
+    if (!users.length || !this.deps.host.appendMessages) return;
+    this.publishCandidateChunk(this.candidateRevealQueue.drain());
+    this.completeCandidateDrain();
+    this.commitPendingCandidateClassification();
+    this.closeRoundCandidateText();
+    this.publishCandidateChunk(this.candidateRevealQueue.drain());
+    this.completeCandidateDrain();
+    this.commitPendingCandidateClassification();
+    this.cancelCandidateFrame();
+    this.resetCandidateState();
+    this.completeRunActivity();
+    this.deps.host.patchMessage(this.input.sessionId, this.input.assistantId, {
+      loading: false, waitingForFirstEvent: false, streaming: false, reasoningStreaming: false,
+      transientText: undefined, runStage: { kind: "completed" },
+    });
+    // 封存插话前的内容，但保留整个运行的起点和累计推理时间。
+    // 先捕获旧消息检查点，再同步追加后续片段，避免界面短暂显示为已完成。
+    const previousCheckpoint = this.checkpointRun("terminal", true);
+    if (this.runActivity) {
+      const { completedAt: _completedAt, keepExpanded: _keepExpanded, ...ongoing } = this.runActivity;
+      this.runActivity = ongoing;
+    }
+    this.earlyTtsQueue?.cancel();
+    const previousId = this.input.assistantId;
+    this.input.assistantId = adjustment.assistantMessageId;
+    this.streamContent = "";
+    this.reasoningContent = "";
+    this.reasoningBlocks = [];
+    this.processMessages = [];
+    this.agentRounds = [];
+    this.taskDelegations = [];
+    this.activeRoundId = undefined;
+    this.processMessageSequence = 0;
+    this.eventSequence = 0;
+    this.finalMessageCompleted = false;
+    this.currentReasoningId = undefined;
+    this.persistedFinalContent = "";
+    this.toolExecutions = [];
+    this.emailDraftCards = [];
+    this.generatedImageAttachments = [];
+    this.sticker = null;
+    this.assistantAt = Date.now();
+    const active = this.deps.registries.activeRuns.current[this.input.sessionId];
+    this.deps.registries.activeRuns.current = { ...this.deps.registries.activeRuns.current,
+      [this.input.sessionId]: { ...(active ?? { mode: this.input.targetMode }), assistantId: this.input.assistantId } };
+    this.deps.host.appendMessages(this.input.sessionId, [...users, {
+      id: this.input.assistantId, role: "assistant", content: "", loading: true,
+      waitingForFirstEvent: true, streaming: false, responseStarted: false, runId: active?.runId,
+      runActivity: this.runActivity ? { ...this.runActivity } : undefined,
+      runStage: { kind: "understanding" },
+    }]);
+    this.deps.host.onAssistantSegment?.(previousId, this.input.assistantId);
+    this.earlyTtsQueue = this.deps.host.earlyTts.start(
+      this.input.targetMode, this.input.sessionId, this.input.assistantId, this.earlyTtsSplitMode,
+    );
+    await previousCheckpoint;
+    await this.checkpointRun("running", true);
+  }
+
   /** AG-UI 事件归约：流式内容、推理、工具、交互卡与终态全部在此处理。 */
-  private handleEvent(event: AguiEvent) {
-    if (event.type === "CUSTOM" && event.name === "cyrene.round") {
+  private reduceEvent(event: AguiEvent) {
+    if (event.type === "CUSTOM" && event.name === "cyrene.mail_draft_card") {
+      const card = normalizeMailDraftCardData((event.value as { card?: unknown } | null | undefined)?.card);
+      if (!card) return;
+      this.updateEmailDraftCard(card);
+      return;
+    } else if (event.type === "CUSTOM" && event.name === "cyrene.image_attachments") {
+      const value = event.value as { messageId?: unknown; attachments?: unknown } | null | undefined;
+      if (value?.messageId !== this.input.assistantId || !Array.isArray(value.attachments)) return;
+      const attachments = value.attachments.filter(isGeneratedImageAttachment);
+      if (attachments.length === 0) return;
+      this.generatedImageAttachments = mergeGeneratedImageAttachments(this.generatedImageAttachments, attachments);
+      this.deps.host.patchMessage(this.input.sessionId, this.input.assistantId, {
+        attachments: this.generatedImageAttachments,
+        waitingForFirstEvent: false,
+      });
+      return;
+    } else if (event.type === "CUSTOM" && event.name === "cyrene.round") {
       const value = event.value as { action?: unknown; roundId?: unknown } | null | undefined;
       if ((value?.action === "start" || value?.action === "end") && typeof value.roundId === "string") {
         // 新轮开始：防御性闭合上一轮候选正文（不依赖 progress_text / discard 事件到达）
@@ -1279,11 +1408,6 @@ export class AgentRunController {
     } else if (event.type === "CUSTOM" && event.name === "cyrene.sticker") {
       this.sticker = typeof event.value === "string" ? event.value : null;
       this.deps.host.patchMessage(this.input.sessionId, this.input.assistantId, { sticker: this.sticker });
-    } else if (event.type === "CUSTOM" && event.name === "cyrene.weather") {
-      const weather = normalizeWeatherData(event.value);
-      if (weather) {
-        this.deps.host.patchMessage(this.input.sessionId, this.input.assistantId, { weather });
-      }
     } else if (event.type === "RUN_FINISHED") {
       this.deps.host.patchMessage(this.input.sessionId, this.input.assistantId, { modelRetry: null });
       // 读取 result.status 区分终态（success / cancelled / timeout / runtime_error）
@@ -1317,4 +1441,22 @@ export class AgentRunController {
       this.resolveTerminal(new Error(event.message ?? event.error ?? event.content ?? t("chatPage.errorModelRequestFailed")));
     }
   }
+}
+
+function isGeneratedImageAttachment(value: unknown): value is GeneratedImageAttachment {
+  if (!value || typeof value !== "object") return false;
+  const attachment = value as Partial<GeneratedImageAttachment>;
+  return typeof attachment.id === "string" && attachment.kind === "image"
+    && typeof attachment.name === "string" && typeof attachment.filePath === "string"
+    && attachment.mime === "image/png" && attachment.source === "model"
+    && typeof attachment.byteLength === "number" && attachment.status === "done";
+}
+
+function mergeGeneratedImageAttachments(
+  current: GeneratedImageAttachment[],
+  incoming: GeneratedImageAttachment[],
+): GeneratedImageAttachment[] {
+  const byId = new Map(current.map((item) => [item.id, item]));
+  for (const attachment of incoming) byId.set(attachment.id, attachment);
+  return [...byId.values()];
 }

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Alert, Button, Modal, Spin } from "antd";
-import { CloudSun, Files, Mail, Music2, Puzzle, Search, ShieldAlert } from "lucide-react";
+import { CloudSun, Files, Music2, Puzzle, Search, ShieldAlert } from "lucide-react";
 import { siNeteasecloudmusic } from "simple-icons";
 import { BrandIcon } from "../../components/ui/BrandIcon";
 import { SettingsInput, SettingsPasswordInput, SettingsSelect, SettingsSwitch } from "../../components/ui/SettingsControls";
@@ -21,20 +21,11 @@ interface ToolValues {
   searchTavilyKey: string;
   searchMinimaxKey: string;
   searchAnySearchKey: string;
-  emailEnabled: boolean;
-  emailSmtpHost: string;
-  emailSmtpPort: number;
-  emailSmtpSecure: boolean;
-  emailSmtpUser: string;
-  emailSmtpPass: string;
-  emailFromName: string;
 }
 
 const defaults: ToolValues = {
   weatherEnabled: false, weatherSource: "open-meteo", amapKey: "", travelEnabled: false,
   searchEngine: "off", searchBochaKey: "", searchTavilyKey: "", searchMinimaxKey: "", searchAnySearchKey: "",
-  emailEnabled: false, emailSmtpHost: "", emailSmtpPort: 465, emailSmtpSecure: true,
-  emailSmtpUser: "", emailSmtpPass: "", emailFromName: "",
 };
 
 const searchKeyFor: Record<Exclude<SearchEngine, "off">, keyof ToolValues> = {
@@ -158,7 +149,7 @@ export function ToolSettingsPanel({ musicSettingsNavigation = 0 }: { musicSettin
     }
   }
 
-  async function setBoolean(key: "weatherEnabled" | "travelEnabled" | "emailEnabled" | "emailSmtpSecure", checked: boolean) {
+  async function setBoolean(key: "weatherEnabled" | "travelEnabled", checked: boolean) {
     await savePatch({ [key]: checked });
   }
 
@@ -238,22 +229,6 @@ export function ToolSettingsPanel({ musicSettingsNavigation = 0 }: { musicSettin
         <Card>
           <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.searchEnabled")}</strong></div><SettingsSwitch ariaLabel={t("settingsPage.tools.searchEnabled")} checked={values.searchEngine !== "off"} disabled={saving} onChange={(checked) => void setSearchEnabled(checked)} /></div>
           {values.searchEngine !== "off" && <><div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.searchSource")}</strong></div><SettingsSelect className="cy-settings-tools__select" ariaLabel={t("settingsPage.tools.searchSource")} value={values.searchEngine} disabled={saving} options={(["bocha", "tavily", "minimax", "anySearch"] as const).map((value) => ({ value, label: t(`settingsPage.tools.search${value}`) }))} onChange={(value) => void setSearchEngine(value)} /></div><div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.searchKey", { provider: t(`settingsPage.tools.search${activeSearch}`) })}</strong></div><div className="cy-settings-row__control cy-settings-tools__field"><SettingsPasswordInput showLabel={t("settingsPage.asr.showSecret")} hideLabel={t("settingsPage.asr.hideSecret")} value={String(values[searchKey])} onChange={(event) => setValues((current) => ({ ...current, [searchKey]: event.target.value }))} /><Button disabled={saving} onClick={() => void savePatch({ [searchKey]: values[searchKey] })}>{t("settingsPage.tools.save")}</Button></div></div></>}
-        </Card>
-      </section>
-
-      <section className="cy-settings-section">
-        <div className="cy-settings-section__heading"><h2><Mail size={18} />{t("settingsPage.tools.email")}</h2><p>{t("settingsPage.tools.emailDescription")}</p></div>
-        <Card>
-          <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.emailEnabled")}</strong></div><SettingsSwitch ariaLabel={t("settingsPage.tools.emailEnabled")} checked={values.emailEnabled} disabled={saving} onChange={(checked) => void setBoolean("emailEnabled", checked)} /></div>
-          {values.emailEnabled && <>
-            <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.smtpHost")}</strong></div><SettingsInput className="cy-settings-tools__select" value={values.emailSmtpHost} onChange={(event) => setValues((current) => ({ ...current, emailSmtpHost: event.target.value }))} /></div>
-            <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.smtpPort")}</strong></div><SettingsInput className="cy-settings-tools__select" type="number" min={1} max={65535} value={values.emailSmtpPort} onChange={(event) => setValues((current) => ({ ...current, emailSmtpPort: event.target.value === "" ? 465 : Number(event.target.value) }))} /></div>
-            <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.smtpSecure")}</strong><span>{t("settingsPage.tools.smtpSecureDescription")}</span></div><SettingsSwitch ariaLabel={t("settingsPage.tools.smtpSecure")} checked={values.emailSmtpSecure} disabled={saving} onChange={(checked) => void setBoolean("emailSmtpSecure", checked)} /></div>
-            <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.smtpUser")}</strong></div><SettingsInput className="cy-settings-tools__select" value={values.emailSmtpUser} onChange={(event) => setValues((current) => ({ ...current, emailSmtpUser: event.target.value }))} /></div>
-            <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.smtpPass")}</strong></div><SettingsPasswordInput className="cy-settings-tools__select" showLabel={t("settingsPage.asr.showSecret")} hideLabel={t("settingsPage.asr.hideSecret")} value={values.emailSmtpPass} onChange={(event) => setValues((current) => ({ ...current, emailSmtpPass: event.target.value }))} /></div>
-            <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.fromName")}</strong></div><SettingsInput className="cy-settings-tools__select" value={values.emailFromName} onChange={(event) => setValues((current) => ({ ...current, emailFromName: event.target.value }))} /></div>
-            <div className="cy-settings-row cy-settings-tools__actions"><Button type="primary" disabled={saving} onClick={() => void savePatch({ emailSmtpHost: values.emailSmtpHost, emailSmtpPort: values.emailSmtpPort, emailSmtpSecure: values.emailSmtpSecure, emailSmtpUser: values.emailSmtpUser, emailSmtpPass: values.emailSmtpPass, emailFromName: values.emailFromName })}>{t("settingsPage.tools.saveEmail")}</Button></div>
-          </>}
         </Card>
       </section>
 

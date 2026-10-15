@@ -116,6 +116,110 @@
 .cy-issue-report__contact a:hover,
 .cy-issue-report__contact button:hover { text-decoration: underline; }
 
+.cy-issue-report__source-picker {
+  display: grid;
+  gap: 10px;
+}
+
+.cy-issue-report__source-lead {
+  margin: 0;
+  color: var(--rb-text-secondary, #85858d);
+  font: 400 12px/1.5 var(--rb-font-sans, inherit);
+}
+
+.cy-issue-report__source-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--rb-border-default, #e7e2e5);
+  border-radius: 11px;
+  background: var(--rb-surface-elevated, #fff);
+  color: var(--rb-text-primary, #25252a);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cy-issue-report__source-option:hover {
+  border-color: var(--rb-border-focus, var(--rb-accent, #ff5b8a));
+  background: color-mix(in srgb, var(--rb-accent, #ff5b8a) 6%, var(--rb-surface-elevated, #fff));
+}
+
+.cy-issue-report__source-option-title {
+  font: 600 13px/1.3 var(--rb-font-sans, inherit);
+}
+
+.cy-issue-report__source-option-hint {
+  color: var(--rb-text-secondary, #85858d);
+  font: 400 11px/1.45 var(--rb-font-sans, inherit);
+}
+
+/* 图标只做视觉锚点，悬停时跟边框一起转成强调色 */
+.cy-issue-report__source-option-icon {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: var(--rb-text-secondary, #77717a);
+}
+
+.cy-issue-report__source-option:hover .cy-issue-report__source-option-icon { color: var(--rb-accent, #ff5b8a); }
+
+.cy-issue-report__source-option-text {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.cy-issue-report__source-picked {
+  display: flex;
+  min-height: 35px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  box-sizing: border-box;
+  padding: 0 10px;
+  border: 1px solid var(--rb-border-default, #e7e2e5);
+  border-radius: 8px;
+  background: var(--rb-surface-elevated, #fff);
+  color: var(--rb-text-primary, #25252a);
+}
+
+.cy-issue-report__source-picked button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--rb-accent, #ff5b8a);
+  font: inherit;
+  cursor: pointer;
+}
+
+.cy-issue-report__source-picked button:hover { text-decoration: underline; }
+
+/* 安装包提示：左侧一道强调色细边 + 极浅底色，不跟表单字段抢视觉 */
+.cy-issue-report__notice {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 5px;
+  padding: 10px 12px;
+  border: 1px solid var(--rb-border-subtle, #eee9ec);
+  border-left: 3px solid var(--rb-accent, #ff5b8a);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--rb-accent, #ff5b8a) 5%, var(--rb-surface-elevated, #fff));
+}
+
+.cy-issue-report__notice-title {
+  color: var(--rb-text-primary, #25252a);
+  font: 600 12px/1.4 var(--rb-font-sans, inherit);
+}
+
+/* 三句话在资源里用换行分隔，靠 pre-line 落成三段 */
+.cy-issue-report__notice-body {
+  margin: 0;
+  color: var(--rb-text-secondary, #77717a);
+  font: 400 11px/1.6 var(--rb-font-sans, inherit);
+  white-space: pre-line;
+}
+
 .cy-issue-report__form {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

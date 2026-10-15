@@ -16,6 +16,7 @@ import type { ToolRiskLevel } from "../../permission-policy";
 import type { ToolFileChange } from "../../../shared/chat-types";
 import type { ContextUsageSnapshot } from "../../../shared/context-usage";
 import type { ToolOutputRef, ToolOutputStore } from "./tool-output/tool-output-store";
+import { createHash } from "node:crypto";
 export type { ToolErrorCategory } from "../tools/registry/tool-execution-error";
 export type { TodoItem, TodoStatus } from "../../../shared/task-session";
 
@@ -56,6 +57,10 @@ export interface ToolObservation {
   fullOutputRef?: string;
   /** Runtime-only 完整输出记录；写入 Checkpoint，不进入模型消息。 */
   toolOutputRef?: ToolOutputRef;
+  /** 面向 UI 的专用呈现数据；由 Harness 白名单事件转发，不混入工具结果正文。 */
+  presentation?: { type: "mail_draft_card"; data: Record<string, unknown> };
+  /** 工具活动面板可见的短摘要；敏感工具不得从原始输出推导预览。 */
+  activityPreview?: string;
   /** 工具返回的原始输出（未截断前），可能被截断后只保留 preview */
   output?: string;
 }
@@ -137,7 +142,7 @@ export interface HarnessConfig {
   reservedOutputTokens: number;
   /** 固定安全余量（token） */
   safetyMarginTokens: number;
-  /** 压缩触发阈值比例（默认 0.7） */
+  /** 压缩触发阈值占总上下文窗口的比例（默认 0.85），同时受可用输入预算限制。 */
   compactionThreshold: number;
   /** 压缩后原样保留的近期 transcript 占上下文窗口比例（默认 0.16）。 */
   compactionRetainRatio: number;
@@ -153,7 +158,7 @@ export const DEFAULT_HARNESS_CONFIG: HarnessConfig = {
   contextWindowTokens: 256_000,
   reservedOutputTokens: 8_192,
   safetyMarginTokens: 512,
-  compactionThreshold: 0.7,
+  compactionThreshold: 0.85,
   compactionRetainRatio: 0.16,
 };
 
@@ -163,6 +168,7 @@ export type HarnessEvent =
   | { type: "model_retry"; status: import("../../../shared/model-retry").ModelRetryStatus }
   | { type: "round_start"; roundId: string }
   | { type: "round_end"; roundId: string }
+  | { type: "run_adjustment"; messages: RunAdjustmentMessage[]; assistantMessageId: string }
   | { type: "candidate_text_delta"; roundId: string; delta: string }
   | { type: "candidate_text_discard"; roundId: string }
   | { type: "progress_text"; content: string }
@@ -170,9 +176,11 @@ export type HarnessEvent =
   | { type: "reasoning_start"; messageId: string }
   | { type: "reasoning_delta"; messageId: string; delta: string }
   | { type: "reasoning_end"; messageId: string }
+  | { type: "image_attachments"; messageId: string; roundId: string; attachments: import("../../../shared/generated-image").GeneratedImageAttachment[] }
   | { type: "tool_start"; toolCallId: string; toolName: string; args: Record<string, unknown>; displayName?: string }
   | ({ type: "tool_output"; toolCallId: string } & import("../tools/registry/tool-context").ShellOutputUpdate)
   | { type: "tool_end"; toolCallId: string; outcome: ToolCallOutcome; preview: string; changes?: ToolFileChange[] }
+  | { type: "mail_draft_card"; toolCallId: string; data: Record<string, unknown> }
   | { type: "todo_update"; items: TodoItem[] }
   | { type: "context_usage"; snapshot: ContextUsageSnapshot }
   | { type: "ask_user"; card: unknown }
@@ -213,17 +221,6 @@ export interface HarnessCompactionLifecycleEvent {
   cache?: HarnessCacheState;
 }
 
-/** 供持久化执行者保存可恢复子运行状态的只读快照。 */
-export interface HarnessCheckpoint {
-  messages: ChatMessage[];
-  state: AgentState;
-  /** 完整工具输出的引用，不复制 output.txt 内容。 */
-  toolOutputs: ToolOutputRef[];
-  rounds: number;
-  cache: HarnessCacheState;
-  at: number;
-}
-
 // ── Harness 输入与输出 ───────────────────────────────────
 
 /** 插入当前运行的用户调整消息（宿主已提交为正式用户消息，harness 只负责进上下文）。 */
@@ -232,6 +229,8 @@ export interface RunAdjustmentMessage {
   id: string;
   /** 模型可见的原始文字。 */
   rawContent: string;
+  /** 与队列投影和权威轨迹共用的展示消息。 */
+  userMessage?: import("../../../shared/chat-types").ChatMessage;
 }
 
 export interface HarnessToolSpec extends ToolSpec {
@@ -261,6 +260,9 @@ export interface HarnessInput {
   messages: ChatMessage[];
   /** canonical runId；仅用于内部 transcript 元数据，永不进入 Provider 请求。 */
   runId?: string;
+  /** 当前 run 的 UI assistant 消息 ID。 */
+  assistantTurnId?: string;
+  generatedImageStore?: import("../../chats/generated-image-store").GeneratedImageStore;
   /** 首次请求前物化一次的内部事实；后续轮次不得重新注入。 */
   initialInternalContext?: {
     kind: "run_start" | "recovery";
@@ -282,17 +284,18 @@ export interface HarnessInput {
   signal?: AbortSignal;
   /** 事件回调 */
   onEvent?: (event: HarnessEvent) => void;
-  /** 每轮和终态时发送的可持久化 transcript 快照。
-   *  契约：Harness 传活引用（不克隆）；消费方必须在回调返回前同步完成克隆或落盘，
-   *  不得持有跨 await 的活引用。payload 必须严格 JSON-serializable
-   *  （不得含 Date / Map / Set / BigInt / class instance），否则克隆与持久化都会失真。 */
-  onCheckpoint?: (checkpoint: HarnessCheckpoint) => void;
   /** 工具执行前与模型可见结果提交后的持久化边界。 */
   onToolLifecycle?: (event: HarnessToolLifecycleEvent) => void;
   /** 工具结果确定后的只读观察回调；只读稳定元数据，不参与执行决策。 */
   onToolFinished?: (event: HarnessToolFinishedEvent) => void;
   /** 压缩前后持久化事务边界。 */
   onCompactionLifecycle?: (event: HarnessCompactionLifecycleEvent) => void;
+  /** 保存会话压缩检查点并返回权威模型历史；临时运行信息只参与占用计量。 */
+  compactTranscript?: (input: {
+    retainTokens: number;
+    transientMessages: ChatMessage[];
+    signal?: AbortSignal;
+  }) => Promise<ChatMessage[]>;
   /** 每次模型请求前的非敏感缓存结构诊断。 */
   onCacheDiagnostic?: (diagnostic: HarnessCacheDiagnostic) => void;
   /**
@@ -307,6 +310,8 @@ export interface HarnessInput {
   requestUserClarification?: (card: unknown) => Promise<unknown>;
   /** 是否向模型公布并允许 Ask/不确定副作用确认工具；默认 true。 */
   includeInteractiveTools?: boolean;
+  /** 可选的运行层工具白名单；子任务据此限制模型清单与执行入口。 */
+  allowedBuiltinToolIds?: ReadonlySet<string>;
   /** 计划模式状态；控制计划工具组可见性（undefined = 不注入计划工具，兼容旧调用方/子任务）。 */
   planState?: import("../plan-mode").PlanStateName;
   /** 工具上下文（权限检查等） */
@@ -372,6 +377,11 @@ export function parseToolCallArgs(call: ToolCall): Record<string, unknown> {
 
 /** 生成工具调用的 fingerprint（用于 uncertainEffects 重复拦截） */
 export function toolCallFingerprint(toolName: string, args: Record<string, unknown>): string {
+  if (toolName === "send_email" || toolName.startsWith("gmail_") || toolName.startsWith("email_")) {
+    const sortedArgs = Object.keys(args).sort().map((key) => [key, args[key]]);
+    const digest = createHash("sha256").update(JSON.stringify(sortedArgs)).digest("hex");
+    return `${toolName}(sha256:${digest})`;
+  }
   const sortedArgs = Object.keys(args)
     .sort()
     .map((k) => `${k}=${String(args[k])}`)

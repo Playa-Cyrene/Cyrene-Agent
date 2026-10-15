@@ -28,6 +28,12 @@ vi.mock("electron", () => ({
   },
 }));
 
+// 替换内容的用例显式处于可写档位；权限拒绝由文件适配器用例单独校验。
+vi.mock("../../permission", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../../permission")>(),
+  getCurrentLevel: () => "full",
+}));
+
 // 生活工具其余依赖：纯函数直接放行，翻译工具的 fetch 打桩
 vi.mock("./built-in-tools", () => ({ currentUserTimezone: () => "Asia/Shanghai" }));
 
@@ -68,7 +74,7 @@ describe("str_replace 接线：单发替换", () => {
     expect(result.appliedEdits).toBe(1);
     expect(result.whitespaceNormalized).toBe(false);
     expect(result.changes).toHaveLength(1);
-    expect(result.changes[0].file).toBe(file);
+    expect(result.changes[0].file).toBe(fs.realpathSync.native(file));
     expect(result.changes[0].kind).toBe("modified");
     expect(fs.readFileSync(file, "utf8")).toBe("# 标题\n\n修改后的正文。\n");
   });

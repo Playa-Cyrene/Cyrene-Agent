@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from "node:fs";
+import { InteractionController } from "./interaction";
 import { describe, expect, it, vi } from "vitest";
 
 /**
@@ -32,15 +34,7 @@ vi.mock("pixi.js", () => {
 // Minimal stub canvas; we never read pixels in these tests.
 const fakeCanvas = {} as HTMLCanvasElement;
 
-describe("Live2DManager.playAction", () => {
-  it("is a no-op when the model is not loaded", async () => {
-    const { Live2DManager } = await import("./manager");
-    const mgr = new Live2DManager({ canvas: fakeCanvas, width: 100, height: 100, modelPath: "/x" });
-    // init() will try to load the real model — we never call it, so model stays null
-    await mgr.playAction({ kind: "expression", name: "墨镜" });
-    // No assertion needed beyond "did not throw"
-  });
-
+describe("Live2DManager", () => {
   it("deduplicates concurrent initialization so only one model is loaded", async () => {
     vi.clearAllMocks();
     vi.stubGlobal("window", { devicePixelRatio: 1, innerWidth: 100, innerHeight: 100 });
@@ -99,90 +93,60 @@ describe("Live2DManager.playAction", () => {
     vi.unstubAllGlobals();
   });
 
-  it("calls model.expression for an expression target", async () => {
-    const { Live2DManager } = await import("./manager");
-    const mgr = new Live2DManager({ canvas: fakeCanvas, width: 100, height: 100, modelPath: "/x" });
-    // Inject a fake model directly
-    (mgr as unknown as { model: unknown }).model = {
-      motion: vi.fn(async () => true),
-      expression: vi.fn(async () => true),
-      internalModel: { motionManager: { definitions: {} } },
-      scale: { set: vi.fn() },
-      anchor: { set: vi.fn() },
-      x: 0, y: 0, width: 100, height: 100,
-      destroy: vi.fn(),
-    };
+});
 
-    await mgr.playAction({ kind: "expression", name: "墨镜" });
-    const model = (mgr as unknown as { model: { expression: ReturnType<typeof vi.fn> } }).model;
-    expect(model.expression).toHaveBeenCalledWith("墨镜");
+describe("retained click actions", () => {
+  it("resolves and plays all actual model hit areas, including both swing ropes", async () => {
+    const json = JSON.parse(readFileSync(new URL("../public/models/cyrene/Cyrene.model3.json", import.meta.url), "utf8"));
+    const definitions = json.FileReferences.Motions;
+    const names = new Set(json.FileReferences.Expressions.map((e: { Name: string }) => e.Name));
+    vi.stubGlobal("window", { devicePixelRatio: 1, innerWidth: 400, innerHeight: 500 });
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => json })));
+    const callbacks = new Map<string, (e: {clientX: number; clientY: number}) => void>();
+    const canvas = { addEventListener: vi.fn((n, cb) => callbacks.set(n, cb)), removeEventListener: vi.fn((n) => callbacks.delete(n)) };
+    let areaName = "";
+    const model = { anchor: { set: vi.fn() }, scale: { set: vi.fn() }, width: 100, height: 100, destroy: vi.fn(),
+      motion: vi.fn(async () => false), expression: vi.fn(async (name: string) => names.has(name)), hitTest: () => [areaName],
+      internalModel: { motionManager: { definitions } } };
+    const { Live2DModel } = await import("pixi-live2d-display/cubism4");
+    vi.mocked(Live2DModel.from).mockResolvedValue(model as never);
+    const { Live2DManager } = await import("./manager");
+    const mgr = new Live2DManager({ canvas: canvas as never, width: 400, height: 500, modelPath: "/x" });
+    await mgr.init();
+    const trigger = vi.fn();
+    const interaction = new InteractionController(canvas as never, model as never, mgr.getHitAreaDefs(), { onTrigger: trigger });
+    try {
+      expect(mgr.getHitAreaDefs()).toHaveLength(9);
+      for (const area of json.HitAreas) {
+        areaName = area.Name;
+        const [group, name] = area.Motion.split(":");
+        const def = definitions[group].find((d: {Name: string}) => d.Name === name);
+        expect(def.File).toBeUndefined();
+        expect(mgr.getHitAreaDefs().find((hit) => hit.name === area.Name)).toMatchObject({
+          motionIndex: definitions[group].indexOf(def), expressionName: def.Expression,
+        });
+        trigger.mockClear(); model.expression.mockClear();
+        callbacks.get("pointerdown")!({clientX: 10, clientY: 10});
+        callbacks.get("pointerup")!({clientX: 10, clientY: 10});
+        await vi.waitFor(() => expect(trigger).toHaveBeenCalledOnce());
+        expect(model.expression).toHaveBeenCalledWith(def.Expression);
+      }
+    } finally { interaction.dispose(); mgr.dispose(); vi.unstubAllGlobals(); }
+    expect(callbacks.size).toBe(0);
   });
+});
 
-  it("resolves motionName to the right index in the right group", async () => {
-    const { Live2DManager } = await import("./manager");
-    const mgr = new Live2DManager({ canvas: fakeCanvas, width: 100, height: 100, modelPath: "/x" });
-    const motionMock = vi.fn(async () => true);
-    (mgr as unknown as { model: unknown }).model = {
-      motion: motionMock,
-      expression: vi.fn(async () => true),
-      internalModel: { motionManager: { definitions: { "动作#6": [{ Name: "动作回正" }, { Name: "Wink~" }, { Name: "我可爱吧~" }, { Name: "笑一笑吧~" }] } } },
-      scale: { set: vi.fn() },
-      anchor: { set: vi.fn() },
-      x: 0, y: 0, width: 100, height: 100,
-      destroy: vi.fn(),
-    };
-    // Inject the motionIndexMap that loadModel() would normally build from the JSON.
-    (mgr as unknown as { motionIndexMap: Map<string, Map<string, number>> }).motionIndexMap = new Map([
-      ["动作#6", new Map([
-        ["动作回正", 0],
-        ["Wink~", 1],
-        ["我可爱吧~", 2],
-        ["笑一笑吧~", 3],
-      ])],
-    ]);
-
-    await mgr.playAction({ kind: "motion", group: "动作#6", motionName: "Wink~" });
-    expect(motionMock).toHaveBeenCalledWith("动作#6", 1);
-
-    await mgr.playAction({ kind: "motion", group: "动作#6", motionName: "笑一笑吧~" });
-    expect(motionMock).toHaveBeenLastCalledWith("动作#6", 3);
-  });
-
-  it("falls back to expression() when motionName is not in the group", async () => {
-    const { Live2DManager } = await import("./manager");
-    const mgr = new Live2DManager({ canvas: fakeCanvas, width: 100, height: 100, modelPath: "/x" });
-    const motionMock = vi.fn(async () => false);
-    const expressionMock = vi.fn(async () => true);
-    (mgr as unknown as { model: unknown }).model = {
-      motion: motionMock,
-      expression: expressionMock,
-      internalModel: { motionManager: { definitions: { "动作#6": [{ Name: "动作回正" }] } } },
-      scale: { set: vi.fn() },
-      anchor: { set: vi.fn() },
-      x: 0, y: 0, width: 100, height: 100,
-      destroy: vi.fn(),
-    };
-
-    await mgr.playAction({ kind: "motion", group: "动作#6", motionName: "Wink~" });
-    expect(expressionMock).toHaveBeenCalledWith("Wink~");
-  });
-
-  it("swallows model errors and logs a warning", async () => {
-    const { Live2DManager } = await import("./manager");
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const mgr = new Live2DManager({ canvas: fakeCanvas, width: 100, height: 100, modelPath: "/x" });
-    (mgr as unknown as { model: unknown }).model = {
-      motion: vi.fn(async () => { throw new Error("boom"); }),
-      expression: vi.fn(async () => { throw new Error("boom"); }),
-      internalModel: { motionManager: { definitions: {} } },
-      scale: { set: vi.fn() },
-      anchor: { set: vi.fn() },
-      x: 0, y: 0, width: 100, height: 100,
-      destroy: vi.fn(),
-    };
-
-    await mgr.playAction({ kind: "expression", name: "X" });
-    expect(warn).toHaveBeenCalled();
-    warn.mockRestore();
+describe("模型资源路径", () => {
+  it("所有动作 URL 无片段且能定位实际文件", () => {
+    const modelUrl = new URL("../public/models/cyrene/Cyrene.model3.json", import.meta.url);
+    const json = JSON.parse(readFileSync(modelUrl, "utf8"));
+    for (const entries of Object.values(json.FileReferences.Motions) as Array<Array<{ File?: string }>>) {
+      for (const entry of entries) {
+        if (!entry.File) continue;
+        const resource = new URL(entry.File, modelUrl);
+        expect(resource.hash).toBe("");
+        expect(existsSync(resource)).toBe(true);
+      }
+    }
   });
 });

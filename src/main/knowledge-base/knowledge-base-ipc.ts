@@ -15,10 +15,10 @@ function store() {
   return instance;
 }
 
-function workspaces(): KnowledgeWorkspaceOption[] {
+async function workspaces(): Promise<KnowledgeWorkspaceOption[]> {
   const found = new Map<string, KnowledgeWorkspaceOption>();
   const activeSessionId = getActiveChatSessionId();
-  for (const session of chatsStore.listSessions()) {
+  for (const session of (await chatsStore.listSessions())) {
     if (!session.workspaceRoot) continue;
     try {
       const workspaceId = workspaceScope(session.workspaceRoot).workspaceId;
@@ -32,10 +32,10 @@ function workspaces(): KnowledgeWorkspaceOption[] {
   return [...found.values()].sort((a, b) => a.workspaceName.localeCompare(b.workspaceName));
 }
 
-function trustedScope(value: KnowledgeScope): KnowledgeScope {
+async function trustedScope(value: KnowledgeScope): Promise<KnowledgeScope> {
   if (value?.kind === "global") return { kind: "global" };
   if (value?.kind === "workspace") {
-    const match = workspaces().find((item) => item.workspaceId === value.workspaceId);
+    const match = (await workspaces()).find((item) => item.workspaceId === value.workspaceId);
     if (!match) throw new Error("工作区不存在");
     return { kind: "workspace", ...match };
   }
@@ -46,8 +46,8 @@ export function registerKnowledgeBaseIpc(ipc: IpcScope = createIpcScope()): void
   ipc.handle(IPC.KNOWLEDGE_GET_STATE, () => store().state());
   ipc.handle(IPC.KNOWLEDGE_SET_ENABLED, (_event, enabled: boolean) => store().setEnabled(enabled));
   ipc.handle(IPC.KNOWLEDGE_LIST_WORKSPACES, () => workspaces());
-  ipc.handle(IPC.KNOWLEDGE_CREATE_COLLECTION, (_event, input: { name: string; scope: KnowledgeScope }) =>
-    store().createCollection({ name: input?.name, scope: trustedScope(input?.scope) }));
+  ipc.handle(IPC.KNOWLEDGE_CREATE_COLLECTION, async (_event, input: { name: string; scope: KnowledgeScope }) =>
+    store().createCollection({ name: input?.name, scope: await trustedScope(input?.scope) }));
   ipc.handle(IPC.KNOWLEDGE_DELETE_COLLECTION, (_event, id: string) => store().deleteCollection(id));
   ipc.handle(IPC.KNOWLEDGE_SET_COLLECTION_ENABLED, (_event, id: string, enabled: boolean) =>
     store().setCollectionEnabled(id, enabled));

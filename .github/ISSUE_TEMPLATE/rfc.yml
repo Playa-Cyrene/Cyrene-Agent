@@ -5,6 +5,29 @@ body:
   - type: markdown
     attributes:
       value: |
+        > [!IMPORTANT]
+        > 本项目欢迎合理使用 AI 辅助，但提交者需要对最终内容负责。
+        > 请勿直接粘贴未经人工审阅、整理和验证的 AI 原始输出。
+        > 若内容明显是未整理的 AI 输出，维护者可能要求重新整理后再继续处理。
+
+        **未按本模板提交的 Issue 会被机器人自动关闭**，请认真填写下面的每一项。
+
+  - type: checkboxes
+    attributes:
+      label: AI 辅助声明（提交前请逐条确认）
+      options:
+        - label: 我已确认：本 Issue 由我本人阅读、核对并整理，未直接粘贴未经处理的 AI 原始输出
+          required: true
+        - label: 我已核对其中涉及的技术事实，并对最终内容负责
+          required: true
+        - label: 我已区分「已确认事实」和「AI 推测 / 尚待验证的结论」
+          required: true
+        - label: 如果 AI 给出了根因分析，我已把「已确认事实」和「根因推测」分开陈述
+          required: true
+
+  - type: markdown
+    attributes:
+      value: |
         ## 🧠 这是技术深度讨论，不是功能请求
         请描述：核心模块现状、提议的设计、影响范围与替代方案。
         如果只是想加用户能感知的功能/UI 改动，请返回「功能请求 ✨」。

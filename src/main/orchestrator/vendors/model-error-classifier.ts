@@ -25,6 +25,23 @@ function safeString(value: unknown): string | undefined {
   return result && result.length <= 160 && !/[\r\n]/.test(result) ? result : undefined;
 }
 
+/** SDK 会包装 fetch 错误；只提取稳定的网络错误标识，不读取底层异常原文。 */
+function networkFailure(error: unknown): { category: "NETWORK" | "TIMEOUT"; code?: string } | undefined {
+  const seen = new Set<unknown>();
+  let current = record(error);
+  for (let depth = 0; current && depth < 8 && !seen.has(current); depth++) {
+    seen.add(current);
+    const name = safeString(current.name)?.toLowerCase();
+    const code = safeString(current.code);
+    if (name?.includes("timeout") || code === "ETIMEDOUT") return { category: "TIMEOUT", code };
+    if (name?.includes("connection") || ["ECONNRESET", "ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN"].includes(code ?? "")) {
+      return { category: "NETWORK", code };
+    }
+    current = record(current.cause);
+  }
+  return undefined;
+}
+
 export function classifyModelFailure(input: {
   provider: string; model: string; status?: number; error?: unknown;
 }): ModelFailureInfo {
@@ -32,15 +49,22 @@ export function classifyModelFailure(input: {
   const table = providers[provider];
   const root = record(input.error);
   const protocolDetails = record(root?.providerDetails);
-  const errorName = safeString(root?.name)?.toLowerCase();
+  const network = networkFailure(input.error);
   const response = record(root?.response);
   const responseData = record(response?.data);
-  const bodyError = record(root?.error) ?? record(responseData?.error);
+  let sdkBody: Record<string, unknown> | undefined;
+  if (typeof root?.responseBody === "string") {
+    try { sdkBody = record(JSON.parse(root.responseBody)); } catch { /* 非 JSON 错误体没有可提取的字段 */ }
+  }
+  const bodyError = record(root?.error) ?? record(responseData?.error) ?? record(sdkBody?.error);
   const status = input.status ?? (typeof root?.status === "number" ? root.status : undefined)
-    ?? (typeof protocolDetails?.status === "number" ? protocolDetails.status : undefined);
-  const vendorCode = safeString(bodyError?.code ?? protocolDetails?.vendorCode ?? root?.vendorCode ?? root?.code ?? root?.error_code ?? root?.errorCode);
+    ?? (typeof protocolDetails?.status === "number" ? protocolDetails.status : undefined)
+    ?? (typeof root?.statusCode === "number" ? root.statusCode : undefined);
+  const vendorCode = safeString(bodyError?.code ?? protocolDetails?.vendorCode ?? root?.vendorCode ?? root?.code ?? root?.error_code ?? root?.errorCode) ?? network?.code;
   const vendorType = safeString(bodyError?.type ?? bodyError?.status ?? protocolDetails?.vendorType ?? root?.vendorType ?? root?.type ?? root?.error_type);
-  const requestId = safeString(root?.request_id ?? root?.requestId ?? root?.["x-request-id"] ?? protocolDetails?.requestId ?? root?.id);
+  const sdkHeaders = record(root?.responseHeaders);
+  const requestId = safeString(root?.request_id ?? root?.requestId ?? root?.["x-request-id"] ?? protocolDetails?.requestId ?? root?.id
+    ?? sdkHeaders?.["x-request-id"] ?? sdkHeaders?.["request-id"]);
   let entry: Entry | undefined = vendorCode
     ? table?.business_codes?.[vendorCode] ?? table?.codes?.[vendorCode]
     : undefined;
@@ -61,9 +85,7 @@ export function classifyModelFailure(input: {
   }
   // Message heuristics are intentionally disabled: provider text is not a stable code surface.
   const category = entry?.category
-    ?? (status === 408 || status === 504 || errorName?.includes("timeout") ? "TIMEOUT"
-      : errorName?.includes("connection") || ["ECONNRESET", "ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN"].includes(vendorCode ?? "")
-        ? "NETWORK" : "UNKNOWN");
+    ?? (status === 408 || status === 504 ? "TIMEOUT" : network?.category ?? networkFailure({ code: vendorCode })?.category ?? "UNKNOWN");
   return {
     provider, model: input.model, category,
     ...(Number.isInteger(status) ? { status } : {}),

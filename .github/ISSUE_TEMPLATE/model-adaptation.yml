@@ -1,0 +1,84 @@
+name: 模型适配 / 贡献认领
+description: 新型号支持、能力修正或贡献方向讨论
+title: "[模型适配] 厂商 / 型号"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        > [!IMPORTANT]
+        > 本项目欢迎合理使用 AI 辅助，但提交者需要对最终内容负责。
+        > 请勿直接粘贴未经人工审阅、整理和验证的 AI 原始输出。
+        > 若内容明显是未整理的 AI 输出，维护者可能要求重新整理后再继续处理。
+
+        **未按本模板提交的 Issue 会被机器人自动关闭**，请认真填写下面的每一项。
+
+  - type: checkboxes
+    attributes:
+      label: AI 辅助声明（提交前请逐条确认）
+      options:
+        - label: 我已确认：本 Issue 由我本人阅读、核对并整理，未直接粘贴未经处理的 AI 原始输出
+          required: true
+        - label: 我已核对其中涉及的技术事实，并对最终内容负责
+          required: true
+        - label: 我已区分「已确认事实」和「AI 推测 / 尚待验证的结论」
+          required: true
+        - label: 如果 AI 给出了根因分析，我已把「已确认事实」和「根因推测」分开陈述
+          required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        有依据的单厂商声明更新可以直接提 PR（合并请求），无需等待认领。先看英文版 [贡献指南](https://github.com/Playa-Cyrene/Cyrene-Agent/blob/master/docs/contributing/model-adaptation.en.md) 和 [适配清单](https://github.com/Playa-Cyrene/Cyrene-Agent/blob/master/docs/references/adapted-models.en.md)。
+        不要提供密钥、授权头、私人对话或带凭证的端点地址。
+  - type: input
+    id: provider-model
+    attributes:
+      label: 厂商与准确型号
+      description: 填接口实际接受的型号名，包含版本或后缀。
+    validations:
+      required: true
+  - type: dropdown
+    id: transport
+    attributes:
+      label: 实际调用协议
+      options:
+        - openai（聊天补全）
+        - anthropic（消息接口）
+        - responses（响应接口）
+        - 尚未确认
+    validations:
+      required: true
+  - type: dropdown
+    id: endpoint-kind
+    attributes:
+      label: 端点类型
+      options:
+        - 官方标准接口
+        - 官方订阅 / 编码接口
+        - 第三方中转 / 托管
+        - 本地服务
+        - 尚未确认
+    validations:
+      required: true
+  - type: textarea
+    id: capability
+    attributes:
+      label: 希望补充或修正的能力
+      description: 型号候选、推理、采样、结构化输出、工具或视觉；写清现象、期望及端点公开域名。
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 依据与未知项
+      description: 官方资料链接，或脱敏的请求/响应、错误、协议、核验日期；没有核验的能力写“未知”。
+    validations:
+      required: true
+  - type: dropdown
+    id: contribution
+    attributes:
+      label: 是否计划提交贡献
+      options:
+        - 愿意提交 PR
+        - 需要协助定位声明或补用例
+        - 暂时只提供资料或问题反馈

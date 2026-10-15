@@ -6,6 +6,8 @@ import { resolveAsset } from "../../../../../shared/renderer-base";
 import { useCyreneAvatar } from "../../../hooks/useCyreneAvatar";
 import type { AgentRoundRecord, ChatMessage, ChatMessageChannelSource, ConversationMode, ProcessMessageRecord, ReasoningBlock, RunActivityRecord, TaskDelegationDisplayRecord, ToolExecutionRecord, ToolFileChange } from "../../../../../shared/chat-types";
 import type { ContextUsageSnapshot } from "../../../../../shared/context-usage";
+import type { GeneratedImageAttachment } from "../../../../../shared/generated-image";
+import type { MailDraftCardData } from "../../../../../shared/mail-draft-card";
 import type { ModelRetryStatus } from "../../../../../shared/model-retry";
 import thinkingMoodUrl from "../../../assets/status-moods/思考中.png?url";
 import completedThinkingMoodUrl from "../../../assets/status-moods/提醒.png?url";
@@ -31,12 +33,12 @@ import { stopTtsPlayback } from "./tts-playback";
 import { LastTurnActionButton } from "./LastTurnActionButton";
 import { resolveRevisableLastTurn } from "./last-turn-actions";
 import { extractMessageStickerId, stripMessageStickerMarkers } from "./message-sticker";
-import type { WeatherData } from "./weather/weather-types";
-import { WeatherCard } from "./weather/WeatherCard";
 import { buildAskUserQa, buildFlatRunTimeline, countRoundChangedFiles, describeToolExecution, resolveAgentRoundTitle } from "./agent-rounds";
 import { TaskDelegationRow } from "./TaskDelegationRow";
 import { extractFileChanges, FileChangeCard } from "./FileChangeCard";
 import { FileLinkContext, type FileLinkEnv } from "./FileLinkContext";
+import { FileIcon } from "./file-icon";
+import { relativePathInsideWorkspace } from "./file-link";
 import { ReviewPanel } from "./ReviewPanel";
 import { reportChatPerfRender } from "./chat-perf-probe";
 import { StreamdownMessageContent } from "./StreamdownMessageContent";
@@ -44,6 +46,9 @@ import { Archive, ScanLine } from "lucide-react";
 import type { BrowserElementSelection } from "../../../../../shared/browser-panel-types";
 import { Marker, MarkerContent, MarkerIcon } from "../../../components/ui/marker";
 import { VirtualChatMessageList } from "./VirtualChatMessageList";
+import { AttachmentImage } from "./AttachmentImage";
+import { GeneratedImageAttachments } from "./GeneratedImageAttachments";
+import { MailDraftCard } from "./MailDraftCard";
 
 export interface ChatMessageItem {
   id: string;
@@ -56,6 +61,7 @@ export interface ChatMessageItem {
   processMessages?: ProcessMessageRecord[];
   agentRounds?: AgentRoundRecord[];
   taskDelegations?: TaskDelegationDisplayRecord[];
+  emailDraftCards?: MailDraftCardData[];
   reasoningStreaming?: boolean;
   responseStarted?: boolean;
   streaming?: boolean;
@@ -69,13 +75,14 @@ export interface ChatMessageItem {
   sticker?: string | null;
   toolExecutions?: ToolExecutionRecord[];
   runActivity?: RunActivityRecord;
+  /** 同一次运行被用户插话分隔时，派生出的共用任务头；不写入会话。 */
+  runDisplay?: RunMessageDisplay;
   runSnapshot?: ChatMessage["runSnapshot"];
   runStage?: AgentRunStage;
   /** 关联的 Run ID，用于获取 Review 快照 */
   runId?: string;
   taskPlan?: TaskPlanPresentation;
   attachments?: ChatMessageAttachment[];
-  weather?: WeatherData;
   /** 上下文容量快照：运行中为每轮 preRequest 实时值，run 结束后为终态快照。 */
   contextUsage?: ContextUsageSnapshot;
   /** 渠道群聊的发送者/引用等隐藏模型上下文；不直接渲染。 */
@@ -87,7 +94,20 @@ export interface ChatMessageItem {
   at?: number;
 }
 
+interface RunMessageDisplay {
+  rootId: string;
+  continuation: boolean;
+  last: boolean;
+  activity: RunActivityRecord;
+  stage?: AgentRunStage;
+  modelRetry?: ModelRetryStatus | null;
+  taskPlan?: TaskPlanPresentation;
+}
+
 export interface ChatMessageAttachment {
+  id?: string;
+  source?: string;
+  byteLength?: number;
   name: string;
   kind: string;
   filePath?: string;
@@ -129,6 +149,7 @@ interface ChatMessageListProps {
   onOpenFileLink?: (relPath: string, line?: number) => void;
   /** 点击助手消息网页链接 → 在 Cyrene 右侧浏览器打开，或从右键菜单选择外部浏览器。 */
   onOpenWebLink?: (url: string, destination: "cyrene" | "external") => void | Promise<void>;
+  onMailDraftChange?: (messageId: string, card: MailDraftCardData) => void;
 }
 
 type CharacterMoodRenderContext = {
@@ -291,19 +312,30 @@ function AssistantContent({
   streaming,
   stickerUrl,
   channelSource,
+  attachments,
 }: {
   content: string;
   streaming: boolean;
   stickerUrl?: string;
   channelSource?: ChatMessageChannelSource;
+  attachments?: ChatMessageAttachment[];
 }) {
+  const generatedImages = (attachments ?? []).filter(isGeneratedImageAttachment);
   return (
     <div className="cy-message__assistant-body">
       {channelSource && <ChannelSourceLabel source={channelSource} direction="outgoing" />}
       {content && <MarkdownContent content={content} streaming={streaming} />}
+      <GeneratedImageAttachments attachments={generatedImages} />
       {stickerUrl && <img className="cy-message__sticker" src={stickerUrl} alt={t("messageList.assistantStickerAlt")} draggable={false} />}
     </div>
   );
+}
+
+function isGeneratedImageAttachment(attachment: ChatMessageAttachment): attachment is ChatMessageAttachment & GeneratedImageAttachment {
+  return attachment.kind === "image" && attachment.source === "model"
+    && typeof attachment.id === "string" && typeof attachment.filePath === "string"
+    && attachment.mime === "image/png" && typeof attachment.byteLength === "number"
+    && attachment.status === "done";
 }
 
 const channelNameKeys: Record<ChatMessageChannelSource["channel"], string> = {
@@ -701,6 +733,8 @@ function RunActivityContent({
   stage,
   taskPlan,
   modelRetry,
+  continuation = false,
+  detailLive,
   expanded,
   onExpand,
   onOpenTaskInspector,
@@ -715,6 +749,8 @@ function RunActivityContent({
   stage?: AgentRunStage;
   taskPlan?: TaskPlanPresentation;
   modelRetry?: ModelRetryStatus | null;
+  continuation?: boolean;
+  detailLive?: boolean;
   expanded: boolean;
   onExpand: (expanded: boolean) => void;
   onOpenTaskInspector?: (delegation: TaskDelegationDisplayRecord) => void;
@@ -726,9 +762,9 @@ function RunActivityContent({
   const snapshot = resolveRunActivitySnapshot(activity, now);
   const wasProcessingRef = useRef(snapshot.processing);
   useEffect(() => {
-    if (shouldAutoCollapseRunActivity(wasProcessingRef.current, snapshot.processing, activity.keepExpanded)) onExpand(false);
+    if (!continuation && shouldAutoCollapseRunActivity(wasProcessingRef.current, snapshot.processing, activity.keepExpanded)) onExpand(false);
     wasProcessingRef.current = snapshot.processing;
-  }, [activity.keepExpanded, onExpand, snapshot.processing]);
+  }, [activity.keepExpanded, continuation, onExpand, snapshot.processing]);
 
   const title = snapshot.processing
     ? t("messageList.activityProcessingTitle", { elapsed: formatElapsed(snapshot.processingMs) })
@@ -738,7 +774,7 @@ function RunActivityContent({
 
   return (
     <section className={`cy-run-activity${snapshot.processing ? " is-processing" : " is-complete"}`}>
-      <button
+      {!continuation && <button
         type="button"
         className="cy-run-activity__header"
         onClick={() => onExpand(!expanded)}
@@ -757,13 +793,13 @@ function RunActivityContent({
         <svg className={`cy-run-activity__chevron${expanded ? " is-expanded" : ""}`} viewBox="0 0 16 16" aria-hidden="true">
           <path d="m4 6 4 4 4-4" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.75" />
         </svg>
-      </button>
+      </button>}
       {expanded && (
         <div className="cy-run-activity__expanded" id={`${activityId}-details`}>
-          {taskPlan && <TaskPlanCard plan={taskPlan} />}
-          <div className="cy-run-activity__divider" />
+          {!continuation && taskPlan && <TaskPlanCard plan={taskPlan} />}
+          {!continuation && <div className="cy-run-activity__divider" />}
           <RunActivityDetail
-            live={snapshot.processing}
+            live={detailLive ?? snapshot.processing}
             agentRounds={agentRounds}
             reasoningBlocks={reasoningBlocks}
             processMessages={processMessages}
@@ -779,6 +815,50 @@ function RunActivityContent({
   );
 }
 
+/** 工具摘要里的文件入口复用正文文件链接环境，预览读取当前完整文件。 */
+export function ToolFileLink({ filePath, changes }: { filePath: string; changes?: ToolFileChange[] }) {
+  const { workspaceRoot, openFile } = useContext(FileLinkContext);
+  const normalizedPath = filePath.replaceAll("\\", "/");
+  const fileName = normalizedPath.split("/").pop() ?? filePath;
+  const relPath = workspaceRoot
+    ? /^(?:[A-Za-z]:\/|\/)/.test(normalizedPath)
+      ? relativePathInsideWorkspace(normalizedPath, workspaceRoot)
+      : normalizedPath.replace(/^\.\//, "")
+    : null;
+  const pathKey = (path: string) => {
+    const normalized = path.replaceAll("\\", "/");
+    const relative = (workspaceRoot ? relativePathInsideWorkspace(normalized, workspaceRoot) : null) ?? normalized;
+    const key = relative.replace(/^\.\//, "");
+    return /^(?:[A-Za-z]:|[\\/]{2})/.test(workspaceRoot ?? normalized) ? key.toLowerCase() : key;
+  };
+  const change = changes?.find((item) => pathKey(item.file) === pathKey(filePath));
+  const content = (
+    <>
+      <FileIcon fileName={fileName} className="cy-file-link__icon" />
+      <span className="cy-file-link__text">{fileName}</span>
+      {change && (change.insertions > 0 || change.deletions > 0) && (
+        <span className="cy-tool-executions__file-stats">
+          {change.insertions > 0 && <span className="is-add">+{change.insertions}</span>}
+          {change.deletions > 0 && <span className="is-remove">-{change.deletions}</span>}
+        </span>
+      )}
+    </>
+  );
+  if (!relPath || !openFile) {
+    return <span className="cy-file-link cy-tool-executions__file is-unavailable" title={filePath}>{content}</span>;
+  }
+  return (
+    <button
+      type="button"
+      className="cy-file-link cy-tool-executions__file"
+      title={filePath}
+      onClick={(event) => { event.stopPropagation(); openFile(relPath); }}
+    >
+      {content}
+    </button>
+  );
+}
+
 function ToolExecutionContent({ tools }: { tools: ToolExecutionRecord[] }) {
   const { t } = useTranslation();
   return (
@@ -789,13 +869,16 @@ function ToolExecutionContent({ tools }: { tools: ToolExecutionRecord[] }) {
         line="dashed"
         items={tools.map((tool) => {
           const presentation = describeToolExecution(tool);
+          const changes = tool.changes ?? (tool.result ? extractFileChanges(tool.result) ?? undefined : undefined);
           return {
             key: tool.id,
             title: presentation.label,
             description: (
               <span className="cy-tool-executions__description">
                 <span className="cy-tool-executions__status">{presentation.statusText}</span>
-                {presentation.detail && <code className="cy-tool-executions__detail" title={presentation.detail}>{presentation.detail}</code>}
+                {presentation.filePaths
+                  ? presentation.filePaths.map((filePath) => <ToolFileLink key={filePath} filePath={filePath} changes={changes} />)
+                  : presentation.detail && <code className="cy-tool-executions__detail" title={presentation.detail}>{presentation.detail}</code>}
               </span>
             ),
             status: tool.status === "running" ? "loading" : tool.status === "error" ? "error" : "success",
@@ -813,22 +896,28 @@ function ToolExecutionContent({ tools }: { tools: ToolExecutionRecord[] }) {
   );
 }
 
-/** ask_user 问答配对展示：问题 + 用户回答成对出现，不展示原始 JSON。 */
-function AskUserQaContent({ rows }: { rows: string[] }) {
+/** 工具折叠详情中的编号问答。 */
+export function AskUserQaContent({ rows }: { rows: string[] }) {
   return (
-    <ul className="cy-ask-user-qa">
-      {rows.map((row) => {
+    <ol className="cy-ask-user-qa">
+      {rows.map((row, index) => {
         const separator = row.indexOf("→");
         const question = separator >= 0 ? row.slice(0, separator).trim() : row;
         const answer = separator >= 0 ? row.slice(separator + 1).trim() : "";
         return (
-          <li className="cy-ask-user-qa__row" key={row}>
-            <span className="cy-ask-user-qa__question">{question}</span>
-            <span className="cy-ask-user-qa__answer">{answer}</span>
+          <li className="cy-ask-user-qa__row" key={`${index}-${row}`}>
+            <div className="cy-ask-user-qa__question">
+              <span className="cy-ask-user-qa__label">Q:</span>
+              <span>{question}</span>
+            </div>
+            <div className="cy-ask-user-qa__answer">
+              <span className="cy-ask-user-qa__label">A:</span>
+              <span>{answer}</span>
+            </div>
           </li>
         );
       })}
-    </ul>
+    </ol>
   );
 }
 
@@ -885,42 +974,6 @@ function UserAttachments({ attachments }: { attachments: ChatMessageAttachment[]
       })}
     </div>
   );
-}
-
-function AttachmentImage({ attachment }: { attachment: ChatMessageAttachment }) {
-  const [src, setSrc] = useState(attachment.previewUrl);
-  // blob: 预览 URL 只在当前页面有效，聊天记录持久化后刷新必失效；只允许一次磁盘重读兜底
-  const diskFallbackTriedRef = useRef(false);
-
-  function readFromDisk(): void {
-    if (!attachment.filePath) return;
-    void window.chat?.getImagePreview?.(attachment.filePath).then((result) => {
-      if (result.ok && result.dataUrl) setSrc(result.dataUrl);
-    });
-  }
-
-  useEffect(() => {
-    setSrc(attachment.previewUrl);
-    diskFallbackTriedRef.current = false;
-    if ((!attachment.previewUrl || attachment.previewUrl.startsWith("file:")) && attachment.filePath) {
-      let active = true;
-      void window.chat?.getImagePreview?.(attachment.filePath).then((result) => {
-        if (active && result.ok && result.dataUrl) setSrc(result.dataUrl);
-      });
-      return () => {
-        active = false;
-      };
-    }
-  }, [attachment.filePath, attachment.previewUrl]);
-
-  // 历史 blob: URL 加载失败时从磁盘重读，修复刷新后的存量裂图
-  function handleImageError(): void {
-    if (diskFallbackTriedRef.current) return;
-    diskFallbackTriedRef.current = true;
-    readFromDisk();
-  }
-
-  return <img src={src} alt={attachment.name} draggable={false} onError={handleImageError} />;
 }
 
 function UserContent({
@@ -1040,6 +1093,7 @@ function createRoles(
   onTtsCacheKey?: (messageId: string, cacheKey: string, converterVersion: string) => void,
   onOpenReviewInspector?: (runId: string, fileIndex: number, filePath: string) => void,
   onOpenTaskInspector?: (delegation: TaskDelegationDisplayRecord) => void,
+  onMailDraftChange?: (messageId: string, card: MailDraftCardData) => void,
 ) {
   return {
   user: {
@@ -1080,12 +1134,13 @@ function createRoles(
     variant: "filled" as const,
     rootClassName: "cy-message cy-message--assistant",
     avatar: <AssistantMessageAvatar />,
-    contentRender: (content: string, info: { extraInfo?: { streaming?: boolean; stickerUrl?: string; channelSource?: ChatMessageChannelSource } }) => (
+    contentRender: (content: string, info: { extraInfo?: { streaming?: boolean; stickerUrl?: string; channelSource?: ChatMessageChannelSource; attachments?: ChatMessageAttachment[] } }) => (
       <AssistantContent
         content={content}
         streaming={Boolean(info.extraInfo?.streaming)}
         stickerUrl={info.extraInfo?.stickerUrl}
         channelSource={info.extraInfo?.channelSource}
+        attachments={info.extraInfo?.attachments}
       />
     ),
     footer: (content: string, info: { extraInfo?: { messageId?: string; streaming?: boolean; at?: number } }) => (
@@ -1102,6 +1157,18 @@ function createRoles(
         onRegenerateLastResponse={onRegenerateLastResponse}
       />
     ),
+  },
+  mail_draft: {
+    placement: "start" as const,
+    variant: "borderless" as const,
+    avatar: null,
+    rootClassName: "cy-message cy-message--mail-draft",
+    contentRender: (_content: string, info: { extraInfo?: { card?: MailDraftCardData; messageId?: string } }) => {
+      const card = info.extraInfo?.card;
+      return card
+        ? <MailDraftCard card={card} conversationId={conversationId} messageId={info.extraInfo?.messageId ?? ""} onChange={onMailDraftChange} />
+        : null;
+    },
   },
   reasoning: {
     placement: "start" as const,
@@ -1128,7 +1195,10 @@ function createRoles(
     contentRender: (_content: string, info: {
       extraInfo?: {
         activityId?: string;
+        rootActivityId?: string;
         activity?: RunActivityRecord;
+        continuation?: boolean;
+        detailLive?: boolean;
         reasoningBlocks?: ReasoningBlock[];
         processMessages?: ProcessMessageRecord[];
         agentRounds?: AgentRoundRecord[];
@@ -1140,8 +1210,9 @@ function createRoles(
       };
     }) => {
       const activityId = info.extraInfo?.activityId;
+      const rootActivityId = info.extraInfo?.rootActivityId ?? activityId;
       const activity = info.extraInfo?.activity;
-      if (!activityId || !activity) return null;
+      if (!activityId || !rootActivityId || !activity) return null;
       return (
         <RunActivityContent
           activityId={activityId}
@@ -1154,8 +1225,10 @@ function createRoles(
           stage={info.extraInfo?.runStage}
           taskPlan={info.extraInfo?.taskPlan}
           modelRetry={info.extraInfo?.modelRetry}
-          expanded={resolveRunActivityExpanded(reasoningExpanded, activityId, activity)}
-          onExpand={(expanded) => onReasoningExpand(activityId, expanded)}
+          continuation={info.extraInfo?.continuation}
+          detailLive={info.extraInfo?.detailLive}
+          expanded={resolveRunActivityExpanded(reasoningExpanded, rootActivityId, activity)}
+          onExpand={(expanded) => onReasoningExpand(rootActivityId, expanded)}
           onOpenTaskInspector={onOpenTaskInspector}
         />
       );
@@ -1176,15 +1249,6 @@ function createRoles(
     avatar: null,
     rootClassName: "cy-message cy-message--waiting",
     contentRender: (_content: string, info: { extraInfo?: { modelRetry?: ModelRetryStatus | null } }) => <ModelWaitContent modelRetry={info.extraInfo?.modelRetry} />,
-  },
-  weather: {
-    placement: "start" as const,
-    variant: "borderless" as const,
-    avatar: null,
-    rootClassName: "cy-message cy-message--weather",
-    contentRender: (_content: string, info: { extraInfo?: { weather?: WeatherData } }) => (
-      info.extraInfo?.weather ? <WeatherCard data={info.extraInfo.weather} /> : null
-    ),
   },
   review: {
     placement: "start" as const,
@@ -1245,7 +1309,7 @@ function convertMessage(message: ChatMessageItem, enabledStickers: readonly Enab
   }
 
   const assistantItems: BubbleItemType[] = [];
-  const stages = assistantRenderStages(message);
+  const stages = assistantRenderStages({ ...message, hasAttachments: Boolean(message.attachments?.length) });
   if (message.waitingForFirstEvent && !message.runActivity) {
     assistantItems.push({
       key: `${message.id}-waiting`,
@@ -1276,30 +1340,48 @@ function convertMessage(message: ChatMessageItem, enabledStickers: readonly Enab
     || tools.length > 0
     || (message.taskDelegations ?? []).length > 0
     || reasoningBlocks.some((block) => block.content.trim());
-  const processing = message.runActivity?.completedAt === undefined;
-  const activityVisible = Boolean(message.runActivity) && (processing || hasProcessContent);
-  if (message.runActivity) {
-    if (activityVisible) {
-      assistantItems.push({
-        key: `${message.id}-activity`,
-        role: "activity",
-        content: "",
-        // 头像钉在运行块头部（状态行左侧）：一次运行只出现一次，不随每条消息重复。
-        // 用 createElement 而非 JSX：convertMessage 在测试里直接执行，不经过 JSX 运行时
-        avatar: createElement(AssistantMessageAvatar),
-        extraInfo: {
-          activityId: `${message.id}-activity`,
-          activity: message.runActivity,
-          reasoningBlocks,
-          processMessages: message.processMessages ?? [],
-          agentRounds: message.agentRounds ?? [],
-          taskDelegations: message.taskDelegations ?? [],
-          tools,
-          runStage: message.runStage,
-          taskPlan: message.taskPlan,
-          modelRetry: message.modelRetry,
-        },
-      });
+  const display = message.runDisplay;
+  const activity = display?.activity ?? message.runActivity;
+  const processing = activity?.completedAt === undefined;
+  let activityVisible = false;
+  const appendActivity = (
+    details: Parameters<typeof buildFlatRunTimeline>[0],
+    key: string,
+    continuation = Boolean(display?.continuation),
+  ) => {
+    if (!activity) return;
+    activityVisible = true;
+    assistantItems.push({
+      key,
+      role: "activity",
+      content: "",
+      // 头像钉在运行块头部（状态行左侧）：一次运行只出现一次，不随每条消息重复。
+      // 用 createElement 而非 JSX：convertMessage 在测试里直接执行，不经过 JSX 运行时
+      avatar: createElement(AssistantMessageAvatar),
+      ...(continuation ? { rootClassName: "cy-message cy-message--activity cy-message--activity-continuation" } : {}),
+      extraInfo: {
+        activityId: key,
+        rootActivityId: `${display?.rootId ?? message.id}-activity`,
+        activity,
+        continuation,
+        detailLive: display ? display.last && processing : undefined,
+        ...details,
+        agentRounds: message.agentRounds ?? [],
+        runStage: display ? display.stage : message.runStage,
+        taskPlan: display ? display.taskPlan : message.taskPlan,
+        modelRetry: display ? display.modelRetry : message.modelRetry,
+      },
+    });
+  };
+  const details = {
+    reasoningBlocks,
+    processMessages: message.processMessages ?? [],
+    taskDelegations: message.taskDelegations ?? [],
+    tools,
+  };
+  if (activity) {
+    if (processing || hasProcessContent || (display && !display.continuation)) {
+      appendActivity(details, `${message.id}-activity`);
     }
   } else {
     for (let index = 0; index <= tools.length; index += 1) {
@@ -1313,19 +1395,11 @@ function convertMessage(message: ChatMessageItem, enabledStickers: readonly Enab
       });
     }
   }
-  if (message.weather) {
-    assistantItems.push({
-      key: `${message.id}-weather`,
-      role: "weather",
-      content: "",
-      extraInfo: { weather: message.weather },
-    });
-  }
   if (stages.includes("assistant")) {
     // 运行块内的正文不重复头像（头像已钉在活动卡头部）：
     // 保留头像占位只做视觉隐藏，正文左边缘与活动卡时间线内容精确对齐。
     // 活动卡未渲染时（如首轮直接回答的纯文本运行）正文保留自己的头像。
-    const hideAvatar = activityVisible;
+    const hideAvatar = activityVisible || display?.continuation;
     assistantItems.push({
       key: message.id,
       role: "assistant",
@@ -1339,11 +1413,21 @@ function convertMessage(message: ChatMessageItem, enabledStickers: readonly Enab
         ttsCacheKey: message.ttsCacheKey,
         stickerUrl: message.sticker ? resolveStickerUrl(message.sticker, enabledStickers) : undefined,
         channelSource: message.channelSource,
+        attachments: message.attachments,
       },
     });
   }
+  for (const card of message.emailDraftCards ?? []) {
+    assistantItems.push({
+      key: `${message.id}-mail-draft-${card.id}`,
+      role: "mail_draft",
+      content: "",
+      avatar: null,
+      extraInfo: { card, messageId: message.id },
+    });
+  }
   // Review 面板：Run 结束后（非 streaming/loading）且有 runId 时显示
-  if (message.runId && !message.streaming && !message.loading) {
+  if (message.runId && !message.streaming && !message.loading && (!display || (display.last && !processing))) {
     assistantItems.push({
       key: `${message.id}-review`,
       role: "review",
@@ -1358,13 +1442,42 @@ function convertMessage(message: ChatMessageItem, enabledStickers: readonly Enab
 }
 
 export function createMessageItems(messages: ChatMessageItem[], enabledStickers: EnabledSticker[]): BubbleItemType[] {
-  return messages.flatMap((message) => convertMessage(message, enabledStickers));
+  return assembleMessageItems(messages, enabledStickers, null).items;
 }
 
 /** 阶段 2：单消息派生缓存状态——stickers 引用变化时整体替换（新 WeakMap），不逐条维护版本号 */
 export interface MessageItemsCacheState {
   stickers: readonly EnabledSticker[];
   byMessage: WeakMap<ChatMessageItem, readonly BubbleItemType[]>;
+  byRunMessage: WeakMap<ChatMessageItem, { sourceActivity: RunActivityRecord; message: ChatMessageItem }>;
+}
+
+/** 复用持久化的 runId：插话只分隔内容，头像、计时、阶段与折叠状态仍属于同一个运行。 */
+function projectRunMessage(
+  message: ChatMessageItem,
+  root: ChatMessageItem,
+  latest: ChatMessageItem,
+  cache: MessageItemsCacheState,
+): ChatMessageItem {
+  const sourceActivity = latest.runActivity!;
+  const continuation = message !== root;
+  const last = message === latest;
+  const stage = continuation ? undefined : latest.runStage;
+  const modelRetry = continuation ? undefined : latest.modelRetry;
+  const taskPlan = continuation ? undefined : latest.taskPlan ?? root.taskPlan;
+  const previous = cache.byRunMessage.get(message);
+  const display = previous?.message.runDisplay;
+  if (previous?.sourceActivity === sourceActivity && display?.rootId === root.id
+    && display.activity.startedAt === root.runActivity!.startedAt
+    && display.continuation === continuation && display.last === last && display.stage === stage
+    && display.modelRetry === modelRetry && display.taskPlan === taskPlan) return previous.message;
+  const projected: ChatMessageItem = { ...message, runDisplay: {
+    rootId: root.id, continuation, last, stage, modelRetry, taskPlan,
+    activity: sourceActivity.startedAt === root.runActivity!.startedAt
+      ? sourceActivity : { ...sourceActivity, startedAt: root.runActivity!.startedAt },
+  } };
+  cache.byRunMessage.set(message, { sourceActivity, message: projected });
+  return projected;
 }
 
 /**
@@ -1379,13 +1492,23 @@ export function assembleMessageItems(
 ): { items: BubbleItemType[]; cache: MessageItemsCacheState } {
   const state: MessageItemsCacheState = cache && cache.stickers === stickers
     ? cache
-    : { stickers, byMessage: new WeakMap<ChatMessageItem, readonly BubbleItemType[]>() };
+    : { stickers, byMessage: new WeakMap<ChatMessageItem, readonly BubbleItemType[]>(), byRunMessage: new WeakMap() };
+  const runs = new Map<string, { root: ChatMessageItem; latest: ChatMessageItem }>();
+  for (const message of messages) {
+    if (message.role !== "assistant" || !message.runId || !message.runActivity) continue;
+    const group = runs.get(message.runId);
+    if (group) group.latest = message;
+    else runs.set(message.runId, { root: message, latest: message });
+  }
   const items: BubbleItemType[] = [];
   for (const message of messages) {
-    let converted = state.byMessage.get(message);
+    const group = message.role === "assistant" && message.runActivity && message.runId ? runs.get(message.runId) : undefined;
+    const projected = group && group.root !== group.latest
+      ? projectRunMessage(message, group.root, group.latest, state) : message;
+    let converted = state.byMessage.get(projected);
     if (converted === undefined) {
-      converted = convertMessage(message, stickers);
-      state.byMessage.set(message, converted);
+      converted = convertMessage(projected, stickers);
+      state.byMessage.set(projected, converted);
     }
     for (const item of converted) items.push(item);
   }
@@ -1412,6 +1535,7 @@ export function ChatMessageList({
   onRegisterScrollToBottom,
   onOpenReviewInspector,
   onOpenTaskInspector,
+  onMailDraftChange,
   workspaceRoot,
   onOpenFileLink,
   onOpenWebLink,
@@ -1507,8 +1631,9 @@ export function ChatMessageList({
       onTtsCacheKey,
       onOpenReviewInspector,
       onOpenTaskInspector,
+      onMailDraftChange,
     ),
-    [beginEdit, cancelEdit, conversationId, editDraft, editingMessageId, mode, onOpenReviewInspector, onOpenTaskInspector, onReasoningExpand, onRegenerateLastResponse, onTtsCacheKey, preferredAddress, reasoningExpanded, revisionBusy, submitEdit, userAvatar, userAvatarUrl],
+    [beginEdit, cancelEdit, conversationId, editDraft, editingMessageId, mode, onMailDraftChange, onOpenReviewInspector, onOpenTaskInspector, onReasoningExpand, onRegenerateLastResponse, onTtsCacheKey, preferredAddress, reasoningExpanded, revisionBusy, submitEdit, userAvatar, userAvatarUrl],
   );
 
   useEffect(() => {

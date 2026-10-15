@@ -49,13 +49,13 @@ export function createSchedulerSubsystem(deps: SchedulerSubsystemDeps): Schedule
 
   const runner = createSchedulerRunner({
     buildOptions: (task) => deps.agentRuntime.buildSchedulerOptions(task),
-    createRunSession: (task) => {
+    createRunSession: async (task) => {
       if (!task.workspaceBinding) throw new Error("定时任务缺少绑定工作区");
-      const session = chatsStore.createSession({
+      const session = (await chatsStore.createSession({
         title: `定时任务：${task.title}`,
         mode: task.mode === "code" ? "code" : "work",
-      });
-      if (!chatsStore.setWorkspaceBinding(session.id, task.workspaceBinding)) {
+      }));
+      if (!(await chatsStore.setWorkspaceBinding(session.id, task.workspaceBinding))) {
         throw new Error("无法将会话绑定到定时任务工作区");
       }
       const win = deps.getReactChatWindow();

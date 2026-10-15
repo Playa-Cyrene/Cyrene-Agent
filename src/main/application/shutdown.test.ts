@@ -7,6 +7,14 @@ afterEach(() => {
 });
 
 describe("createShutdownCoordinator", () => {
+  it("closes the database after persistence flush even when a flush fails", async () => {
+    const events: string[] = [];
+    const coordinator = createShutdownCoordinator({ readiness: createStartupReadiness(), log: vi.fn() });
+    coordinator.register({ id: "database", phase: "closePersistence", dispose: () => { events.push("close"); } });
+    coordinator.register({ id: "journal", phase: "flushPersistence", dispose: async () => { await Promise.resolve(); events.push("flush"); throw new Error("failed"); } });
+    await coordinator.requestControlledShutdown({ reason: "test", finalAction: () => events.push("final") });
+    expect(events).toEqual(["flush", "close", "final"]);
+  });
   it("runs fixed phases sequentially and entries within one phase concurrently", async () => {
     const events: string[] = [];
     const readiness = createStartupReadiness();

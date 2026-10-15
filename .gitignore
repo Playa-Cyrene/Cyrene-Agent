@@ -247,8 +247,9 @@ dist/renderer/cyrene-welcome.png
 /preview-demo/
 
 # 本地学习考试预览草稿与构建产物
-/docs/references/adapted-models.md
 /src/renderer/learn-exam-preview.css
 /src/renderer/learn-exam-preview.html
 /src/renderer/learn-exam-preview.tsx
 /dist/renderer/learn-exam.html
+*.sqlite
+*.sqlite-*

@@ -10,7 +10,7 @@
       "动作#6": [
         {
           "Name": "动作回正",
-          "File": "motions/动作#6_0.motion3.json",
+          "File": "motions/动作%236_0.motion3.json",
           "WrapMode": 2,
           "VarFloats": [
             {
@@ -22,7 +22,7 @@
         },
         {
           "Name": "Wink~",
-          "File": "motions/动作#6_1.motion3.json",
+          "File": "motions/动作%236_1.motion3.json",
           "WrapMode": 2,
           "VarFloats": [
             {
@@ -34,7 +34,7 @@
         },
         {
           "Name": "我可爱吧~",
-          "File": "motions/动作#6_2.motion3.json",
+          "File": "motions/动作%236_2.motion3.json",
           "WrapMode": 2,
           "VarFloats": [
             {
@@ -46,7 +46,7 @@
         },
         {
           "Name": "笑一笑吧~",
-          "File": "motions/动作#6_3.motion3.json",
+          "File": "motions/动作%236_3.motion3.json",
           "WrapMode": 2,
           "VarFloats": [
             {
@@ -147,7 +147,7 @@
       "Tick3": [
         {
           "Name": "Wink（待机）",
-          "File": "motions/动作#6_1.motion3.json",
+          "File": "motions/动作%236_1.motion3.json",
           "WrapMode": 2,
           "VarFloats": [
             {
@@ -159,7 +159,7 @@
         },
         {
           "Name": "可爱（待机）",
-          "File": "motions/动作#6_2.motion3.json",
+          "File": "motions/动作%236_2.motion3.json",
           "WrapMode": 2,
           "VarFloats": [
             {
@@ -171,7 +171,7 @@
         },
         {
           "Name": "微笑（待机）",
-          "File": "motions/动作#6_3.motion3.json",
+          "File": "motions/动作%236_3.motion3.json",
           "WrapMode": 2,
           "VarFloats": [
             {

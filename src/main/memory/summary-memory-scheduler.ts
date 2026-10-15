@@ -7,11 +7,11 @@ import { readSummaryFile, writeSummaryFileAtomic } from "./summary-memory-store"
 import { summarizeMemory } from "./summary-memory-llm";
 
 export interface SummaryMemoryProgressStore {
-  getSessionRecord(id: string): ChatSessionRecord | null;
-  getSummaryMemoryProgress(id: string): SummaryMemoryProgress | undefined;
-  appendSummaryMemoryTurn(id: string, turn: SummaryMemoryPendingTurn): boolean;
-  markSummaryMemoryProcessed(id: string, processedTurns: Array<{ assistantEntryId: string }>): boolean;
-  listSessions(): Array<{ id: string }>;
+  getSessionRecord(id: string): (ChatSessionRecord | null) | Promise<ChatSessionRecord | null>;
+  getSummaryMemoryProgress(id: string): (SummaryMemoryProgress | undefined) | Promise<SummaryMemoryProgress | undefined>;
+  appendSummaryMemoryTurn(id: string, turn: SummaryMemoryPendingTurn): (boolean) | Promise<boolean>;
+  markSummaryMemoryProcessed(id: string, processedTurns: Array<{ assistantEntryId: string }>): (boolean) | Promise<boolean>;
+  listSessions(): (Array<{ id: string }>) | Promise<Array<{ id: string }>>;
 }
 
 export interface SummaryMemorySchedulerOptions {
@@ -42,23 +42,23 @@ export class SummaryMemoryScheduler {
     }
   }
 
-  scheduleSummaryTurn(input: {
+  async scheduleSummaryTurn(input: {
     conversationId: string;
     assistantEntryId: string;
     userTurnId?: string;
     userText: string;
     assistantText: string;
-  }): void {
+  }): Promise<void> {
     if (!this.enabled || !isSummaryMemoryEnabled() || this.cancelledSessions.has(input.conversationId) || !input.assistantEntryId) return;
     try {
-      const recorded = this.options.sessions.appendSummaryMemoryTurn(input.conversationId, {
+      const recorded = (await this.options.sessions.appendSummaryMemoryTurn(input.conversationId, {
         assistantEntryId: input.assistantEntryId,
         ...(input.userTurnId ? { userTurnId: input.userTurnId } : {}),
         userText: input.userText,
         assistantText: input.assistantText,
-      });
+      }));
       if (!recorded) return;
-      const progress = this.options.sessions.getSummaryMemoryProgress(input.conversationId);
+      const progress = (await this.options.sessions.getSummaryMemoryProgress(input.conversationId));
       if ((progress?.pendingTurns.length ?? 0) >= 10) {
         void this.flushSummary(input.conversationId).catch((error) => this.reportError(input.conversationId, error));
       }
@@ -74,7 +74,7 @@ export class SummaryMemoryScheduler {
 
   async flushAll(): Promise<void> {
     if (!this.enabled || !isSummaryMemoryEnabled()) return;
-    await Promise.all(this.options.sessions.listSessions().map(({ id }) => (
+    await Promise.all((await this.options.sessions.listSessions()).map(({ id }) => (
       this.flushSummary(id).catch((error) => this.reportError(id, error))
     )));
   }
@@ -103,9 +103,9 @@ export class SummaryMemoryScheduler {
   private async flushOne(conversationId: string): Promise<void> {
     if (!this.enabled || !isSummaryMemoryEnabled() || this.cancelledSessions.has(conversationId)) return;
     const generation = this.generation;
-    const session = this.options.sessions.getSessionRecord(conversationId);
+    const session = (await this.options.sessions.getSessionRecord(conversationId));
     if (!session) return;
-    const progress = this.options.sessions.getSummaryMemoryProgress(conversationId);
+    const progress = (await this.options.sessions.getSummaryMemoryProgress(conversationId));
     const turns = progress?.pendingTurns ?? [];
     if (turns.length === 0) return;
     const paths = resolveSummaryMemoryPaths({ conversationId, userDataRoot: this.options.userDataRoot, session });
@@ -144,36 +144,36 @@ export class SummaryMemoryScheduler {
       } finally {
         this.abortControllers.delete(controller);
       }
-      if (!isCurrentTarget()) return;
+      if (!(await isCurrentTarget())) return;
 
       // Write the project-level file first. Repeated retries replace complete summaries,
       // so a crash between file writes cannot duplicate source turns in either file.
       if (paths.workspacePath && result.workspaceSummary && result.workspaceSummary !== workspaceFile.content) {
         await writeSummaryFileAtomic(paths.workspacePath, result.workspaceSummary, 1200, workspaceRoot, isCurrentTarget);
       }
-      if (!isCurrentTarget()) return;
+      if (!(await isCurrentTarget())) return;
       if (result.sessionSummary !== sessionFile.content) {
         await writeSummaryFileAtomic(paths.sessionPath, result.sessionSummary, 800, workspaceRoot, isCurrentTarget);
       }
-      if (!isCurrentTarget()) return;
-      this.options.sessions.markSummaryMemoryProcessed(conversationId, turns.map(({ assistantEntryId }) => ({ assistantEntryId })));
+      if (!(await isCurrentTarget())) return;
+      (await this.options.sessions.markSummaryMemoryProcessed(conversationId, turns.map(({ assistantEntryId }) => ({ assistantEntryId }))));
     });
   }
 
-  private isCurrent(conversationId: string, generation: number): boolean {
+  private async isCurrent(conversationId: string, generation: number): Promise<boolean> {
     return this.enabled && isSummaryMemoryEnabled() && generation === this.generation
       && !this.cancelledSessions.has(conversationId)
-      && this.options.sessions.getSessionRecord(conversationId) !== null;
+      && (await this.options.sessions.getSessionRecord(conversationId)) !== null;
   }
 
-  private isCurrentTarget(
+  private async isCurrentTarget(
     conversationId: string,
     generation: number,
     expectedSessionPath: string,
     expectedWorkspacePath?: string,
-  ): boolean {
+  ): Promise<boolean> {
     if (!this.isCurrent(conversationId, generation)) return false;
-    const session = this.options.sessions.getSessionRecord(conversationId);
+    const session = (await this.options.sessions.getSessionRecord(conversationId));
     if (!session) return false;
     try {
       const currentPaths = resolveSummaryMemoryPaths({

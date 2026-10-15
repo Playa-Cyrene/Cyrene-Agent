@@ -95,9 +95,9 @@ export function createChannelsSubsystem(
     });
   };
 
-  const resolveBoundConversationId = (sessionId: string): string | null => {
+  const resolveBoundConversationId = async (sessionId: string): Promise<string | null> => {
     const conversationId = getChannelConversationBindingStore().resolve(sessionId);
-    return conversationId && listSessions().some((session) => session.id === conversationId) ? conversationId : null;
+    return conversationId && (await listSessions()).some((session) => session.id === conversationId) ? conversationId : null;
   };
 
   const buildAndRunAgent: DispatcherDeps["buildAndRunAgent"] = async (
@@ -206,6 +206,8 @@ export function createChannelsSubsystem(
           mode,
           conversationId: channelInput.target.conversationId,
           channel: msg.channel,
+          userTurnId: channelInput.userTurnId,
+          assistantEntryId: options.transcriptSink?.getLastAssistantEntryId?.(),
         });
         channelResult.sticker = finished.sticker;
       }

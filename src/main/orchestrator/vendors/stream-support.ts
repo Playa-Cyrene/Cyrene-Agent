@@ -9,10 +9,11 @@ export function isExplicitStreamUnsupported(error: unknown): boolean {
   const seen = new Set<unknown>();
   while (current && typeof current === "object" && !seen.has(current)) {
     seen.add(current);
-    const record = current as { status?: unknown; message?: unknown; cause?: unknown };
-    const status = typeof record.status === "number" ? record.status : 0;
+    const record = current as { status?: unknown; statusCode?: unknown; message?: unknown; responseBody?: unknown; cause?: unknown };
+    const status = typeof record.status === "number" ? record.status : typeof record.statusCode === "number" ? record.statusCode : 0;
     const message = typeof record.message === "string" ? record.message : "";
-    if (explicitlyRejectsStreaming(status, message) || explicitlyRejectsStreaming(400, message)) return true;
+    const body = typeof record.responseBody === "string" ? record.responseBody : "";
+    if (explicitlyRejectsStreaming(status, `${message}\n${body}`) || status === 0 && explicitlyRejectsStreaming(400, message)) return true;
     current = record.cause;
   }
   return false;

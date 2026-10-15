@@ -87,7 +87,7 @@ export interface GitLogEntry {
 }
 
 export interface GitServiceDeps {
-  getSession: (sessionId: string) => Pick<ChatSession, "mode" | "workspaceBinding"> | null;
+  getSession: (sessionId: string) => (Pick<ChatSession, "mode" | "workspaceBinding"> | null) | Promise<Pick<ChatSession, "mode" | "workspaceBinding"> | null>;
   resolveExecutable: () => Promise<ResolvedGitExecutable | null>;
   createClient?: (input: { workspaceRoot: string; executable: ResolvedGitExecutable }) => GitClient;
   workspaceWatcher?: GitWorkspaceWatcher;
@@ -131,7 +131,7 @@ export function createGitService(deps: GitServiceDeps): GitService {
   });
 
   async function resolveCodeSession(sessionId: string): Promise<ResolvedCodeSession | CodeGitStatus> {
-    const session = deps.getSession(sessionId);
+    const session = (await deps.getSession(sessionId));
     if (!session) return emptyCodeGitStatus(sessionId, "error", "找不到当前对话");
     if (session.mode !== "code") {
       return emptyCodeGitStatus(sessionId, "error", "Git 工作台只在 Code 模式可用");

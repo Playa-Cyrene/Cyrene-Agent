@@ -19,6 +19,7 @@ import type { SideEffectKind, TodoItem, ToolCallOutcome } from "./harness/types"
 import type { ChatMessage as CanonicalChatMessage } from "./vendors/types";
 import { isContextUsageSnapshot } from "../../shared/context-usage";
 import { normalizeMusicCardData } from "../../shared/music-card";
+import { normalizeMailDraftCardData } from "../../shared/mail-draft-card";
 import { SHELL_VISIBLE_OUTPUT_LIMIT } from "../../shared/shell-output";
 
 export interface TranscriptEnvelopeBase {
@@ -52,7 +53,7 @@ export function assertValidPresentationPatch(value: unknown): asserts value is T
   const allowed = new Set([
     "content", "reasoning", "reasoningBlocks", "processMessages", "agentRounds",
     "taskDelegations", "channelSource", "sticker", "toolExecutions", "runActivity",
-    "runSnapshot", "ttsCacheKey", "ttsCacheVersion", "musicCard", "contextUsage", "delta",
+    "runSnapshot", "ttsCacheKey", "ttsCacheVersion", "musicCard", "emailDraftCards", "contextUsage", "delta",
   ]);
   if (Object.keys(value).some((key) => !allowed.has(key))) {
     throw new Error("TRANSCRIPT_INVALID_PRESENTATION_PATCH");
@@ -84,6 +85,8 @@ export function assertValidPresentationPatch(value: unknown): asserts value is T
       if (!isRunSnapshot(field)) throw new Error("TRANSCRIPT_INVALID_PRESENTATION_PATCH");
     } else if (key === "musicCard") {
       if (!isRecord(field) || normalizeMusicCardData(field) === null || !isMusicCard(field)) throw new Error("TRANSCRIPT_INVALID_PRESENTATION_PATCH");
+    } else if (key === "emailDraftCards") {
+      if (!Array.isArray(field) || !field.every((card) => normalizeMailDraftCardData(card) !== null)) throw new Error("TRANSCRIPT_INVALID_PRESENTATION_PATCH");
     } else if (key === "contextUsage") {
       if (!isContextUsageSnapshot(field) || !isContextUsageShape(field)) throw new Error("TRANSCRIPT_INVALID_PRESENTATION_PATCH");
     } else {

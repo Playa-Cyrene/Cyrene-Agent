@@ -1,3 +1,4 @@
+import { closeConversationDatabases } from "../../../../../main/storage/conversation-database-client";
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import fs from "node:fs";
@@ -177,6 +178,7 @@ describe("useSchedulerEvents", () => {
       expect({ id: live?.id, content: live?.content, toolExecutions: live?.toolExecutions, runSnapshot: live?.runSnapshot })
         .toEqual({ id: reloaded?.id, content: reloaded?.content, toolExecutions: reloaded?.toolExecutions, runSnapshot: reloaded?.runSnapshot });
     } finally {
+      await closeConversationDatabases();
       fs.rmSync(rootPath, { recursive: true, force: true });
     }
   });

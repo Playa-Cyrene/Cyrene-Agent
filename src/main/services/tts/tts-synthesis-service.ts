@@ -88,8 +88,8 @@ export function createTtsSynthesisService(
       return { requestId: request.requestId, status: "skipped" };
     }
 
-    const historicalMessage = chatsStore
-      .getSession(request.conversationId)
+    const historicalMessage = (await chatsStore
+      .getSession(request.conversationId))
       ?.messages.find(
         (message) => message.id === request.messageId && message.role === "model",
       );

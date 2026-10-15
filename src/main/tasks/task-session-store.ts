@@ -1,20 +1,12 @@
-import fs from "node:fs";
-import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { getConversationDatabase, type ConversationDatabaseClient } from "../storage/conversation-database-client";
 import type {
   TaskSession,
   TaskSessionStatus,
   TaskSubagentType,
-  TodoItem,
-  TodoStatus,
   TaskTraceRecord,
-  TaskTranscriptMessage,
+  TodoItem,
 } from "../../shared/task-session";
-
-const ROOT_DIR_NAME = "cyrene-tasks";
-const SESSIONS_DIR_NAME = "sessions";
-const INDEX_FILE_NAME = "index.json";
-const TRACE_LIMIT = 2_000;
 
 export interface CreateTaskSessionInput {
   parentConversationId: string;
@@ -39,7 +31,9 @@ export interface TaskSessionCheckpoint {
   parentRunId?: string;
   childRunId?: string;
   status?: TaskSessionStatus;
-  messages?: TaskTranscriptMessage[];
+  // messages 已退役：对话事实归 SQLite transcript 增量写入，
+  // resume 的历史由 task-transcript-projection 重投影。字段仍留在
+  // TaskSession 上（create/resume 的种子 + 旧文件回退读取），但不再随 checkpoint 更新。
   trace?: TaskTraceRecord[];
   todoItems?: TodoItem[];
   resultText?: string;
@@ -53,92 +47,31 @@ export interface TaskSessionStoreOptions {
   createChildRunId?: () => string;
 }
 
-interface TaskSessionIndexRow {
-  id: string;
-  parentConversationId: string;
-  status: TaskSessionStatus;
-  updatedAt: number;
-  companionId?: string;
-  contextOpen?: boolean;
-}
-
-function isTaskStatus(value: unknown): value is TaskSessionStatus {
-  return value === "running" || value === "completed" || value === "failed"
-    || value === "cancelled" || value === "interrupted";
-}
-
-function isTaskType(value: unknown): value is TaskSubagentType {
-  return value === "general" || value === "document" || value === "search";
-}
-
-function isTodoStatus(value: unknown): value is TodoStatus {
-  return value === "pending" || value === "in_progress" || value === "completed" || value === "cancelled";
-}
-
-function cloneTodoItems(value: unknown): TodoItem[] {
-  if (!Array.isArray(value)) return [];
-  return value.flatMap((item) => {
-    if (!item || typeof item !== "object") return [];
-    const candidate = item as Partial<TodoItem>;
-    if (typeof candidate.id !== "string" || candidate.id.trim().length === 0
-      || typeof candidate.content !== "string" || candidate.content.trim().length === 0
-      || !isTodoStatus(candidate.status)) return [];
-    return [{
-      id: candidate.id,
-      content: candidate.content,
-      status: candidate.status,
-      ...(typeof candidate.activeForm === "string" ? { activeForm: candidate.activeForm } : {}),
-    }];
-  });
-}
-
-function isTaskSession(value: unknown): value is TaskSession {
-  if (!value || typeof value !== "object") return false;
-  const session = value as Partial<TaskSession>;
-  return session.schemaVersion === 1
-    && typeof session.id === "string"
-    && typeof session.parentConversationId === "string"
-    && typeof session.parentRunId === "string"
-    && typeof session.childRunId === "string"
-    && typeof session.description === "string"
-    && isTaskType(session.subagentType)
-    && (session.companionId === undefined || typeof session.companionId === "string")
-    && (session.contextOpen === undefined || typeof session.contextOpen === "boolean")
-    && (session.mode === "work" || session.mode === "code")
-    && isTaskStatus(session.status)
-    && Array.isArray(session.messages)
-    && Array.isArray(session.trace)
-    && typeof session.createdAt === "number"
-    && typeof session.updatedAt === "number";
-}
-
-function cloneSession(session: TaskSession): TaskSession {
-  return JSON.parse(JSON.stringify(session)) as TaskSession;
-}
-
 /**
- * Task 私有会话存储。它不依赖 Electron，方便测试；生产启动时传入 app.getPath("userData")。
+ * Task 私有会话存储（SQLite facade）。
+ *
+ * 自 v5 迁移起，task_sessions / task_trace 与会话轨迹共用 cyrene.sqlite
+ * （同一 worker 连接、同一迁移与对账机制）；旧 JSON 文件由 worker 启动时
+ * 一次性只读导入，源文件保留。
+ *
+ * 注意：全部方法为 async（SQLite 调用在 worker 线程执行，主进程不得同步读写）。
+ * 业务语义与退役的 JSON 实现一致；守卫错误码不变（TASK_PARENT_MISMATCH 等，
+ * 由 ConversationStoreError 携带）。
  */
 export class TaskSessionStore {
-  private readonly taskRoot: string;
-  private readonly sessionsDir: string;
-  private readonly indexPath: string;
+  private readonly database: ConversationDatabaseClient;
   private readonly now: () => number;
   private readonly createId: () => string;
   private readonly createChildRunId: () => string;
-  private index = new Map<string, TaskSessionIndexRow>();
 
   constructor(root: string, options: TaskSessionStoreOptions = {}) {
-    this.taskRoot = path.join(root, ROOT_DIR_NAME);
-    this.sessionsDir = path.join(this.taskRoot, SESSIONS_DIR_NAME);
-    this.indexPath = path.join(this.taskRoot, INDEX_FILE_NAME);
+    this.database = getConversationDatabase(root);
     this.now = options.now ?? Date.now;
     this.createId = options.createId ?? randomUUID;
     this.createChildRunId = options.createChildRunId ?? randomUUID;
-    this.initialize();
   }
 
-  create(input: CreateTaskSessionInput): TaskSession {
+  async create(input: CreateTaskSessionInput): Promise<TaskSession> {
     const now = this.now();
     const session: TaskSession = {
       schemaVersion: 1,
@@ -159,205 +92,54 @@ export class TaskSessionStore {
       createdAt: now,
       updatedAt: now,
     };
-    this.write(session);
-    return cloneSession(session);
+    return this.database.call<TaskSession>("tasks.insert", session);
   }
 
-  get(taskId: string): TaskSession | null {
-    const session = this.read(taskId);
-    return session ? cloneSession(session) : null;
+  async get(taskId: string): Promise<TaskSession | null> {
+    return this.database.call<TaskSession | null>("tasks.get", taskId);
   }
 
-  findOpenByCompanion(parentConversationId: string, companionId: string): TaskSession | null {
-    const row = [...this.index.values()]
-      .filter((candidate) => candidate.parentConversationId === parentConversationId
-        && candidate.companionId === companionId && candidate.contextOpen !== false)
-      .sort((left, right) => right.updatedAt - left.updatedAt);
-    const session = row[0] ? this.read(row[0].id) : null;
-    return session ? cloneSession(session) : null;
+  async findOpenByCompanion(parentConversationId: string, companionId: string): Promise<TaskSession | null> {
+    return this.database.call<TaskSession | null>("tasks.findOpenByCompanion", parentConversationId, companionId);
   }
 
-  listOpenCompanions(parentConversationId: string): string[] {
-    const seen = new Set<string>();
-    return [...this.index.values()]
-      .filter((row) => row.parentConversationId === parentConversationId
-        && Boolean(row.companionId) && row.contextOpen !== false)
-      .sort((left, right) => right.updatedAt - left.updatedAt)
-      .flatMap((row) => {
-        const companionId = row.companionId!;
-        if (seen.has(companionId)) return [];
-        seen.add(companionId);
-        return [companionId];
-      });
+  async listOpenCompanions(parentConversationId: string): Promise<string[]> {
+    return this.database.call<string[]>("tasks.listOpenCompanions", parentConversationId);
   }
 
-  closeByCompanion(parentConversationId: string, companionId: string): TaskSession {
-    const session = this.findOpenByCompanion(parentConversationId, companionId);
-    if (!session) throw new Error("TASK_COMPANION_CONTEXT_NOT_OPEN");
-    if (session.status === "running") throw new Error("TASK_ALREADY_RUNNING");
-    const mutable = this.require(session.id);
-    mutable.contextOpen = false;
-    mutable.updatedAt = this.now();
-    this.write(mutable);
-    return cloneSession(mutable);
+  async closeByCompanion(parentConversationId: string, companionId: string): Promise<TaskSession> {
+    return this.database.call<TaskSession>("tasks.closeByCompanion", parentConversationId, companionId, this.now());
   }
 
-  listForParent(parentConversationId: string): TaskSession[] {
-    return [...this.index.values()]
-      .filter((row) => row.parentConversationId === parentConversationId)
-      .sort((a, b) => b.updatedAt - a.updatedAt)
-      .flatMap((row) => {
-        const session = this.read(row.id);
-        return session ? [cloneSession(session)] : [];
-      });
+  async listForParent(parentConversationId: string): Promise<TaskSession[]> {
+    return this.database.call<TaskSession[]>("tasks.listForParent", parentConversationId);
   }
 
-  resume(taskId: string, input: ResumeTaskSessionInput): TaskSession {
-    const session = this.require(taskId);
-    if (session.parentConversationId !== input.parentConversationId) {
-      throw new Error("TASK_PARENT_MISMATCH");
-    }
-    if (session.subagentType !== input.subagentType) {
-      throw new Error("TASK_PROFILE_MISMATCH");
-    }
-    if (session.contextOpen === false) throw new Error("TASK_CONTEXT_CLOSED");
-    if (input.companionId && session.companionId && session.companionId !== input.companionId) {
-      throw new Error("TASK_COMPANION_MISMATCH");
-    }
-    if (session.status === "running") {
-      throw new Error("TASK_ALREADY_RUNNING");
-    }
-
-    if (input.companionId) session.companionId = input.companionId;
-    session.contextOpen = true;
-    session.parentRunId = input.parentRunId;
-    session.childRunId = this.createChildRunId();
-    session.status = "running";
-    session.resultText = undefined;
-    session.error = undefined;
-    session.completedAt = undefined;
-    session.messages.push({ role: "user", content: input.prompt });
-    session.updatedAt = this.now();
-    this.write(session);
-    return cloneSession(session);
+  async resume(taskId: string, input: ResumeTaskSessionInput): Promise<TaskSession> {
+    return this.database.call<TaskSession>("tasks.resume", taskId, input, this.createChildRunId(), this.now());
   }
 
-  checkpoint(taskId: string, patch: TaskSessionCheckpoint): TaskSession {
-    const session = this.require(taskId);
-    if (patch.parentRunId !== undefined) session.parentRunId = patch.parentRunId;
-    if (patch.childRunId !== undefined) session.childRunId = patch.childRunId;
-    if (patch.status !== undefined) session.status = patch.status;
-    if (patch.messages !== undefined) session.messages = cloneSession({ ...session, messages: patch.messages }).messages;
-    if (patch.trace !== undefined) session.trace = patch.trace.slice(-TRACE_LIMIT);
-    if (patch.todoItems !== undefined) session.todoItems = cloneTodoItems(patch.todoItems);
-    if (patch.resultText !== undefined) session.resultText = patch.resultText;
-    if (patch.error !== undefined) session.error = { ...patch.error };
-    if (patch.completedAt !== undefined) session.completedAt = patch.completedAt;
-    session.updatedAt = this.now();
-    this.write(session);
-    return cloneSession(session);
-  }
-
-  private initialize(): void {
-    fs.mkdirSync(this.sessionsDir, { recursive: true });
-    this.readIndex();
-
-    let changed = false;
-    for (const row of this.index.values()) {
-      const session = this.read(row.id);
-      if (!session) continue;
-      if (session.status === "running") {
-        session.status = "interrupted";
-        session.updatedAt = this.now();
-        this.writeSession(session);
-        this.index.set(session.id, this.indexRow(session));
-        changed = true;
-      }
-    }
-    if (changed) this.writeIndex();
-  }
-
-  private require(taskId: string): TaskSession {
-    const session = this.read(taskId);
-    if (!session) throw new Error("TASK_NOT_FOUND");
-    return session;
-  }
-
-  private read(taskId: string): TaskSession | null {
-    const file = path.join(this.sessionsDir, `${taskId}.json`);
-    if (!fs.existsSync(file)) return null;
-    try {
-      const parsed = JSON.parse(fs.readFileSync(file, "utf8")) as unknown;
-      return isTaskSession(parsed)
-        ? { ...parsed, todoItems: cloneTodoItems((parsed as Partial<TaskSession>).todoItems) }
-        : null;
-    } catch {
-      return null;
-    }
-  }
-
-  private write(session: TaskSession): void {
-    this.writeSession(session);
-    this.index.set(session.id, this.indexRow(session));
-    this.writeIndex();
-  }
-
-  private writeSession(session: TaskSession): void {
-    this.atomicWrite(path.join(this.sessionsDir, `${session.id}.json`), session);
-  }
-
-  private writeIndex(): void {
-    this.atomicWrite(this.indexPath, [...this.index.values()]);
-  }
-
-  private readIndex(): void {
-    if (!fs.existsSync(this.indexPath)) return;
-    try {
-      const parsed = JSON.parse(fs.readFileSync(this.indexPath, "utf8")) as unknown;
-      if (!Array.isArray(parsed)) return;
-      for (const row of parsed) {
-        if (!row || typeof row !== "object") continue;
-        const candidate = row as Partial<TaskSessionIndexRow>;
-        if (typeof candidate.id !== "string"
-          || typeof candidate.parentConversationId !== "string"
-          || !isTaskStatus(candidate.status)
-          || typeof candidate.updatedAt !== "number"
-          || (candidate.companionId !== undefined && typeof candidate.companionId !== "string")
-          || (candidate.contextOpen !== undefined && typeof candidate.contextOpen !== "boolean")) continue;
-        this.index.set(candidate.id, candidate as TaskSessionIndexRow);
-      }
-    } catch {
-      this.index.clear();
-    }
-  }
-
-  private indexRow(session: TaskSession): TaskSessionIndexRow {
-    return {
-      id: session.id,
-      parentConversationId: session.parentConversationId,
-      status: session.status,
-      updatedAt: session.updatedAt,
-      ...(session.companionId ? { companionId: session.companionId } : {}),
-      ...(session.contextOpen !== undefined ? { contextOpen: session.contextOpen } : {}),
-    };
-  }
-
-  private atomicWrite(filePath: string, value: unknown): void {
-    const tempPath = `${filePath}.tmp`;
-    fs.writeFileSync(tempPath, JSON.stringify(value, null, 2), "utf8");
-    fs.renameSync(tempPath, filePath);
+  async checkpoint(taskId: string, patch: TaskSessionCheckpoint): Promise<TaskSession> {
+    return this.database.call<TaskSession>("tasks.checkpoint", taskId, patch, this.now());
   }
 }
 
+// 类型再导出：退役前这些类型从此文件出发，消费方 import 路径不变。
+export type {
+  TaskSessionStatus,
+  TaskSubagentType,
+  TaskTraceRecord,
+  TodoItem,
+};
+
 const storesByRoot = new Map<string, TaskSessionStore>();
 
-/** Reuse the live store across task execution and read-only IPC queries. */
 export function getTaskSessionStore(root: string): TaskSessionStore {
-  const resolvedRoot = path.resolve(root);
-  let store = storesByRoot.get(resolvedRoot);
+  const key = root;
+  let store = storesByRoot.get(key);
   if (!store) {
-    store = new TaskSessionStore(resolvedRoot);
-    storesByRoot.set(resolvedRoot, store);
+    store = new TaskSessionStore(root);
+    storesByRoot.set(key, store);
   }
   return store;
 }

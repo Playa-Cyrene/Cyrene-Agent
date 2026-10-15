@@ -1,4 +1,5 @@
 import type { AppUpdateState } from "../../../../shared/app-update";
+import { isNewerVersion } from "../../../../shared/version";
 
 /**
  * 更新状态 → 界面展示的唯一映射。
@@ -57,14 +58,17 @@ export function resolveAppUpdateView(state: AppUpdateState): AppUpdateView {
   }
 }
 
-/** 版本 → 纪念称号文案 key；想让某个版本带头衔（如 1.3.0 的"正式版"）就加一行 */
-const VERSION_TITLE_KEYS: Record<string, string> = {
-  "1.3.0": "ui.version.firstStable",
-};
+/**
+ * 正式版起点：从这个版本起的正式发布都带「正式版」称号。
+ * 称号不再逐个版本登记，版本号本身读 package.json，涨上去也照样带上，不用每次发版改代码。
+ */
+const STABLE_SINCE = "1.3.0";
 
-/** 查版本称号：有条目返回文案 key（组件层用 t() 翻译），普通版本返回 null 只显示 v 号 */
+/** 查版本称号：达到正式版起点返回文案 key（组件层用 t() 翻译），否则返回 null 只显示 v 号 */
 export function resolveVersionTitleKey(version: string): string | null {
-  return VERSION_TITLE_KEYS[version] ?? null;
+  const trimmed = version.trim();
+  // 起点版本本身、以及任何比它更新的版本都算正式版；预发布号优先级更低，不会命中
+  return trimmed === STABLE_SINCE || isNewerVersion(trimmed, STABLE_SINCE) ? "ui.version.firstStable" : null;
 }
 
 /** 官网地址：设置页关于行与头像菜单共用，走 system.openExternal 在默认浏览器打开 */

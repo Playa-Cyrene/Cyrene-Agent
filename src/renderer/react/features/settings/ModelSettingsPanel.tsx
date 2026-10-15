@@ -72,6 +72,7 @@ interface ModelProfile {
   apiKey: string;
   explicitTransport?: ApiTransport;
   reasoning?: ReasoningPreference;
+  imageGeneration?: { enabled: boolean; model: string };
   contextWindowTokens?: number;
   multimodal?: boolean;
   modelOptions?: Record<string, { contextWindowTokens?: number; multimodal?: boolean; manualReasoning?: ManualReasoningConfig }>;
@@ -178,6 +179,7 @@ interface ModelProfileDraft {
   apiKey: string;
   transport: ApiTransport;
   reasoning?: ReasoningPreference;
+  imageGeneration: { enabled: boolean; model: string };
   modelOptions: Record<string, ModelOptionDraft>;
 }
 
@@ -246,6 +248,8 @@ export function ModelSettingsPanel() {
   const [apiKey, setApiKey] = useState("");
   const [transport, setTransport] = useState<ApiTransport>(MODEL_PRESETS[0].transport);
   const [reasoning, setReasoning] = useState<ReasoningPreference>();
+  const [imageGenerationEnabled, setImageGenerationEnabled] = useState(false);
+  const [imageGenerationModel, setImageGenerationModel] = useState("");
   const [vision, setVision] = useState<VisionValues>({ baseUrl: "", apiKey: "", model: "" });
   const [thinkingOverride, setThinkingOverride] = useState<-1 | 0 | 1>(0);
   const [disableMaxToken, setDisableMaxToken] = useState(false);
@@ -270,6 +274,7 @@ export function ModelSettingsPanel() {
     apiKey,
     transport,
     reasoning,
+    imageGeneration: { enabled: imageGenerationEnabled, model: imageGenerationModel.trim() },
     modelOptions,
   });
   const hasUnsavedProfileChanges = !activeId || (savedDraftSignature !== undefined && currentDraftSignature !== savedDraftSignature);
@@ -345,6 +350,8 @@ export function ModelSettingsPanel() {
     setApiKey(nextApiKey);
     setTransport(nextTransport);
     setReasoning(profile.reasoning);
+    setImageGenerationEnabled(profile.imageGeneration?.enabled ?? false);
+    setImageGenerationModel(profile.imageGeneration?.model ?? "");
     setSavedDraftSignature(modelProfileDraftSignature({
       provider: profile.provider,
       displayName: nextDisplayName,
@@ -354,6 +361,7 @@ export function ModelSettingsPanel() {
       apiKey: nextApiKey,
       transport: nextTransport,
       reasoning: profile.reasoning,
+      imageGeneration: profile.imageGeneration ?? { enabled: false, model: "" },
       modelOptions: nextModelOptions,
     }));
     setNewModel("");
@@ -373,6 +381,8 @@ export function ModelSettingsPanel() {
     setApiKey("");
     setTransport(nextPreset.transport);
     setReasoning(undefined);
+    setImageGenerationEnabled(false);
+    setImageGenerationModel("");
     setNewModel("");
     setStatus(undefined);
   }
@@ -388,6 +398,8 @@ export function ModelSettingsPanel() {
     setModel(nextPreset.mainModels[0] ?? "");
     setApiKey("");
     setTransport(nextPreset.transport);
+    setImageGenerationEnabled(false);
+    setImageGenerationModel("");
     setNewModel("");
     if (nextMode === "local") setApiKey("");
     setStatus(undefined);
@@ -565,6 +577,12 @@ export function ModelSettingsPanel() {
       if (!baseUrl.trim()) return t("settingsPage.modelSettings.validationUrl");
       if (!model.trim()) return t("settingsPage.modelSettings.validationModel");
     }
+    if (imageGenerationEnabled && transport !== "responses") {
+      return t("settingsPage.modelSettings.imageGenerationResponsesOnly");
+    }
+    if (imageGenerationEnabled && !imageGenerationModel.trim()) {
+      return t("settingsPage.modelSettings.imageGenerationModelRequired");
+    }
     return null;
   }
 
@@ -596,6 +614,7 @@ export function ModelSettingsPanel() {
         apiKey: currentApiKey(),
         explicitTransport: transport,
         reasoning,
+        imageGeneration: { enabled: imageGenerationEnabled, model: imageGenerationModel.trim() },
         // 新字段按模型保存；兼容字段镜像默认模型值，确保旧版读取时保持合理行为。
         modelOptions: savedModelOptions,
         contextWindowTokens: defaultOption.contextWindowTokens,
@@ -981,6 +1000,29 @@ export function ModelSettingsPanel() {
                   <small>{t("settingsPage.modelSettings.modelListHint")}</small>
                 </div>
               </div>
+            </div>
+
+            <div className="cy-model-card__section">
+              <div className="cy-model-section-heading"><h3><ImageIcon size={17} />{t("settingsPage.modelSettings.imageGenerationTitle")}</h3><p>{t("settingsPage.modelSettings.imageGenerationDescription")}</p></div>
+              <div className="cy-model-option-form__switch">
+                <div><strong>{t("settingsPage.modelSettings.imageGenerationEnable")}</strong><small>{t("settingsPage.modelSettings.imageGenerationEnableHint")}</small></div>
+                <SettingsSwitch
+                  ariaLabel={t("settingsPage.modelSettings.imageGenerationEnable")}
+                  checked={imageGenerationEnabled}
+                  onChange={setImageGenerationEnabled}
+                  disabled={transport !== "responses"}
+                />
+              </div>
+              <label className="cy-model-field">
+                <span>{t("settingsPage.modelSettings.imageGenerationModel")}</span>
+                <SettingsInput
+                  value={imageGenerationModel}
+                  onChange={(event) => setImageGenerationModel(event.target.value)}
+                  placeholder="gpt-image-2.5-flare"
+                  disabled={transport !== "responses" || !imageGenerationEnabled}
+                />
+                {transport !== "responses" && <small>{t("settingsPage.modelSettings.imageGenerationResponsesOnly")}</small>}
+              </label>
             </div>
 
             <div className="cy-model-card__section">

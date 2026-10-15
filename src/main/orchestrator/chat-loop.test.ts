@@ -1,3 +1,4 @@
+import { closeConversationDatabases } from "../storage/conversation-database-client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../token-usage-store", () => ({
@@ -14,6 +15,8 @@ vi.mock("./vendors", async (importOriginal) => {
 });
 
 import { runChatLoop as runChatLoopProduction, type ChatLoopOptions } from "./chat-loop";
+import * as timeoutManager from "../timeout-manager";
+import { DEFAULT_TIMEOUT_SETTINGS } from "../../shared/timeout-types";
 import { createSseReader } from "./vendors";
 import { ConversationTranscriptStore } from "./conversation-transcript-store";
 import { materializeTranscript } from "./conversation-transcript-context";
@@ -167,6 +170,15 @@ function runChatLoop(options: ChatLoopOptions) {
   return runChatLoopProduction({
     ...options,
     streamChat: options.streamChat ?? testSdkStream,
+    generateChat: options.generateChat ?? (async input => {
+      const http = input.adapter.buildRequest(input.request, input.config);
+      const response = await fetch(http.url, { method: "POST", headers: http.headers, body: http.body, signal: input.signal });
+      if (!response.ok) {
+        const error = Object.assign(new Error(`HTTP ${response.status}`), { status: response.status, retryAfterMs: 0 });
+        throw error;
+      }
+      return input.adapter.parseResponse(await response.json());
+    }),
   });
 }
 
@@ -190,6 +202,38 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe("runChatLoop", () => {
+  it("接收数据活动能让普通聊天请求跨过默认空闲期限", async () => {
+    vi.useFakeTimers();
+    try {
+      const adapter = new FakeAdapter();
+      const streamChat: NonNullable<ChatLoopOptions["streamChat"]> = (input) => new Promise((resolve, reject) => {
+        const onAbort = () => reject(new DOMException("aborted", "AbortError"));
+        input.signal!.addEventListener("abort", onAbort, { once: true });
+        setTimeout(() => input.onStreamActivity?.(), 20_000);
+        setTimeout(() => input.onStreamActivity?.(), 40_000);
+        setTimeout(() => {
+          input.signal!.removeEventListener("abort", onAbort);
+          input.onDelta?.({ type: "text_delta", delta: "done" });
+          resolve(adapter.parseResponse({ text: "done" }));
+        }, 80_000);
+      });
+      vi.spyOn(timeoutManager, "getTimeoutSettings").mockReturnValue({
+        ...DEFAULT_TIMEOUT_SETTINGS,
+        modelRequestTimeoutSec: 60,
+      });
+      const outcome = runChatLoop({
+        settings: { provider: "test", baseUrl: "https://test", model: "m", apiKey: "k", contextWindowTokens: 256000, modelRequestMaxRetries: 0 },
+        adapter, messages: [{ role: "user", content: "hi" }], soulSystemBaseContent: "system",
+        timeoutMs: 120_000, fallbackRevealIntervalMs: 0, streamChat,
+      }).then((response) => ({ response }), (error) => ({ error }));
+
+      await vi.advanceTimersByTimeAsync(90_000);
+      expect(await outcome).toMatchObject({ response: { reply: "done" } });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("keeps the chat system prefix stable while appending runtime context as a wire-only suffix", async () => {
     const adapter = new FakeAdapter();
     await runChatLoop({
@@ -702,6 +746,117 @@ describe("runChatLoop", () => {
     });
   });
 
+  it("commits a pure generated image before emitting its attachment event", async () => {
+    const adapter = new FakeAdapter();
+    const attachment = {
+      id: "image-1", kind: "image" as const, name: "generated-image.png", filePath: "managed/generated-image.png",
+      mime: "image/png", source: "model" as const, byteLength: 20, status: "done" as const,
+    };
+    const order: string[] = [];
+    const sink = fakeSink({ appendAssistant: async () => { order.push("persist"); return "assistant-entry"; } });
+    const generatedImageStore = {
+      save: vi.fn(async () => attachment),
+      deleteConversation: vi.fn(async () => undefined),
+      readManagedPng: vi.fn(async () => Buffer.alloc(0)),
+    };
+
+    const result = await runChatLoop({
+      settings: { provider: "test", baseUrl: "https://test", model: "m", apiKey: "k", contextWindowTokens: 256000 },
+      adapter,
+      messages: [{ role: "user", content: "画一只猫" }],
+      soulSystemBaseContent: "SOUL_SYSTEM",
+      timeoutMs: 30_000,
+      recordUsage: vi.fn(),
+      conversationId: "conversation-1",
+      assistantTurnId: "assistant-1",
+      generatedImageStore,
+      transcriptSink: sink,
+      onEvent: (event) => { if (event.type === "image_attachments") order.push("image-event"); },
+      streamChat: async () => ({
+        assistantMessage: { role: "assistant" as const, content: "" },
+        text: "",
+        toolCalls: [],
+        finishReason: "stop" as const,
+        raw: {},
+        generatedImages: [{ id: "image-1", toolCallId: "tool-1", base64: "AA==", mime: "image/png" as const }],
+      }),
+    });
+
+    expect(result.reply).toBe("");
+    expect(generatedImageStore.save).toHaveBeenCalledWith({
+      conversationId: "conversation-1",
+      image: expect.objectContaining({ id: "image-1", toolCallId: "tool-1" }),
+    });
+    expect(sink.appendAssistant).toHaveBeenCalledWith({
+      message: expect.objectContaining({ content: "", attachments: [attachment] }),
+    });
+    expect(order).toEqual(["persist", "image-event"]);
+  });
+
+  it("shows a save error instead of an image attachment when generated image persistence fails", async () => {
+    const events: string[] = [];
+    const result = await runChatLoop({
+      settings: { provider: "test", baseUrl: "https://test", model: "m", apiKey: "k", contextWindowTokens: 256000 },
+      adapter: new FakeAdapter(),
+      messages: [{ role: "user", content: "画一只猫" }],
+      soulSystemBaseContent: "SOUL_SYSTEM",
+      timeoutMs: 30_000,
+      recordUsage: vi.fn(),
+      generatedImageStore: {
+        save: vi.fn(async () => { throw new Error("disk full"); }),
+        deleteConversation: vi.fn(async () => undefined),
+        readManagedPng: vi.fn(async () => Buffer.alloc(0)),
+      },
+      onEvent: (event) => events.push(event.type),
+      streamChat: async () => ({
+        assistantMessage: { role: "assistant" as const, content: "" },
+        text: "",
+        toolCalls: [],
+        finishReason: "stop" as const,
+        raw: {},
+        generatedImages: [{ id: "image-1", toolCallId: "tool-1", base64: "AA==", mime: "image/png" as const }],
+      }),
+    });
+
+    expect(result.reply).toContain("图片生成失败，图片未能保存");
+    expect(events).not.toContain("image_attachments");
+  });
+
+  it("appends an image save error after streamed assistant text", async () => {
+    const deltas: string[] = [];
+    const streamChat: NonNullable<ChatLoopOptions["streamChat"]> = async (input) => {
+      input.onDelta?.({ type: "text_delta", delta: "图片已经生成。" });
+      return {
+        assistantMessage: { role: "assistant" as const, content: "图片已经生成。" },
+        text: "图片已经生成。",
+        toolCalls: [],
+        finishReason: "stop" as const,
+        raw: {},
+        generatedImages: [{ id: "image-1", toolCallId: "tool-1", base64: "AA==", mime: "image/png" as const }],
+      };
+    };
+
+    const result = await runChatLoop({
+      settings: { provider: "test", baseUrl: "https://test", model: "m", apiKey: "k", contextWindowTokens: 256000 },
+      adapter: new FakeAdapter(),
+      messages: [{ role: "user", content: "画一只猫" }],
+      soulSystemBaseContent: "SOUL_SYSTEM",
+      timeoutMs: 30_000,
+      fallbackRevealIntervalMs: 0,
+      recordUsage: vi.fn(),
+      generatedImageStore: {
+        save: vi.fn(async () => { throw new Error("disk full"); }),
+        deleteConversation: vi.fn(async () => undefined),
+        readManagedPng: vi.fn(async () => Buffer.alloc(0)),
+      },
+      onEvent: (event) => { if (event.type === "text_message_content") deltas.push(event.delta); },
+      streamChat,
+    });
+
+    expect(result.reply).toBe("图片已经生成。\n\n图片生成失败，图片未能保存，请重试。");
+    expect(deltas.join("")).toBe(result.reply);
+  });
+
   it("rejects the turn when ChatLoop assistant persistence fails", async () => {
     const adapter = new FakeAdapter();
 
@@ -829,6 +984,7 @@ describe("ChatLoop transcript cross-loop continuity", () => {
       const finalSnapshot = await store.read(conversationId);
       expect(finalSnapshot.entries.filter((entry) => entry.kind === "assistant")).toHaveLength(2);
     } finally {
+      await closeConversationDatabases();
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
@@ -896,6 +1052,7 @@ describe("ChatLoop transcript cross-loop continuity", () => {
         expect.objectContaining({ role: "user", content: "谢谢，再聊聊" }),
       ]));
     } finally {
+      await closeConversationDatabases();
       fs.rmSync(root, { recursive: true, force: true });
     }
   });

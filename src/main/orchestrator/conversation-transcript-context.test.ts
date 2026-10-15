@@ -1,3 +1,4 @@
+import { closeConversationDatabases } from "../storage/conversation-database-client";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -169,7 +170,8 @@ describe("buildModelContext", () => {
     return { root, store: new ConversationTranscriptStore(root, { now: () => 1_000 }) };
   }
 
-  afterEach(() => {
+  afterEach(async () => {
+  await closeConversationDatabases();
     for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
   });
 
@@ -224,7 +226,7 @@ describe("buildModelContext", () => {
 describe("resolveTranscriptRetainTokens", () => {
   it("derives the retain window from the harness budget constants", () => {
     expect(resolveTranscriptRetainTokens(256_000))
-      .toBe(Math.floor((256_000 - 8_192 - 512) * 0.7));
+      .toBe(217_600);
     expect(resolveTranscriptRetainTokens(0)).toBe(1);
   });
 });
@@ -234,7 +236,8 @@ describe("resolveTranscriptRetainTokens", () => {
 describe("transcript failure matrix", () => {
   const roots: string[] = [];
 
-  afterEach(() => {
+  afterEach(async () => {
+  await closeConversationDatabases();
     for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
   });
 

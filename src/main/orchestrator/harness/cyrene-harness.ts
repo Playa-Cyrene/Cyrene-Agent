@@ -56,6 +56,7 @@ import {
   type PromptLayers,
 } from "../prompt-layers";
 import { buildToolCatalog } from "../tools/registry/tool-catalog";
+import { persistGeneratedImages } from "../../chats/generated-image-store";
 
 const LOG_PREFIX = "[CyreneHarness]";
 
@@ -80,7 +81,6 @@ export interface HarnessRun {
   cache: HarnessCacheState;
   /** 已完成的工具执行轮数（最终无工具的回复轮不计入；LLM 请求轮数 = rounds + 最终回复轮）。 */
   rounds: number;
-  checkpointFailure?: string;
   /** ask_user 等交互内置工具的 dispatch 上下文。 */
   askDispatchContext: ToolDispatchContext;
   /** 普通工具的 dispatch 上下文（延迟输出持久化，重试收敛后统一落盘）。 */
@@ -108,9 +108,6 @@ export async function runCyreneHarness(input: HarnessInput): Promise<HarnessResu
   materializeInitialContext(run);
 
   while (!run.clock.isExecutionTimeout()) {
-    if (run.checkpointFailure) {
-      return finishRun(run, `执行状态保存失败：${run.checkpointFailure}`, true, "error");
-    }
     // 用户取消：finalAnswer 保持为空，不生成 "最终回复被取消。" 之类的占位文案。
     if (input.signal?.aborted) return cancelledResult(run);
     refreshRunTools(run);
@@ -135,13 +132,7 @@ export async function runCyreneHarness(input: HarnessInput): Promise<HarnessResu
         return finishRun(run, `插话提交失败：${errorMessage(error)}`, true, "error");
       }
       if (adjustments.length > 0) {
-        for (const adjustment of adjustments) {
-          run.messages.push({ role: "user", content: adjustment.rawContent });
-        }
-        checkpoint(run);
-        if (run.checkpointFailure) {
-          return finishRun(run, `执行状态保存失败：${run.checkpointFailure}`, true, "error");
-        }
+        applyRunAdjustments(run, adjustments);
       }
     }
 
@@ -154,13 +145,15 @@ export async function runCyreneHarness(input: HarnessInput): Promise<HarnessResu
     //（调用方/测试依赖 fetch 同步发起），因此只在真正需要压缩时才 await。
     const compaction = compactIfNeeded(run, promptLayers);
     if (compaction) {
-      await compaction;
-      // 压缩已替换模型历史：checkpoint 失败 = 新 epoch 未持久化。
-      // 此时继续请求模型，崩溃恢复会拿到旧历史 + 旧周期，违反缓存周期不变量 → 立即熔断。
-      if (run.checkpointFailure) {
-        return finishRun(run, `执行状态保存失败：${run.checkpointFailure}`, true, "error");
+      try {
+        await compaction;
+      } catch (error) {
+        if (input.signal?.aborted) return cancelledResult(run);
+        return finishRun(run, `上下文压缩失败：${errorMessage(error)}`, true, "error");
       }
+      // 会话摘要已提交检查点，运行历史与后续轮次从同一压缩视图继续。
     }
+    if (input.signal?.aborted) return cancelledResult(run);
 
     // ── 上下文容量快照 + 缓存诊断（压缩后、请求前）──
     emitContextUsage(run, "preRequest");
@@ -189,21 +182,48 @@ export async function runCyreneHarness(input: HarnessInput): Promise<HarnessResu
         : failed;
     }
 
+    // 推理结束回调可能触发取消；模型成功返回不代表本轮仍允许提交历史。
+    if (input.signal?.aborted) return cancelledResult(run);
+
     // ── Assistant response 必须写回 transcript（否则模型下一轮看不到自己上一轮的回复）──
-    const assistantMessage = toAssistantMessage(response);
+    const persistedImages = await persistGeneratedImages(
+      input.generatedImageStore,
+      input.toolContext?.conversationId ?? "default",
+      response.generatedImages,
+    );
+    if (input.signal?.aborted) return cancelledResult(run);
+    const imageSaveNotice = persistedImages.failedCount > 0
+      ? persistedImages.attachments.length > 0
+        ? "部分生成图片保存失败。"
+        : "图片生成失败，图片未能保存，请重试。"
+      : "";
+    const replyText = [response.text, imageSaveNotice].filter(Boolean).join("\n\n");
+    const assistantMessage = {
+      ...toAssistantMessage({ ...response, text: replyText }),
+      content: replyText,
+      ...(persistedImages.attachments.length ? { attachments: persistedImages.attachments } : {}),
+    };
     run.messages.push(assistantMessage);
     try {
       // canonical assistant 先于任何工具 dispatch 落盘（fail-closed）：
       // 写失败 = 本轮协议断裂，直接终态 error，不得带着缺失的声明继续执行。
       run.currentAssistantEntryId = await input.transcriptSink?.appendAssistant({
-        message: assistantMessage,
+        message: transcriptSafeAssistantToolCalls(assistantMessage, run.currentTools),
         roundId,
       });
     } catch (error) {
       return finishRun(run, `会话轨迹保存失败：${errorMessage(error)}`, true, "error");
     }
-    if (response.text) {
-      run.streamController.bufferProgressContent(response.text);
+    if (persistedImages.attachments.length > 0) {
+      input.onEvent?.({
+        type: "image_attachments",
+        messageId: input.assistantTurnId ?? `msg-${input.runId}`,
+        roundId,
+        attachments: persistedImages.attachments,
+      });
+    }
+    if (typeof assistantMessage.content === "string" && assistantMessage.content) {
+      run.streamController.bufferProgressContent(assistantMessage.content);
     }
 
     // ── 截断可见化：finishReason=length 表示命中输出上限 ──
@@ -229,7 +249,6 @@ export async function runCyreneHarness(input: HarnessInput): Promise<HarnessResu
       if (outcome === "cancelled") return cancelledResult(run);
       input.onEvent?.({ type: "round_end", roundId });
       run.rounds++;
-      checkpoint(run);
       continue;
     }
 
@@ -258,16 +277,10 @@ export async function runCyreneHarness(input: HarnessInput): Promise<HarnessResu
       if (intermediate) {
         input.onEvent?.({ type: "progress_text", content: intermediate });
       }
-      for (const adjustment of endAdjustments) {
-        run.messages.push({ role: "user", content: adjustment.rawContent });
-      }
+      applyRunAdjustments(run, endAdjustments);
       // 本轮模型已产出回复且运行未结束：按工具轮口径推进轮次，
       // 让下一轮拿到新 roundId，轮次上限也能正确计数
       run.rounds++;
-      checkpoint(run);
-      if (run.checkpointFailure) {
-        return finishRun(run, `执行状态保存失败：${run.checkpointFailure}`, true, "error");
-      }
       continue;
     }
     const finalAnswer = run.streamController.commitProgressBuffer() + truncatedSuffix;
@@ -283,6 +296,15 @@ export async function runCyreneHarness(input: HarnessInput): Promise<HarnessResu
 }
 
 // ═══ 运行准备 ═════════════════════════════════════════════
+
+/** 工具结果已完整提交后追加插话，下一轮使用新的助手展示分组。 */
+function applyRunAdjustments(run: HarnessRun, adjustments: RunAdjustmentMessage[]): void {
+  for (const adjustment of adjustments) run.messages.push({ role: "user", content: adjustment.rawContent });
+  const assistantMessageId = `${run.input.runId ?? "harness-run"}:adjust:${adjustments.at(-1)!.id}`;
+  run.input.assistantTurnId = assistantMessageId;
+  run.input.transcriptSink?.setAssistantTurnId?.(assistantMessageId);
+  run.input.onEvent?.({ type: "run_adjustment", messages: adjustments, assistantMessageId });
+}
 
 /** 初始化单次运行：合并配置、深拷贝状态、构建工具清单与 dispatch 上下文。 */
 function createRun(input: HarnessInput): HarnessRun {
@@ -306,6 +328,7 @@ function createRun(input: HarnessInput): HarnessRun {
     ...registryToolSpecs,
     ...getHarnessBuiltinToolSpecs({
       includeInteractive: input.includeInteractiveTools,
+      allowedToolIds: input.allowedBuiltinToolIds,
       includeTask: Boolean(input.taskExecutor),
       includeCloseTask: Boolean(input.closeTaskExecutor),
       openTaskCompanions: input.openTaskCompanions,
@@ -375,6 +398,7 @@ function createRun(input: HarnessInput): HarnessRun {
     onEvent: input.onEvent,
     requestUserClarification: input.requestUserClarification,
     includeInteractiveTools: input.includeInteractiveTools,
+    allowedBuiltinToolIds: input.allowedBuiltinToolIds,
     signal: input.signal,
     toolOutputStore: input.toolOutputStore,
     toolContext: input.toolContext,
@@ -461,6 +485,7 @@ function refreshRunTools(run: HarnessRun): void {
     })),
     ...getHarnessBuiltinToolSpecs({
       includeInteractive: run.input.includeInteractiveTools,
+      allowedToolIds: run.input.allowedBuiltinToolIds,
       includeTask: Boolean(run.input.taskExecutor),
       includeCloseTask: Boolean(run.input.closeTaskExecutor),
       openTaskCompanions: run.input.openTaskCompanions,
@@ -495,8 +520,7 @@ function buildRoundPromptLayers(run: HarnessRun): PromptLayers {
 
 /**
  * Mid-loop compaction（循环中途压缩）：估算超预算时压缩历史并推进缓存周期。
- * 压缩会替换模型历史，因此下一次请求前必须先持久化新 epoch
- * （主循环在压缩后检查 checkpointFailure，失败即熔断，不再发起模型请求）。
+ * 会话压缩先提交 transcript 检查点，再替换模型上下文并推进缓存周期。
  *
  * 同步门控：未超预算时返回 undefined（不产生 await 挂起点），
  * 保证主循环到首次 LLM fetch 之间保持同步直达。
@@ -521,23 +545,31 @@ async function runCompaction(run: HarnessRun, roundSystemPrompt: string, budget:
   const { input, config } = run;
   console.log(`${LOG_PREFIX} mid-loop compaction triggered (estimated=${budget.estimatedInput} budget=${budget.usableInputBudget})`);
   const messageCountBefore = run.messages.length;
+  emitContextUsage(run, "preCompaction");
   input.onCompactionLifecycle?.({ status: "started", messageCountBefore });
-  const compactedMessages = await compressForAgentLoop({
-    messages: run.messages,
-    retainTokens: Math.floor(config.contextWindowTokens * config.compactionRetainRatio),
-    summarize: (history) => summarizeHistory(
-      input.vendorConfig,
-      roundSystemPrompt,
-      history,
-      run.allToolSpecs,
-      input.signal,
-      {
-        maxRetries: config.modelRequestMaxRetries,
-        idleTimeoutMs: config.modelRequestIdleTimeoutMs,
-        onStatus: (status) => input.onEvent?.({ type: "model_retry", status }),
-      },
-    ),
-  });
+  const retainTokens = Math.floor(config.contextWindowTokens * config.compactionRetainRatio);
+  // 运行时环境等内部事实不属于会话历史；压缩后继续供本轮使用。
+  const transientMessages = run.messages.filter((message) => message.visibility === "internal"
+    && message.role === "user"
+    && message.internal?.runId === (input.runId ?? "harness-run"));
+  const compactedMessages = input.compactTranscript && input.transcriptSink
+    ? [...await input.compactTranscript({ retainTokens, transientMessages, signal: input.signal }), ...transientMessages]
+    : await compressForAgentLoop({
+      messages: run.messages,
+      retainTokens,
+      summarize: (history) => summarizeHistory(
+        input.vendorConfig,
+        roundSystemPrompt,
+        history,
+        run.allToolSpecs,
+        input.signal,
+        {
+          maxRetries: config.modelRequestMaxRetries,
+          idleTimeoutMs: config.modelRequestIdleTimeoutMs,
+          onStatus: (status) => input.onEvent?.({ type: "model_retry", status }),
+        },
+      ),
+    });
   if (compactedMessages !== run.messages) {
     run.cache = { cacheEpoch: run.cache.cacheEpoch + 1, epochReason: "compaction" };
     run.messages = compactedMessages;
@@ -547,7 +579,6 @@ async function runCompaction(run: HarnessRun, roundSystemPrompt: string, budget:
       messageCountAfter: compactedMessages.length,
       cache: { ...run.cache },
     });
-    checkpoint(run);
   } else {
     run.messages = compactedMessages;
   }
@@ -590,40 +621,17 @@ async function callRoundLLM(run: HarnessRun, promptLayers: PromptLayers, roundId
 
 // ═══ 结算出口 ═════════════════════════════════════════════
 
-/** 持久化可恢复子运行状态；失败记入 checkpointFailure，由主循环统一降级为 error。
- *  注意：messages/state 传的是活引用（不做 deepClone），克隆契约由消费方
- *  （run-store / task-session-store）在回调返回前同步完成。 */
-function checkpoint(run: HarnessRun): void {
-  try {
-    run.input.onCheckpoint?.({
-      messages: run.messages,
-      state: run.state,
-      toolOutputs: run.toolOutputs,
-      rounds: run.rounds,
-      cache: { ...run.cache },
-      at: Date.now(),
-    });
-  } catch (error) {
-    run.checkpointFailure = error instanceof Error ? error.message : String(error);
-    console.error(`${LOG_PREFIX} checkpoint failed:`, error);
-  }
-}
-
-/** 终态统一结算（所有终态共享）：停表 → terminal 快照 → checkpoint。
+/** 终态统一结算（所有终态共享）：停表 → terminal 快照。
  *  cancelled / error / timeout / success 一律经过此处，
- *  保证上下文环 UI 拿到终态数据、可恢复状态落盘。 */
+ *  保证上下文环 UI 拿到终态数据。 */
 function settleRun(run: HarnessRun): void {
   run.clock.stopActive();
   emitContextUsage(run, "terminal");
-  checkpoint(run);
 }
 
 /** 用户取消的统一出口：settleRun 后返回空 finalAnswer 的 cancelled 结果。 */
 function cancelledResult(run: HarnessRun): HarnessResult {
   settleRun(run);
-  if (run.checkpointFailure) {
-    return buildResult(`执行状态保存失败：${run.checkpointFailure}`, run.state, true, "error", run.rounds);
-  }
   return {
     finalAnswer: "",
     finalState: run.state,
@@ -634,7 +642,7 @@ function cancelledResult(run: HarnessRun): HarnessResult {
   };
 }
 
-/** 终态统一出口：settleRun → checkpointFailure 降级 error → 构造结果。 */
+/** 终态统一出口：settleRun → 构造结果。 */
 function finishRun(
   run: HarnessRun,
   finalAnswer: string,
@@ -642,9 +650,6 @@ function finishRun(
   terminateReason: HarnessResult["terminateReason"],
 ): HarnessResult {
   settleRun(run);
-  if (run.checkpointFailure) {
-    return buildResult(`执行状态保存失败：${run.checkpointFailure}`, run.state, true, "error", run.rounds);
-  }
   return buildResult(finalAnswer, run.state, terminated, terminateReason, run.rounds);
 }
 
@@ -722,6 +727,17 @@ function toAssistantMessage(response: ChatResponse): ChatMessage {
     role: "assistant",
     content: response.text,
     ...(response.toolCalls?.length ? { toolCalls: response.toolCalls } : {}),
+  };
+}
+
+/** 邮件工具参数可能含收件人、主题或正文；运行期保留原消息给模型，轨迹只保留工具声明。 */
+function transcriptSafeAssistantToolCalls(message: ChatMessage, tools: HarnessInput["tools"]): ChatMessage {
+  const sensitiveIds = new Set(tools.filter((tool) => tool.sensitiveArgs).map((tool) => tool.id));
+  if (!message.toolCalls?.some((call) => sensitiveIds.has(call.name))) return message;
+  return {
+    role: "assistant",
+    content: "[邮件工具调用已脱敏]",
+    toolCalls: message.toolCalls.map((call) => sensitiveIds.has(call.name) ? { ...call, arguments: "{}" } : call),
   };
 }
 

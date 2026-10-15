@@ -71,6 +71,8 @@ export interface ProviderProfile {
    * true 时图片直发主模型（direct），false 走独立视觉模型转述（caption）。
    */
   multimodal?: boolean;
+  /** Responses 主对话可启用的图片生成工具；旧档案不含此字段时保持关闭。 */
+  imageGeneration?: { enabled: boolean; model: string };
 }
 
 /**
@@ -141,6 +143,8 @@ export interface ModelSettings {
    * 保存的是用户 preference（不覆盖）；effective config 由 capability 决定。
    */
   reasoning?: ReasoningPreference;
+  /** 当前有效模型档案的 Responses 图片生成配置；旧配置缺省为关闭。 */
+  imageGeneration?: { enabled: boolean; model: string };
   /** 当前实际模型的手动推理规则；由档案展开，仅用于运行时。 */
   manualReasoning?: ManualReasoningConfig;
   // 按厂商缓存：currentProvider 之外的厂商配置也保留在这里，切回来时回填。
@@ -248,6 +252,10 @@ function normalizeProviderProfile(
     ? "https://api.minimax.cn/v1"
     : baseUrl;
   const rawContextWindow = (input as { contextWindowTokens?: unknown })?.contextWindowTokens;
+  const rawImageGeneration = (input as { imageGeneration?: unknown })?.imageGeneration;
+  const imageGeneration = rawImageGeneration && typeof rawImageGeneration === "object" && !Array.isArray(rawImageGeneration)
+    ? rawImageGeneration as { enabled?: unknown; model?: unknown }
+    : undefined;
   const model = typeof input?.model === "string" ? input.model.trim() : "";
   // 模型清单六步契约（顺序是业务数据，删除当前模型后的顺位 fallback 依赖它）：
   // 1. trim model；2. models 逐项 trim → 去空；3. 稳定去重（保持首现顺序，大小写原样）；
@@ -308,6 +316,9 @@ function normalizeProviderProfile(
     multimodal: (input as { multimodal?: unknown })?.multimodal === true || (input as { multimodal?: unknown })?.multimodal === false
       ? (input as { multimodal: boolean }).multimodal
       : undefined,
+    ...(typeof imageGeneration?.enabled === "boolean" && typeof imageGeneration.model === "string"
+      ? { imageGeneration: { enabled: imageGeneration.enabled, model: imageGeneration.model.trim() } }
+      : {}),
   };
 }
 
@@ -494,6 +505,7 @@ export function resolveModelSettingsProfile(settings: ModelSettings, id?: string
     apiKey: profile.apiKey,
     explicitTransport: profile.explicitTransport,
     reasoning: profile.reasoning,
+    imageGeneration: profile.imageGeneration,
     manualReasoning: modelOption?.manualReasoning,
     // 档案级字段覆盖镜像；未定义时回退全局值（老档案 = 现行为）
     contextWindowTokens: modelOption?.contextWindowTokens ?? profile.contextWindowTokens ?? settings.contextWindowTokens,
@@ -524,6 +536,7 @@ export function resolveSessionModelSettings(
     model,
     contextWindowTokens: modelOption?.contextWindowTokens ?? binding.profile.contextWindowTokens ?? settings.contextWindowTokens,
     multimodal: modelOption?.multimodal ?? binding.profile.multimodal ?? settings.multimodal,
+    imageGeneration: binding.profile.imageGeneration,
     manualReasoning: modelOption?.manualReasoning,
   };
 }

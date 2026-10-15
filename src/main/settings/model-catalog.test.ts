@@ -4,6 +4,20 @@ import { normalizeModelSettings, getDefaultModelProfile, getPublicModelConfig, r
 import { resolveCaptionVisionConfig } from "../orchestrator/image-router";
 
 describe("model catalog", () => {
+  it("keeps image generation disabled for legacy profiles and resolves explicit Responses settings", () => {
+    const settings = normalizeModelSettings({
+      provider: "ChatGPT（OpenAI）",
+      modelProfiles: [
+        { id: "legacy", provider: "ChatGPT（OpenAI）", model: "gpt-5.6", baseUrl: "https://api.openai.com/v1", apiKey: "key", explicitTransport: "responses" },
+        { id: "images", provider: "ChatGPT（OpenAI）", model: "gpt-5.6", baseUrl: "https://api.openai.com/v1", apiKey: "key", explicitTransport: "responses", imageGeneration: { enabled: true, model: "gpt-image-2.5-flare" } },
+      ],
+      defaultModelProfileId: "legacy",
+    });
+
+    expect(resolveModelSettingsProfile(settings, "legacy").imageGeneration).toBeUndefined();
+    expect(resolveModelSettingsProfile(settings, "images").imageGeneration)
+      .toEqual({ enabled: true, model: "gpt-image-2.5-flare" });
+  });
   it("keeps the first saved model as the default and rejects a duplicate key plus model", () => {
     const first = addModelProfile([], {
       id: "openai-1",

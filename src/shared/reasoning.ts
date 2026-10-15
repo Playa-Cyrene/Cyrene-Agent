@@ -61,9 +61,9 @@ export function resolveReasoningCapability(
       return rule.capability;
     }
   }
-  // 第二轮：模型名跨家族推断（第一轮未出真实规则时兜底）
+  // 第二轮：只用显式声明的家族推断，厂商内的宽泛规则不自动外溢。
   for (const rule of MODEL_REASONING_RULES) {
-    if (rule.modelPattern.test(model) && rule.capability !== UNKNOWN_REASONING_CAPABILITY) {
+    if (rule.modelInferencePattern?.test(model) && rule.capability !== UNKNOWN_REASONING_CAPABILITY) {
       return rule.capability;
     }
   }

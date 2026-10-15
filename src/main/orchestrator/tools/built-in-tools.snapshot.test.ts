@@ -12,7 +12,7 @@ import {
   setUserTimezoneConfig,
 } from "./built-in-tools";
 
-/** built-in-tools 注册的 10 个工具 id，严格按 built-in-tools.ts 的注册先后排序。
+/** built-in-tools 注册的 9 个工具 id，严格按 built-in-tools.ts 的注册先后排序。
  *  registry 插入顺序 = 工具目录 prompt 顺序，拆分时 facade 的 import 顺序必须保持它。 */
 const BUILT_IN_TOOL_IDS = [
   "fetch_url",
@@ -24,12 +24,12 @@ const BUILT_IN_TOOL_IDS = [
   "install_mcp_server",
   "weather",
   "web_search",
-  "play_live2d_action",
 ] as const;
 
 describe("built-in-tools 注册快照", () => {
   it("按原注册顺序插入 registry（工具目录 prompt 顺序契约）", () => {
     const allIds = toolRegistry.getAllTools().map((t) => t.id);
+    expect(allIds).not.toContain("play_live2d_action");
     // 只取 built-in-tools 这 7 个 id 的相对顺序做断言，对 registry 里其它模块的
     // 注册（tool-registry.ts 自带工具等）保持鲁棒。
     const positions = BUILT_IN_TOOL_IDS.map((id) => allIds.indexOf(id));

@@ -1,3 +1,4 @@
+import { closeConversationDatabases } from "../storage/conversation-database-client";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -109,6 +110,18 @@ describe("AgentRuntime 插件宿主事件", () => {
       conversationId: "conversation-channel",
       channel: "wechat",
     });
+  });
+
+  it("passes canonical source IDs through the runtime to memory completion", async () => {
+    const runtime = createAgentRuntime(createDeps(vi.fn(async () => {})));
+    await runtime.onRunFinished({ reply: "reply", toolResults: [] }, "user", {
+      source: "desktop", mode: "chat", conversationId: "c1", runId: "r1",
+      userTurnId: "u1", assistantEntryId: "a1",
+    });
+    expect(mocks.onAgentRunFinished).toHaveBeenCalledWith(
+      expect.anything(), "user", expect.anything(), undefined, "c1",
+      expect.objectContaining({ vectorMemorySource: { userTurnId: "u1", assistantEntryId: "a1" } }),
+    );
   });
 
   it.each(["timeout", "cancelled", "runtime_error"] as const)(
@@ -553,6 +566,7 @@ describe("AgentRuntime 轨迹上下文注入（CTA Phase 1）", () => {
       expect(JSON.stringify(built.options.messages)).not.toContain("stale renderer");
     } finally {
       electronMocks.userDataRoot = "";
+      await closeConversationDatabases();
       rmSync(root, { recursive: true, force: true });
     }
   });

@@ -1,0 +1,130 @@
+name: 运行时 Bug（源码）🐛
+description: 从仓库源码运行（git clone + pnpm run dev）时出现的功能异常、偶现问题、崩溃等
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        > [!IMPORTANT]
+        > 本项目欢迎合理使用 AI 辅助，但提交者需要对最终内容负责。
+        > 请勿直接粘贴未经人工审阅、整理和验证的 AI 原始输出。
+        > 若内容明显是未整理的 AI 输出，维护者可能要求重新整理后再继续处理。
+
+        **未按本模板提交的 Issue 会被机器人自动关闭**，请认真填写下面的每一项。
+
+  - type: checkboxes
+    attributes:
+      label: AI 辅助声明（提交前请逐条确认）
+      options:
+        - label: 我已确认：本 Issue 由我本人阅读、核对并整理，未直接粘贴未经处理的 AI 原始输出
+          required: true
+        - label: 我已核对其中涉及的技术事实，并对最终内容负责
+          required: true
+        - label: 我已区分「已确认事实」和「AI 推测 / 尚待验证的结论」
+          required: true
+        - label: 如果 AI 给出了根因分析，我已把「已确认事实」和「根因推测」分开陈述
+          required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        ## ⚠️ 我们无法重现的问题是无法修复的
+        请尽量写清触发条件和复现步骤；偶现问题请注明出现频率（如「上千次出一次」）。
+
+        > 如果是 pnpm install / 构建失败，请返回选择「安装/构建问题 🔧」。
+        > 本模板适用于从仓库源码运行（git clone + pnpm install / pnpm run dev）；如果你用的是 GitHub Releases 下载的安装包，请返回选择「运行时 Bug（安装包）🐛」。
+        > 请务必填写当前提交号：`package.json` 里的版本号只代表打包时的版本，无法区分不同的代码状态，只有提交号能定位到你实际运行的代码。
+
+  - type: input
+    id: commit
+    attributes:
+      label: 提交号（commit）
+      description: 在仓库目录运行 `git rev-parse --short HEAD` 的输出；从应用内「报告问题」入口填写时会带过来
+      placeholder: "如 a1b2c3d"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: 操作系统
+      options:
+        - Windows 11
+        - Windows 10
+    validations:
+      required: true
+
+  - type: dropdown
+    id: mode
+    attributes:
+      label: 出问题的会话模式
+      multiple: true
+      options:
+        - chat（聊天）
+        - work（工作）
+        - learn（学习）
+        - code（编程）
+        - 不确定 / 其他入口（渠道、定时任务等）
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 按顺序描述你做了什么。偶现问题写触发场景即可。
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际行为
+      description: 实际发生了什么？有没有报错提示？
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望行为
+      description: 你认为应该发生什么？
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志 / 截图
+      description: |
+        如有报错弹窗、异常截图请拖拽上传。
+        日志位于 `%APPDATA%/Cyrene/logs/`，可粘贴相关片段。
+    validations:
+      required: false
+
+  - type: textarea
+    id: source-evidence
+    attributes:
+      label: 源码依据（涉及实现或根因判断时填写）
+      description: |
+        请对应到上面填写的提交号，提供仓库源码的相对路径、行号及相关调用链。
+        还没定位到源码时可填写「尚未定位」。
+      placeholder: |
+        文件与行号：src/main/...:123
+        调用链或判断依据：
+        （尚未定位时填写“尚未定位”）
+    validations:
+      required: false
+
+  - type: input
+    id: frequency
+    attributes:
+      label: 出现频率
+      description: 必现 / 偶现（大约多少次出一次）
+      placeholder: "必现 / 偶现（约 N 次出 1 次）"
+    validations:
+      required: false

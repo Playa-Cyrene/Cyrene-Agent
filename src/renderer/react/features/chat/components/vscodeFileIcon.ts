@@ -65,6 +65,8 @@ const EXT_ICON: Record<string, string> = {
   markdown: markdownSvg,
   mdx: markdownSvg,
   txt: textSvg,
+  csv: textSvg,
+  log: textSvg,
   py: pythonSvg,
   pyw: pythonSvg,
   rs: rustSvg,

@@ -5,7 +5,6 @@ import {
   type AgentRunStage,
   type ComposerInteraction,
 } from "../components/run-presentation";
-import type { WeatherData } from "../components/weather/weather-types";
 import type { PermissionApprovalRequest } from "./chat-page-bridge";
 import { recoverInterruptedMessage } from "./session-runtime-state";
 
@@ -48,61 +47,6 @@ export function parseSessionRunActiveError(message: string): string | undefined 
   // Electron 会给 invoke 拒绝包一层 "Error invoking remote method 'agui:run': Error: ..."，
   // 守卫前缀不一定在消息开头；按 runId 模式匹配，顺带避免普通文本误触发。
   return /SESSION_RUN_ACTIVE:(run-[A-Za-z0-9-]+)/.exec(message)?.[1];
-}
-
-export function normalizeWeatherData(value: unknown): WeatherData | undefined {
-  const card = asRecord(value);
-  if (!card) return undefined;
-
-  const source = asNonEmptyString(card.source);
-  const location = asRecord(card.location);
-  const province = asNonEmptyString(location?.province);
-  const city = asNonEmptyString(location?.city);
-  const temp = typeof card.temp === "number" ? card.temp : undefined;
-  const humidity = typeof card.humidity === "number" ? card.humidity : undefined;
-
-  if (!source || !province || !city || temp === undefined || humidity === undefined) {
-    return undefined;
-  }
-
-  if (source === "open-meteo") {
-    const weatherCode = typeof card.weatherCode === "number" ? card.weatherCode : undefined;
-    const windDeg = typeof card.windDeg === "number" ? card.windDeg : undefined;
-    const windSpeed = typeof card.windSpeed === "number" ? card.windSpeed : undefined;
-    if (weatherCode === undefined || windDeg === undefined || windSpeed === undefined) return undefined;
-    return {
-      source: "open-meteo",
-      location: { province, city },
-      weatherCode,
-      temp,
-      feelsLike: typeof card.feelsLike === "number" ? card.feelsLike : temp,
-      humidity,
-      windDeg,
-      windSpeed,
-      precipitation: typeof card.precipitation === "number" ? card.precipitation : 0,
-      pressure: typeof card.pressure === "number" ? card.pressure : 0,
-    };
-  }
-
-  if (source === "amap") {
-    const weather = asNonEmptyString(card.weather);
-    const windDirection = asNonEmptyString(card.windDirection);
-    const windPower = asNonEmptyString(card.windPower);
-    const reporttime = asNonEmptyString(card.reporttime);
-    if (!weather || !windDirection || !windPower || !reporttime) return undefined;
-    return {
-      source: "amap",
-      location: { province, city },
-      weather,
-      temp,
-      humidity,
-      windDirection,
-      windPower,
-      reporttime,
-    };
-  }
-
-  return undefined;
 }
 
 export function permissionInteraction(request: PermissionApprovalRequest): ComposerInteraction {
@@ -148,6 +92,7 @@ export function toUiMessages(session: ChatSession): ChatMessageItem[] {
       responseStarted: message.role === "model" && Boolean(message.content.trim() || message.sticker),
       sticker: message.sticker,
       toolExecutions: message.toolExecutions,
+      emailDraftCards: message.emailDraftCards?.map((card) => card.status === "sending" ? { ...card, status: "unknown" } : card),
       attachments: message.attachments,
       contextUsage: message.contextUsage,
       runId: message.runSnapshot?.runId,

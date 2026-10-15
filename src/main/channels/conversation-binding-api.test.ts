@@ -15,7 +15,7 @@ function makeStore() {
 }
 
 describe("conversation binding IPC API", () => {
-  it("returns metadata only and includes available conversations", () => {
+  it("returns metadata only and includes available conversations", async () => {
     const { store, sessionId } = makeStore();
     const result = getContextBindingSnapshot(store, [
       { id: "conversation-1", title: "主线", mode: "chat", updatedAt: 10 },
@@ -27,18 +27,18 @@ describe("conversation binding IPC API", () => {
     expect(result).not.toHaveProperty("messages");
   });
 
-  it("rejects unknown external chats and missing conversations", () => {
+  it("rejects unknown external chats and missing conversations", async () => {
     const { store, sessionId } = makeStore();
-    expect(bindContextConversation(store, { sessionId: "unknown", conversationId: "conversation-1" }, () => true)).toEqual({ ok: false, error: "外部聊天不存在" });
-    expect(bindContextConversation(store, { sessionId, conversationId: "missing" }, () => false)).toEqual({ ok: false, error: "桌面对话不存在" });
+    expect(await bindContextConversation(store, { sessionId: "unknown", conversationId: "conversation-1" }, () => true)).toEqual({ ok: false, error: "外部聊天不存在" });
+    expect(await bindContextConversation(store, { sessionId, conversationId: "missing" }, () => false)).toEqual({ ok: false, error: "桌面对话不存在" });
   });
 
-  it("binds only validated ids and unbinds the selected external chat", () => {
+  it("binds only validated ids and unbinds the selected external chat", async () => {
     const { store, sessionId } = makeStore();
     const secondSessionId = makeSessionId("wechat", "chat-2");
     store.observe({ sessionId: secondSessionId, channel: "wechat", chatId: "chat-2", chatType: "private", lastAt: 2 });
-    expect(bindContextConversation(store, { sessionId, conversationId: "conversation-1" }, () => true)).toEqual({ ok: true });
-    expect(bindContextConversation(store, { sessionId: secondSessionId, conversationId: "conversation-2" }, () => true)).toEqual({ ok: true });
+    expect(await bindContextConversation(store, { sessionId, conversationId: "conversation-1" }, () => true)).toEqual({ ok: true });
+    expect(await bindContextConversation(store, { sessionId: secondSessionId, conversationId: "conversation-2" }, () => true)).toEqual({ ok: true });
     expect(unbindContextConversation(store, sessionId)).toEqual({ ok: true });
     expect(store.resolve(sessionId)).toBeNull();
     expect(store.resolve(secondSessionId)).toBe("conversation-2");

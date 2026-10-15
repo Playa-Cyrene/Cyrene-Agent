@@ -83,7 +83,10 @@ export interface ToolExecutionPresentation {
   label: string;
   statusText: string;
   detail?: string;
+  filePaths?: string[];
 }
+
+const FILE_TOOL_NAMES = new Set(["Read", "Write", "Edit", "read_file", "write_file", "edit_file", "str_replace", "apply_patch"]);
 
 function parseToolArgs(argsText?: string): Record<string, unknown> | undefined {
   if (!argsText) return undefined;
@@ -133,6 +136,16 @@ export function describeToolExecution(tool: ToolExecutionRecord): ToolExecutionP
     : tool.status === "error"
       ? t("agentRounds.statusFailed", { action })
       : t("agentRounds.statusDone", { action });
+  if (FILE_TOOL_NAMES.has(tool.name)) {
+    const target = firstStringArg(args, ["path", "filePath", "file_path"]);
+    const changes = tool.changes ?? (Array.isArray(result?.changes) ? result.changes : []);
+    const filePaths = target ? [target] : [...new Set(changes.flatMap((change: unknown) => {
+      if (!change || typeof change !== "object") return [];
+      const file = firstStringArg(change as Record<string, unknown>, ["file"]);
+      return file ? [file] : [];
+    }))];
+    if (filePaths.length > 0) return { label, statusText, detail, filePaths };
+  }
   return { label, statusText, detail };
 }
 

@@ -77,7 +77,7 @@ export class WikiMemoryScheduler {
 
   async flushAll(): Promise<void> {
     if (!this.enabled || !isWikiMemoryEnabled()) return;
-    for (const id of this.options.sourceReader.listConversationIds()) {
+    for (const id of (await this.options.sourceReader.listConversationIds())) {
       try { await this.flushConversation(id, true); }
       catch (error) { this.reportError(id, error); }
     }
@@ -92,15 +92,15 @@ export class WikiMemoryScheduler {
     await this.queues.get(conversationId)?.catch(() => undefined);
   }
 
-  releaseSessionCancellation(conversationId: string): void {
+  async releaseSessionCancellation(conversationId: string): Promise<void> {
     this.cancelled.delete(conversationId);
-    if (!this.options.sourceReader.listConversationIds().includes(conversationId)) markWikiSourcesFresh(conversationId);
+    if (!(await this.options.sourceReader.listConversationIds()).includes(conversationId)) markWikiSourcesFresh(conversationId);
   }
 
   private async backfill(): Promise<void> {
     // Yield to startup and process old sessions one at a time. Progress is durable.
     await new Promise<void>((resolve) => setTimeout(resolve, 2000));
-    const liveIds = new Set(this.options.sourceReader.listConversationIds());
+    const liveIds = new Set((await this.options.sourceReader.listConversationIds()));
     for (const id of await this.store.listTombstonedConversations()) {
       if (!this.enabled || !isWikiMemoryEnabled()) return;
       // A crash between tombstoning and chat deletion leaves a live session.
@@ -119,7 +119,7 @@ export class WikiMemoryScheduler {
     try {
       let completed = false;
       await this.enqueue(conversationId, async () => {
-        if (!this.isCurrent(conversationId, this.generation)) return;
+        if (!(await this.isCurrent(conversationId, this.generation))) return;
         const conversation = await this.options.sourceReader.readConversation(conversationId);
         if (conversation) {
           await this.store.reconcileConversationSources(conversationId, conversation.activeSourceIds);
@@ -135,9 +135,9 @@ export class WikiMemoryScheduler {
 
   private async processConversation(conversationId: string, force: boolean): Promise<void> {
     const generation = this.generation;
-    if (!this.isCurrent(conversationId, generation)) return;
+    if (!(await this.isCurrent(conversationId, generation))) return;
     let conversation = await this.options.sourceReader.readConversation(conversationId);
-    if (!conversation || !this.isCurrent(conversationId, generation)) return;
+    if (!conversation || !(await this.isCurrent(conversationId, generation))) return;
     try {
       await this.store.reconcileConversationSources(conversationId, conversation.activeSourceIds);
       markWikiSourcesFresh(conversationId);
@@ -152,7 +152,7 @@ export class WikiMemoryScheduler {
       .sort((a, b) => a.seq - b.seq);
     if (pending.length < 10 && !force) return;
     for (let start = 0; start < pending.length; start += 10) {
-      if (!this.isCurrent(conversationId, generation)) return;
+      if (!(await this.isCurrent(conversationId, generation))) return;
       const batch = pending.slice(start, start + 10);
       const turns: WikiChatSourceTurn[] = batch.map((item) => item.turn);
       const controller = new AbortController();
@@ -163,7 +163,7 @@ export class WikiMemoryScheduler {
       } finally {
         if (this.controllers.get(conversationId) === controller) this.controllers.delete(conversationId);
       }
-      if (!this.isCurrent(conversationId, generation)) return;
+      if (!(await this.isCurrent(conversationId, generation))) return;
       const latest = await this.options.sourceReader.readConversation(conversationId);
       if (!latest || latest.workspaceRoot !== conversation.workspaceRoot || latest.mode !== conversation.mode) return;
       const active = new Set(latest.activeSourceIds);
@@ -178,7 +178,7 @@ export class WikiMemoryScheduler {
         return;
       }
       await this.store.applyClaims(candidates, { shouldCommit: () => this.isCurrent(conversationId, generation) });
-      if (!this.isCurrent(conversationId, generation)) return;
+      if (!(await this.isCurrent(conversationId, generation))) return;
       processed = Math.max(processed, ...batch.map((item) => item.seq));
       await this.store.markProcessedSeq(conversationId, processed);
       conversation = latest;
@@ -188,9 +188,9 @@ export class WikiMemoryScheduler {
     }
   }
 
-  private isCurrent(conversationId: string, generation: number): boolean {
+  private async isCurrent(conversationId: string, generation: number): Promise<boolean> {
     return this.enabled && isWikiMemoryEnabled() && generation === this.generation &&
-      !this.cancelled.has(conversationId) && this.options.sourceReader.listConversationIds().includes(conversationId);
+      !this.cancelled.has(conversationId) && (await this.options.sourceReader.listConversationIds()).includes(conversationId);
   }
 
   private enqueue(conversationId: string, work: () => Promise<void>): Promise<void> {

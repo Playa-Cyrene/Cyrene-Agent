@@ -55,8 +55,10 @@ export const IPC = {
   CHAT_TOGGLE_MAXIMIZE: "chat:toggle-maximize",
   CHAT_IS_MAXIMIZED: "chat:is-maximized",
   CHAT_INGEST_FILES: "chat:ingest-files",
+  CHAT_PASTE_FILES: "chat:paste-files",
   CHAT_CAPTION_IMAGE: "chat:caption-image",
   CHAT_GET_IMAGE_PREVIEW: "chat:get-image-preview",
+  CHAT_SAVE_GENERATED_IMAGE: "chat:save-generated-image",
   CHAT_GET_IMAGE_SEND_STRATEGY: "chat:get-image-send-strategy",
   // 推理下拉（chat 窗口：原子读 + providerKey 写）
   CHAT_GET_REASONING_STATE: "chat:get-reasoning-state",
@@ -152,6 +154,18 @@ export const IPC = {
   SETTINGS_PREVIEW_RUNTIME_SYNC: "settings:preview-runtime-sync",
   SETTINGS_OPEN_STICKER_MANAGER: "settings:open-sticker-manager",
   SETTINGS_OPEN_CUSTOM_STYLE_PROMPT: "settings:open-custom-style-prompt",
+  GMAIL_GET_STATUS: "gmail:get-status",
+  GMAIL_GET_CLIENT_CONFIG: "gmail:get-client-config",
+  GMAIL_SAVE_CLIENT_CONFIG: "gmail:save-client-config",
+  GMAIL_BEGIN_AUTHORIZATION: "gmail:begin-authorization",
+  GMAIL_WAIT_AUTHORIZATION: "gmail:wait-authorization",
+  GMAIL_CANCEL_AUTHORIZATION: "gmail:cancel-authorization",
+  GMAIL_DISCONNECT: "gmail:disconnect",
+  GMAIL_PICK_ATTACHMENTS: "gmail:pick-attachments",
+  MAIL_DRAFT_UPDATE: "mail-draft:update",
+  MAIL_DRAFT_DELETE: "mail-draft:delete",
+  MAIL_DRAFT_SEND: "mail-draft:send",
+  MAIL_ATTACHMENT_SAVE: "mail-attachment:save",
 
   // chat sessions (multi-conversation history, persisted to userData/cyrene-chats/)
   CHATS_LIST: "chats:list",
@@ -272,7 +286,6 @@ export const IPC = {
   LIVE2D_SPEECH_PREPARE: "live2d:speech-prepare",
   LIVE2D_MOUTH_START: "live2d:mouth-start",
   LIVE2D_MOUTH_STOP: "live2d:mouth-stop",
-  LIVE2D_PLAY_ACTION: "live2d:play-action",        // 主进程 → 桌宠窗口：执行动作（motion 或 expression）
   LIVE2D_GET_MAIN_DIAGNOSTICS: "live2d:get-main-diagnostics",
   // embedding model status
   EMBEDDING_SET_MODEL: "embedding:set-model",
@@ -350,6 +363,8 @@ export const IPC = {
   SKILL_CLEAR_MODE_OVERRIDE: "skill:clear-mode-override",
   // skill catalog（skill 页拉取元数据：id/name/description/modes）
   SKILL_GET_CATALOG: "skill:get-catalog",
+  // 输入框 /skill 自动补全：按会话模式重新扫描并返回启用的技能。
+  SKILL_GET_SUGGESTIONS: "skill:get-suggestions",
   // 重新扫描 user skills 目录，安装/删除 skill 后无需重启即可刷新 UI
   SKILL_RESCAN: "skill:rescan",
 
@@ -412,7 +427,7 @@ export const IPC = {
   PLAN_GET_STATE: "plan:get-state",
 
   // user choice card (ambiguity resolver)
-  // 卡片展示走 AGUI_EVENT 的 CUSTOM 事件（与天气卡片同通道）
+  // 卡片展示走 AGUI_EVENT 的 CUSTOM 事件
   // renderer → main：回传用户选择
   CHOICE_RESOLVE: "choice:resolve",
 

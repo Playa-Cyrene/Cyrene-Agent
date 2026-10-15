@@ -44,20 +44,6 @@ export function bootstrapConfigGetters(ctx: BootstrapConfigContext): void {
     () => loadUserProfile().defaultCity,
     () => loadGeneralSettings().weatherSource,
     () => loadGeneralSettings().amapKey,
-    // 天气卡片回调：工具拿到结构化数据后，发 Custom 事件给 react 聊天窗口渲染卡片
-    (card, context) => {
-      const win = getReactChatWindow();
-      if (win) {
-        win.webContents.send(IPC.AGUI_EVENT, {
-          type: "CUSTOM",
-          name: "cyrene.weather",
-          value: card,
-          // 天气工具在 Harness 内执行时必须归属到该 run；否则 renderer 的
-          // RunEventGate 会把没有 runId 的卡片事件当作串会话事件丢弃。
-          ...(context?.runId ? { runId: context.runId } : {}),
-        });
-      }
-    },
     () => loadGeneralSettings().weatherEnabled,
   );
 
@@ -65,13 +51,14 @@ export function bootstrapConfigGetters(ctx: BootstrapConfigContext): void {
   setUserTimezoneConfig(() => loadUserProfile().timezone);
 
   // 注入用户选择卡片回调：工具调 ask_user_choice 时发 Custom 事件给 react 聊天窗口
-  setChoiceCardSender((cardData) => {
+  setChoiceCardSender((cardData, runId) => {
     const win = getReactChatWindow();
     if (win) {
       win.webContents.send(IPC.AGUI_EVENT, {
         type: "CUSTOM",
         name: "cyrene.choice",
         value: cardData,
+        ...(runId ? { runId } : {}),
       });
     }
   });
@@ -85,6 +72,7 @@ export function bootstrapConfigGetters(ctx: BootstrapConfigContext): void {
         type: "CUSTOM",
         name: "cyrene.choice.dismiss",
         value: settlement,
+        ...(settlement.runId ? { runId: settlement.runId } : {}),
       });
     }
   });

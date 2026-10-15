@@ -188,12 +188,12 @@ export function registerBrowserPageTools(controller: BrowserPanelController): vo
     execute: async (args, ctx) => {
       const capture = await controller.captureControlScreenshot(browserOwner(ctx));
       if (!capture.ok) return `[错误] 截图失败：${capture.reason}`;
-      const settingsModule = await import("../settings/model-settings");
+      const settingsModule = await import("../settings/model-settings.js");
       const settings = settingsModule.resolveModelSettingsProfile(settingsModule.loadModelSettings());
-      const router = await import("../orchestrator/image-router");
+      const router = await import("../orchestrator/image-router.js");
       const vision = router.resolveCaptionVisionConfig(settings);
       if (!vision.ok) return `[错误] 截图已截取（${capture.width}×${capture.height}，${capture.url}），但当前没有可用视觉模型：${vision.error}`;
-      const captioner = await import("../orchestrator/vision-captioner");
+      const captioner = await import("../orchestrator/vision-captioner.js");
       const question = stringArg(args, "question") ?? ctx?.userQuery ?? "描述网页当前可见内容，并指出明显的页面状态或交互反馈。";
       const description = await captioner.captionImage({ base64: capture.base64, mime: "image/png" }, question, vision.config);
       if (description.startsWith("[错误")) return `[错误] ${description}`;

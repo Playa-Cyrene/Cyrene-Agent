@@ -66,11 +66,11 @@ describe("conversation title service", () => {
       onTitleChanged: () => {},
     });
 
-    expect(service.schedule({
+    expect((await service.schedule({
       sessionId: stored.id,
       userMessageId: "user-1",
       text: "帮我设计一个待办事项管理应用",
-    })).toBe(true);
+    }))).toBe(true);
 
     await vi.advanceTimersByTimeAsync(2_999);
     expect(requests).toHaveLength(0);
@@ -88,7 +88,7 @@ describe("conversation title service", () => {
     expect(stored.title).toBe("待办应用设计");
   });
 
-  it("schedules a session only once even when persistence paths report it repeatedly", () => {
+  it("schedules a session only once even when persistence paths report it repeatedly", async () => {
     vi.useFakeTimers();
     const stored = session();
     const service = createConversationTitleService({
@@ -103,8 +103,8 @@ describe("conversation title service", () => {
     });
     const request = { sessionId: stored.id, userMessageId: "user-1", text: "帮我设计一个待办事项管理应用" };
 
-    expect(service.schedule(request)).toBe(true);
-    expect(service.schedule(request)).toBe(false);
+    expect((await service.schedule(request))).toBe(true);
+    expect((await service.schedule(request))).toBe(false);
     expect(vi.getTimerCount()).toBe(1);
   });
 
@@ -125,7 +125,7 @@ describe("conversation title service", () => {
       onTitleChanged: () => {},
     });
 
-    service.schedule({ sessionId: stored.id, userMessageId: "user-1", text: "帮我设计待办应用" });
+    (await service.schedule({ sessionId: stored.id, userMessageId: "user-1", text: "帮我设计待办应用" }));
     await vi.advanceTimersByTimeAsync(3_000);
 
     expect(stored.title).toBe("待办应用设计");
@@ -149,7 +149,7 @@ describe("conversation title service", () => {
       onTitleChanged: () => {},
     });
 
-    service.schedule({ sessionId: stored.id, userMessageId: "user-1", text: "帮我设计待办应用" });
+    (await service.schedule({ sessionId: stored.id, userMessageId: "user-1", text: "帮我设计待办应用" }));
     await vi.advanceTimersByTimeAsync(3_000);
 
     expect(writes).toBe(0);
@@ -174,7 +174,7 @@ describe("conversation title service", () => {
       onTitleChanged: () => {},
     });
 
-    service.schedule({ sessionId: stored.id, userMessageId: "user-1", text: "帮我设计待办应用" });
+    (await service.schedule({ sessionId: stored.id, userMessageId: "user-1", text: "帮我设计待办应用" }));
     await vi.advanceTimersByTimeAsync(3_000);
 
     expect(requests).toBe(0);
@@ -200,7 +200,7 @@ describe("conversation title service", () => {
       onTitleChanged: () => {},
     });
 
-    service.schedule({ sessionId: stored.id, userMessageId: "user-1", text: "帮我设计待办应用" });
+    (await service.schedule({ sessionId: stored.id, userMessageId: "user-1", text: "帮我设计待办应用" }));
     await vi.advanceTimersByTimeAsync(3_000);
     expect(requests).toBe(0);
 

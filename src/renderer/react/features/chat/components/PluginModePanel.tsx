@@ -174,18 +174,23 @@ export function PluginModePanel({ api: providedApi }: PluginModePanelProps) {
     });
   }, [filter, overview.plugins]);
 
+  const usedMarketSource = market.sources?.find((source) => source.used)?.url;
+
   const refreshPlugins = useCallback(async () => {
     if (!api) return;
     setHeaderAction("refresh");
     setError(null);
     try {
       setOverview(normalizePluginOverview(await api.rescan()));
+      // 市场列表只在切入市场视图时拉取一次；在市场视图里点刷新若只重扫本地插件，
+      // 页面上看不到任何变化。这里同时重新拉取市场列表，并沿用当前正在使用的数据源。
+      if (view === "market") await loadMarket(usedMarketSource);
     } catch (cause) {
       setError(t("pluginPanel.refreshFailed", { error: cause instanceof Error ? cause.message : String(cause) }));
     } finally {
       setHeaderAction(null);
     }
-  }, [api, t]);
+  }, [api, t, view, loadMarket, usedMarketSource]);
 
   const importPlugin = useCallback(async () => {
     if (!api) return;

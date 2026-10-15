@@ -84,33 +84,6 @@ html[data-ui-theme-pending] .sticker-shell {
   --rb-scroll-thumb:   rgba(0, 0, 0, 0.18);
   --rb-scroll-thumb-hover: rgba(0, 0, 0, 0.32);
 
-  /* Weather card: glass-morphism on white UI, dark text for contrast */
-  --rb-weather-bg:          rgba(255, 255, 255, 0.62);
-  --rb-weather-card-border: rgba(255, 255, 255, 0.85);
-  --rb-weather-border:      rgba(157, 139, 171, 0.16);
-  --rb-weather-text-strong: #5c4a66;
-  --rb-weather-text-default: #7a6888;
-  --rb-weather-text-muted:  #9d8bab;
-  --rb-weather-text-faint:  #bdaecf;
-  --rb-weather-accent:      #ff7fa8;
-  --rb-weather-detail-bg:   rgba(255, 255, 255, 0.55);
-  --rb-weather-detail-border: rgba(255, 255, 255, 0.9);
-  --rb-weather-icon-bg:     linear-gradient(135deg, #ffe4ee, #efe6ff);
-  --rb-weather-panel-bg:    rgba(255, 255, 255, 0.38);
-  --rb-weather-panel-border: rgba(255, 255, 255, 0.7);
-  --rb-weather-tag-bg:      linear-gradient(135deg, #ffd9e7, #e6ddff);
-
-  /* Weather illustration overrides for light theme */
-  --rb-weather-sun-core-1:  #ffe08a;
-  --rb-weather-sun-core-2:  #ffb14d;
-  --rb-weather-sun-ray:     #ffc95c;
-  --rb-weather-sun-glow:    rgba(255, 190, 90, 0.35);
-  --rb-weather-cloud:       #ffffff;
-  --rb-weather-cloud-shadow: rgba(160, 150, 190, 0.25);
-  --rb-weather-rain:        #7db4ff;
-  --rb-weather-snow:        #a8c8ff;
-  --rb-weather-bolt-1:      #ffe08a;
-  --rb-weather-bolt-2:      #ff9d4d;
 }
 
 /* NOTE: do NOT paint `body` here. The Live2D pet window keeps its

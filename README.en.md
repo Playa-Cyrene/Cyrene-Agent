@@ -194,23 +194,9 @@ Because these endpoints have not been tested through the complete Work workflow:
 
 Unknown models, local models, and custom endpoints use the generic **Tier D** profile by default. Users must verify actual compatibility themselves.
 
-> [!NOTE]
->
-> Cyrene is currently developed independently by a single developer. Time, hardware, and API testing budgets are limited. At this stage, compatibility maintenance and technical support are only provided for the major model providers that have been explicitly adapted and verified. The testing scope may expand as the project develops.
+The current model names, capability coverage, and verification status are maintained in the [model compatibility catalog](./docs/references/adapted-models.en.md). The catalog is the source of truth and may change as models and contributor evidence are updated.
 
-The primary model providers currently covered include:
-
-- Doubao Seed
-- Kimi
-- DeepSeek
-- Qwen
-- GLM
-- MiMo
-- MiniMax
-- OpenAI
-- Anthropic Claude
-
-Verification status varies by provider and model. Refer to the project's compatibility matrix and benchmark report for authoritative details.
+Models not listed in the catalog, local models, and custom endpoints may still work through generic compatibility handling, but full compatibility is not guaranteed. See the [model adaptation guide](./docs/contributing/model-adaptation.en.md) to contribute a model update.
 
 > BGE-M3 is a local Embedding enhancement model used by the project. It is not a local large language model for chat.
 

@@ -4,7 +4,7 @@
 //   read_skill_reference：按需读 references 附件（带路径穿越防护）
 // 注册进现有 toolRegistry，两处 LLM 路径都从 registry 取，自动生效。
 
-import { toolRegistry, type ToolEffectKind } from "../orchestrator/tools/registry/tool-registry";
+import { toolRegistry } from "../orchestrator/tools/registry/tool-registry";
 import { skillRegistry } from "./skill-registry";
 import { logger, LogTag } from "../logger";
 import type { ToolContext } from "../orchestrator/tools/registry/tool-context";
@@ -34,10 +34,22 @@ function truncateForContext(text: string, maxChars: number, hint: string): strin
  * FC 循环开始时调 resetReadRefs() 清空。防止模型在同一轮任务里重复读同一文件。
  */
 const readRefs = new Set<string>();
+let readRefsByContext = new WeakMap<ToolContext, Set<string>>();
+
+function referenceReads(context?: ToolContext): Set<string> {
+  if (!context) return readRefs;
+  let refs = readRefsByContext.get(context);
+  if (!refs) {
+    refs = new Set();
+    readRefsByContext.set(context, refs);
+  }
+  return refs;
+}
 
 /** 每轮 FC 循环开始前调，清空已读记录。由 cyrene-agent.ts 在循环入口调。 */
 export function resetReadRefs(): void {
   readRefs.clear();
+  readRefsByContext = new WeakMap();
 }
 
 /**
@@ -70,14 +82,9 @@ export function registerSkillTools(): void {
       "返回：该 skill 的指令正文 + 可用的 references 文件清单。若正文引用了 references/xxx，需要详情时再用 read_skill_reference 读取。",
     enabled: true,
     risk: "safe",
-    effectKind: "read" as const, // 默认值，effectResolver 会根据实际 skill 覆盖
-    effectResolver: (args: Record<string, unknown>): ToolEffectKind => {
-      const id = String(args.skill_id || "");
-      const skill = skillRegistry.getById(id);
-      if (!skill) return "unknown";
-      // skill 未声明 effectKind → unknown（会被 ExecutionPolicyGuard 拒绝）
-      return skill.effectKind ?? "unknown";
-    },
+    // 这里只加载指令；技能后续使用的工具各自检查实际副作用和权限。
+    effectKind: "read" as const,
+    verificationPolicy: "none" as const,
     inputSchema: {
       type: "object",
       properties: {
@@ -93,7 +100,8 @@ export function registerSkillTools(): void {
       }
       const skill = skillRegistry.getById(id);
       if (!skill || !skill.enabled || !skillRegistry.isAvailable(id)) {
-        const available = skillRegistry.getEnabled().map(s => s.id).join(", ") || "(无)";
+        const available = skillRegistry.getEnabled().filter(s => isSkillAllowedForRun(s.id, ctx?.allowedSkillIds))
+          .map(s => s.id).join(", ") || "(无)";
         return `[invoke_skill] skill not found: ${id}。可用 skill: ${available}`;
       }
       const body = skillRegistry.getBody(id);
@@ -145,16 +153,18 @@ export function registerSkillTools(): void {
         return `[read_skill_reference] skill not found: ${id}`;
       }
       // 去重：同一轮内同一 reference 不重复返回（内容已在对话历史里，再读浪费轮数+token）
+      // 主代理与各子任务独立去重，各自的上下文需要各自读取一次。
+      const reads = referenceReads(ctx);
       const readKey = `${id}/${ref}`;
-      if (readRefs.has(readKey)) {
+      if (reads.has(readKey)) {
         return `[read_skill_reference] "${ref}" 已在本轮读过，内容已在对话中，不要重复读取。` +
-          `如需其他文件，可读：${skill.references.filter(r => !readRefs.has(`${id}/${r}`)).join(", ") || "(全部已读)"}`;
+          `如需其他文件，可读：${skill.references.filter(r => !reads.has(`${id}/${r}`)).join(", ") || "(全部已读)"}`;
       }
       const content = skillRegistry.getReference(id, ref);
       if (content === null) {
         return `[read_skill_reference] 读取失败（ref 不在清单或文件不存在）: ${ref}。可用: ${skill.references.join(", ") || "(无)"}`;
       }
-      readRefs.add(readKey);
+      reads.add(readKey);
       console.log(LOG_PREFIX, "read_skill_reference:", id, ref, "len=" + content.length);
       const truncated = truncateForContext(
         content,

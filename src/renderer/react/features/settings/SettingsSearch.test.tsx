@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import i18next from 'i18next';
 import { SettingsSearch } from './SettingsSearch';
+import { SETTINGS_NAV_ITEMS } from './settingsNavItems';
 import { buildSettingEntries, buildCatalogEntries, buildPluginEntries, searchSettings } from './settingsSearchIndex';
 import zh from '../../i18n/zh-CN.json';
 import en from '../../i18n/en.json';
@@ -185,5 +186,14 @@ describe('Index: long titles versus explanatory text',()=>{
  it('R13 keeps long English labels but excludes lowercase descriptions and paragraphs',()=>{
   const entries=buildSettingEntries({settingsPage:{general:{disableGpu:'Disable client GPU rendering',description:'General settings without punctuation',body:'This is a complete explanatory sentence.',multiline:'First line\nSecond line'}}});
   expect(entries.map(entry=>entry.label)).toEqual(['Disable client GPU rendering']);
+ });
+});
+
+describe('Navigation: preserve upstream sections',()=>{
+ it('R14 keeps email navigation and indexes the email settings section',()=>{
+  expect(SETTINGS_NAV_ITEMS.map(item=>item.section)).toEqual(['general','appearance','preferences','models','usage','browser','email','toolToggle','tools','subagents','plugins','mcp','memory','knowledge','cyrene','skill','channels','tts','asr','disclaimer']);
+  const entries=buildSettingEntries(zh);
+  expect(entries.find(entry=>entry.settingKey==='settingsPage.emailSettings.title')?.section).toBe('email');
+  expect(searchSettings(entries,zh.settingsPage.emailSettings.title).some(entry=>entry.section==='email')).toBe(true);
  });
 });

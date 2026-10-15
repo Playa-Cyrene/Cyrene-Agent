@@ -37,9 +37,6 @@ declare global {
       onMouthStart: (callback: (payload: { durationMs: number }) => void) => () => void;
       onMouthStop: (callback: () => void) => () => void;
     };
-    live2dAction?: {
-      onPlayAction: (callback: (target: import("../shared/live2d-actions").Live2DTarget) => void) => () => void;
-    };
   }
 }
 
@@ -98,12 +95,6 @@ const manager = new Live2DManager({
       trackSubscription("live2dSpeech:onMouthStop", window.live2dSpeech?.onMouthStop(() => {
         mouthSync?.stop();
         speakingMotion?.stop();
-      }) ?? (() => {})),
-    );
-    // LLM-driven action bridge: when Main sends a resolved Live2DTarget, play it.
-    speechOffs.push(
-      trackSubscription("live2dAction:onPlayAction", window.live2dAction?.onPlayAction((target) => {
-        void manager.playAction(target);
       }) ?? (() => {})),
     );
     live2dSpeechOffs = speechOffs;

@@ -342,6 +342,45 @@ describe("PluginModePanel", () => {
     expect(api.marketList).toHaveBeenCalledTimes(2);
   });
 
+  it("市场视图里点刷新会重新拉取市场列表，并沿用当前使用的数据源", async () => {
+    const github = "https://raw.githubusercontent.com/Playa-0v0/Cyrene-Plugins/main/registry.json";
+    const api = apiFor([]);
+    const marketList = api.marketList as ReturnType<typeof vi.fn>;
+    marketList.mockResolvedValueOnce({
+      ok: true,
+      plugins: [marketEntry({ downloads: 12 })],
+      sources: [{ url: github, ok: true, used: true }],
+    });
+    await renderPanel(api);
+    await clickMarketToggle();
+    expect(container.textContent).toContain("12 次下载");
+
+    // 注册表在此期间更新了下载量
+    marketList.mockResolvedValueOnce({
+      ok: true,
+      plugins: [marketEntry({ downloads: 30 })],
+      sources: [{ url: github, ok: true, used: true }],
+    });
+    const refresh = container.querySelector<HTMLButtonElement>('button[aria-label="刷新插件"]');
+    expect(refresh).not.toBeNull();
+    await act(async () => refresh?.click());
+
+    expect(api.rescan).toHaveBeenCalledTimes(1);
+    expect(marketList).toHaveBeenCalledTimes(2);
+    expect(marketList).toHaveBeenLastCalledWith(github);
+    expect(container.textContent).toContain("30 次下载");
+  });
+
+  it("插件视图里点刷新只重扫本地插件，不拉取市场列表", async () => {
+    const api = apiFor([plugin()]);
+    await renderPanel(api);
+    const refresh = container.querySelector<HTMLButtonElement>('button[aria-label="刷新插件"]');
+    await act(async () => refresh?.click());
+
+    expect(api.rescan).toHaveBeenCalledTimes(1);
+    expect(api.marketList).not.toHaveBeenCalled();
+  });
+
   it("安装成功后显示提示并刷新本地列表", async () => {
     const api = apiFor([]);
     (api.marketList as ReturnType<typeof vi.fn>).mockResolvedValue({

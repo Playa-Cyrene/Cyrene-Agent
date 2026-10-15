@@ -1,0 +1,52 @@
+.cy-workspace-preview {
+  height: 100%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--rb-surface-workspace, #fff);
+  color: var(--rb-text-primary, #222);
+}
+.cy-workspace-preview__body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px;
+  display: grid;
+  place-items: center;
+}
+.cy-workspace-preview__body img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  display: block;
+}
+.cy-workspace-preview__svg {
+  width: 100%;
+  overflow: auto;
+}
+.cy-workspace-preview__svg svg {
+  max-width: none;
+  height: auto;
+  display: block;
+}
+.cy-workspace-preview footer {
+  padding: 12px;
+  border-top: 1px solid var(--rb-border-default, #ddd);
+}
+.cy-workspace-preview__zoom {
+  width: 100%;
+  min-width: 0;
+  cursor: zoom-in;
+}
+.cy-workspace-preview__zoom:focus-visible {
+  outline: 2px solid var(--rb-accent);
+  outline-offset: 4px;
+}
+.cy-workspace-preview button {
+  padding: 6px 12px;
+  border: 1px solid var(--rb-border-default, #ddd);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}

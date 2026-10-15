@@ -53,8 +53,9 @@ export class MemoryManager {
     await memoryStore.upsertL0Field("permanentNote", updated)
   }
 
-  async writeMemory(candidates: MemoryCandidate[]): Promise<void> {
+  async writeMemory(candidates: MemoryCandidate[], assertSourceCurrent?: () => Promise<void>): Promise<void> {
     for (const candidate of candidates) {
+      if (assertSourceCurrent) await assertSourceCurrent()
       if (shouldSkipCandidate(candidate)) {
         console.log("[PMRS/Manager] 候选标记为不写入或存在过度概括，跳过")
         continue
@@ -89,19 +90,19 @@ export class MemoryManager {
         }
 
         // 情况三：合法字段，直接写入
-        await memoryStore.upsertL0Field(candidate.field as L0WritableField, candidate.content)
+        await memoryStore.upsertL0Field(candidate.field as L0WritableField, candidate.content, assertSourceCurrent)
         console.log(`[PMRS/Manager] L0 更新字段: ${candidate.field} = "${candidate.content.slice(0, 20)}"`)
       } else if (candidate.layer === "L1") {
         const field = resolveL1Field(candidate.field, candidate.content)
-        await memoryStore.replaceL1Field(field, candidate.content)
+        await memoryStore.replaceL1Field(field, candidate.content, assertSourceCurrent)
         console.log(`[PMRS/Manager] L1 更新字段: ${field}`)
       } else if (candidate.layer === "L2") {
-        await this.writeL2(candidate)
+        await this.writeL2(candidate, assertSourceCurrent)
       }
     }
   }
 
-  private async writeL2(candidate: MemoryCandidate): Promise<void> {
+  private async writeL2(candidate: MemoryCandidate, assertSourceCurrent?: () => Promise<void>): Promise<void> {
     const l2Input: Omit<L2Memory, "id" | "createdAt" | "lastAccessedAt" | "accessCount" | "weight" | "status"> = {
       content: candidate.content,
       triggerText: candidate.triggerText,
@@ -115,7 +116,7 @@ export class MemoryManager {
     // L2 原文对话片段（展示用），缺失时不注入
     if (candidate.sourceQuote) l2Input.sourceQuote = candidate.sourceQuote
 
-    const l2 = await memoryStore.addL2Memory(l2Input)
+    const l2 = await memoryStore.addL2Memory(l2Input, assertSourceCurrent)
 
     let ragId: string | undefined
     try {

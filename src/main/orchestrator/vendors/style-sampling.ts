@@ -1,3 +1,5 @@
+import { MODEL_SAMPLING_RULES } from "../../../shared/vendor-registry";
+import type { ModelSamplingRule } from "../../../shared/vendor-registry/model-types";
 import type { ReasoningPreference } from "../../../shared/reasoning";
 import type {
   RepetitionLevel,
@@ -18,56 +20,8 @@ interface ResolveStyleSamplingInput {
   preference: StyleSamplingPreference;
 }
 
-interface ModelSamplingRule {
-  providerId: string;
-  modelPattern: RegExp;
-  diversity: boolean;
-  repetition?: "openai" | "qwen";
-  requiresReasoningOff?: boolean;
-  maximumTemperature?: number;
-}
-
 const OPENAI_REPETITION = { light: 0.2, medium: 0.5, strong: 0.8 } as const;
 const QWEN_REPETITION = { light: 1.05, medium: 1.10, strong: 1.18 } as const;
-
-const MODEL_SAMPLING_RULES: readonly ModelSamplingRule[] = [
-  {
-    providerId: "chatgpt",
-    modelPattern: /^(?:gpt-4o(?:-mini)?|gpt-4\.1(?:-(?:mini|nano))?)$/i,
-    diversity: true,
-    repetition: "openai",
-  },
-  {
-    providerId: "qwen",
-    modelPattern: /^qwen-(?:max|plus|turbo)$/i,
-    diversity: true,
-    repetition: "qwen",
-    maximumTemperature: 1.99,
-  },
-  {
-    providerId: "minimax",
-    modelPattern: /^MiniMax-(?:M3|M2\.(?:7|5))$/i,
-    diversity: true,
-  },
-  {
-    providerId: "glm",
-    modelPattern: /^glm-(?:5\.[123]|5-turbo|4\.7)$/i,
-    diversity: true,
-  },
-  {
-    providerId: "deepseek",
-    // V4.1 Flash（deepseek-flash）与 V4 旧名；思考模式下 temperature 不生效，需关闭思考
-    modelPattern: /^deepseek-(?:v4-(?:pro|flash)|flash)$/i,
-    diversity: true,
-    requiresReasoningOff: true,
-  },
-  {
-    providerId: "mimo",
-    modelPattern: /^mimo-v2\.5-pro$/i,
-    diversity: true,
-    requiresReasoningOff: true,
-  },
-];
 
 function resolveDiversity(
   preference: StyleSamplingPreference,

@@ -10,6 +10,8 @@ import type { TodoItem } from "./todo-types";
 import type { TaskDelegationPresentation } from "./task-session";
 import type { ContextUsageSnapshot } from "./context-usage";
 import type { BrowserElementSelection } from "./browser-panel-types";
+import type { GeneratedImageAttachment } from "./generated-image";
+import type { MailDraftCardData } from "./mail-draft-card";
 
 // - schemaVersion 用于以后改 schema 时的迁移判断；当前固定 1。
 
@@ -181,6 +183,8 @@ export interface ChatMessage {
   ttsCacheVersion?: string;
   /** 已实际展示的音乐候选卡片；持久化展示不延长 Skill 候选状态 TTL。 */
   musicCard?: MusicCardData;
+  /** 用户确认发送或由 Agent 创建的邮件卡片；不含收件邮件正文或本地文件路径。 */
+  emailDraftCards?: MailDraftCardData[];
   /** 上下文容量快照（run 终态落盘）；运行中被每轮 preRequest 快照实时覆盖（纯内存）。 */
   contextUsage?: ContextUsageSnapshot;
 }
@@ -203,10 +207,10 @@ export interface ChatPresentationDelta {
 export type ChatPresentationCheckpointPatch = Partial<Pick<ChatMessage,
   "content" | "reasoning" | "reasoningBlocks" | "processMessages" | "agentRounds" |
   "taskDelegations" | "channelSource" | "sticker" | "toolExecutions" | "runActivity" |
-  "runSnapshot" | "ttsCacheKey" | "ttsCacheVersion" | "musicCard" | "contextUsage"
+  "runSnapshot" | "ttsCacheKey" | "ttsCacheVersion" | "musicCard" | "emailDraftCards" | "contextUsage"
 >> & { delta?: ChatPresentationDelta };
 
-export type MessageAttachment = ImageMessageAttachment | DocumentMessageAttachment | WebElementMessageAttachment;
+export type MessageAttachment = ImageMessageAttachment | GeneratedImageAttachment | DocumentMessageAttachment | WebElementMessageAttachment;
 
 export interface ImageMessageAttachment {
   kind: "image";
@@ -279,10 +283,11 @@ export interface PendingChatMessage {
   userSticker?: string;
   /**
    * 调整目标运行 id：非空表示该条目已被请求"插入当前运行下一步"。
-   * 注入成功后条目转为正式用户消息并移出队列；运行结束/取消时未注入的
-   * 条目由复位逻辑清除此标记，回普通队列按序派发。
+   * 注入成功后条目移出队列；已接受的消息在运行结束时入册，留待下次用户续跑。
    */
   adjustRunId?: string;
+  /** 调整已接受：立即呈现为普通用户消息；保留到注入或终态入册，不再显示在队列中。 */
+  adjustAcceptedAt?: number;
   /** 入队时间戳（主进程写入）：数组顺序是派发顺序的权威依据，此字段作审计。 */
   enqueuedAt: number;
   /** 撤回事务的可恢复中间态；存在时条目对认领、编辑与插话调整只读。 */
@@ -310,6 +315,8 @@ export interface PendingDispatchUserSnapshot {
   attachments?: PendingChatAttachment[];
   /** 用户表情包标识。 */
   sticker?: string;
+  /** 贴纸消息的模型侧文本（用户原话 + 表情包说明）；缺省时模型侧回退 text。 */
+  modelText?: string;
 }
 
 /**

@@ -38,6 +38,7 @@ import { ToolToggleSettingsPanel } from "./ToolToggleSettingsPanel";
 import { ChannelsSettingsPanel } from "./ChannelsSettingsPanel";
 import { SubagentSettingsPanel } from "./SubagentSettingsPanel";
 import { BrowserControlSettingsPanel } from "./BrowserControlSettingsPanel";
+import { EmailSettingsPanel } from "./EmailSettingsPanel";
 import settingsLogoUrl from "../../../settings/100.png";
 import "../../components/ui/WindowControls.css";
 import "./AppearanceSettingsPage.css";
@@ -78,7 +79,7 @@ function readAppearance(value: unknown): AppearanceValues {
 }
 
 export type SettingsSection =
-  | "appearance" | "preferences" | "models" | "usage" | "general" | "toolToggle" | "tools" | "plugins" | "memory" | "knowledge" | "cyrene" | "skill" | "subagents" | "asr" | "tts" | "mcp" | "channels" | "disclaimer" | "browser";
+  | "appearance" | "preferences" | "models" | "usage" | "general" | "toolToggle" | "tools" | "plugins" | "memory" | "knowledge" | "cyrene" | "skill" | "subagents" | "asr" | "tts" | "mcp" | "channels" | "disclaimer" | "browser" | "email";
 
 export interface AppearanceSettingsPageProps {
   section: SettingsSection;
@@ -274,7 +275,7 @@ export function AppearanceSettingsPage({ section, onSelectSection, onBackToWorks
 
       <main className="cy-workspace is-empty cy-settings-content" ref={contentRef}>
         <div className={`cy-settings-content__inner${section === "knowledge" ? " is-knowledge-settings" : ""}`}>
-          {section === "browser" ? <BrowserControlSettingsPanel /> : section === "preferences" ? <PreferencesSettingsPanel /> : section === "models" ? <ModelSettingsPanel /> : section === "usage" ? <UsageStatsPanel /> : section === "general" ? <GeneralSettingsPanel /> : section === "toolToggle" ? <ToolToggleSettingsPanel /> : section === "tools" ? <ToolSettingsPanel musicSettingsNavigation={musicSettingsNavigation} /> : section === "subagents" ? <SubagentSettingsPanel /> : section === "plugins" ? <PluginSettingsPanel /> : section === "memory" ? <MemorySettingsPanel /> : section === "knowledge" ? <KnowledgeBaseSettingsPanel /> : section === "cyrene" ? <CyreneSettingsPanel /> : section === "skill" ? <SkillSettingsPanel /> : section === "asr" ? <AsrSettingsPanel /> : section === "tts" ? <TtsSettingsPanel /> : section === "mcp" ? <McpSettingsPanel /> : section === "channels" ? <ChannelsSettingsPanel /> : section === "disclaimer" ? <DisclaimerSettingsPanel /> : <>
+          {section === "email" ? <EmailSettingsPanel /> : section === "browser" ? <BrowserControlSettingsPanel /> : section === "preferences" ? <PreferencesSettingsPanel /> : section === "models" ? <ModelSettingsPanel /> : section === "usage" ? <UsageStatsPanel /> : section === "general" ? <GeneralSettingsPanel /> : section === "toolToggle" ? <ToolToggleSettingsPanel /> : section === "tools" ? <ToolSettingsPanel musicSettingsNavigation={musicSettingsNavigation} /> : section === "subagents" ? <SubagentSettingsPanel /> : section === "plugins" ? <PluginSettingsPanel /> : section === "memory" ? <MemorySettingsPanel /> : section === "knowledge" ? <KnowledgeBaseSettingsPanel /> : section === "cyrene" ? <CyreneSettingsPanel /> : section === "skill" ? <SkillSettingsPanel /> : section === "asr" ? <AsrSettingsPanel /> : section === "tts" ? <TtsSettingsPanel /> : section === "mcp" ? <McpSettingsPanel /> : section === "channels" ? <ChannelsSettingsPanel /> : section === "disclaimer" ? <DisclaimerSettingsPanel /> : <>
             <h1>{t("settingsPage.appearance")}</h1>
             <p className="cy-settings-intro">{t("settingsPage.description")}</p>
 

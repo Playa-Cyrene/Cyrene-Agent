@@ -51,7 +51,16 @@ describe("ChatPage 对话级模型切换接线", () => {
   it("切模型与切档案走同一 operation token 切换器，不各自直连 IPC", () => {
     expect(chatPageSource).toContain("createSessionModelSwitcher");
     expect(chatPageSource).toMatch(/onSelectSessionModel=\{\(model\) => \{[\s\S]{0,300}?modelSwitcher\.switchModel\(/);
-    expect(chatPageSource).toMatch(/onSelectModelProfile=\{\(modelProfileId\) => \{[\s\S]{0,400}?modelSwitcher\.switchProfile\(/);
+    const profileSelectionStart = chatPageSource.indexOf("onSelectModelProfile={(modelProfileId) => {");
+    const profileSelectionEnd = chatPageSource.indexOf("\n            }}", profileSelectionStart);
+    const profileSelectionSource = chatPageSource.slice(profileSelectionStart, profileSelectionEnd);
+    expect(profileSelectionStart).toBeGreaterThan(-1);
+    expect(profileSelectionEnd).toBeGreaterThan(profileSelectionStart);
+    expect(profileSelectionSource).toContain("modelSwitcher.switchProfile(activeSessionId, modelProfileId)");
+    expect(profileSelectionSource).toContain("setPendingModelProfileByMode");
+    expect(profileSelectionSource).toContain("delete next[mode]");
+    expect(chatPageSource).toContain("setPendingSessionModelByMode((current) => ({ ...current, [mode]: model }))");
+    expect(chatPageSource).toContain("store.setSessionModel(session.id, pendingSessionModel)");
   });
 });
 

@@ -1,7 +1,30 @@
-name: 运行时 Bug 🐛
-description: 应用运行中的功能异常、偶现问题、崩溃等
+name: 运行时 Bug（安装包）🐛
+description: 使用预编译安装包时出现的功能异常、偶现问题、崩溃等
 labels: ["bug", "needs-triage"]
 body:
+  - type: markdown
+    attributes:
+      value: |
+        > [!IMPORTANT]
+        > 本项目欢迎合理使用 AI 辅助，但提交者需要对最终内容负责。
+        > 请勿直接粘贴未经人工审阅、整理和验证的 AI 原始输出。
+        > 若内容明显是未整理的 AI 输出，维护者可能要求重新整理后再继续处理。
+
+        **未按本模板提交的 Issue 会被机器人自动关闭**，请认真填写下面的每一项。
+
+  - type: checkboxes
+    attributes:
+      label: AI 辅助声明（提交前请逐条确认）
+      options:
+        - label: 我已确认：本 Issue 由我本人阅读、核对并整理，未直接粘贴未经处理的 AI 原始输出
+          required: true
+        - label: 我已核对其中涉及的技术事实，并对最终内容负责
+          required: true
+        - label: 我已区分「已确认事实」和「AI 推测 / 尚待验证的结论」
+          required: true
+        - label: 如果 AI 给出了根因分析，我已把「已确认事实」和「根因推测」分开陈述
+          required: true
+
   - type: markdown
     attributes:
       value: |
@@ -9,6 +32,10 @@ body:
         请尽量写清触发条件和复现步骤；偶现问题请注明出现频率（如「上千次出一次」）。
 
         > 如果是 pnpm install / 构建失败，请返回选择「安装/构建问题 🔧」。
+        > 本模板适用于从 GitHub Releases 下载的安装包；如果你是从仓库源码运行（git clone + pnpm run dev），请返回选择「运行时 Bug（源码）🐛」。
+        > 涉及代码实现或根因判断时，请以问题版本对应的仓库源码为依据，并提供源码路径、行号或调用链。
+        > 解包后的 `app.asar`（Electron 应用归档）中的压缩或编译代码、运行日志，可以证明问题在某版本中出现，但不能单独用来反推业务逻辑或确认根因。
+        > 如果暂时找不到源码依据，请先描述可复现的现象，并将根因判断标为假设。仅依据编译产物的推断可能无法核实；维护者可能要求补充源码依据，无法确认时可能关闭问题单。
 
   - type: input
     id: app-version
@@ -26,17 +53,6 @@ body:
       options:
         - Windows 11
         - Windows 10
-    validations:
-      required: true
-
-  - type: dropdown
-    id: install-source
-    attributes:
-      label: 安装来源
-      options:
-        - 仓库源码（git clone + pnpm install / pnpm run dev）
-        - 预编译安装包（GitHub Releases 下载的 exe）
-        - 不确定 / 其他
     validations:
       required: true
 
@@ -89,6 +105,20 @@ body:
       description: |
         如有报错弹窗、异常截图请拖拽上传。
         日志位于 `%APPDATA%/Cyrene/logs/`，可粘贴相关片段。
+    validations:
+      required: false
+
+  - type: textarea
+    id: source-evidence
+    attributes:
+      label: 源码依据（涉及实现或根因判断时填写）
+      description: |
+        请对应到上面填写的应用版本，提供仓库源码的相对路径、行号及相关调用链。
+        还没定位到源码时可填写「尚未定位」；只依据打包产物分析时，请将结论标为假设。
+      placeholder: |
+        文件与行号：src/main/...:123
+        调用链或判断依据：
+        （尚未定位时填写“尚未定位”）
     validations:
       required: false
 

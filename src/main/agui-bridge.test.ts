@@ -1,3 +1,4 @@
+import { closeConversationDatabases } from "./storage/conversation-database-client";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -129,10 +130,14 @@ vi.mock("./permission", () => ({
   checkPermission: vi.fn(),
 }));
 
+beforeEach(() => { mocks.userDataRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-bridge-db-")); });
+afterEach(async () => { await closeConversationDatabases(); });
+
 describe("agui-bridge sticker event ordering", () => {
   // 每个测试前重置可定制的终态行为字段，
   // 避免上一个测试的副作用泄漏到下一个测试。
   beforeEach(() => {
+    mocks.userDataRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-bridge-db-"));
     mocks.runFinishedResult = undefined;
     mocks.emitDuplicateRunFinished = false;
     mocks.errorAfterRunFinished = null;
@@ -165,7 +170,7 @@ describe("agui-bridge sticker event ordering", () => {
     if (!handler) throw new Error("AGUI_RUN handler was not registered");
     const ack = await handler({
       sender: { isDestroyed: () => false, send: () => {} },
-    }, {
+    }, { assistantTurnId: "fixture-5948",
       messages: [{ role: "user", content: "你好" }],
       sessionId: "chat-events",
     }) as { runId: string };
@@ -211,6 +216,9 @@ describe("agui-bridge sticker event ordering", () => {
       mode: "chat",
       pendingDispatch,
     };
+    const dir = path.join(transcriptRoot, "cyrene-chats", "sessions");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "v2-claim.json"), JSON.stringify(record));
     mocks.getSession.mockReturnValue(null);
     mocks.getSessionRecord.mockReturnValue(record);
     mocks.getPendingDispatch.mockReturnValue(pendingDispatch);
@@ -231,7 +239,7 @@ describe("agui-bridge sticker event ordering", () => {
     }), async () => ({}), () => null);
     const handler = mocks.handlers.get(IPC.AGUI_RUN);
     if (!handler) throw new Error("AGUI_RUN handler was not registered");
-    const ack = await handler({ sender: { isDestroyed: () => false, send: () => {} } }, {
+    const ack = await handler({ sender: { isDestroyed: () => false, send: () => {} } }, { assistantTurnId: "fixture-8281",
       sessionId: "v2-claim",
       userTurnId: "pending-user",
       messages: [{ role: "user", content: "崩溃前输入" }],
@@ -244,6 +252,7 @@ describe("agui-bridge sticker event ordering", () => {
       id: "user:v1:pending-user:r1",
       turnId: "pending-user",
     }));
+    await closeConversationDatabases();
     fs.rmSync(transcriptRoot, { recursive: true, force: true });
     mocks.userDataRoot = "";
   });
@@ -321,6 +330,7 @@ describe("agui-bridge sticker event ordering", () => {
       status: "success",
     }));
     expect(pendingTurns.pendingCount()).toBe(0);
+    await closeConversationDatabases();
     fs.rmSync(transcriptRoot, { recursive: true, force: true });
     mocks.userDataRoot = "";
   });
@@ -367,7 +377,7 @@ describe("agui-bridge sticker event ordering", () => {
 
     const handler = mocks.handlers.get(IPC.AGUI_RUN);
     if (!handler) throw new Error("AGUI_RUN handler was not registered");
-    await handler({ sender }, { messages: [{ role: "user", content: "帮我生成一份文档" }], sessionId: "work-ask" });
+    await handler({ sender }, { assistantTurnId: "fixture-14061", messages: [{ role: "user", content: "帮我生成一份文档" }], sessionId: "work-ask" });
 
     const options = mocks.runCyreneAgent.mock.calls[0]?.[0] as {
       requestUserClarification: (card: unknown) => Promise<unknown>;
@@ -420,7 +430,7 @@ describe("agui-bridge sticker event ordering", () => {
 
     const handler = mocks.handlers.get(IPC.AGUI_RUN);
     if (!handler) throw new Error("AGUI_RUN handler was not registered");
-    await handler({ sender }, { messages: [{ role: "user", content: "解释一下" }], sessionId: "chat-think" });
+    await handler({ sender }, { assistantTurnId: "fixture-16347", messages: [{ role: "user", content: "解释一下" }], sessionId: "chat-think" });
     await expect.poll(() => sent.some((event) => event.type === "RUN_FINISHED")).toBe(true);
 
     expect(sent.map((event) => event.type)).toEqual([
@@ -463,7 +473,7 @@ describe("agui-bridge sticker event ordering", () => {
     }), async () => {}, () => null);
     const handler = mocks.handlers.get(IPC.AGUI_RUN);
     if (!handler) throw new Error("AGUI_RUN handler was not registered");
-    await handler({ sender: { isDestroyed: () => false, send: (_channel: string, event: { type?: string; delta?: string }) => sent.push(event) } }, { messages: [{ role: "user", content: "测试" }], sessionId: `${mode}-time` });
+    await handler({ sender: { isDestroyed: () => false, send: (_channel: string, event: { type?: string; delta?: string }) => sent.push(event) } }, { assistantTurnId: "fixture-18643", messages: [{ role: "user", content: "测试" }], sessionId: `${mode}-time` });
 
     expect(sent.filter((event) => event.type === "TEXT_MESSAGE_CONTENT").map((event) => event.delta).join("")).toBe("真正回复");
     mocks.agentEvents = [];
@@ -501,7 +511,7 @@ describe("agui-bridge sticker event ordering", () => {
     if (!handler) throw new Error("AGUI_RUN handler was not registered");
     await handler(
       { sender },
-      { messages: [{ role: "user", content: "累了" }], sessionId: "chat-sticker", style: "01_default.md" },
+      { assistantTurnId: "fixture-20046", messages: [{ role: "user", content: "累了" }], sessionId: "chat-sticker", style: "01_default.md" },
     );
     // complete 回调里 run 终态统计同步（真实 fs）先于终态事件发送，
     // 等待 RUN_FINISHED 真正送达后再断言事件顺序
@@ -539,7 +549,7 @@ describe("agui-bridge sticker event ordering", () => {
     if (!handler) throw new Error("AGUI_RUN handler was not registered");
     await handler(
       { sender },
-      {
+      { assistantTurnId: "fixture-21520",
         messages: [{ role: "user", content: "hi" }],
         sessionId: "chat-style",
         styleId: "lively",
@@ -579,7 +589,7 @@ describe("agui-bridge sticker event ordering", () => {
 
     await handler({
       sender: { isDestroyed: () => false, send: () => {} },
-    }, {
+    }, { assistantTurnId: "fixture-22834",
       messages: [{ role: "user", content: "修改项目文件" }],
       sessionId: "work-chat",
       executionMode: "chat",
@@ -607,7 +617,7 @@ describe("agui-bridge sticker event ordering", () => {
 
     await expect(handler({
       sender: { isDestroyed: () => false, send: () => {} },
-    }, {
+    }, { assistantTurnId: "fixture-23875",
       messages: [{ role: "user", content: "开始" }],
       sessionId: "work-no-workspace",
     })).rejects.toThrow("需要先绑定项目工作区");
@@ -647,7 +657,7 @@ describe("agui-bridge sticker event ordering", () => {
     if (!handler) throw new Error("AGUI_RUN handler was not registered");
     const ack = await handler(
       { sender },
-      { messages: [{ role: "user", content: "hi" }], sessionId: "chat-identity" },
+      { assistantTurnId: "fixture-25308", messages: [{ role: "user", content: "hi" }], sessionId: "chat-identity" },
     ) as { runId: string };
 
     await expect.poll(() => sent.some((event) => event.type === "RUN_FINISHED")).toBe(true);
@@ -699,7 +709,7 @@ describe("agui-bridge sticker event ordering", () => {
     if (!handler) throw new Error("AGUI_RUN handler was not registered");
     await handler(
       { sender },
-      { messages: [{ role: "user", content: "hi" }], sessionId: "chat-dup" },
+      { assistantTurnId: "fixture-27177", messages: [{ role: "user", content: "hi" }], sessionId: "chat-dup" },
     );
 
     await expect.poll(() => sent.some((event) => event.type === "RUN_FINISHED")).toBe(true);
@@ -741,7 +751,7 @@ describe("agui-bridge sticker event ordering", () => {
     if (!handler) throw new Error("AGUI_RUN handler was not registered");
     await handler(
       { sender },
-      { messages: [{ role: "user", content: "hi" }], sessionId: "chat-err-after" },
+      { assistantTurnId: "fixture-28662", messages: [{ role: "user", content: "hi" }], sessionId: "chat-err-after" },
     );
 
     await expect.poll(() => sent.some((event) => event.type === "RUN_FINISHED")).toBe(true);
@@ -785,7 +795,7 @@ describe("agui-bridge sticker event ordering", () => {
     if (!handler) throw new Error("AGUI_RUN handler was not registered");
     await handler(
       { sender },
-      { messages: [{ role: "user", content: "hi" }], sessionId: "chat-cancelled" },
+      { assistantTurnId: "fixture-30410", messages: [{ role: "user", content: "hi" }], sessionId: "chat-cancelled" },
     );
 
     await expect.poll(() => sent.some((event) => event.type === "RUN_FINISHED")).toBe(true);
@@ -833,7 +843,7 @@ describe("agui-bridge sticker event ordering", () => {
     if (!handler) throw new Error("AGUI_RUN handler was not registered");
     const ack = await handler(
       { sender },
-      { messages: [{ role: "user", content: "hi" }], sessionId: "chat-bare-complete" },
+      { assistantTurnId: "fixture-32220", messages: [{ role: "user", content: "hi" }], sessionId: "chat-bare-complete" },
     ) as { runId: string };
 
     await expect.poll(() => sent.some((event) => event.type === "RUN_FINISHED")).toBe(true);
@@ -881,7 +891,7 @@ describe("agui-bridge sticker event ordering", () => {
     if (!handler) throw new Error("AGUI_RUN handler was not registered");
     const ack = await handler(
       { sender },
-      { messages: [{ role: "user", content: "hi" }], sessionId: "chat-sync-complete" },
+      { assistantTurnId: "fixture-34050", messages: [{ role: "user", content: "hi" }], sessionId: "chat-sync-complete" },
     ) as { runId: string };
 
     // 让 microtask 跑完（mock Observable 是同步的，subscribe 返回时已 complete）
@@ -927,7 +937,7 @@ describe("agui-bridge sticker event ordering", () => {
     if (!handler) throw new Error("AGUI_RUN handler was not registered");
     await handler(
       { sender },
-      { messages: [{ role: "user", content: "hi" }], sessionId: "chat-runtime-error" },
+      { assistantTurnId: "fixture-35873", messages: [{ role: "user", content: "hi" }], sessionId: "chat-runtime-error" },
     );
 
     await expect.poll(() => sent.some((event) => event.type === "RUN_ERROR")).toBe(true);
@@ -977,7 +987,7 @@ describe("agui-bridge sticker event ordering", () => {
 
     const ack = await runHandler(
       { sender },
-      { messages: [{ role: "user", content: "hi" }], sessionId: "chat-cancel-1" },
+      { assistantTurnId: "fixture-37704", messages: [{ role: "user", content: "hi" }], sessionId: "chat-cancel-1" },
     ) as { runId: string };
 
     // 等 CyreneAgent.runWithEvents 被调用
@@ -1030,11 +1040,11 @@ describe("agui-bridge sticker event ordering", () => {
     // 启动两个 run（会话守卫要求不同会话：跨会话并发是既有能力）
     const ack1 = await runHandler(
       { sender },
-      { messages: [{ role: "user", content: "run1" }], sessionId: "chat-isolation-a" },
+      { assistantTurnId: "fixture-39543", messages: [{ role: "user", content: "run1" }], sessionId: "chat-isolation-a" },
     ) as { runId: string };
     const ack2 = await runHandler(
       { sender },
-      { messages: [{ role: "user", content: "run2" }], sessionId: "chat-isolation-b" },
+      { assistantTurnId: "fixture-39712", messages: [{ role: "user", content: "run2" }], sessionId: "chat-isolation-b" },
     ) as { runId: string };
 
     await vi.waitFor(() => expect(mocks.runCyreneAgent).toHaveBeenCalledTimes(2));
@@ -1086,11 +1096,11 @@ describe("agui-bridge sticker event ordering", () => {
 
     await runHandler(
       { sender },
-      { messages: [{ role: "user", content: "run1" }], sessionId: "chat-cancel-all-a" },
+      { assistantTurnId: "fixture-41483", messages: [{ role: "user", content: "run1" }], sessionId: "chat-cancel-all-a" },
     );
     await runHandler(
       { sender },
-      { messages: [{ role: "user", content: "run2" }], sessionId: "chat-cancel-all-b" },
+      { assistantTurnId: "fixture-41619", messages: [{ role: "user", content: "run2" }], sessionId: "chat-cancel-all-b" },
     );
 
     await vi.waitFor(() => expect(mocks.runCyreneAgent).toHaveBeenCalledTimes(2));
@@ -1157,14 +1167,14 @@ describe("agui-bridge session run guard", () => {
 
     const ack1 = await runHandler(
       { sender },
-      { messages: [{ role: "user", content: "run1" }], sessionId: "guard-1" },
+      { assistantTurnId: "fixture-43973", messages: [{ role: "user", content: "run1" }], sessionId: "guard-1" },
     ) as { runId: string };
     expect(bridge.__getSessionActiveRunForTest("guard-1")).toBe(ack1.runId);
 
     // 不带 takeoverFromRunId 的同会话第二个 run → 拒绝，错误带稳定前缀 + active runId
     await expect(runHandler(
       { sender },
-      { messages: [{ role: "user", content: "run2" }], sessionId: "guard-1" },
+      { assistantTurnId: "fixture-44273", messages: [{ role: "user", content: "run2" }], sessionId: "guard-1" },
     )).rejects.toThrow(`SESSION_RUN_ACTIVE:${ack1.runId}`);
 
     // 拒绝不得影响第一个 run：守卫仍指向 run1
@@ -1178,14 +1188,14 @@ describe("agui-bridge session run guard", () => {
 
     const ack1 = await runHandler(
       { sender },
-      { messages: [{ role: "user", content: "run1" }], sessionId: "guard-2" },
+      { assistantTurnId: "fixture-44832", messages: [{ role: "user", content: "run1" }], sessionId: "guard-2" },
     ) as { runId: string };
     // complete 回调链路（副作用 → endLifecycle）是异步的：等守卫真实释放
     await vi.waitFor(() => expect(bridge.__getSessionActiveRunForTest("guard-2")).toBeUndefined());
 
     const ack2 = await runHandler(
       { sender },
-      { messages: [{ role: "user", content: "run2" }], sessionId: "guard-2" },
+      { assistantTurnId: "fixture-45146", messages: [{ role: "user", content: "run2" }], sessionId: "guard-2" },
     ) as { runId: string };
     expect(ack2.runId).toBeTruthy();
     expect(bridge.__getSessionActiveRunForTest("guard-2")).toBe(ack2.runId);
@@ -1202,12 +1212,12 @@ describe("agui-bridge session run guard", () => {
 
     const ack1 = await runHandler(
       { sender },
-      { messages: [{ role: "user", content: "run1" }], sessionId: "guard-3" },
+      { assistantTurnId: "fixture-45870", messages: [{ role: "user", content: "run1" }], sessionId: "guard-3" },
     ) as { runId: string };
 
     const ack2 = await runHandler(
       { sender },
-      {
+      { assistantTurnId: "fixture-46031",
         messages: [{ role: "user", content: "run2" }],
         sessionId: "guard-3",
         takeoverFromRunId: ack1.runId,
@@ -1233,12 +1243,12 @@ describe("agui-bridge session run guard", () => {
 
     const ack1 = await runHandler(
       { sender },
-      { messages: [{ role: "user", content: "run1" }], sessionId: "guard-4" },
+      { assistantTurnId: "fixture-47083", messages: [{ role: "user", content: "run1" }], sessionId: "guard-4" },
     ) as { runId: string };
 
     await expect(runHandler(
       { sender },
-      {
+      { assistantTurnId: "fixture-47238",
         messages: [{ role: "user", content: "run2" }],
         sessionId: "guard-4",
         takeoverFromRunId: "stale-or-wrong-run-id",
@@ -1260,12 +1270,12 @@ describe("agui-bridge session run guard", () => {
 
     const ack1 = await runHandler(
       { sender },
-      { messages: [{ role: "user", content: "run1" }], sessionId: "guard-5" },
+      { assistantTurnId: "fixture-48058", messages: [{ role: "user", content: "run1" }], sessionId: "guard-5" },
     ) as { runId: string };
 
     await expect(runHandler(
       { sender },
-      {
+      { assistantTurnId: "fixture-48213",
         messages: [{ role: "user", content: "run2" }],
         sessionId: "guard-5",
         takeoverFromRunId: ack1.runId,
@@ -1283,17 +1293,17 @@ describe("agui-bridge session run guard", () => {
 
     const ack1 = await runHandler(
       { sender },
-      { messages: [{ role: "user", content: "run1" }], sessionId: "guard-6" },
+      { assistantTurnId: "fixture-48850", messages: [{ role: "user", content: "run1" }], sessionId: "guard-6" },
     ) as { runId: string };
 
     // 两个 takeover 同 tick 发起：旧 run 结算后双双醒来重新竞争守卫，恰一个注册成功
     const [first, second] = await Promise.allSettled([
-      runHandler({ sender }, {
+      runHandler({ sender }, { assistantTurnId: "fixture-49106",
         messages: [{ role: "user", content: "a" }],
         sessionId: "guard-6",
         takeoverFromRunId: ack1.runId,
       }),
-      runHandler({ sender }, {
+      runHandler({ sender }, { assistantTurnId: "fixture-49268",
         messages: [{ role: "user", content: "b" }],
         sessionId: "guard-6",
         takeoverFromRunId: ack1.runId,
@@ -1319,7 +1329,7 @@ describe("agui-bridge session run guard", () => {
 
     const ack1 = await runHandler(
       { sender },
-      { messages: [{ role: "user", content: "run1" }], sessionId: "guard-7" },
+      { assistantTurnId: "fixture-50433", messages: [{ role: "user", content: "run1" }], sessionId: "guard-7" },
     ) as { runId: string };
 
     // 旧 run 迟到的清理（runId 不匹配）不得误删当前守卫
@@ -1341,7 +1351,7 @@ describe("agui-bridge session run guard", () => {
 
     await expect(runHandler(
       { sender },
-      { messages: [{ role: "user", content: "run1" }], sessionId: "guard-8" },
+      { assistantTurnId: "fixture-51321", messages: [{ role: "user", content: "run1" }], sessionId: "guard-8" },
     )).rejects.toThrow("boom: build options failed");
 
     // 早期退出路径必须释放守卫，否则该会话永久拒绝新 run
@@ -1356,8 +1366,8 @@ describe("agui-bridge session run guard", () => {
     const sender = makeSender();
 
     const [first, second] = await Promise.allSettled([
-      runHandler({ sender }, { messages: [{ role: "user", content: "a" }], sessionId: "guard-9" }),
-      runHandler({ sender }, { messages: [{ role: "user", content: "b" }], sessionId: "guard-9" }),
+      runHandler({ sender }, { assistantTurnId: "fixture-51976", messages: [{ role: "user", content: "a" }], sessionId: "guard-9" }),
+      runHandler({ sender }, { assistantTurnId: "fixture-52076", messages: [{ role: "user", content: "b" }], sessionId: "guard-9" }),
     ]);
 
     // 守卫注册在同步代码块内完成（get 与 set 之间无 await）→ 同 tick 竞态下恰一个赢
@@ -1452,7 +1462,7 @@ describe("agui-bridge pending adjust IPC", () => {
     const sender = makeSender();
     mocks.skipDefaultRunFinished = true;
     mocks.neverComplete = true;
-    await runHandler({ sender }, { messages: [{ role: "user", content: "run" }], sessionId: "adj-2" });
+    await runHandler({ sender }, { assistantTurnId: "fixture-55784", messages: [{ role: "user", content: "run" }], sessionId: "adj-2" });
 
     const result = await adjustHandler({ sender }, { sessionId: "adj-2", messageId: "q-1" });
     expect(result).toEqual({ ok: false, error: "no-safe-next-step", queue: [] });
@@ -1469,7 +1479,7 @@ describe("agui-bridge pending adjust IPC", () => {
     mocks.neverComplete = true;
     const { bridge, adjustHandler, runHandler } = await setupBridge();
     const sender = makeSender();
-    const ack = await runHandler({ sender }, {
+    const ack = await runHandler({ sender }, { assistantTurnId: "fixture-56563",
       messages: [{ role: "user", content: "执行任务" }],
       sessionId: "adj-3",
     }) as { runId: string };
@@ -1506,7 +1516,7 @@ describe("agui-bridge pending adjust IPC", () => {
     const sender = makeSender();
     mocks.skipDefaultRunFinished = true;
     mocks.neverComplete = true;
-    const ack = await runHandler({ sender }, {
+    const ack = await runHandler({ sender }, { assistantTurnId: "fixture-58147",
       messages: [{ role: "user", content: "执行任务" }], sessionId: "adj-v2",
     }) as { runId: string };
     mocks.markPendingAdjust.mockReturnValue({ ok: true, queue: [{ id: "q-v2", adjustRunId: ack.runId }] });
@@ -1524,7 +1534,7 @@ describe("agui-bridge pending adjust IPC", () => {
     });
     const { bridge, runHandler } = await setupBridge();
     const sender = makeSender();
-    const ack = await runHandler({ sender }, {
+    const ack = await runHandler({ sender }, { assistantTurnId: "fixture-59064",
       messages: [{ role: "user", content: "很快结束" }],
       sessionId: "adj-4",
     }) as { runId: string };
@@ -1545,7 +1555,7 @@ describe("agui-bridge pending adjust IPC", () => {
     });
     const sender = makeSender();
 
-    await expect(runHandler({ sender }, {
+    await expect(runHandler({ sender }, { assistantTurnId: "fixture-59862",
       messages: [{ role: "user", content: "run" }],
       sessionId: "adj-5",
     })).rejects.toThrow("boom: build options failed");
@@ -1561,7 +1571,8 @@ describe("agui-bridge transcript dispatch", () => {
     return { isDestroyed: () => false, send: () => {} };
   }
 
-  afterEach(() => {
+  afterEach(async () => {
+  await closeConversationDatabases();
     for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
   });
 
@@ -1609,10 +1620,13 @@ describe("agui-bridge transcript dispatch", () => {
         { id: "u1", role: "user", content: "当前输入", at: 3 },
       ],
     });
+    const dir = path.join(root, "cyrene-chats", "sessions");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "chat-transcript.json"), JSON.stringify({ ...mocks.getSession(), title: "fixture", identityId: null, createdAt: 1, updatedAt: 3, schemaVersion: 1 }));
     const { runHandler, seenInputs } = await setupBridge();
     const sender = makeSender();
 
-    await runHandler({ sender }, {
+    await runHandler({ sender }, { assistantTurnId: "fixture-62154",
       messages: [{ role: "user", content: "当前输入" }],
       sessionId: "chat-transcript",
       userTurnId: "u1",
@@ -1632,7 +1646,7 @@ describe("agui-bridge transcript dispatch", () => {
     // 派发前轨迹已落盘：回填边界 + 当前 user
     const { getConversationTranscriptStore } = await import("./orchestrator/conversation-transcript-store");
     const entries = (await getConversationTranscriptStore(root).read("chat-transcript")).entries;
-    expect(entries.some((entry) => entry.kind === "backfill_boundary")).toBe(true);
+    expect(entries.filter(entry => entry.kind === "user")).toHaveLength(2);
     expect(entries.some((entry) => entry.kind === "user" && entry.turnId === "u1")).toBe(true);
     expect(entries.some((entry) => entry.kind === "assistant" && entry.payload.content === "旧回答")).toBe(true);
     mocks.userDataRoot = "";
@@ -1664,14 +1678,14 @@ describe("agui-bridge transcript dispatch", () => {
     const reconcile = vi.spyOn(ConversationJournalService.prototype, "reconcilePendingWithdrawals")
       .mockImplementation(async () => { order.push("reconcile"); });
     const append = vi.spyOn(ConversationJournalService.prototype, "appendUser")
-      .mockImplementation(async () => { order.push("append"); });
+      .mockImplementation(async () => { order.push("append"); return { id: "user:v1:u1:r1", kind: "user", seq: 1, at: 1, turnId: "u1", revision: 1, payload: { text: "next" } }; });
     const context = vi.spyOn(ConversationJournalService.prototype, "buildModelContext")
       .mockImplementation(async () => {
         order.push("context");
         return { conversationId: "order-session", messages: [] } as any;
       });
     try {
-      await runHandler({ sender: makeSender() }, {
+      await runHandler({ sender: makeSender() }, { assistantTurnId: "fixture-64943",
         sessionId: "order-session",
         currentUser: { turnId: "u1", text: "next", visibleContent: "next" },
       });
@@ -1690,7 +1704,7 @@ describe("agui-bridge transcript dispatch", () => {
     const { runHandler, seenInputs } = await setupBridge();
     const sender = makeSender();
 
-    await runHandler({ sender }, {
+    await runHandler({ sender }, { assistantTurnId: "fixture-65643",
       messages: [{ role: "user", content: "channel text" }],
       sessionId: "chat-plain",
     });
@@ -1718,7 +1732,7 @@ describe("agui-bridge transcript dispatch", () => {
     const { runHandler, seenInputs } = await setupBridge();
     const sender = makeSender();
 
-    await expect(runHandler({ sender }, {
+    await expect(runHandler({ sender }, { assistantTurnId: "fixture-66799",
       sessionId: "chat-fail",
       userTurnId: "missing-turn",
     })).rejects.toThrow("TRANSCRIPT_USER_TURN_NOT_FOUND");
@@ -1744,7 +1758,7 @@ describe("agui-bridge transcript dispatch", () => {
     const { runHandler, seenInputs } = await setupBridge();
     const sender = makeSender();
     try {
-      await runHandler({ sender }, {
+      await runHandler({ sender }, { assistantTurnId: "fixture-67677",
         sessionId: "chat-rollback",
         currentUser: { turnId: "u1", text: "当前输入", visibleContent: "当前输入" },
       });
@@ -1752,7 +1766,7 @@ describe("agui-bridge transcript dispatch", () => {
       expect(seenInputs[0]).toMatchObject({ currentUser: { turnId: "u1" }, modelContext: expect.any(Object) });
       const { getConversationTranscriptStore } = await import("./orchestrator/conversation-transcript-store");
       const entries = (await getConversationTranscriptStore(root).read("chat-rollback")).entries;
-      expect(entries.some((entry) => entry.kind === "backfill_boundary")).toBe(true);
+      expect(entries.filter(entry => entry.kind === "user")).toHaveLength(1);
       expect(entries.some((entry) => entry.kind === "user" && entry.turnId === "u1")).toBe(true);
     } finally {
       mocks.userDataRoot = "";
@@ -1809,7 +1823,7 @@ describe("agui-bridge transcript dispatch", () => {
       });
       mocks.getSessionRecord.mockReturnValue(record);
       mocks.composeSession.mockImplementation((_record: unknown, messages: unknown[]) => ({ ...record, messages }));
-      await runHandler({ sender: makeSender() }, {
+      await runHandler({ sender: makeSender() }, { assistantTurnId: "fixture-70411",
         sessionId: `journal-${mode}`,
         mode,
         messages: [{ role: "user", content: "forged" }],
@@ -1846,7 +1860,7 @@ describe("agui-bridge transcript dispatch", () => {
     }));
     mocks.getSessionRecord.mockReturnValue(record);
     mocks.composeSession.mockImplementation((_record: unknown, messages: unknown[]) => ({ ...record, messages }));
-    await runHandler({ sender: makeSender() }, {
+    await runHandler({ sender: makeSender() }, { assistantTurnId: "fixture-72493",
       sessionId: "rewind-session",
       currentUser: { turnId: "u1", text: "edited", visibleContent: "展示编辑" },
       transcriptRewind: { anchorUserTurnId: "u1", disposition: "replace_user" },
@@ -1881,7 +1895,7 @@ describe("agui-bridge transcript dispatch", () => {
     const { ConversationJournalService } = await import("./orchestrator/conversation-journal-service");
     const journal = new ConversationJournalService(getConversationTranscriptStore(root));
     await journal.appendUser("keep-session", { id: "u1", turnId: "u1", text: "old", at: 1, revision: 1 });
-    await runHandler({ sender: makeSender() }, {
+    await runHandler({ sender: makeSender() }, { assistantTurnId: "fixture-74598",
       sessionId: "keep-session",
       currentUser: { turnId: "u1", text: "old", visibleContent: "new visible", sticker: "wave" },
       transcriptRewind: { anchorUserTurnId: "u1", disposition: "keep_user" },
@@ -1897,7 +1911,7 @@ describe("agui-bridge transcript dispatch", () => {
     ["canonical", "appendUser"],
     ["presentation", "appendPresentation"],
     ["model context", "buildModelContext"],
-  ] as const)("%s 失败时 fail-closed，不启动模型", async (_label, method) => {
+  ] as const)("%s 故障只影响所属层", async (_label, method) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-bridge-fail-closed-"));
     roots.push(root);
     mocks.userDataRoot = root;
@@ -1920,13 +1934,23 @@ describe("agui-bridge transcript dispatch", () => {
     const { ConversationJournalService } = await import("./orchestrator/conversation-journal-service");
     const failure = vi.spyOn(ConversationJournalService.prototype, method as "appendUser" | "appendPresentation" | "buildModelContext")
       .mockRejectedValueOnce(new Error(`FAIL_${method}`));
-    await expect(runHandler({ sender: makeSender() }, {
+    const call = runHandler({ sender: makeSender() }, { assistantTurnId: "fixture-76837",
       sessionId: "fail-closed",
       currentUser: { turnId: "u1", text: "next", visibleContent: "展示" },
-    })).rejects.toThrow(`FAIL_${method}`);
-    expect(seen).toHaveLength(0);
-    expect(mocks.runCyreneAgent).not.toHaveBeenCalled();
+    });
+    if (method === "appendPresentation") {
+      await expect(call).resolves.toMatchObject({ success: true });
+      expect(seen).toHaveLength(1);
+      expect(mocks.runCyreneAgent).toHaveBeenCalledTimes(1);
+      const { ConversationTranscriptStore } = await import("./orchestrator/conversation-transcript-store");
+      expect((await new ConversationTranscriptStore(root).read("fail-closed")).entries.some(entry => entry.kind === "user")).toBe(true);
+    } else {
+      await expect(call).rejects.toThrow(`FAIL_${method}`);
+      expect(seen).toHaveLength(0);
+      expect(mocks.runCyreneAgent).not.toHaveBeenCalled();
+    }
     failure.mockRestore();
+    await expect(runHandler({ sender: makeSender() }, { assistantTurnId: "next-assistant", sessionId: "fail-closed", currentUser: { turnId: "u2", text: "continue", visibleContent: "continue" } })).resolves.toMatchObject({ success: true });
     mocks.userDataRoot = "";
   });
 
@@ -1955,7 +1979,7 @@ describe("agui-bridge transcript dispatch", () => {
     }));
     const sender = makeSender();
 
-    await runHandler({ sender }, {
+    await runHandler({ sender }, { assistantTurnId: "fixture-78072",
       messages: [{ role: "user", content: "当前输入" }],
       sessionId: "chat-recovery-merge",
       userTurnId: "u1",
@@ -2017,7 +2041,7 @@ describe("agui-bridge transcript dispatch", () => {
         (mocks.runCyreneAgent.mock.calls.at(-1)?.[0] as { transcriptSink?: import("./orchestrator/transcript-sink").TranscriptSink }).transcriptSink;
 
       // 第一轮：当前 user 落盘，run 级提交端写入 canonical assistant
-      await runHandler({ sender }, {
+      await runHandler({ sender }, { assistantTurnId: "fixture-80940",
         messages: [{ role: "user", content: "first-user" }],
         sessionId: conversationId,
         userTurnId: "turn-1",
@@ -2048,7 +2072,7 @@ describe("agui-bridge transcript dispatch", () => {
         { id: "a-1", role: "model", content: "first-assistant", at: 2 },
         { id: "turn-2", role: "user", content: "second-user", at: 3 },
       ]));
-      await runHandler({ sender }, {
+      await runHandler({ sender }, { assistantTurnId: "fixture-82215",
         messages: [{ role: "user", content: "second-user" }],
         sessionId: conversationId,
         userTurnId: "turn-2",
@@ -2111,7 +2135,7 @@ describe("agui-bridge transcript dispatch", () => {
       (mocks.runCyreneAgent.mock.calls.at(-1)?.[0] as { transcriptSink?: import("./orchestrator/transcript-sink").TranscriptSink }).transcriptSink;
 
     // 轮次 1：无工具（ChatLoop 单请求路径，assistant 无 roundId）
-    await runHandler({ sender }, {
+    await runHandler({ sender }, { assistantTurnId: "fixture-85231",
       messages: [{ role: "user", content: "first-user" }],
       sessionId: conversationId,
       userTurnId: "turn-1",
@@ -2126,7 +2150,7 @@ describe("agui-bridge transcript dispatch", () => {
       { id: "a-1", role: "model", content: "first-assistant", at: 2 },
       { id: "turn-2", role: "user", content: "second-user", at: 3 },
     ]));
-    await runHandler({ sender }, {
+    await runHandler({ sender }, { assistantTurnId: "fixture-85889",
       messages: [{ role: "user", content: "second-user" }],
       sessionId: conversationId,
       userTurnId: "turn-2",
@@ -2154,7 +2178,7 @@ describe("agui-bridge transcript dispatch", () => {
       { id: "a-2", role: "model", content: "second-assistant", at: 4 },
       { id: "turn-3", role: "user", content: "third-user", at: 5 },
     ]));
-    await runHandler({ sender }, {
+    await runHandler({ sender }, { assistantTurnId: "fixture-87068",
       messages: [{ role: "user", content: "third-user" }],
       sessionId: conversationId,
       userTurnId: "turn-3",

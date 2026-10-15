@@ -8,12 +8,11 @@
 // 门禁：built-in-tools.snapshot.test.ts（注册顺序 + 模型可见字段 + 拒绝路径协议）。
 
 export { setUserTimezoneConfig, currentUserTimezone } from "./builtin-tools/timezone";
-export { setWeatherConfig, type WeatherCardData } from "./builtin-tools/weather-tool";
+export { setWeatherConfig } from "./builtin-tools/weather-tool";
 export { setSearchConfig } from "./builtin-tools/web-search-tool";
 
 import { toolRegistry } from "./registry/tool-registry";
 import { logger, LogTag } from "../../logger";
-import { createPlayLive2DActionTool } from "./builtin-tools/play-live2d-action";
 import { weatherTool } from "./builtin-tools/weather-tool";
 import { webSearchTool } from "./builtin-tools/web-search-tool";
 import { fetchUrlTool } from "./builtin-tools/fetch-url-tool";
@@ -23,11 +22,6 @@ import { installMcpServerTool } from "./builtin-tools/install-mcp-tool";
 import { runVerificationTool } from "./builtin-tools/run-verification-tool";
 import { runShellTool } from "./builtin-tools/run-shell-tool";
 import { shellJobTool } from "./builtin-tools/shell-job-tool";
-
-let sendToLive2DWindow: (channel: string, payload?: unknown) => void = () => {};
-export function setLive2dWindowSender(sender: typeof sendToLive2DWindow): void {
-  sendToLive2DWindow = sender;
-}
 
 // ── 注册（顺序 = 原 built-in-tools.ts 的字面顺序，勿重排）─────────────
 toolRegistry.register(fetchUrlTool);
@@ -41,4 +35,3 @@ toolRegistry.register(installMcpServerTool);
 logger.info(LogTag.BuiltinTools, "registered: fetch_url / download_file / run_shell / install_mcp_server");
 toolRegistry.register(weatherTool);
 toolRegistry.register(webSearchTool);
-toolRegistry.register(createPlayLive2DActionTool({ sendToLive2DWindow }));

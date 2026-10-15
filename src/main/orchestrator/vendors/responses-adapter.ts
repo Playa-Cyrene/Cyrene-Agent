@@ -4,7 +4,7 @@
 // 与 Chat Completions 的关键 wire 差异（施工文档钉死，改前必读）：
 //   1. tools 扁平格式：{type:'function', name, parameters, strict}（无 function 嵌套层）
 //   2. tool_choice 少一层嵌套：named 直接 {type:'function', name}
-//   3. 多轮回放：完整 output items 存 rawAssistant，下一轮经 replay policy + toResponseInputItems() 原顺序重放
+//   3. 此适配器服务辅助调用；主会话的有来源重放由 model-runtime 负责
 //   4. store:false 恒定发送（无状态，不留服务端会话）
 //   5. 加密 reasoning 回放：仅 OpenAI 官方端点 include reasoning.encrypted_content，第三方不发
 //   6. maxTokens → max_output_tokens；reasoning_effort → reasoning:{effort}
@@ -17,7 +17,7 @@ import {
   HttpRequest, ProviderCapability, StreamChunk, StreamEvent,
   TestConnectionResult, ToolCall, ToolExecutionResult, VendorConfig,
 } from "./types";
-import { toResponseInputItems } from "openai/lib/responses/ResponseInputItems";
+import { contentText, recoverPortableMessage } from "./model-history";
 import { authHeaderFor } from "./auth";
 import { resolveEffectiveReasoning } from "../../../shared/reasoning";
 import { applyManualReasoningBody, normalizeManualReasoningConfig, resolveConfiguredReasoningCapability } from "../../../shared/manual-reasoning";
@@ -92,60 +92,11 @@ function toUserContentBlocks(content: NonNullable<ChatMessage["content"]>): Arra
   });
 }
 
-/**
- * Responses 多轮回放策略（施工文档关键决策 #4）：
- *   rawAssistant → replay policy → toResponseInputItems() → input[]
- * - 官方端点：reasoning 带 encrypted_content 的保留
- * - 第三方：reasoning 一律丢弃（无加密内容可引用）
- * - message / function_call 恒定保留；未知类型防御性丢弃
- */
-function replayRawAssistant(rawAssistant: unknown, includeEncryptedReasoning: boolean): Array<Record<string, unknown>> {
-  if (!Array.isArray(rawAssistant)) return [];
-  const replayable = rawAssistant.filter((item): item is WireOutputItem => {
-    if (!item || typeof item !== "object") return false;
-    const type = (item as { type?: unknown }).type;
-    if (type === "message" || type === "function_call") return true;
-    if (type === "reasoning") return includeEncryptedReasoning && typeof (item as WireReasoningItem).encrypted_content === "string";
-    return false;
-  });
-  try {
-    const converted = toResponseInputItems(replayable as unknown as Parameters<typeof toResponseInputItems>[0]);
-    return converted as unknown as Array<Record<string, unknown>>;
-  } catch {
-    // SDK 对未知 item type 抛 TypeError → 逐个降级，只保留确定可回放的
-    const fallback: Array<Record<string, unknown>> = [];
-    for (const item of replayable) {
-      try {
-        const converted = toResponseInputItems([item] as unknown as Parameters<typeof toResponseInputItems>[0]);
-        fallback.push(...(converted as unknown as Array<Record<string, unknown>>));
-      } catch {
-        // 单个 item 无法转换：跳过（保其余轮次可回放）
-      }
-    }
-    return fallback;
-  }
-}
-
-function assistantFallbackItems(message: ChatMessage, replayed: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+function assistantFallbackItems(message: ChatMessage): Array<Record<string, unknown>> {
   const fallback: Array<Record<string, unknown>> = [];
-  const text = typeof message.content === "string" ? message.content : "";
-  const replayedText = replayed
-    .filter((item) => item.type === "message")
-    .flatMap((item) => Array.isArray(item.content) ? item.content : [])
-    .filter((block) => block && typeof block === "object")
-    .map((block) => {
-      const record = block as Record<string, unknown>;
-      return record.type === "output_text" && typeof record.text === "string" ? record.text : "";
-    })
-    .join("");
-  if (text && !replayedText.includes(text)) fallback.push({ role: "assistant", content: text });
-
-  const replayedCallIds = new Set(replayed
-    .filter((item) => item.type === "function_call")
-    .map((item) => item.call_id)
-    .filter((id): id is string => typeof id === "string"));
+  const text = contentText(message.content);
+  if (text) fallback.push({ role: "assistant", content: text });
   for (const call of message.toolCalls ?? []) {
-    if (replayedCallIds.has(call.id)) continue;
     fallback.push({ type: "function_call", call_id: call.id, name: call.name, arguments: call.arguments });
   }
   return fallback;
@@ -153,17 +104,15 @@ function assistantFallbackItems(message: ChatMessage, replayed: Array<Record<str
 
 /**
  * 统一 ChatMessage[] → Responses input items + instructions。
- * system 聚合进 instructions；assistant 优先 rawAssistant 原样回放，
- * 缺失时退化构造（input_text + function_call items）；tool → function_call_output。
+ * system 聚合进 instructions；assistant 使用通用正文与工具调用；tool → function_call_output。
  */
 function toWireInput(
   messages: ChatMessage[],
-  includeEncryptedReasoning: boolean,
 ): { instructions: string | undefined; input: Array<Record<string, unknown>> } {
   const systemParts: string[] = [];
   const input: Array<Record<string, unknown>> = [];
 
-  for (const m of messages) {
+  for (const m of messages.map(recoverPortableMessage)) {
     if (m.role === "system") {
       const text = typeof m.content === "string" ? m.content : "";
       if (text) systemParts.push(text);
@@ -181,14 +130,8 @@ function toWireInput(
       });
       continue;
     }
-    // assistant：优先原顺序回放可识别的 Responses item，统一字段只补底稿未覆盖的内容。
-    if (m.rawAssistant !== undefined) {
-      const replayed = replayRawAssistant(m.rawAssistant, includeEncryptedReasoning);
-      input.push(...replayed, ...assistantFallbackItems(m, replayed));
-      continue;
-    }
-    // SDK easy input message 接受 assistant + string content；input_text 仅适用于 user 输入。
-    input.push(...assistantFallbackItems(m, []));
+    // 旧辅助调用只编码通用语义；来源兼容的原生重放由 AI SDK 入口负责。
+    input.push(...assistantFallbackItems(m));
   }
 
   return { instructions: systemParts.length > 0 ? systemParts.join("\n\n") : undefined, input };
@@ -214,7 +157,7 @@ export class ResponsesAdapter implements ChatVendorAdapter {
 
   buildRequest(req: ChatRequest, cfg: VendorConfig): HttpRequest {
     const includeEncryptedReasoning = shouldIncludeEncryptedReasoning(cfg, this.capability);
-    const { instructions, input } = toWireInput(req.messages, includeEncryptedReasoning);
+    const { instructions, input } = toWireInput(req.messages);
 
     const body: Record<string, unknown> = {
       model: req.model,

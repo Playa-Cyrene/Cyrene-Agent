@@ -9,6 +9,7 @@ import { useFeedback } from "../../../components/feedback/FeedbackProvider";
 /** window.chat 中附件链路用到的子集（桥模式：显式 cast，不依赖全局 Window 声明）。 */
 interface ComposerChatApi {
   ingestDroppedFiles: (files: File[]) => Promise<ComposerAttachment[]>;
+  pasteClipboardFiles?: () => Promise<ComposerAttachment[]>;
   saveScreenshotTemp: (base64: string, mime: string) => Promise<{ filePath: string }>;
   startScreenshot: () => Promise<{ ok: boolean; reason?: string } | undefined>;
   onScreenshotInsert: (callback: (data: ScreenshotInsertPayload) => void) => () => void;
@@ -38,6 +39,7 @@ export interface ComposerAttachmentsApi {
   isDraggingFiles: boolean;
   chooseFiles: (files: File[]) => Promise<void>;
   handlePastedImage: (file: File) => Promise<void>;
+  handlePastedFiles: () => Promise<void>;
   handleScreenshot: () => Promise<void>;
   removeAttachment: (index: number) => void;
   /** 消息落盘后的图片预处理：direct 直传 / caption 视觉描述，结果写回消息上的附件条目 */
@@ -148,6 +150,26 @@ export function useComposerAttachments(input: {
       }
     } catch (error) {
       // 导入失败：简短失败反馈，非阻塞错误轻提示
+      feedback.notice({ tone: "error", message: t("chatPage.ingestFilesFailed", { error: error instanceof Error ? error.message : String(error) }) });
+    } finally {
+      setAttachmentBusy(false);
+    }
+  }
+
+  async function handlePastedFiles() {
+    const targetScope = scopeKey;
+    const chat = composerChatApi();
+    if (!chat?.pasteClipboardFiles) return;
+    setAttachmentBusy(true);
+    try {
+      const attachments = await chat.pasteClipboardFiles();
+      if (attachments.length > 0) {
+        setAttachmentsByScope((current) => ({
+          ...current,
+          [targetScope]: [...(current[targetScope] ?? []), ...attachments],
+        }));
+      }
+    } catch (error) {
       feedback.notice({ tone: "error", message: t("chatPage.ingestFilesFailed", { error: error instanceof Error ? error.message : String(error) }) });
     } finally {
       setAttachmentBusy(false);
@@ -344,6 +366,7 @@ export function useComposerAttachments(input: {
     isDraggingFiles,
     chooseFiles,
     handlePastedImage,
+    handlePastedFiles,
     handleScreenshot,
     removeAttachment,
     prepareImageAttachments,

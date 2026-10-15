@@ -10,6 +10,7 @@ import {
   Globe,
   Headphones,
   Heart,
+  Mail,
   Monitor,
   Palette,
   Power,
@@ -49,6 +50,7 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<SettingsNavGroup> = [
       { section: "models", labelKey: "settingsPage.modelSettings.title", icon: <Boxes size={18} strokeWidth={1.8} /> },
       { section: "usage", labelKey: "settingsPage.usage.title", icon: <BarChart3 size={18} strokeWidth={1.8} /> },
       { section: "browser", labelKey: "settingsPage.browserControl.navLabel", icon: <Globe size={18} strokeWidth={1.8} /> },
+      { section: "email", labelKey: "settingsPage.emailSettings.title", icon: <Mail size={18} strokeWidth={1.8} /> },
     ],
   },
   {

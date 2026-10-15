@@ -31,10 +31,10 @@ const PROFILES = [
   },
 ];
 
-function installSettings() {
+function installSettings(defaultModelProfileId = "p-single") {
   const listModelProfiles = vi.fn(async () => ({
     profiles: PROFILES,
-    defaultModelProfileId: "p-single",
+    defaultModelProfileId,
   }));
   Object.assign(window, { settings: { listModelProfiles } });
   return { listModelProfiles };
@@ -43,6 +43,7 @@ function installSettings() {
 const roots: Root[] = [];
 
 async function renderSelector(props: {
+  hasSession?: boolean;
   activeProfileId?: string;
   sessionModel?: string;
   onSelectSessionModel?: (model: string) => void;
@@ -53,6 +54,7 @@ async function renderSelector(props: {
   roots.push(root);
   await act(async () => {
     root.render(createElement(ModelSelector, {
+      hasSession: props.hasSession,
       activeProfileId: props.activeProfileId,
       sessionModel: props.sessionModel,
       onSelect: () => {},
@@ -113,6 +115,16 @@ describe("模型子下拉", () => {
       onSelectSessionModel: () => {},
     });
     expect(modelButton(host)?.textContent).toContain("glm-x");
+  });
+
+  it("欢迎页默认多模型档案：显示暂存的模型选择", async () => {
+    installSettings("p-multi");
+    const host = await renderSelector({
+      hasSession: false,
+      sessionModel: "glm-mini",
+      onSelectSessionModel: () => {},
+    });
+    expect(modelButton(host)?.textContent).toContain("glm-mini");
   });
 
   it("欢迎页（未传 onSelectModel）：多模型档案也不显示子下拉", async () => {

@@ -5,8 +5,15 @@
 // shared/reasoning.ts 与 main/orchestrator/vendors/types.ts 对外仍
 // re-export 这些类型，既有 import 路径全部不变；类型的事实源在此。
 //
-// 规则里的 providerId 必须与 entry.capability.id 完全一致：
-// chatgpt / claude / deepseek / glm / kimi / qwen / minimax / mimo / doubao。
+// 规则里的 providerId 由 define-vendor 按 entry.capability.id 自动填充。
+
+import type {
+  ModelCatalogItem,
+  ModelSamplingRuleInput,
+  RuleMetadata,
+  StructuredOutputRuleInput,
+  VendorPresetDefaults,
+} from "./model-types";
 
 export type ReasoningMode = "auto" | "off" | "on";
 
@@ -72,6 +79,9 @@ export interface ModelReasoningRule {
   providerId: string;
   modelPattern: RegExp;
   capability: ReasoningCapability;
+  modelInferencePattern?: RegExp;
+  familyLabel?: string;
+  metadata?: RuleMetadata;
 }
 
 // ── 厂商能力系类型（自 main/orchestrator/vendors/types.ts 原样迁入）──
@@ -160,14 +170,8 @@ export interface VendorRegistryEntry {
   shortName: string;
   /** tool_choice 厂商怪癖（可选；无怪癖厂商不写，走 policy 通用规则） */
   toolChoiceQuirk?: ToolChoiceQuirk;
-}
-
-/**
- * entry 的唯一书写入口：结构完整性交给接口约束，字面量信息交给 const 泛型。
- * 注意显式类型标注（const x: VendorRegistryEntry = {...}）会把 capability.id
- * 等字面量擦成 string，导致后续 BuiltinProviderId 推导退化 —— entry 一律走本函数，
- * 不裸写对象、不写标注。
- */
-export function defineVendor<const T extends VendorRegistryEntry>(entry: T): T {
-  return entry;
+  presetDefaults?: VendorPresetDefaults;
+  models?: readonly ModelCatalogItem[];
+  samplingRules?: readonly ModelSamplingRuleInput[];
+  structuredOutputRules?: readonly StructuredOutputRuleInput[];
 }

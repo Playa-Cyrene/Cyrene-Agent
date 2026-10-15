@@ -1,12 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // vi.hoisted 保证 mock 变量在 vi.mock 工厂里可用（vi.mock 会被提升到文件顶部）
-const { sendMailMock, createTransportMock, requestUserChoiceMock, existsSyncMock } = vi.hoisted(() => ({
-  sendMailMock: vi.fn(),
-  createTransportMock: vi.fn(() => ({ sendMail: sendMailMock })),
-  requestUserChoiceMock: vi.fn(),
-  existsSyncMock: vi.fn(() => true),
-}));
+const { sendMailMock, closeTransportMock, createTransportMock, requestUserChoiceMock, existsSyncMock } = vi.hoisted(() => {
+  const sendMailMock = vi.fn();
+  const closeTransportMock = vi.fn();
+  return {
+    sendMailMock,
+    closeTransportMock,
+    createTransportMock: vi.fn(() => ({ sendMail: sendMailMock, close: closeTransportMock })),
+    requestUserChoiceMock: vi.fn(),
+    existsSyncMock: vi.fn(() => true),
+  };
+});
 
 // mock nodemailer
 vi.mock("nodemailer", () => ({
@@ -59,7 +64,7 @@ describe("send_email", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     requestUserChoiceMock.mockResolvedValue("send");
-    sendMailMock.mockResolvedValue({ messageId: "<test@localhost>" });
+    sendMailMock.mockResolvedValue({ accepted: ["a@b.com"], messageId: "<test@localhost>" });
     existsSyncMock.mockReturnValue(true);
     injectConfig();
   });
@@ -111,7 +116,7 @@ describe("send_email", () => {
       body: "本周内容",
       attachments: ["C:/report.docx"],
     });
-    expect(res).toBe("[send_email] 已发送：a@b.com, c@d.com 主题：周报");
+    expect(res).toBe("[send_email] 邮件已发送。");
     expect(createTransportMock).toHaveBeenCalledWith({
       host: "smtp.qq.com",
       port: 465,
@@ -121,11 +126,12 @@ describe("send_email", () => {
     expect(sendMailMock).toHaveBeenCalledTimes(1);
     const mailOpts = sendMailMock.mock.calls[0][0];
     expect(mailOpts.from).toBe('"昔涟" <sender@qq.com>');
-    expect(mailOpts.to).toBe("a@b.com, c@d.com");
+    expect(mailOpts.to).toEqual(["a@b.com", "c@d.com"]);
     expect(mailOpts.cc).toBeUndefined();
     expect(mailOpts.subject).toBe("周报");
     expect(mailOpts.text).toBe("本周内容");
     expect(mailOpts.attachments).toEqual([{ filename: "report.docx", path: "C:/report.docx" }]);
+    expect(closeTransportMock).toHaveBeenCalledTimes(1);
   });
 
   it("fromName 含双引号 → 转义后传入 from", async () => {
@@ -138,12 +144,17 @@ describe("send_email", () => {
   it("cc 非空 → 传入 join 后的 cc", async () => {
     await exec({ to: ["a@b.com"], cc: ["x@y.com", "z@w.com"], subject: "标题", body: "正文" });
     const mailOpts = sendMailMock.mock.calls[0][0];
-    expect(mailOpts.cc).toBe("x@y.com, z@w.com");
+    expect(mailOpts.cc).toEqual(["x@y.com", "z@w.com"]);
   });
 
-  it("sendMail 抛错 → 捕获返回错误字符串", async () => {
+  it("sendMail 抛错 → 返回结果未知且关闭传输器", async () => {
     sendMailMock.mockRejectedValue(new Error("connect ECONNREFUSED"));
-    const res = await exec({ to: ["a@b.com"], subject: "标题", body: "正文" });
-    expect(res).toBe("[错误] 发送失败：connect ECONNREFUSED");
+    await expect(exec({ to: ["a@b.com"], subject: "标题", body: "正文" })).rejects.toMatchObject({
+      code: "SMTP_SEND_RESULT_UNKNOWN",
+      category: "timeout",
+      retryable: false,
+      effectState: "unknown",
+    });
+    expect(closeTransportMock).toHaveBeenCalledTimes(1);
   });
 });

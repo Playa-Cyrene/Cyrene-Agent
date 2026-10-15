@@ -225,7 +225,7 @@ export const runVerificationTool: ToolDefinition = {
         source: command.source,
       }, {
         // 仅在工具真实执行时读取宿主档位；模块加载阶段保持 VerificationRunner 纯净。
-        permissionLevel: (await import("../../../permission")).getCurrentLevel(),
+        permissionLevel: (await import("../../../permission.js")).getCurrentLevel(),
         signal: undefined,
       });
 

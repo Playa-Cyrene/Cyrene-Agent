@@ -55,20 +55,22 @@ describe("normalizeResponsesEvent", () => {
     })).toEqual([{ type: "tool_call_arguments_delta", index: 2, delta: '{"city"' }]);
   });
 
-  test("response.function_call_arguments.done → tool_call_end（不重放全量）", () => {
+  test("response.function_call_arguments.done → tool_call_end（携带完整参数快照）", () => {
     expect(normalizeResponsesEvent({
       type: "response.function_call_arguments.done",
       output_index: 2,
       arguments: '{"city":"BJ"}',
-    })).toEqual([{ type: "tool_call_end", index: 2 }]);
+    })).toEqual([{ type: "tool_call_end", index: 2, arguments: '{"city":"BJ"}' }]);
   });
 
-  test("response.output_item.done（function_call）→ tool_call_end 兜底（含 id）", () => {
+  test("response.output_item.done（function_call）→ 携带工具项快照闭合", () => {
     expect(normalizeResponsesEvent({
       type: "response.output_item.done",
       output_index: 2,
       item: { type: "function_call", call_id: "call_1", name: "get_weather", arguments: "{}" },
-    })).toEqual([{ type: "tool_call_end", index: 2, id: "call_1" }]);
+    })).toEqual([{
+      type: "tool_call_end", index: 2, id: "call_1", name: "get_weather", arguments: "{}",
+    }]);
   });
 
   test("response.completed → usage（含 cached）+ finish stop", () => {

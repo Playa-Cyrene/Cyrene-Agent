@@ -1,7 +1,7 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const electronMock = vi.hoisted(() => ({
   userDataDir: "",
@@ -19,14 +19,26 @@ function pngBytes(size = 16): ArrayBuffer {
 
 async function freshStore() {
   const store = await import("./moments-store");
-  store.initialize();
+  await store.initialize();
   return store;
 }
+
+const temporaryRoots: string[] = [];
+
+afterEach(async () => {
+  // 先关 DB worker（Windows 下打开的 sqlite 文件不能删），再清临时目录。
+  const { closeConversationDatabases } = await import("../storage/conversation-database-client");
+  await closeConversationDatabases().catch(() => {});
+  for (const root of temporaryRoots.splice(0)) {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 
 describe("moments store", () => {
   beforeEach(() => {
     vi.resetModules();
     electronMock.userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-moments-"));
+    temporaryRoots.push(electronMock.userDataDir);
   });
 
   it("创建用户动态并按 createdAt 倒序出现在 feed", async () => {
@@ -171,13 +183,16 @@ describe("moments store", () => {
     expect(store.listFeed()).toHaveLength(0);
   });
 
-  it("落盘后可恢复（moments.json 持久化）", async () => {
+  it("落盘后可恢复：DB worker 重启后动态仍在（SQLite 持久化）", async () => {
     const store = await freshStore();
     await store.createUserPost({ title: "持久", text: "重启还在" });
 
+    // 模拟进程重启：关闭 worker（连接终止），重新初始化读模型
+    const { closeConversationDatabases } = await import("../storage/conversation-database-client");
+    await closeConversationDatabases();
     vi.resetModules();
     const reloaded = await import("./moments-store");
-    reloaded.initialize();
+    await reloaded.initialize();
     const feed = reloaded.listFeed();
     expect(feed).toHaveLength(1);
     expect(feed[0].post.title).toBe("持久");
@@ -394,17 +409,35 @@ describe("moments store", () => {
     expect(limited.entries).toHaveLength(2);
   });
 
-  it("schemaVersion 2 持久化与旧数据（无 sourceTaskId 字段）读入兼容", async () => {
-    const store = await freshStoreWithCharacters(["万敌"]);
-    const post = await store.createUserPost({ text: "版本迁移" });
-    if (!post.applied) throw new Error("create failed");
-    await store.createCharacterComment("万敌", { postId: post.value.id, content: "带任务 id 的评论", sourceTaskId: "task_v2" });
+  it("旧 moments.json 一次性导入：评论（含 sourceTaskId）与点赞在重启后可见", async () => {
+    // 旧 JSON 存储时代的数据：worker 启动时导入（版本 105 标记），源文件保留
+    fs.writeFileSync(path.join(electronMock.userDataDir, "moments.json"), JSON.stringify({
+      schemaVersion: 2,
+      posts: [{ id: "moment_legacy_1", author: "user", text: "旧动态", media: [], createdAt: 1_000 }],
+      comments: [
+        { id: "comment_legacy_1", postId: "moment_legacy_1", author: "万敌", content: "带任务 id 的评论", createdAt: 1_100, sourceTaskId: "task_v2" },
+        { id: "comment_legacy_2", postId: "moment_legacy_1", author: "user", content: "无任务 id 的旧评论", createdAt: 1_200 },
+      ],
+      reactions: [{ postId: "moment_legacy_1", actor: "user", type: "like", createdAt: 1_300 }],
+    }), "utf8");
 
-    // 重启恢复：sourceTaskId 随 schemaVersion 2 持久化
-    vi.resetModules();
-    const reloaded = await import("./moments-store");
-    reloaded.initialize();
-    const item = reloaded.getFeedItem(post.value.id);
-    expect(item?.comments[0].sourceTaskId).toBe("task_v2");
+    const store = await import("./moments-store");
+    await store.initialize();
+
+    const item = store.getFeedItem("moment_legacy_1");
+    expect(item?.post.text).toBe("旧动态");
+    expect(item?.comments.map((comment) => comment.sourceTaskId)).toEqual(["task_v2", undefined]);
+    expect(item?.likes).toHaveLength(1);
+
+    // 反应任务幂等：sourceTaskId 随导入保留，同一任务重跑识别为已产出
+    store.setCharacterAuthorRegistry(new Set(["万敌"]));
+    const idempotent = await store.createComment(
+      { postId: "moment_legacy_1", content: "带任务 id 的评论" },
+      "万敌",
+      { sourceTaskId: "task_v2" },
+    );
+    expect(idempotent).toMatchObject({ applied: true });
+    expect((idempotent as { value: { id: string } }).value.id).toBe("comment_legacy_1");
+    expect(store.getFeedItem("moment_legacy_1")?.comments).toHaveLength(2);
   });
 });

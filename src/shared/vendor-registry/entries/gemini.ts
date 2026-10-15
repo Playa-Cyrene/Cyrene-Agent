@@ -1,7 +1,6 @@
 // gemini（Google）的注册表条目 —— 走官方 OpenAI 兼容层（…/v1beta/openai），
 // 思考档位经 reasoning_effort 参数映射 thinking_level，以官方兼容文档（2026-09）为准。
-import { defineVendor } from "../types";
-import { UNKNOWN_REASONING_CAPABILITY } from "../fallback";
+import { defineVendor, legacyMetadata } from "../define-vendor";
 
 export const GEMINI_REGISTRY = defineVendor({
   capability: {
@@ -22,20 +21,63 @@ export const GEMINI_REGISTRY = defineVendor({
     // 官方 OpenAI 兼容层已核实；原生 Gemini API 不属于三种内置协议
     supportedTransports: ["openai"],
   },
+  presetDefaults: {
+    baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
+    transport: "openai",
+  },
+  models: [
+    {
+      model: "gemini-3.8-flash",
+      recommendedFor: ["chat"],
+      unknownCapabilities: [
+        { feature: "sampling", transport: "openai", note: "现有采样白名单未覆盖该型号。" },
+        { feature: "structuredOutput", transport: "openai", note: "预设协议没有专用结构化输出规则，保留提示词 JSON 回退。" },
+      ],
+    },
+    {
+      model: "gemini-3.1-pro",
+      recommendedFor: ["chat"],
+      unknownCapabilities: [
+        { feature: "sampling", transport: "openai", note: "现有采样白名单未覆盖该型号。" },
+        { feature: "structuredOutput", transport: "openai", note: "预设协议没有专用结构化输出规则，保留提示词 JSON 回退。" },
+      ],
+    },
+    {
+      model: "gemini-3.5-flash",
+      recommendedFor: ["chat"],
+      unknownCapabilities: [
+        { feature: "sampling", transport: "openai", note: "现有采样白名单未覆盖该型号。" },
+        { feature: "structuredOutput", transport: "openai", note: "预设协议没有专用结构化输出规则，保留提示词 JSON 回退。" },
+      ],
+    },
+    {
+      model: "gemini-2.5-flash",
+      recommendedFor: ["chat"],
+      unknownCapabilities: [
+        { feature: "sampling", transport: "openai", note: "现有采样白名单未覆盖该型号。" },
+        { feature: "structuredOutput", transport: "openai", note: "预设协议没有专用结构化输出规则，保留提示词 JSON 回退。" },
+      ],
+    },
+    {
+      model: "gemini-2.5-pro",
+      recommendedFor: [],
+      note: "历史清单保留名称；不改写用户请求。",
+    },
+  ],
   shortName: "Gemini",
   reasoningRules: [
     // ── gemini（Google）──
     // 官方兼容文档：reasoning_effort 仅 low/medium/high 三档（映射 thinking_level）。
     // Gemini 3 系与 2.5 Pro 官方明确"思考不可关闭" → supportsDisable=false。
     // 产品默认档 medium：官方不传参时动态思考偏重，medium 为成本/质量平衡点。
-    { providerId: "gemini", modelPattern: /^gemini-3/i, capability: {
+    { familyLabel: "gemini-3 系列", modelPattern: /^gemini-3/i, modelInferencePattern: /^gemini-3/i, metadata: legacyMetadata("迁自 src/shared/vendor-registry/entries/gemini.ts"), capability: {
       control: "effort",
       supportedEfforts: ["low", "medium", "high"],
       defaultEffort: "medium",
       requestStyle: "openai-effort",
       supportsDisable: false,
     } },
-    { providerId: "gemini", modelPattern: /^gemini-2\.5-pro/i, capability: {
+    { modelPattern: /^gemini-2\.5-pro/i, modelInferencePattern: /^gemini-2\.5-pro/i, metadata: legacyMetadata("迁自 src/shared/vendor-registry/entries/gemini.ts"), capability: {
       control: "effort",
       supportedEfforts: ["low", "medium", "high"],
       defaultEffort: "medium",
@@ -43,14 +85,12 @@ export const GEMINI_REGISTRY = defineVendor({
       supportsDisable: false,
     } },
     // 2.5 Flash / Flash-Lite：官方支持 reasoning_effort:"none" 关闭思考 → 可关可调
-    { providerId: "gemini", modelPattern: /^gemini-2\.5-flash/i, capability: {
+    { modelPattern: /^gemini-2\.5-flash/i, modelInferencePattern: /^gemini-2\.5-flash/i, metadata: legacyMetadata("迁自 src/shared/vendor-registry/entries/gemini.ts"), capability: {
       control: "toggle-effort",
       supportedEfforts: ["low", "medium", "high"],
       defaultEffort: "medium",
       requestStyle: "openai-effort",
       supportsDisable: true,
     } },
-    // 2.5 之前的老系列（2.0 / 1.5）不支持思考，走通配兜底
-    { providerId: "gemini", modelPattern: /.*/, capability: UNKNOWN_REASONING_CAPABILITY },
   ],
 });

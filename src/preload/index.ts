@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
 import { IPC } from "../shared/ipc-channels";
+import type { ContextCompactionPhaseEvent } from "../shared/context-usage";
 import type { QqListenAuthRequirement } from "../shared/qq-listen";
 import type { ApprovalRequest, ApprovalSettledPayload } from "../shared/permission-approval";
 import type { StartTtsRequest, TtsSessionEvent, TtsStartResult } from "../shared/tts-session";
@@ -20,6 +21,9 @@ import { getLive2DIpcListenerCounts } from "./live2d-listener-diagnostics";
 import { exposeMusicApi } from "./music";
 import type { AppUpdateApi, AppUpdateState } from "../shared/app-update";
 import type { ConversationMode } from "../shared/chat-types";
+import type { SkillSuggestionItem, SkillSuggestionMode } from "../shared/skill-suggestions";
+import type { GmailAccountStatus, GmailClientConfigStatus } from "../shared/gmail-types";
+import type { MailAttachmentRef, MailDraftCardData } from "../shared/mail-draft-card";
 import type { SidebarOrganizationDraft, SidebarOrganizationResult, SidebarOrganizationSnapshot } from "../shared/sidebar-organization";
 import type { ToastItem, ToastPushPayload } from "../shared/toast-types";
 import type { BrowserElementSelection, BrowserPanelBounds, BrowserPanelResult, BrowserPanelState } from "../shared/browser-panel-types";
@@ -73,6 +77,8 @@ const chatApi = {
   toggleMaximize: () => ipcRenderer.send(IPC.CHAT_TOGGLE_MAXIMIZE),
   isMaximized: () => ipcRenderer.invoke(IPC.CHAT_IS_MAXIMIZED),
   getEnabledStickers: () => ipcRenderer.invoke(IPC.STICKERS_GET_ENABLED),
+  getSkillSuggestions: (mode: SkillSuggestionMode): Promise<SkillSuggestionItem[]> =>
+    ipcRenderer.invoke(IPC.SKILL_GET_SUGGESTIONS, { mode }),
   /** 从 dataTransfer.files 或 fileInput.files 提取路径后批量摄入。
    *  路径提取在 preload（webUtils.getPathForFile），避免新版 Electron 中 File.path 不可用的问题。
    *  同时携带 File.type（MIME）：主进程图片判定按「扩展名或 MIME」，与渲染端预览口径一致。 */
@@ -87,10 +93,13 @@ const chatApi = {
     if (entries.length === 0) return [];
     return ipcRenderer.invoke(IPC.CHAT_INGEST_FILES, entries);
   },
+  pasteClipboardFiles: (): Promise<unknown[]> => ipcRenderer.invoke(IPC.CHAT_PASTE_FILES),
   captionImage: (filePath: string, hasAnnotations = false) =>
     ipcRenderer.invoke(IPC.CHAT_CAPTION_IMAGE, { filePath, hasAnnotations }),
   getImagePreview: (filePath: string) =>
     ipcRenderer.invoke(IPC.CHAT_GET_IMAGE_PREVIEW, { filePath }),
+  saveGeneratedImage: (filePath: string, name: string) =>
+    ipcRenderer.invoke(IPC.CHAT_SAVE_GENERATED_IMAGE, { filePath, name }),
   getImageSendStrategy: (sessionId?: string) =>
     ipcRenderer.invoke(IPC.CHAT_GET_IMAGE_SEND_STRATEGY, sessionId ? { sessionId } : undefined),
   getGeneralSettings: () => ipcRenderer.invoke(IPC.SETTINGS_GET_GENERAL),
@@ -237,7 +246,7 @@ const schedulerEventsApi = {
 contextBridge.exposeInMainWorld("schedulerEvents", schedulerEventsApi);
 
 // 用户选择卡片（歧义消解器）：渲染端回传用户选择给主进程
-// 卡片展示走 AGUI_EVENT 的 CUSTOM 事件（与天气卡片同通道），resolve 走独立 IPC
+// 卡片展示走 AGUI_EVENT 的 CUSTOM 事件，resolve 走独立 IPC
 const choiceApi = {
   resolve: (id: string, value: unknown) =>
     ipcRenderer.invoke(
@@ -514,6 +523,23 @@ const settingsApi = {
 
 contextBridge.exposeInMainWorld("settings", settingsApi);
 
+contextBridge.exposeInMainWorld("gmail", {
+  getStatus: () => ipcRenderer.invoke(IPC.GMAIL_GET_STATUS) as Promise<GmailAccountStatus>,
+  getClientConfig: () => ipcRenderer.invoke(IPC.GMAIL_GET_CLIENT_CONFIG) as Promise<GmailClientConfigStatus>,
+  saveClientConfig: (clientId: string, clientSecret: string) => ipcRenderer.invoke(IPC.GMAIL_SAVE_CLIENT_CONFIG, clientId, clientSecret) as Promise<GmailClientConfigStatus>,
+  beginAuthorization: () => ipcRenderer.invoke(IPC.GMAIL_BEGIN_AUTHORIZATION) as Promise<{ flowId: string }>,
+  waitForAuthorization: (flowId: string) => ipcRenderer.invoke(IPC.GMAIL_WAIT_AUTHORIZATION, flowId) as Promise<GmailAccountStatus>,
+  cancelAuthorization: (flowId: string) => ipcRenderer.invoke(IPC.GMAIL_CANCEL_AUTHORIZATION, flowId) as Promise<GmailAccountStatus>,
+  disconnect: () => ipcRenderer.invoke(IPC.GMAIL_DISCONNECT) as Promise<GmailAccountStatus>,
+});
+
+contextBridge.exposeInMainWorld("mailDrafts", {
+  update: (card: MailDraftCardData) => ipcRenderer.invoke(IPC.MAIL_DRAFT_UPDATE, card) as Promise<{ ok: boolean; card?: MailDraftCardData; error?: string }>,
+  delete: (card: MailDraftCardData) => ipcRenderer.invoke(IPC.MAIL_DRAFT_DELETE, card) as Promise<{ ok: boolean; status?: "deleted"; error?: string }>,
+  send: (card: MailDraftCardData) => ipcRenderer.invoke(IPC.MAIL_DRAFT_SEND, card) as Promise<{ ok: boolean; status?: MailDraftCardData["status"]; card?: MailDraftCardData; error?: string }>,
+  pickAttachments: () => ipcRenderer.invoke(IPC.GMAIL_PICK_ATTACHMENTS) as Promise<{ ok: boolean; attachments: MailAttachmentRef[] }>,
+});
+
 const pluginsApi = {
   list: () => ipcRenderer.invoke(IPC.PLUGINS_LIST),
   setEnabled: (id: string, enabled: boolean) =>
@@ -682,15 +708,6 @@ const live2dSpeechApi = {
 };
 contextBridge.exposeInMainWorld("live2dSpeech", live2dSpeechApi);
 
-const live2dActionApi = {
-  onPlayAction: (callback: (payload: import("../shared/live2d-actions").Live2DTarget) => void) => {
-    const listener = (_event: Electron.IpcRendererEvent, payload: import("../shared/live2d-actions").Live2DTarget) => callback(payload);
-    ipcRenderer.on(IPC.LIVE2D_PLAY_ACTION, listener);
-    return () => ipcRenderer.removeListener(IPC.LIVE2D_PLAY_ACTION, listener);
-  },
-};
-contextBridge.exposeInMainWorld("live2dAction", live2dActionApi);
-
 const live2dDiagnosticsApi = {
   getMain: () => ipcRenderer.invoke(IPC.LIVE2D_GET_MAIN_DIAGNOSTICS),
   getIpcListenerCounts: () => getLive2DIpcListenerCounts(ipcRenderer),
@@ -819,11 +836,11 @@ const chatStoreApi = {
     ipcRenderer.on(IPC.CHATS_WORKSPACE_CHANGED, listener);
     return () => ipcRenderer.removeListener(IPC.CHATS_WORKSPACE_CHANGED, listener);
   },
-  // main → 所有窗口：上下文压缩阶段（自动压缩在 run 前发生，渲染端没有 AG-UI 事件可听）
-  onCompactionPhase: (callback: (payload: { sessionId: string; phase: "running" | "finished" }) => void) => {
+  // main → 所有窗口：上下文压缩阶段及占用
+  onCompactionPhase: (callback: (payload: ContextCompactionPhaseEvent) => void) => {
     const listener = (
       _e: Electron.IpcRendererEvent,
-      payload: { sessionId: string; phase: "running" | "finished" },
+      payload: ContextCompactionPhaseEvent,
     ) => callback(payload);
     ipcRenderer.on(IPC.CHATS_COMPACTION_PHASE, listener);
     return () => ipcRenderer.removeListener(IPC.CHATS_COMPACTION_PHASE, listener);

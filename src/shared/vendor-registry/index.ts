@@ -12,6 +12,7 @@
 // 会拦截漏登记，快照测试会拦截重排旧序。
 
 import type { ModelReasoningRule, VendorRegistryEntry } from "./types";
+import type { ModelSamplingRule, StructuredOutputRule } from "./model-types";
 import { CHATGPT_REGISTRY } from "./entries/chatgpt";
 import { CLAUDE_REGISTRY } from "./entries/claude";
 import { DEEPSEEK_REGISTRY } from "./entries/deepseek";
@@ -67,6 +68,15 @@ export const REASONING_VENDOR_ORDER: readonly VendorRegistryEntry[] = [
 
 export const MODEL_REASONING_RULES: readonly ModelReasoningRule[] =
   REASONING_VENDOR_ORDER.flatMap((entry) => entry.reasoningRules);
+
+// 能力各自在厂商内维护首条命中顺序；厂商关联键由聚合层填充。
+export const MODEL_SAMPLING_RULES: readonly ModelSamplingRule[] =
+  (VENDOR_REGISTRY as readonly VendorRegistryEntry[]).flatMap((entry) =>
+    (entry.samplingRules ?? []).map((rule) => ({ ...rule, providerId: entry.capability.id })));
+
+export const MODEL_STRUCTURED_OUTPUT_RULES: readonly StructuredOutputRule[] =
+  (VENDOR_REGISTRY as readonly VendorRegistryEntry[]).flatMap((entry) =>
+    (entry.structuredOutputRules ?? []).map((rule) => ({ ...rule, provider: entry.capability.id })));
 
 /**
  * 按厂商显示名查短名（去括号后缀）。参数仍是 displayName——过渡态：

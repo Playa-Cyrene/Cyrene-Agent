@@ -207,7 +207,7 @@ describe("AnthropicAdapter", () => {
   // Claude 官方要求多轮 tool_calls 时必须完整回传 assistant.content 数组（含 thinking + tool_use），
   // 本 fixture 断言经过 appendToolResults + buildRequest 后 wire body 里这些 block 的顺序与字段完整。
 
-  test("多轮工具调用：assistant.content 含 thinking + tool_use → appendToolResults → buildRequest 的 wire body 完整保留", () => {
+  test("旧历史无来源时保留文本与工具，不重放推理签名", () => {
     const adapter = new AnthropicAdapter("test-anthropic", anthropicCap);
     const rawAssistantBlocks = [
       { type: "thinking", thinking: "我先想一下", signature: "sig-abc" },
@@ -251,7 +251,6 @@ describe("AnthropicAdapter", () => {
     expect(Array.isArray(body.messages[1].content)).toBe(true);
     const assistantBlocks = body.messages[1].content as Array<Record<string, unknown>>;
     expect(assistantBlocks).toEqual([
-      { type: "thinking", thinking: "我先想一下", signature: "sig-abc" },
       { type: "text", text: "需要查天气" },
       { type: "tool_use", id: "t1", name: "get_weather", input: { city: "北京" } },
     ]);

@@ -83,7 +83,37 @@ describe("agent round presentation", () => {
       label: "写入文件",
       statusText: "正在写入文件",
       detail: "src/renderer/App.tsx",
+      filePaths: ["src/renderer/App.tsx"],
     });
+  });
+
+  it.each([
+    ["Read", "file_path"], ["Write", "file_path"], ["Edit", "file_path"],
+    ["read_file", "path"], ["write_file", "path"], ["edit_file", "filePath"], ["str_replace", "file_path"],
+  ])("exposes the target file of %s without including source text", (name, pathKey) => {
+    const filePath = "D:\\项目\\src\\characters.ts";
+    const presentation = describeToolExecution({
+      id: "file-tool", name, status: "success",
+      argsText: JSON.stringify({ [pathKey]: filePath, content: "private source", old_string: "private old source" }),
+    });
+    expect(presentation.filePaths).toEqual([filePath]);
+    expect(JSON.stringify(presentation)).not.toContain("private");
+  });
+
+  it("exposes every changed file for a multi-file patch, including legacy result-only records", () => {
+    const changes = [
+      { file: "src/a.ts", kind: "modified" as const, insertions: 1, deletions: 1 },
+      { file: "src/b.tsx", kind: "added" as const, insertions: 2, deletions: 0 },
+    ];
+    expect(describeToolExecution({ id: "patch", name: "apply_patch", status: "success", changes }).filePaths)
+      .toEqual(["src/a.ts", "src/b.tsx"]);
+    expect(describeToolExecution({ id: "legacy", name: "apply_patch", status: "success", result: JSON.stringify({ changes }) }).filePaths)
+      .toEqual(["src/a.ts", "src/b.tsx"]);
+  });
+
+  it.each(["run_shell", "Glob", "Grep", "list_dir", "search_code"])("keeps %s out of file preview targets", (name) => {
+    expect(describeToolExecution({ id: "other", name, status: "success", argsText: '{"path":"src"}' }).filePaths)
+      .toBeUndefined();
   });
 
   it("keeps the activity useful when streamed arguments are malformed", () => {

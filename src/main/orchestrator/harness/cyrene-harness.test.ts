@@ -11,6 +11,9 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 // ── Hoisted mocks（必须在 import SUT 之前）──────────────
 
@@ -50,6 +53,12 @@ const { fakeAdapter, fakeStreamChatWithSdk, recordUsage, recordRequest } = vi.ho
 vi.mock("../vendors", () => ({
   getAdapterForConfig: vi.fn(() => fakeAdapter),
   streamChatWithSdk: fakeStreamChatWithSdk,
+  generateChatWithAiSdk: async (input: { adapter: typeof fakeAdapter; request: unknown; signal?: AbortSignal }) => {
+    const http = input.adapter.buildRequest(input.request);
+    const response = await fetch(http.url, { method: "POST", headers: http.headers, body: http.body, signal: input.signal });
+    if (!response.ok) throw new Error(`模型请求失败：HTTP ${response.status}`);
+    return input.adapter.parseResponse(await response.json());
+  },
   resolveTransport: vi.fn(() => "openai"),
 }));
 
@@ -65,12 +74,16 @@ import { runCyreneHarness } from "./cyrene-harness";
 import { getAdapterForConfig } from "../vendors";
 import { dispatchToolCall, resolveToolDispatchSideEffect } from "./tool-dispatcher";
 import type { ToolDispatchResult } from "./tool-dispatcher";
-import type { HarnessCacheDiagnostic, HarnessCheckpoint, HarnessEvent, HarnessInput, HarnessToolFinishedEvent, HarnessToolLifecycleEvent, RunAdjustmentMessage } from "./types";
+import type { HarnessCacheDiagnostic, HarnessEvent, HarnessInput, HarnessToolFinishedEvent, HarnessToolLifecycleEvent, RunAdjustmentMessage } from "./types";
 import type { ChatMessage, ChatResponse, ToolCall } from "../vendors/types";
 import type { ToolDefinition } from "../tools/registry/tool-registry";
 import { projectCacheRelevantChatRequest } from "../prompt-layers";
 import type { TranscriptSink } from "../transcript-sink";
 import { parseToolCallArgs, toolCallFingerprint } from "./types";
+import { ConversationTranscriptStore } from "../conversation-transcript-store";
+import { ConversationJournalService } from "../conversation-journal-service";
+import { ConversationTranscriptCompactor } from "../conversation-transcript-compactor";
+import { closeConversationDatabases } from "../../storage/conversation-database-client";
 
 const mockedDispatch = vi.mocked(dispatchToolCall);
 
@@ -648,13 +661,12 @@ describe("CyreneHarness completion", () => {
     expect(String(lastToolMessage?.content)).toContain("熔断");
   });
 
-  it("persists a structured compaction checkpoint before the next model request", async () => {
+  it("compacts mid-loop and emits started/committed lifecycle before the next model request", async () => {
     const { fn: fetchMock } = fakeFetchSequencer([
       assistantResponse({ text: "## 原始任务与意图\n- 完成历史任务\n\n## 下一步\n- 继续回答" }),
       assistantResponse({ text: "已在保留上下文的基础上完成。" }),
     ]);
     vi.stubGlobal("fetch", fetchMock);
-    const checkpoints: HarnessCheckpoint[] = [];
     const compactions: Array<{ status: string; messageCountBefore: number; messageCountAfter?: number }> = [];
     const historicalMessages: ChatMessage[] = Array.from({ length: 20 }, (_, index) => ({
       role: index % 2 === 0 ? "user" : "assistant",
@@ -676,7 +688,6 @@ describe("CyreneHarness completion", () => {
         compactionThreshold: 0.3,
         compactionRetainRatio: 0.16,
       },
-      onCheckpoint: (checkpoint) => checkpoints.push(checkpoint),
       onCompactionLifecycle: (event) => compactions.push(event),
     });
 
@@ -685,48 +696,82 @@ describe("CyreneHarness completion", () => {
       messages: ChatMessage[];
     };
     expect(summaryRequest.messages.some((entry) => entry.content === "旧任务".repeat(100))).toBe(true);
-    expect(summaryRequest.messages.at(-1)?.content).toContain("## 原始任务与意图");
-    expect(checkpoints.at(-1)?.messages[0]?.content).toContain("<cyrene_compaction_checkpoint>");
-    expect(checkpoints.at(-1)?.cache).toEqual({ cacheEpoch: 2, epochReason: "compaction" });
+    expect(summaryRequest.messages.at(-1)?.content ?? "").toContain("## 原始任务与意图");
     expect(compactions).toEqual([
       expect.objectContaining({ status: "started", messageCountBefore: historicalMessages.length + 1 }),
       expect.objectContaining({ status: "committed", cache: { cacheEpoch: 2, epochReason: "compaction" } }),
     ]);
   });
 
-  it("halts before the next model request when the post-compaction checkpoint fails", async () => {
-    const { fn: fetchMock } = fakeFetchSequencer([
-      assistantResponse({ text: "## 原始任务与意图\n- 完成历史任务\n\n## 下一步\n- 继续回答" }),
-      assistantResponse({ text: "不应到达这里。" }),
-    ]);
-    vi.stubGlobal("fetch", fetchMock);
-    const historicalMessages: ChatMessage[] = Array.from({ length: 20 }, (_, index) => ({
-      role: index % 2 === 0 ? "user" : "assistant",
-      content: `${index === 0 ? "旧任务" : "旧历史"}`.repeat(100),
-    }));
-
-    const result = await runCyreneHarness({
-      systemPrompt: "test system prompt",
-      messages: [
-        ...historicalMessages,
-        { role: "user", content: "请继续完成".repeat(40) },
-      ],
-      tools: [],
-      vendorConfig,
-      config: {
-        contextWindowTokens: 200,
-        reservedOutputTokens: 20,
-        safetyMarginTokens: 0,
-        compactionThreshold: 0.3,
-        compactionRetainRatio: 0.16,
-      },
-      onCheckpoint: () => { throw new Error("disk unavailable"); },
-    });
-
-    // 第一次 fetch 是压缩摘要请求；checkpoint 失败后不得再发起模型请求
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(result.terminateReason).toBe("error");
-    expect(result.finalAnswer).toContain("执行状态保存失败");
+  it("轮次内压缩保存检查点，下一轮沿用摘要且保留当前运行环境", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-durable-compaction-"));
+    try {
+      const store = new ConversationTranscriptStore(root);
+      const journal = new ConversationJournalService(store);
+      const oldContent = "旧历史".repeat(200);
+      for (let index = 0; index < 20; index++) {
+        if (index % 2 === 0) {
+          await journal.appendUser("c1", { id: `old-${index}`, turnId: `old-${index}`, text: oldContent });
+        } else {
+          await journal.createRunSink({ conversationId: "c1", runId: `old-${index}` })
+            .appendAssistant({ message: { role: "assistant", content: oldContent } });
+        }
+      }
+      await journal.appendUser("c1", { id: "latest", turnId: "latest", text: "继续读取文件" });
+      const call = { id: "read-big", name: "read_file", arguments: "{}" };
+      const output = "FILE_OBSERVATION_".repeat(800);
+      const dispatch = successDispatchResult(call.id);
+      mockStartedDispatch({ ...dispatch, tool: "read_file", message: output, output, preview: output,
+        rawResult: { ...dispatch.rawResult!, toolId: "read_file", output } });
+      const { fn: fetchMock } = fakeFetchSequencer([
+        assistantResponse({ toolCalls: [call] }),
+        assistantResponse({ text: "完成当前读取任务" }),
+        assistantResponse({ text: "继续下一条任务" }),
+      ]);
+      vi.stubGlobal("fetch", fetchMock);
+      const summarize = vi.fn(async () => "保留用户的文件读取目标。");
+      const compactor = new ConversationTranscriptCompactor({ store, summarize });
+      const events: HarnessEvent[] = [];
+      const compactTranscript: NonNullable<HarnessInput["compactTranscript"]> = async (request) => (
+        await compactor.compact({ ...request, conversationId: "c1", trigger: "automatic",
+          modelSettings: { ...vendorConfig, contextWindowTokens: 20_000 } })
+      ).compactedMessages;
+      const config = { contextWindowTokens: 20_000, reservedOutputTokens: 500, safetyMarginTokens: 0 };
+      const first = await runCyreneHarness({
+        systemPrompt: "文件任务", vendorConfig, config, includeInteractiveTools: false,
+        runId: "run-first", tools: [safeReadTool("read_file")],
+        messages: (await journal.buildModelContext("c1")).messages,
+        initialInternalContext: { kind: "run_start", content: "当前运行环境仅供本轮使用" },
+        transcriptSink: journal.createRunSink({ conversationId: "c1", runId: "run-first" }),
+        compactTranscript, onEvent: (event) => events.push(event),
+      });
+      expect(first.finalAnswer).toBe("完成当前读取任务");
+      expect(summarize).toHaveBeenCalledTimes(1);
+      const after = await journal.buildModelContext("c1");
+      expect(after.messages[0]?.content).toContain("<cyrene_compaction_checkpoint>");
+      expect(after.messages.some((message) => message.content === oldContent)).toBe(false);
+      expect(after.messages.some((message) => message.visibility === "internal")).toBe(false);
+      const secondRequest = JSON.parse((fetchMock.mock.calls[1]![1] as RequestInit).body as string);
+      expect(secondRequest.messages.some((message: ChatMessage) => String(message.content).includes("当前运行环境仅供本轮使用"))).toBe(true);
+      const usages = events.filter((event): event is Extract<HarnessEvent, { type: "context_usage" }> => event.type === "context_usage");
+      const beforeIndex = usages.findIndex((event) => event.snapshot.phase === "preCompaction");
+      expect(beforeIndex).toBeGreaterThan(0);
+      expect(usages[beforeIndex + 1]?.snapshot.totalTokens).toBeLessThan(usages[beforeIndex]!.snapshot.totalTokens);
+      await journal.appendUser("c1", { id: "next", turnId: "next", text: "继续下一条任务" });
+      const next = await runCyreneHarness({
+        systemPrompt: "文件任务", vendorConfig, config, includeInteractiveTools: false,
+        runId: "run-next", tools: [safeReadTool("read_file")],
+        messages: (await journal.buildModelContext("c1")).messages,
+        transcriptSink: journal.createRunSink({ conversationId: "c1", runId: "run-next" }), compactTranscript,
+      });
+      expect(next.finalAnswer).toBe("继续下一条任务");
+      expect(summarize).toHaveBeenCalledTimes(1);
+      expect((await store.read("c1")).entries.filter((entry) => entry.kind === "compaction_checkpoint")).toHaveLength(1);
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+    } finally {
+      await closeConversationDatabases();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("routes a tool round failure to a unified error terminal settlement", async () => {
@@ -736,62 +781,23 @@ describe("CyreneHarness completion", () => {
     vi.stubGlobal("fetch", fetchMock);
     mockedDispatch.mockRejectedValue(new Error("dispatch infrastructure exploded"));
     const events: HarnessEvent[] = [];
-    const checkpoints: HarnessCheckpoint[] = [];
 
     // 工具轮抛出的非取消错误不得冲出 runCyreneHarness：
-    // 统一走 finishRun（terminal 快照 + checkpoint + error 终态）
+    // 统一走 finishRun（terminal 快照 + error 终态）
     const result = await runCyreneHarness({
       systemPrompt: "you are a test agent",
       messages: [{ role: "user", content: "创建一个文件" }],
       tools: [mutationTool()],
       vendorConfig,
       onEvent: (event) => events.push(event),
-      onCheckpoint: (checkpoint) => checkpoints.push(checkpoint),
     });
 
     expect(result.terminateReason).toBe("error");
     expect(result.finalAnswer).toContain("工具执行异常");
     const usageEvents = events.filter((event): event is Extract<HarnessEvent, { type: "context_usage" }> => event.type === "context_usage");
     expect(usageEvents.at(-1)?.snapshot.phase).toBe("terminal");
-    expect(checkpoints.length).toBeGreaterThan(0);
     // 工具轮失败后不再发起模型请求
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    // transcript 已闭合：合成失败结果已写回
-    expect(checkpoints.at(-1)?.messages.some((message) => message.role === "tool")).toBe(true);
-  });
-
-  it("passes live transcript references to onCheckpoint instead of cloning", async () => {
-    // 克隆契约：harness 侧不 deepClone，传活引用，
-    // 由消费方（run-store / task-session-store）在回调返回前同步 clone。
-    const { fn: fetchMock } = fakeFetchSequencer([
-      assistantResponse({ toolCalls: [mutationToolCall("call-1")] }),
-      assistantResponse({ text: "完成。" }),
-    ]);
-    vi.stubGlobal("fetch", fetchMock);
-    mockedDispatch.mockResolvedValue(successDispatchResult());
-    const snapshots: HarnessCheckpoint[] = [];
-    // 活引用共享同一数组，断言时两者 length 恒等；增长需在回调时刻记录
-    const lengthsAtCheckpoint: number[] = [];
-
-    await runCyreneHarness({
-      systemPrompt: "you are a test agent",
-      messages: [{ role: "user", content: "创建一个文件" }],
-      tools: [mutationTool()],
-      vendorConfig,
-      onCheckpoint: (checkpoint) => {
-        snapshots.push(checkpoint);
-        lengthsAtCheckpoint.push(checkpoint.messages.length);
-      },
-    });
-
-    // 同一 run 内多次 checkpoint 传递同一活引用，且内容随轮次增长
-    expect(snapshots.length).toBeGreaterThanOrEqual(2);
-    const first = snapshots[0]!;
-    const last = snapshots.at(-1)!;
-    expect(last.messages).toBe(first.messages);
-    expect(lengthsAtCheckpoint.at(-1)!).toBeGreaterThan(lengthsAtCheckpoint[0]!);
-    expect(last.state).toBe(first.state);
-    expect(last.toolOutputs).toBe(first.toolOutputs);
   });
 
   it("keeps mid-loop content as progress and commits only the last no-tool reply as final answer", async () => {
@@ -831,7 +837,6 @@ describe("CyreneHarness completion", () => {
       .mockResolvedValueOnce({ ok: false, json: async () => ({}) })
       .mockResolvedValueOnce({ ok: true, json: async () => assistantResponse({ text: "仍然可以继续回答。" }) });
     vi.stubGlobal("fetch", fetchMock);
-    const checkpoints: HarnessCheckpoint[] = [];
     const originalHistory = "旧任务".repeat(100);
     const historicalMessages: ChatMessage[] = Array.from({ length: 20 }, (_, index) => ({
       role: index % 2 === 0 ? "user" : "assistant",
@@ -854,12 +859,14 @@ describe("CyreneHarness completion", () => {
         compactionRetainRatio: 0.16,
         modelRequestMaxRetries: 0,
       },
-      onCheckpoint: (checkpoint) => checkpoints.push(checkpoint),
     });
 
     expect(result.finalAnswer).toBe("仍然可以继续回答。");
-    expect(checkpoints.at(-1)?.messages.some((entry) => entry.content === originalHistory)).toBe(true);
-    expect(checkpoints.at(-1)?.cache).toEqual({ cacheEpoch: 1, epochReason: "run_start" });
+    // 压缩摘要请求失败：历史不被替换，下一次真实模型请求仍携带完整原始历史
+    const secondRequest = JSON.parse((fetchMock.mock.calls[1]![1] as RequestInit).body as string) as {
+      messages: ChatMessage[];
+    };
+    expect(secondRequest.messages.some((entry) => entry.content === originalHistory)).toBe(true);
   });
 
   it("writes only the pruned tool observation into the next model request", async () => {
@@ -901,44 +908,6 @@ describe("CyreneHarness completion", () => {
     expect(toolMessage?.content).toContain("TAIL_MARKER");
     expect(toolMessage?.content).not.toContain("MIDDLE_SECRET_MARKER");
     expect(toolMessage?.content).not.toContain("toolOutputRef");
-  });
-
-  it("checkpoints the transcript after tool work and before terminal settlement", async () => {
-    const { fn: fetchMock } = fakeFetchSequencer([
-      assistantResponse({ toolCalls: [mutationToolCall("checkpoint-call")] }),
-      assistantResponse({ text: "检查完成。" }),
-    ]);
-    vi.stubGlobal("fetch", fetchMock);
-    mockedDispatch.mockResolvedValue({
-      ...successDispatchResult("checkpoint-call"),
-      toolOutputRef: {
-        recordId: "c".repeat(64),
-        resultRef: `tool-result://v1/${"c".repeat(64)}`,
-        runId: "run-1",
-        toolCallId: "checkpoint-call",
-        toolName: "write_file",
-        bytes: 42,
-        codePoints: 42,
-        truncatedForModel: false,
-        createdAt: 1,
-      },
-    });
-    const checkpoints: HarnessCheckpoint[] = [];
-
-    await runCyreneHarness({
-      systemPrompt: "you are a test agent",
-      messages: [{ role: "user", content: "检查任务" }],
-      tools: [],
-      vendorConfig,
-      onCheckpoint: (checkpoint) => checkpoints.push(checkpoint),
-    });
-
-    expect(checkpoints.some((checkpoint) => checkpoint.messages.some((message) => message.role === "tool"))).toBe(true);
-    expect(checkpoints.some((checkpoint) => checkpoint.toolOutputs?.[0]?.toolCallId === "checkpoint-call")).toBe(true);
-    expect(checkpoints.at(-1)).toMatchObject({ rounds: 1 });
-    // 克隆契约：Harness 传活引用（不克隆），隔离由消费方 clone 保证。
-    // run 结束后 Harness 不再持有 transcript，消费方回调内同步克隆即可保证不串扰。
-    expect(checkpoints.at(-1)?.messages).toBe(checkpoints.at(-2)?.messages);
   });
 
   it("records a durable lifecycle before dispatch and after committing a tool observation", async () => {
@@ -1031,24 +1000,6 @@ describe("CyreneHarness completion", () => {
     expect("durationMs" in finished[0]).toBe(false);
     expect(finished[1].durationMs).toBeGreaterThanOrEqual(0);
     expect(events).toContainEqual({ type: "candidate_text_discard", roundId: "round-0" });
-  });
-
-  it("settles as a runtime error when a required checkpoint cannot be persisted", async () => {
-    const { fn: fetchMock } = fakeFetchSequencer([
-      assistantResponse({ text: "不能假装已经保存。" }),
-    ]);
-    vi.stubGlobal("fetch", fetchMock);
-
-    const result = await runCyreneHarness({
-      systemPrompt: "you are a test agent",
-      messages: [{ role: "user", content: "执行任务" }],
-      tools: [],
-      vendorConfig,
-      onCheckpoint: () => { throw new Error("disk unavailable"); },
-    });
-
-    expect(result.terminateReason).toBe("error");
-    expect(result.finalAnswer).toContain("执行状态保存失败");
   });
 
   it("accepts honest final after an unknown non-idempotent side effect; uncertainEffects retained", async () => {
@@ -1258,7 +1209,6 @@ describe("CyreneHarness run adjustments", () => {
     });
     const poll = vi.fn((): Promise<RunAdjustmentMessage[]> | undefined =>
       adjustments.length > 0 ? Promise.resolve(adjustments.splice(0)) : undefined);
-    const checkpoints: HarnessCheckpoint[] = [];
 
     const result = await runCyreneHarness({
       systemPrompt: "you are a test agent",
@@ -1266,7 +1216,6 @@ describe("CyreneHarness run adjustments", () => {
       tools: [mutationTool()],
       vendorConfig,
       pollRunAdjustments: poll,
-      onCheckpoint: (checkpoint) => checkpoints.push(checkpoint),
     });
 
     // 轮询点共三次：round-0 请求前（无标记）、round-1 请求前（取走插话）、最终结算前（空）
@@ -1280,10 +1229,6 @@ describe("CyreneHarness run adjustments", () => {
     // 插话紧跟工具结果之后（当前操作结束 → 插话 → 下一次模型请求）
     const toolMessageIndex = secondRequest.messages.findIndex((message) => message.role === "tool");
     expect(toolMessageIndex).toBe(secondRequest.messages.length - 3);
-    // 注入后、下一次请求前落盘 checkpoint（崩溃恢复不丢插话）
-    expect(checkpoints.some((checkpoint) =>
-      checkpoint.messages.some((message) => message.role === "user" && message.content === "插话：先看另一个文件"),
-    )).toBe(true);
     expect(result.finalAnswer).toBe("已按插话调整方案完成。");
   });
 
@@ -1427,43 +1372,6 @@ describe("CyreneHarness run adjustments", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("插话注入后 checkpoint 失败：按既有的状态保存失败语义熔断，不得静默继续", async () => {
-    const { fn: fetchMock } = fakeFetchSequencer([
-      assistantResponse({ toolCalls: [mutationToolCall("call-1")] }),
-      assistantResponse({ text: "不应被请求。" }),
-    ]);
-    vi.stubGlobal("fetch", fetchMock);
-    const adjustments: RunAdjustmentMessage[] = [];
-    mockedDispatch.mockImplementation(async () => {
-      adjustments.push({ id: "q-adj", rawContent: "插话：写盘会失败" });
-      return successDispatchResult("call-1");
-    });
-    const poll = vi.fn((): Promise<RunAdjustmentMessage[]> | undefined =>
-      adjustments.length > 0 ? Promise.resolve(adjustments.splice(0)) : undefined);
-    let failed = false;
-    const checkpoints: HarnessCheckpoint[] = [];
-
-    const result = await runCyreneHarness({
-      systemPrompt: "you are a test agent",
-      messages: [{ role: "user", content: "创建一个文件" }],
-      tools: [mutationTool()],
-      vendorConfig,
-      pollRunAdjustments: poll,
-      // 只在插话注入后的 checkpoint 抛错（普通轮次 checkpoint 正常）
-      onCheckpoint: (checkpoint) => {
-        checkpoints.push(checkpoint);
-        if (!failed && checkpoint.messages.some((message) => message.content === "插话：写盘会失败")) {
-          failed = true;
-          throw new Error("disk unavailable");
-        }
-      },
-    });
-
-    expect(result.terminateReason).toBe("error");
-    expect(result.finalAnswer).toContain("执行状态保存失败");
-    // 熔断发生在下一次模型请求之前
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
 });
 
 describe("CyreneHarness context usage snapshots", () => {
@@ -1582,6 +1490,44 @@ describe("CyreneHarness transcript sink", () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it("persists a pure generated image before publishing the assistant attachment event", async () => {
+    const attachment = {
+      id: "image-1", kind: "image" as const, name: "generated-image.png", filePath: "managed/generated-image.png",
+      mime: "image/png", source: "model" as const, byteLength: 20, status: "done" as const,
+    };
+    const order: string[] = [];
+    const sink = fakeSink({ appendAssistant: async () => { order.push("persist"); return "assistant-entry"; } });
+    const generatedImageStore = {
+      save: vi.fn(async () => attachment),
+      deleteConversation: vi.fn(async () => undefined),
+      readManagedPng: vi.fn(async () => Buffer.alloc(0)),
+    };
+    const response: ChatResponse = {
+      ...assistantResponse({ text: "" }),
+      generatedImages: [{ id: "image-1", toolCallId: "tool-1", base64: "AA==", mime: "image/png" }],
+    };
+    const { fn: modelFetch } = fakeFetchSequencer([response]);
+    vi.stubGlobal("fetch", modelFetch);
+
+    const result = await runCyreneHarness(harnessInput({
+      runId: "run-1",
+      assistantTurnId: "assistant-1",
+      generatedImageStore,
+      transcriptSink: sink,
+      onEvent: (event) => { if (event.type === "image_attachments") order.push("image-event"); },
+    }));
+
+    expect(result.finalAnswer).toBe("");
+    expect(sink.appendAssistant).toHaveBeenCalledWith(expect.objectContaining({
+      message: expect.objectContaining({ content: "", attachments: [attachment] }),
+    }));
+    expect(order).toEqual(["persist", "image-event"]);
+    expect(generatedImageStore.save).toHaveBeenCalledWith({
+      conversationId: "default",
+      image: expect.objectContaining({ id: "image-1", toolCallId: "tool-1" }),
+    });
   });
 
   it("awaits assistant persistence before dispatching any tool", async () => {

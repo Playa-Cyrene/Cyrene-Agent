@@ -1,3 +1,4 @@
+import { WorkspacePreviewContent, type WorkspacePreview } from "./WorkspacePreview";
 // ChatPageInspector — 把 ChatPage 的标签状态组装成 RightInspector 的标签列表。
 // 标签固定顺序：文件树（files）→ 文件预览（file:<路径>）→ Diff（diff:<run>:<路径>）→ 计划（plan:<会话>）。
 
@@ -54,6 +55,7 @@ export interface ChatPageInspectorFileTab {
 }
 
 export interface ChatPageInspectorProps {
+  preview?: WorkspacePreview | null;
   sessionId?: string;
   /** 工作区根路径（未绑定时为空，文件树显示引导态） */
   workspaceRoot?: string;
@@ -77,6 +79,7 @@ export interface ChatPageInspectorProps {
 }
 
 export function ChatPageInspector({
+  preview,
   sessionId,
   workspaceRoot,
   filesTabOpen,
@@ -96,6 +99,20 @@ export function ChatPageInspector({
 }: ChatPageInspectorProps) {
   const { t } = useTranslation();
   const tabs: InspectorTab[] = [];
+  // 预览占用工作区标签，让 BrowserPanel 通过已有 active 路径隐藏原生网页层。
+  if (preview) {
+    tabs.push({
+      id: "preview",
+      label: preview.kind === "image" ? preview.attachment.name : t("messageList.diagramPreview"),
+      content: (
+        <WorkspacePreviewContent
+          key={preview.kind === "image" ? preview.attachment.id : preview.svg}
+          preview={preview}
+          active={activeTabId === "preview" || activeTabId === null}
+        />
+      ),
+    });
+  }
 
   if (browserTabOpen) {
     tabs.push({

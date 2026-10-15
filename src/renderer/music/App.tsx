@@ -883,14 +883,17 @@ export function App() {
   if (!canOpenPlayer({ neteaseSignedIn: loginReady, localTrackCount: cacheTracks.length })) {
     return (
       <div className="mp-shell">
-        <div className="mp-window-chrome">
-          <button type="button" className="win-btn" onClick={minimizeWindow} title="最小化"><Minus size={14} /></button>
-          <button type="button" className="win-btn win-btn--close" onClick={closeWindow} title="关闭"><X size={14} /></button>
-        </div>
         {kernelMissing && <MpvKernelWarning />}
         <div className="mp-not-ready">
           <p>还没有可播放的音乐</p>
           <p className="mp-not-ready-hint">在「设置 → 插件 → 音乐工具」里导入本地音乐，或扫码登录网易云</p>
+        </div>
+        {/* 窗口按钮必须排在整屏 drag 区域之后：Electron 按文档顺序合成拖拽区域，
+            后出现的 no-drag 才能从前面的 drag 里扣掉，否则按钮会被当成标题栏、点了没反应。
+            按钮是绝对定位，挪到后面不影响显示位置。 */}
+        <div className="mp-window-chrome">
+          <button type="button" className="win-btn" onClick={minimizeWindow} title="最小化"><Minus size={14} /></button>
+          <button type="button" className="win-btn win-btn--close" onClick={closeWindow} title="关闭"><X size={14} /></button>
         </div>
       </div>
     );

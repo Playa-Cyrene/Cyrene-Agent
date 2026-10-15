@@ -112,3 +112,23 @@ export function buildContextUsageSnapshot(input: ContextUsageSnapshotInput): Con
     updatedAt: Date.now(),
   };
 }
+
+/** 压缩只改消息历史：系统、工具与技能沿用最近一次请求的计量。 */
+export function buildCompactionContextUsageSnapshot(input: {
+  phase: ContextUsagePhase;
+  contextWindowTokens: number;
+  messages: ChatMessage[];
+  previous?: ContextUsageSnapshot;
+}): ContextUsageSnapshot {
+  const computed = buildContextUsageSnapshot({ ...input, personaContent: "" });
+  const inheritable = new Map(
+    (input.previous?.categories ?? [])
+      .filter((category) => category.key === "systemPrompt" || category.key === "tools" || category.key === "skills")
+      .map((category) => [category.key, category.tokens]),
+  );
+  const categories = computed.categories.map((category) => ({
+    ...category,
+    tokens: inheritable.get(category.key) ?? category.tokens,
+  }));
+  return { ...computed, categories, totalTokens: categories.reduce((sum, category) => sum + category.tokens, 0) };
+}

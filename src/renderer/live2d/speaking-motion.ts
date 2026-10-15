@@ -87,7 +87,7 @@ export class SpeakingMotionController {
     if (index < 0) return;
     try {
       // IDLE priority: only starts when nothing else is playing, and any
-      // NORMAL motion (LLM actions, hit-area reactions) can interrupt it.
+      // NORMAL motion (hit-area reactions) can interrupt it.
       await this.model.motion(SWING_GROUP, index, MotionPriority.IDLE);
     } catch (err) {
       console.warn("[Cyrene] swing motion failed", err);

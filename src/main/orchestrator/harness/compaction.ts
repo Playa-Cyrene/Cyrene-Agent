@@ -2,7 +2,7 @@
  * 循环内上下文压缩：在 Agent Loop 中途、而非仅入口处，防止循环内上下文膨胀。
  *
  * 三件事：
- * 1. 循环内检查点（每轮 callLLM 前检查，阈值 0.7）
+ * 1. 循环内检查点（每轮 callLLM 前检查，默认总上下文占用 85%）
  * 2. 配对安全切点（不切断 tool_call / tool_result 配对）
  * 3. agent 导向压缩 prompt
  *
@@ -11,6 +11,7 @@
 
 import type { ChatMessage } from "../vendors/types";
 import { estimateTokens, estimateMessageTokens } from "../context-manager";
+import { DEFAULT_HARNESS_CONFIG } from "./types";
 
 // ── Token 预算计算 ────────────────────────────────────────
 
@@ -23,6 +24,19 @@ export interface TokenBudget {
   needsCompaction: boolean;
 }
 
+/** 按总上下文容量触发压缩；小窗口仍优先满足输出预留与安全余量。 */
+export function resolveCompactionTriggerTokens(
+  contextWindow: number,
+  reservedOutput = DEFAULT_HARNESS_CONFIG.reservedOutputTokens,
+  safetyMargin = DEFAULT_HARNESS_CONFIG.safetyMarginTokens,
+  threshold = DEFAULT_HARNESS_CONFIG.compactionThreshold,
+): number {
+  return Math.max(1, Math.min(
+    contextWindow * threshold,
+    contextWindow - reservedOutput - safetyMargin,
+  ));
+}
+
 /**
  * 计算 token 预算并判断是否需要压缩。
  *
@@ -32,7 +46,7 @@ export interface TokenBudget {
  * @param contextWindow 上下文窗口大小
  * @param reservedOutput 为 LLM 回复预留的 token
  * @param safetyMargin 固定安全余量
- * @param threshold 压缩触发阈值（默认 0.7）
+ * @param threshold 压缩触发比例，占总上下文容量（默认 0.85）
  */
 export function computeTokenBudget(
   systemPrompt: string,
@@ -41,7 +55,7 @@ export function computeTokenBudget(
   contextWindow: number,
   reservedOutput: number,
   safetyMargin: number,
-  threshold = 0.7,
+  threshold = DEFAULT_HARNESS_CONFIG.compactionThreshold,
 ): TokenBudget {
   const systemTokens = estimateTokens(systemPrompt);
   const schemaTokens = toolSchemas.reduce(
@@ -56,7 +70,9 @@ export function computeTokenBudget(
   return {
     usableInputBudget,
     estimatedInput,
-    needsCompaction: estimatedInput >= usableInputBudget * threshold,
+    needsCompaction: estimatedInput >= resolveCompactionTriggerTokens(
+      contextWindow, reservedOutput, safetyMargin, threshold,
+    ),
   };
 }
 

@@ -16,8 +16,8 @@ const MAX_MESSAGE_LIMIT = 100;
 
 /** 会话存储的最小只读视图；真实实现是 chats-store，测试注入内存假件。 */
 export interface PluginChatsStoreReader {
-  listSessions(): ChatSessionMeta[];
-  getSession(id: string): ChatSession | null;
+  listSessions(): (ChatSessionMeta[]) | Promise<ChatSessionMeta[]>;
+  getSession(id: string): (ChatSession | null) | Promise<ChatSession | null>;
 }
 
 export interface PluginConversationsServiceOptions {
@@ -138,7 +138,7 @@ export function createPluginConversationsService(
         offset = decodeListCursor(input.cursor).offset;
       }
       // 列表分页不承诺跨并发编辑的完整快照，按当前顺序切片即可。
-      const sessions = reader.listSessions();
+      const sessions = (await reader.listSessions());
       const page: PluginConversationPage = {
         items: sessions.slice(offset, offset + limit).map(toSummary),
       };
@@ -174,7 +174,7 @@ export function createPluginConversationsService(
       const from = cursor?.from ?? input.fromMessageId;
       const through = cursor?.through ?? input.throughMessageId;
 
-      const session = reader.getSession(input.conversationId);
+      const session = (await reader.getSession(input.conversationId));
       if (!session) {
         throw pluginHostError("E_NOT_FOUND", `会话不存在: ${input.conversationId}`);
       }

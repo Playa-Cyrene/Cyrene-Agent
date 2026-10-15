@@ -8,6 +8,7 @@ import {
 interface MutableToolCall {
   index: number;
   id?: string;
+  itemId?: string;
   name: string;
   arguments: string;
   ended: boolean;
@@ -33,20 +34,26 @@ export class CyreneStreamAccumulator {
         this.text += delta.delta;
         return;
       case "tool_call_start": {
-        const toolCall = this.getOrCreateToolCall(delta.index);
+        const toolCall = this.getOrResolveToolCall(delta.index, delta.id, delta.itemId);
         this.assignStableId(toolCall, delta.id);
+        this.assignStableItemId(toolCall, delta.itemId);
         toolCall.name += delta.nameDelta ?? "";
         return;
       }
       case "tool_call_arguments_delta": {
-        const toolCall = this.getOrCreateToolCall(delta.index);
+        const toolCall = this.getOrResolveToolCall(delta.index, delta.id, delta.itemId);
         this.assignStableId(toolCall, delta.id);
+        this.assignStableItemId(toolCall, delta.itemId);
         toolCall.arguments += delta.delta;
         return;
       }
       case "tool_call_end": {
-        const toolCall = this.getOrCreateToolCall(delta.index);
+        const toolCall = this.getOrResolveToolCall(delta.index, delta.id, delta.itemId, delta.terminalSnapshot);
         this.assignStableId(toolCall, delta.id);
+        this.assignStableItemId(toolCall, delta.itemId);
+        // Responses 结束事件携带完整快照时，用快照补齐名称和参数，不重复追加参数。
+        if (delta.name !== undefined) toolCall.name = delta.name;
+        if (delta.arguments !== undefined) toolCall.arguments = delta.arguments;
         toolCall.ended = true;
         return;
       }
@@ -123,6 +130,41 @@ export class CyreneStreamAccumulator {
     };
     this.toolCalls.set(index, created);
     return created;
+  }
+
+  private getOrResolveToolCall(index: number, id?: string, itemId?: string, terminalSnapshot = false): MutableToolCall {
+    if (itemId) {
+      const byItemId = this.sortedToolCalls().find((toolCall) => toolCall.itemId === itemId);
+      if (byItemId) return byItemId;
+    }
+    if (id) {
+      const byId = this.sortedToolCalls().find((toolCall) => toolCall.id === id);
+      if (byId) return byId;
+    }
+
+    if (terminalSnapshot) {
+      if (!id && !itemId && this.toolCalls.size > 0) {
+        throw new ProviderProtocolError("E_TOOL_CALL_INCOMPLETE",
+          "Cannot match a terminal tool call without call_id or item_id");
+      }
+      if (this.toolCalls.has(index)) {
+        const nextIndex = Math.max(...this.toolCalls.keys()) + 1;
+        return this.getOrCreateToolCall(nextIndex);
+      }
+    }
+
+    return this.toolCalls.get(index) ?? this.getOrCreateToolCall(index);
+  }
+
+  private assignStableItemId(toolCall: MutableToolCall, itemId?: string): void {
+    if (!itemId) return;
+    if (toolCall.itemId && toolCall.itemId !== itemId) {
+      throw new ProviderProtocolError(
+        "E_TOOL_CALL_ID_CHANGED",
+        `Tool call at index ${toolCall.index} changed its native item id`,
+      );
+    }
+    toolCall.itemId = itemId;
   }
 
   private assignStableId(toolCall: MutableToolCall, id: string | undefined): void {

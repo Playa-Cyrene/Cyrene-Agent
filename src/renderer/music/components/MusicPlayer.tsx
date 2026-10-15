@@ -17,6 +17,7 @@ import {
   X,
 } from "lucide-react";
 import type { MusicPlayerProps } from "../types";
+import { wheelToHorizontalScroll } from "../playlist-scroll";
 import logo from "../assets/logo.png";
 import decoBadge from "../assets/music2.png";
 import LyricsView from "./LyricsView";
@@ -111,7 +112,14 @@ export default function MusicPlayer({
           <img className="mp-brand-logo" src={logo} alt="logo" />
           <span className="mp-brand-name">Cyrene Music</span>
         </div>
-        <nav className="mp-playlists" aria-label="歌单选择">
+        <nav
+          className="mp-playlists"
+          aria-label="歌单选择"
+          onWheel={(event) => {
+            const next = wheelToHorizontalScroll(event.currentTarget, event.deltaX, event.deltaY);
+            if (next !== null) event.currentTarget.scrollLeft = next;
+          }}
+        >
           {playlists.map((pl) => (
             <button
               key={pl.id}

@@ -10,6 +10,7 @@ const requiredTokens = [
   "--rb-surface-hover",
   "--rb-surface-active",
   "--rb-surface-soft",
+  "--rb-surface-secondary",
   "--rb-text-primary",
   "--rb-text-secondary",
   "--rb-text-disabled",
@@ -58,6 +59,16 @@ describe("React 主题令牌契约", () => {
     expect(themeEntry).not.toContain("cyrene-dark");
   });
 
+  it("每个主题都为次级表面角色提供自己的颜色", () => {
+    const themesRoot = resolve(uiRoot, "themes");
+    const themeFiles = readdirSync(themesRoot).filter((file) => file.endsWith(".css"));
+
+    for (const file of themeFiles) {
+      expect(readStyle(resolve(themesRoot, file)), `${file} should define --rb-surface-secondary`)
+        .toMatch(/--rb-surface-secondary\s*:/);
+    }
+  });
+
   it("让应用外壳直接消费页面和工作区角色令牌", () => {
     const root = readStyle(resolve(__dirname, "react-root.css"));
 
@@ -73,15 +84,6 @@ describe("React 主题令牌契约", () => {
     for (const file of styleFiles) {
       expect(readStyle(resolve(__dirname, "..", file)), `${file} should use shared role variables for colors`).not.toMatch(sharedColorAliases);
     }
-  });
-
-  it("允许天气卡片维护独立于应用主题的明暗与插画配色", () => {
-    const weather = readStyle(resolve(__dirname, "../features/chat/components/weather/weather-card.css"));
-
-    expect(weather).toMatch(/\.weather-card\[data-theme="light"\]\s*\{[^}]*--card-bg:/s);
-    expect(weather).toMatch(/\.weather-card\[data-theme="dark"\]\s*\{[^}]*--card-bg:/s);
-    expect(weather).toMatch(/\.weather-card\[data-theme="light"\]\s*\{[^}]*--sun-core-1:/s);
-    expect(weather).toMatch(/\.weather-card\[data-theme="dark"\]\s*\{[^}]*--sun-core-1:/s);
   });
 
   it("只引用已声明的表面语义令牌", () => {

@@ -25,7 +25,7 @@ type LegacyRunOptions = Omit<CyreneRunOptions, "toolSystemContent" | "soulSystem
 interface RunnerDeps {
   buildOptions: (task: ScheduledTask) => Promise<LegacyRunOptions>;
   /** 有绑定工作区的用户任务每次触发创建独立 Cyrene 会话，不复用当前活动聊天。 */
-  createRunSession?: (task: ScheduledTask) => string;
+  createRunSession?: (task: ScheduledTask) => (string) | Promise<string>;
   getChatWebContents: () => WebContents | null;
   recordHistory: (entry: ScheduledTaskHistoryEntry) => void;
   id: () => string;
@@ -80,7 +80,7 @@ export function createSchedulerRunner(deps: RunnerDeps) {
     let sessionCreationError: Error | undefined;
     if (task.workspaceBinding) {
       try {
-        conversationId = deps.createRunSession?.(task) ?? null;
+        conversationId = (await deps.createRunSession?.(task)) ?? null;
         if (!conversationId) sessionCreationError = new Error("无法为定时任务创建独立会话");
       } catch (error) {
         sessionCreationError = error instanceof Error ? error : new Error(String(error));
@@ -203,7 +203,7 @@ export function createSchedulerRunner(deps: RunnerDeps) {
           presentationError = error;
         }
       }
-      if (presentationError !== undefined) throw presentationError;
+      if (presentationError !== undefined) console.warn("[Scheduler] 展示更新失败，已提交的权威轨迹保留:", presentationError);
     };
 
     let transcriptSink: ReturnType<ConversationJournalService["createRunSink"]> | undefined;

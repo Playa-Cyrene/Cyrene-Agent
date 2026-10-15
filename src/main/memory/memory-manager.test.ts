@@ -46,6 +46,28 @@ describe("MemoryManager L2 sync", () => {
     vi.resetModules()
   })
 
+  it("checks the source again at the store boundary before mutating L2", async () => {
+    const { memoryManager } = await import("./memory-manager")
+    const { memoryStore } = await import("./memory-store")
+    const guard = vi.fn().mockResolvedValueOnce(undefined).mockRejectedValue(new Error("MEMORY_SOURCE_CHANGED"))
+    await expect(memoryManager.writeMemory([{ layer: "L2", content: "obsolete", triggerText: "old", confidence: 0.9 }], guard))
+      .rejects.toThrow("MEMORY_SOURCE_CHANGED")
+    expect(await memoryStore.getAllL2()).toHaveLength(0)
+    expect(ragMock.addL2MemoryVector).not.toHaveBeenCalled()
+  })
+
+  it("stops later candidates if the source changes while an earlier vector is syncing", async () => {
+    const { memoryManager } = await import("./memory-manager")
+    const { memoryStore } = await import("./memory-store")
+    let current = true
+    ragMock.addL2MemoryVector.mockImplementation(async () => { current = false; return "rag-first" })
+    const guard = async () => { if (!current) throw new Error("MEMORY_SOURCE_CHANGED") }
+    const candidate: MemoryCandidate = { layer: "L2", content: "first", triggerText: "user", confidence: 0.9 }
+    await expect(memoryManager.writeMemory([candidate, { ...candidate, content: "second" }], guard)).rejects.toThrow("MEMORY_SOURCE_CHANGED")
+    expect((await memoryStore.getAllL2()).map(memory => memory.content)).toEqual(["first"])
+    expect(ragMock.addL2MemoryVector).toHaveBeenCalledTimes(1)
+  })
+
   afterEach(async () => {
     await vi.dynamicImportSettled()
   })

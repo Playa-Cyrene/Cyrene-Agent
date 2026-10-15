@@ -88,7 +88,7 @@ function setup() {
   };
   const service = createSpeechInputService({
     registry,
-    sessionStore: { getSession: (id: string) => (sessions.has(id) ? { id } : null) },
+    sessionStore: { getSession: async (id: string) => (sessions.has(id) ? { id } : null) },
     commitBridge: bridge,
     callController,
   });

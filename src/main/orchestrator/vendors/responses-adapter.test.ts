@@ -299,7 +299,7 @@ describe("ResponsesAdapter — parseResponse", () => {
   });
 });
 
-describe("ResponsesAdapter — rawAssistant 多轮回放", () => {
+describe("ResponsesAdapter — 无来源旧历史兼容", () => {
   const chatgptCap: ProviderCapability = {
     ...capability,
     id: "chatgpt",
@@ -326,18 +326,17 @@ describe("ResponsesAdapter — rawAssistant 多轮回放", () => {
     arguments: "{}",
   };
 
-  test("官方端点：带 encrypted_content 的 reasoning 原顺序保留回放", () => {
+  test("官方端点也不重放来源未知的加密推理，保留正文和工具", () => {
     const { body } = makeBody([
       { role: "user", content: "hi" },
       { role: "assistant", content: "", rawAssistant: [reasoningWithEncrypted, messageItem, functionCallItem] },
       { role: "user", content: "继续" },
     ], { cap: chatgptCap, config: { baseUrl: "https://api.openai.com/v1" } });
     const input = body.input as Array<Record<string, unknown>>;
-    // 用户消息 + 三个回放 item + 用户消息
-    expect(input).toHaveLength(5);
-    expect(input[1]).toMatchObject({ type: "reasoning", id: "rs_1" });
-    expect(input[2]).toMatchObject({ type: "message", id: "msg_1" });
-    expect(input[3]).toMatchObject({ type: "function_call", call_id: "call_1" });
+    expect(input).toHaveLength(4);
+    expect(input[1]).toEqual({ role: "assistant", content: "回复" });
+    expect(input[2]).toMatchObject({ type: "function_call", call_id: "call_1" });
+    expect(JSON.stringify(input)).not.toContain("enc-blob");
   });
 
   test("第三方端点：reasoning 无 encrypted_content 可引用 → 丢弃，其余保留", () => {
@@ -346,7 +345,7 @@ describe("ResponsesAdapter — rawAssistant 多轮回放", () => {
     ], { config: { baseUrl: "https://api.deepseek.com" } });
     const input = body.input as Array<Record<string, unknown>>;
     expect(input).toHaveLength(1);
-    expect(input[0]).toMatchObject({ type: "message", id: "msg_1" });
+    expect(input[0]).toEqual({ role: "assistant", content: "回复" });
   });
 
   test("官方端点但 reasoning 缺 encrypted_content → 丢弃", () => {
@@ -356,7 +355,7 @@ describe("ResponsesAdapter — rawAssistant 多轮回放", () => {
     ], { cap: chatgptCap, config: { baseUrl: "https://api.openai.com/v1" } });
     const input = body.input as Array<Record<string, unknown>>;
     expect(input).toHaveLength(1);
-    expect(input[0]).toMatchObject({ type: "message" });
+    expect(input[0]).toEqual({ role: "assistant", content: "回复" });
   });
 
   test("未知 item 类型防御性丢弃，不阻断其余回放", () => {
@@ -365,7 +364,7 @@ describe("ResponsesAdapter — rawAssistant 多轮回放", () => {
     ], { config: { baseUrl: "https://api.deepseek.com" } });
     const input = body.input as Array<Record<string, unknown>>;
     expect(input).toHaveLength(1);
-    expect(input[0]).toMatchObject({ type: "message" });
+    expect(input[0]).toEqual({ role: "assistant", content: "回复" });
   });
 
   test("异协议、空或不可回放底稿时从统一正文和工具调用重建", () => {
@@ -396,7 +395,7 @@ describe("ResponsesAdapter — rawAssistant 多轮回放", () => {
     }]);
     const input = body.input as Array<Record<string, unknown>>;
     expect(input).toHaveLength(2);
-    expect(input[0]).toMatchObject({ type: "message", id: "msg_1" });
+    expect(input[0]).toEqual({ role: "assistant", content: "回复" });
     expect(input[1]).toMatchObject({ type: "function_call", call_id: "call_1" });
   });
 
@@ -406,7 +405,7 @@ describe("ResponsesAdapter — rawAssistant 多轮回放", () => {
     ], { config: { baseUrl: "https://api.deepseek.com" } });
     const input = body.input as Array<Record<string, unknown>>;
     expect(input).toHaveLength(1);
-    expect(input[0]).toMatchObject({ type: "message", id: "msg_1" });
+    expect(input[0]).toEqual({ role: "assistant", content: "回复" });
   });
 });
 

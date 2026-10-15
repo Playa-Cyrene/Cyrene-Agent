@@ -1,3 +1,4 @@
+import { closeConversationDatabases } from "../storage/conversation-database-client";
 /**
  * TranscriptSink 契约测试（CTA Phase 1 Task 4）。
  *
@@ -19,7 +20,8 @@ import type { ChatMessage } from "./vendors/types";
 
 const roots: string[] = [];
 
-afterEach(() => {
+afterEach(async () => {
+  await closeConversationDatabases();
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
 });
 

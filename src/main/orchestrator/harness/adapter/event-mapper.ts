@@ -16,6 +16,11 @@ export function sendHarnessEventAsAgui(
   send: (event: BaseEvent) => void,
 ): void {
   switch (event.type) {
+    case "run_adjustment": {
+      send({ type: EventType.CUSTOM, name: "cyrene.run.adjustment",
+        value: { messages: event.messages, assistantMessageId: event.assistantMessageId }, threadId, runId } as BaseEvent);
+      break;
+    }
     case "model_retry": {
       send({
         type: EventType.CUSTOM,
@@ -83,6 +88,16 @@ export function sendHarnessEventAsAgui(
       send({ type: EventType.REASONING_MESSAGE_END, messageId: event.messageId, threadId, runId } as BaseEvent);
       break;
     }
+    case "image_attachments": {
+      send({
+        type: EventType.CUSTOM,
+        name: "cyrene.image_attachments",
+        value: { messageId: event.messageId, roundId: event.roundId, attachments: event.attachments },
+        threadId,
+        runId,
+      } as BaseEvent);
+      break;
+    }
     case "tool_start": {
       send({
         type: EventType.TOOL_CALL_START,
@@ -132,6 +147,16 @@ export function sendHarnessEventAsAgui(
           text: event.text,
           ...(event.truncated ? { truncated: true } : {}),
         },
+        threadId,
+        runId,
+      } as BaseEvent);
+      break;
+    }
+    case "mail_draft_card": {
+      send({
+        type: EventType.CUSTOM,
+        name: "cyrene.mail_draft_card",
+        value: { toolCallId: event.toolCallId, card: event.data },
         threadId,
         runId,
       } as BaseEvent);

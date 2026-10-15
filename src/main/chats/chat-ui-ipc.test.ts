@@ -97,7 +97,7 @@ describe("chat reasoning IPC", () => {
     const handler = mocks.handlers.get(IPC.CHAT_GET_REASONING_STATE);
     if (!handler) throw new Error("reasoning state handler was not registered");
 
-    expect(handler({}, { sessionId: "session-openai" })).toMatchObject({
+    expect(await handler({}, { sessionId: "session-openai" })).toMatchObject({
       providerKey: "ChatGPT（OpenAI）",
       providerId: "chatgpt",
       model: "gpt-5.6",
@@ -135,7 +135,7 @@ describe("chat reasoning IPC", () => {
     const handler = mocks.handlers.get(IPC.CHAT_GET_REASONING_STATE);
     if (!handler) throw new Error("reasoning state handler was not registered");
 
-    expect(handler({}, {})).toMatchObject({
+    expect(await handler({}, {})).toMatchObject({
       providerKey: "ChatGPT（OpenAI）",
       model: "gpt-5.6",
       modelProfileId: "openai-profile",
@@ -148,7 +148,7 @@ describe("chat reasoning IPC", () => {
     const handler = mocks.handlers.get(IPC.CHAT_GET_REASONING_STATE);
     if (!handler) throw new Error("reasoning state handler was not registered");
 
-    expect(handler({}, { modelProfileId: "openai-profile" })).toMatchObject({
+    expect(await handler({}, { modelProfileId: "openai-profile" })).toMatchObject({
       modelProfileId: "openai-profile",
       preference: { mode: "on", effort: "high" },
     });
@@ -197,7 +197,7 @@ describe("chat reasoning IPC", () => {
     const handler = mocks.handlers.get(IPC.CHAT_GET_REASONING_STATE);
     if (!handler) throw new Error("reasoning state handler was not registered");
 
-    expect(handler({}, { sessionId: "session-openai" })).toMatchObject({
+    expect(await handler({}, { sessionId: "session-openai" })).toMatchObject({
       model: "gpt-5.6-mini",
       modelProfileId: "openai-profile",
     });
@@ -215,7 +215,7 @@ describe("chat reasoning IPC", () => {
     const handler = mocks.handlers.get(IPC.CHAT_GET_REASONING_STATE);
     if (!handler) throw new Error("reasoning state handler was not registered");
 
-    expect(handler({}, { sessionId: "session-mini" })).toMatchObject({
+    expect(await handler({}, { sessionId: "session-mini" })).toMatchObject({
       model: "gpt-5.6-mini",
       preference: { mode: "on", effort: "high" },
       modelProfileId: "openai-profile",
@@ -235,7 +235,7 @@ describe("chat reasoning IPC", () => {
     const handler = mocks.handlers.get(IPC.CHAT_GET_REASONING_STATE);
     if (!handler) throw new Error("reasoning state handler was not registered");
 
-    expect(handler({}, { sessionId: "session-stale" })).toMatchObject({
+    expect(await handler({}, { sessionId: "session-stale" })).toMatchObject({
       model: "gpt-5.6",
       modelProfileId: "openai-profile",
     });

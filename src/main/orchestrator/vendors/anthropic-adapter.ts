@@ -16,6 +16,7 @@ import { getTimeoutSettings } from "../../timeout-manager";
 import { resolveAutomaticToolChoicePolicy, resolveToolChoicePolicy } from "./tool-choice-policy";
 import { getVendorRuntimeSettings } from "./runtime-settings";
 import { resolveApiEndpoint } from "../../../shared/api-endpoint";
+import { recoverPortableMessage } from "./model-history";
 
 const ANTHROPIC_VERSION = "2023-06-01";
 const DEFAULT_MAX_TOKENS = 4096;
@@ -111,8 +112,7 @@ function toAnthropicContent(content: ChatMessageContent): string | ContentBlock[
 /**
  * 把统一消息翻译成 Anthropic wire messages。
  * system 抽出来单独返回（Anthropic system 是顶层字段）。
- * 关键：assistant 若带 rawAssistant（上一轮原始 content block 数组）则原样回传，
- * 保证 thinking / tool_use block 完整回灌（MiniMax 多轮强制要求）。
+ * 旧历史仅恢复通用正文与工具，签名重放由统一模型入口负责。
  * tool 结果：Anthropic 用 user 角色的 tool_result block，同轮多个合并到同一条 user message。
  */
 function toWireMessages(messages: ChatMessage[], options?: { cacheBreakpoints?: boolean }): {
@@ -127,29 +127,24 @@ function toWireMessages(messages: ChatMessage[], options?: { cacheBreakpoints?: 
   const system = systemText || undefined;
 
   const wire: Array<Record<string, unknown>> = [];
-  for (const m of messages.filter(x => x.role !== "system")) {
+  for (const m of messages.filter(x => x.role !== "system").map(recoverPortableMessage)) {
     if (m.role === "user") {
       wire.push({ role: "user", content: toAnthropicContent(m.content ?? "") });
     } else if (m.role === "assistant") {
-      if (m.rawAssistant !== undefined) {
-        wire.push({ role: "assistant", content: m.rawAssistant });
-      } else {
-        const blocks: ContentBlock[] = [];
-        if (m.thinking) blocks.push({ type: "thinking", thinking: m.thinking });
-        if (m.content) blocks.push({ type: "text", text: m.content });
-        if (m.toolCalls) {
-          for (const tc of m.toolCalls) {
-            let input: unknown = {};
-            try {
-              input = JSON.parse(tc.arguments || "{}");
-            } catch {
-              input = {};
-            }
-            blocks.push({ type: "tool_use", id: tc.id, name: tc.name, input });
-          }
-        }
-        wire.push({ role: "assistant", content: blocks.length > 0 ? blocks : "" });
+      const blocks: ContentBlock[] = [];
+      // 旧调用只使用通用内容；有来源的签名重放由统一模型入口负责。
+      if (m.content) {
+        const content = toAnthropicContent(m.content);
+        if (typeof content === "string") blocks.push({ type: "text", text: content });
+        else blocks.push(...content);
       }
+      if (m.toolCalls) {
+        for (const tc of m.toolCalls) {
+          const input: unknown = JSON.parse(tc.arguments);
+          blocks.push({ type: "tool_use", id: tc.id, name: tc.name, input });
+        }
+      }
+      wire.push({ role: "assistant", content: blocks.length > 0 ? blocks : "" });
     } else if (m.role === "tool") {
       const block: ContentBlock = {
         type: "tool_result",
@@ -317,7 +312,7 @@ export class AnthropicAdapter implements ChatVendorAdapter {
       ...(text ? { content: text } : {}),
       ...(thinking ? { thinking } : {}),
       ...(toolCalls.length > 0 ? { toolCalls } : {}),
-      // 关键：原样保留 content block 数组，下一轮 buildRequest 直接回传给厂商
+      // 保留旧响应输出形态供兼容读取，不能当作有来源的重放数据。
       rawAssistant: blocks,
     };
 

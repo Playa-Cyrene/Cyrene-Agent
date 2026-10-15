@@ -1,3 +1,4 @@
+import { WorkspacePreviewContext, type WorkspacePreview } from "../components/WorkspacePreview";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Globe, MessageSquareText } from "lucide-react";
 import { useTranslation } from "../../../i18n";
@@ -33,7 +34,7 @@ import type {
   TaskDelegationDisplayRecord,
 } from "../../../../../shared/chat-types";
 import type { SidebarOrganizationDraft, SidebarOrganizationSnapshot } from "../../../../../shared/sidebar-organization";
-import { type ContextUsageSnapshot } from "../../../../../shared/context-usage";
+import { isContextUsageSnapshot, type ContextUsageSnapshot } from "../../../../../shared/context-usage";
 import type { ModelFailureInfo } from "../../../../../shared/model-error";
 import { ChatPagePanelHost } from "../components/ChatPagePanelHost";
 import { useUserCallPreference } from "../../../hooks/useUserNickname";
@@ -186,6 +187,13 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
   const [browserTabOpen, setBrowserTabOpen] = useState(() => localStorage.getItem("cyrene.browser-panel.open") === "1");
   /** 右侧面板当前激活的标签 ID（files / file:... / diff:... / plan:...），null 时面板取第一个标签 */
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
+  const [preview, setPreview] = useState<WorkspacePreview | null>(null);
+  const previewReturnTab = useRef<string | null>(null);
+  const openWorkspacePreview = useCallback((next: WorkspacePreview) => {
+    if (activeTabId !== "preview") previewReturnTab.current = activeTabId;
+    setPreview(next);
+    setActiveTabId("preview");
+  }, [activeTabId]);
   useEffect(() => {
     localStorage.setItem("cyrene.browser-panel.open", browserTabOpen ? "1" : "0");
   }, [browserTabOpen]);
@@ -205,8 +213,12 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
   >({});
   // 最近绑定的项目文件夹：工作文件夹下拉的候选，打开下拉时再懒加载
   const [recentProjects, setRecentProjects] = useState<string[]>([]);
-  // 欢迎页（无会话）暂存的模型选择：ensureSession 建会话后落地（与 pendingWorkspaceByMode 同构）。
+  // 欢迎页（无会话）暂存档案选择：ensureSession 建会话后落地（与 pendingWorkspaceByMode 同构）。
   const [pendingModelProfileByMode, setPendingModelProfileByMode] = useState<
+    Partial<Record<ConversationMode, string>>
+  >({});
+  // 欢迎页暂存的档案内模型选择；创建会话后在档案写入完成时落地。
+  const [pendingSessionModelByMode, setPendingSessionModelByMode] = useState<
     Partial<Record<ConversationMode, string>>
   >({});
   const [sessionsByMode, setSessionsByMode] = useState<Partial<Record<ConversationMode, ChatSessionMeta[]>>>({});
@@ -233,7 +245,14 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
   useEffect(() => {
     const store = chatStore();
     if (!store?.onCompactionPhase) return;
-    return store.onCompactionPhase(({ sessionId, phase }) => {
+    return store.onCompactionPhase(({ sessionId, phase, contextUsage }) => {
+      if (isContextUsageSnapshot(contextUsage)) {
+        setSessionContextUsageBySession((current) => {
+          const previous = current[sessionId];
+          if (previous && previous.updatedAt > contextUsage.updatedAt) return current;
+          return { ...current, [sessionId]: contextUsage };
+        });
+      }
       setAutoCompactingSessionId((current) =>
         phase === "running" ? sessionId : current === sessionId ? null : current,
       );
@@ -415,6 +434,10 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
 
   const activeSessionId = activeSessionIds[mode];
   const scopeKey = activeSessionId ?? `mode:${mode}`;
+  useEffect(() => {
+    setPreview(null);
+    setActiveTabId((id) => id === "preview" ? null : id);
+  }, [scopeKey]);
   const draft = drafts[scopeKey] ?? "";
   const messages = activeSessionId ? (messagesBySession[activeSessionId] ?? []) : [];
   const activeInteraction = sessionInteraction(interactionsBySession, activeSessionId);
@@ -443,6 +466,7 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
     isDraggingFiles,
     chooseFiles,
     handlePastedImage,
+    handlePastedFiles,
     handleScreenshot,
     removeAttachment,
     prepareImageAttachments,
@@ -458,6 +482,7 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
   // 渲染态消息快照 ref：待发队列流程查询消息是否已在视图（刷新恢复时不重复追加）
   const messagesBySessionRef = useRef(messagesBySession);
   messagesBySessionRef.current = messagesBySession;
+  const activeMailDraftControllersRef = useRef<Record<string, AgentRunController>>({});
 
   // 待发队列流程：入队/认领/派发/恢复的页面链路（独立模块，便于流程级测试）。
   // host 经 ref 每次渲染刷新到最新闭包；流程实例与入队失败缓存跨渲染稳定。
@@ -948,6 +973,13 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
       api: aguiApi(),
       store: chatStore(),
       host: {
+        appendMessages,
+        onAssistantSegment: (previousId, nextId) => {
+          if (activeMailDraftControllersRef.current[previousId] === controller) {
+            delete activeMailDraftControllersRef.current[previousId];
+          }
+          activeMailDraftControllersRef.current[nextId] = controller;
+        },
         patchMessage: updateMessage,
         setInteraction: setInteractionForSession,
         clearInteraction: clearInteractionForSession,
@@ -1040,7 +1072,14 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
       },
       startRun: runModel,
     });
-    await controller.start();
+    activeMailDraftControllersRef.current[input.assistantId] = controller;
+    try {
+      await controller.start();
+    } finally {
+      for (const [messageId, active] of Object.entries(activeMailDraftControllersRef.current)) {
+        if (active === controller) delete activeMailDraftControllersRef.current[messageId];
+      }
+    }
   }
 
   function isSessionBusy(sessionId: string): boolean {
@@ -1182,6 +1221,15 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
     if (pendingModelProfileId) {
       await store.setModelProfile(session.id, pendingModelProfileId);
       setPendingModelProfileByMode((current) => {
+        const next = { ...current };
+        delete next[targetMode];
+        return next;
+      });
+    }
+    const pendingSessionModel = pendingSessionModelByMode[targetMode];
+    if (pendingSessionModel) {
+      await store.setSessionModel(session.id, pendingSessionModel);
+      setPendingSessionModelByMode((current) => {
         const next = { ...current };
         delete next[targetMode];
         return next;
@@ -1622,7 +1670,7 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
 
   const isCurrentScopeRunning = Boolean(activeSessionId && activeRunsBySession.current[activeSessionId]);
   const currentPendingQueue = activeSessionId
-    ? (pendingQueueBySession[activeSessionId] ?? []).map((item) => ({
+    ? (pendingQueueBySession[activeSessionId] ?? []).filter((item) => item.adjustAcceptedAt === undefined).map((item) => ({
       id: item.id,
       content: item.visibleContent || item.rawContent,
       attachmentCount: item.attachments?.length,
@@ -1700,6 +1748,7 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
 
   /** 收起右侧面板：关闭全部标签（再次点击开关可重新展开文件树） */
   const collapseInspector = () => {
+    setPreview(null);
     setFilesTabOpen(false);
     setBrowserTabOpen(false);
     setFileTabs([]);
@@ -1736,8 +1785,9 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
   /** 计划标签 ID：会话内唯一（计划内容始终跟随当前会话） */
   const planTabId = `plan:${activeSessionId ?? "session"}`;
 
-  /** 右侧面板标签固定顺序：浏览器 → 文件树 → 文件预览 → Diff → 子任务 → 计划 */
+  /** 右侧面板标签固定顺序：图片/图表预览 → 浏览器 → 文件树 → 文件预览 → Diff → 子任务 → 计划 */
   const inspectorTabIds = [
+    ...(preview ? ["preview"] : []),
     ...(browserTabOpen ? ["browser"] : []),
     ...(filesTabOpen ? ["files"] : []),
     ...fileTabs.map((tab) => tab.id),
@@ -1764,7 +1814,9 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
       return;
     }
     const remaining = inspectorTabIds.filter((tabId) => tabId !== id);
-    if (id === "files") {
+    if (id === "preview") {
+      setPreview(null);
+    } else if (id === "files") {
       setFilesTabOpen(false);
     } else if (id === "browser") {
       setBrowserTabOpen(false);
@@ -1778,7 +1830,10 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
       setDiffTabs((tabs) => tabs.filter((tab) => tab.id !== id));
     }
     if (activeTabId === id) {
-      setActiveTabId(remaining[index - 1] ?? remaining[index] ?? null);
+      const returnToPreviewOrigin = id === "preview" && remaining.includes(previewReturnTab.current ?? "");
+      setActiveTabId(returnToPreviewOrigin
+        ? previewReturnTab.current
+        : remaining[index - 1] ?? remaining[index] ?? null);
     }
   };
 
@@ -1853,6 +1908,7 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
   }, [onOpenSettings]);
 
   return (
+    <WorkspacePreviewContext.Provider value={openWorkspacePreview}>
     <div ref={pageRef} className="cy-page cy-page--chat">
       <ChatPageNavigation
         activePanel={activePanel}
@@ -1989,6 +2045,23 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
             onEditLastUserMessage={mode === "chat" ? editLastChatUserMessage : undefined}
             onRegenerateLastResponse={mode === "chat" ? regenerateLastChatResponse : undefined}
             onTtsCacheKey={activeSessionId ? handleTtsCacheKeyForActiveSession : undefined}
+            onMailDraftChange={activeSessionId ? (messageId, card) => {
+              const controller = activeMailDraftControllersRef.current[messageId];
+              if (controller) {
+                controller.updateEmailDraftCard(card);
+                return;
+              }
+              const current = messagesBySessionRef.current[activeSessionId]?.find((message) => message.id === messageId);
+              if (!current) return;
+              const cards = current.emailDraftCards ?? [];
+              const index = cards.findIndex((item) => item.id === card.id);
+              const nextCards = index < 0 ? [...cards, card] : cards.map((item, itemIndex) => itemIndex === index ? card : item);
+              updateMessage(activeSessionId, messageId, { emailDraftCards: nextCards });
+              const mutationKey = `mail-card:${messageId}:${card.id}:${card.status}:${crypto.randomUUID()}`;
+              void chatStore()?.checkpointPresentation(activeSessionId, messageId, mutationKey, { emailDraftCards: nextCards })
+                .then((result) => { if (!result.ok) throw new Error(result.error); })
+                .catch((error) => console.error("[ChatPage] mail card checkpoint failed", error));
+            } : undefined}
             onScrollToBottomVisibilityChange={setScrollToBottomVisible}
             onRegisterScrollToBottom={registerScrollToBottom}
             onOpenReviewInspector={openDiffTab}
@@ -2042,6 +2115,7 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
             onRemoveAttachment={removeAttachment}
             onScreenshot={() => void handleScreenshot()}
             onPasteImage={(file) => void handlePastedImage(file)}
+            onPasteFiles={() => void handlePastedFiles()}
             onChooseSticker={(id) => {
               const separator = draft && !draft.endsWith(" ") ? " " : "";
               setDrafts((current) => ({ ...current, [scopeKey]: `${draft}${separator}[sticker:${id}]` }));
@@ -2051,18 +2125,27 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
                 ? activeSession.modelProfileId
                 : pendingModelProfileByMode[mode]
             }
-            activeSessionModel={activeSession && activeSession.id === activeSessionId ? activeSession.model : undefined}
+            activeSessionModel={activeSession && activeSession.id === activeSessionId
+              ? activeSession.model
+              : pendingSessionModelByMode[mode]}
             contextUsage={latestContextUsage}
             mainModelFailure={activeSessionId ? mainModelFailureBySession[activeSessionId] : undefined}
             onSelectSessionModel={(model) => {
-              // 子下拉只在有会话时由 ModelSelector 渲染，这里防御性兜底
-              if (!activeSessionId) return;
+              if (!activeSessionId) {
+                setPendingSessionModelByMode((current) => ({ ...current, [mode]: model }));
+                return;
+              }
               modelSwitcher.switchModel(activeSessionId, model);
             }}
             onSelectModelProfile={(modelProfileId) => {
               // 欢迎页（无会话）：暂存选择，ensureSession 建会话后落地；不再静默丢弃。
               if (!activeSessionId) {
                 setPendingModelProfileByMode((current) => ({ ...current, [mode]: modelProfileId }));
+                setPendingSessionModelByMode((current) => {
+                  const next = { ...current };
+                  delete next[mode];
+                  return next;
+                });
                 return;
               }
               // operation token（决策 11）：最新一次切换独占 UI 更新权，迟到回调丢弃
@@ -2138,6 +2221,7 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
             <Separator className="cy-dock-separator" />
             <Panel id="inspector" defaultSize="45" minSize={320} maxSize="70%" className="cy-dock-body">
               <ChatPageInspector
+                preview={preview}
                 sessionId={activeSessionId}
                 workspaceRoot={activeSession?.workspaceBinding?.workspaceRoot}
                 filesTabOpen={filesTabOpen}
@@ -2160,5 +2244,6 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
         )}
       </Group>
     </div>
+    </WorkspacePreviewContext.Provider>
   );
 }

@@ -6,7 +6,7 @@ import { nextModelRetryDelayMs, readRetryAfterMs } from "./model-retry-policy";
 
 export interface ModelRetryAttemptInput {
   signal: AbortSignal;
-  /** 任意协议增量用于重置空闲超时。 */
+  /** 收到响应数据或协议增量时重置空闲超时。 */
   onStreamActivity: () => void;
   /** 用户可见文本或推理开始输出后禁止重发。 */
   onVisibleDelta: () => void;

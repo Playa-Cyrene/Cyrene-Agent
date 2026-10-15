@@ -47,6 +47,9 @@ jobs:
       - name: Build
         run: pnpm run build
 
+      - name: Check model declarations and adapted models catalog
+        run: pnpm run check:adapted-models
+
       # 插件清单契约检查：源码类型与 manifest.schema.json 保持一致
       - name: Check plugin schema contract
         run: pnpm run check:plugin-schema

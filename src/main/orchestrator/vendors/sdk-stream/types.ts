@@ -1,9 +1,17 @@
 export type UnifiedStreamDelta =
   | { type: "reasoning_delta"; delta: string }
   | { type: "text_delta"; delta: string }
-  | { type: "tool_call_start"; index: number; id?: string; nameDelta?: string }
-  | { type: "tool_call_arguments_delta"; index: number; id?: string; delta: string }
-  | { type: "tool_call_end"; index: number; id?: string }
+  | { type: "tool_call_start"; index: number; id?: string; itemId?: string; nameDelta?: string }
+  | { type: "tool_call_arguments_delta"; index: number; id?: string; itemId?: string; delta: string }
+  | {
+      type: "tool_call_end";
+      index: number;
+      id?: string;
+      itemId?: string;
+      terminalSnapshot?: boolean;
+      name?: string;
+      arguments?: string;
+    }
   | { type: "usage"; inputTokens?: number; outputTokens?: number; cachedInputTokens?: number; cacheCreationTokens?: number }
   | { type: "finish"; reason: string }
   | { type: "refusal"; reason?: string };
@@ -14,6 +22,7 @@ export interface StreamAccumulatorSnapshot {
   toolCalls: ReadonlyArray<{
     index: number;
     id?: string;
+    itemId?: string;
     name: string;
     arguments: string;
     ended: boolean;

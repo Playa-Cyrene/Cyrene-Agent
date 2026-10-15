@@ -323,9 +323,9 @@ describe("sendHarnessEventAsAgui runId stamping", () => {
     expect(custom.name).toBe("cyrene.todo");
   });
 
-  it("routes context_usage snapshots to the cyrene.context.usage CUSTOM event", () => {
+  it.each(["preCompaction", "preRequest", "terminal"] as const)("routes %s context usage snapshots to the renderer", (phase) => {
     const snapshot = {
-      phase: "preRequest" as const,
+      phase,
       contextWindowTokens: 128_000,
       totalTokens: 1200,
       categories: [{ key: "systemPrompt" as const, tokens: 1200 }],

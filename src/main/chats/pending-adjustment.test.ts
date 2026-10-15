@@ -89,23 +89,23 @@ function createFakeTranscript(): FakeTranscript {
 }
 
 describe("createRunAdjustmentPoller", () => {
-  it("无本运行标记时同步返回 undefined（不产生 await 挂起点）", () => {
+  it("无本运行标记时返回空列表", async () => {
     const fake = createFakeStore();
     const transcript = createFakeTranscript();
     fake.queue.set("s1", [makeItem("q-1"), makeItem("q-2", "run-other")]);
     const poll = createRunAdjustmentPoller("s1", "run-1", fake.store, transcript.port);
 
-    const result = poll();
-    expect(result).toBeUndefined();
+    const result = await poll();
+    expect(result).toEqual([]);
     expect(fake.commits).toEqual([]);
     expect(transcript.calls).toEqual([]);
   });
 
-  it("会话不存在同样返回 undefined", () => {
+  it("会话不存在同样返回空列表", async () => {
     const fake = createFakeStore();
     const transcript = createFakeTranscript();
     const poll = createRunAdjustmentPoller("missing", "run-1", fake.store, transcript.port);
-    expect(poll()).toBeUndefined();
+    expect(await poll()).toEqual([]);
   });
 
   it("双写顺序：轨迹先写（含附件元数据）→ 聊天历史后写，逐条交错且都成功才返回", async () => {
@@ -120,8 +120,8 @@ describe("createRunAdjustmentPoller", () => {
     const order: string[] = [];
     const tracedStore: PendingAdjustmentStore = {
       getPendingMessages: fake.store.getPendingMessages,
-      commitPendingAdjust: (sessionId, messageId, runId) => {
-        const result = fake.store.commitPendingAdjust(sessionId, messageId, runId);
+      commitPendingAdjust: async (sessionId, messageId, runId) => {
+        const result = (await fake.store.commitPendingAdjust(sessionId, messageId, runId));
         order.push(`commit:${messageId}`);
         return result;
       },
@@ -227,7 +227,7 @@ describe("createRunAdjustmentPoller", () => {
     const poll = createRunAdjustmentPoller("s1", "run-1", fake.store, transcript.port);
 
     await poll();
-    expect(poll()).toBeUndefined();
+    expect(await poll()).toEqual([]);
     expect(fake.commits).toHaveLength(1);
     expect(transcript.calls).toHaveLength(1);
   });

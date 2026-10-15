@@ -37,11 +37,11 @@ export function getContextBindingSnapshot(
   };
 }
 
-export function bindContextConversation(
+export async function bindContextConversation(
   store: ChannelConversationBindingStore,
   payload: unknown,
-  conversationExists: (conversationId: string) => boolean,
-): ContextBindingResult {
+  conversationExists: (conversationId: string) => boolean | Promise<boolean>,
+): Promise<ContextBindingResult> {
   if (!payload || typeof payload !== "object") return { ok: false, error: "请求格式无效" };
   const value = payload as { sessionId?: unknown; conversationId?: unknown };
   if (typeof value.sessionId !== "string" || value.sessionId.length === 0 || value.sessionId.length > 128) {

@@ -1,4 +1,5 @@
 import { app } from "electron";
+import path from "node:path";
 import { loadPromptFile } from "../prompts/prompt-loader";
 import type { AguiRunInput } from "../agui-bridge";
 import type { ScheduledTask } from "../scheduler/types";
@@ -46,6 +47,7 @@ import {
 } from "./build-options";
 import { buildModelContext } from "./conversation-transcript-context";
 import { getConversationTranscriptStore } from "./conversation-transcript-store";
+import { createGeneratedImageStore } from "../chats/generated-image-store";
 import { getHarnessRunStore } from "./harness/run-store";
 import { ConversationTranscriptCompactor } from "./conversation-transcript-compactor";
 import { type CyreneRunResult, type CyreneRunOptions } from "./cyrene-agent";
@@ -91,7 +93,7 @@ export interface AgentRuntimeDeps {
   broadcastRuntimeStateChanged: () => void;
   citaService: CitaService;
   socialContextScheduler: { schedule: (input: SocialExtractionInput) => void };
-  chatsStore: { getWorkspaceBinding: (conversationId: string) => { workspaceRoot: string; displayName: string; boundAt: number } | undefined };
+  chatsStore: { getWorkspaceBinding: (conversationId: string) => ({ workspaceRoot: string; displayName: string; boundAt: number } | undefined) | Promise<{ workspaceRoot: string; displayName: string; boundAt: number } | undefined> };
   socialAtomStore: { listActive: (conversationId: string, now: number) => SocialAtom[] };
   buildSummaryMemoryContext?: (conversationId: string) => Promise<{ stablePrompt: string; runtimeContext: string }>;
   scheduleSummaryTurn?: (input: Parameters<typeof scheduleSummaryTurn>[0]) => void;
@@ -125,6 +127,9 @@ export interface AgentRuntime {
 export function createAgentRuntime(rawDeps: AgentRuntimeDeps): AgentRuntime {
   const runtimeStateService = rawDeps.runtimeStateService;
   const transcriptStore = getConversationTranscriptStore(app.getPath("userData"));
+  const generatedImageStore = createGeneratedImageStore({
+    rootDirectory: path.join(app.getPath("userData"), "chat-media", "generated-images"),
+  });
   const transcriptRunStore = getHarnessRunStore(app.getPath("userData"));
   // Production composition owns the singleton; unit/fallback callers retain
   // the same service contract but fail closed until one is injected.
@@ -242,12 +247,14 @@ export function createAgentRuntime(rawDeps: AgentRuntimeDeps): AgentRuntime {
         };
       },
       buildMomentsContext: (query: string) => {
-        // 只读本地 moments 数据（内存缓存），同步返回；initialize 幂等防御装配顺序
-        momentsStore.initialize();
+        // 只读本地 moments 数据（内存缓存），同步返回。
+        // 读模型由 registerMomentsIpc 的 await initialize 装载（先于任何运行入口）；
+        // 万一装配顺序被打乱，这里降级为无 moments 上下文而不是抛错。
+        if (!momentsStore.isReady()) return "";
         return buildMomentsContextBlock(momentsStore.listFeed({ limit: 20 }), query, Date.now());
       },
-      getWorkspaceBinding: (conversationId: string) => {
-        return rawDeps.chatsStore.getWorkspaceBinding(conversationId);
+      getWorkspaceBinding: async (conversationId: string) => {
+        return (await rawDeps.chatsStore.getWorkspaceBinding(conversationId));
       },
       buildSummaryMemoryContext: rawDeps.buildSummaryMemoryContext,
       buildPluginPromptContext: (input) => rawDeps.buildPluginPromptContext(input),
@@ -296,7 +303,15 @@ export function createAgentRuntime(rawDeps: AgentRuntimeDeps): AgentRuntime {
     buildOptions: async (input) => {
       const buildOptionsDeps = buildBuildOptionsDeps();
       const { options, latestUserText } = await buildAgentRunOptions(input, buildOptionsDeps);
-      return { options: { ...options, onToolFinished }, latestUserText };
+      return {
+        options: {
+          ...options,
+          onToolFinished,
+          assistantTurnId: input.assistantTurnId,
+          generatedImageStore,
+        },
+        latestUserText,
+      };
     },
 
     onRunFinished: async (result, latestUserText, context) => {
@@ -307,7 +322,10 @@ export function createAgentRuntime(rawDeps: AgentRuntimeDeps): AgentRuntime {
         onRunFinishedDeps,
         context.channel as ChannelId | undefined,
         context.conversationId,
-        { runId: context.runId, source: context.source, mode: context.mode },
+        { runId: context.runId, source: context.source, mode: context.mode,
+          vectorMemorySource: context.userTurnId && context.assistantEntryId
+            ? { userTurnId: context.userTurnId, assistantEntryId: context.assistantEntryId }
+            : undefined },
       );
       // 调用方应只在成功终态进入收尾；此处再守住插件事件契约，避免未来新增入口误报完成。
       const terminalStatus = result.terminal?.status;

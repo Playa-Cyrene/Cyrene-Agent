@@ -7,7 +7,7 @@
  * transcript-level checkpoint operation; callers must not silently tail-cut.
  */
 
-import { DEFAULT_HARNESS_CONFIG } from "./harness/types";
+import { resolveCompactionTriggerTokens } from "./harness/compaction";
 import type { ConversationTranscriptStore } from "./conversation-transcript-store";
 import {
   buildFullModelContext,
@@ -16,7 +16,6 @@ import {
   type TranscriptRunReader,
 } from "./conversation-transcript-projection";
 import type { TranscriptEntry } from "./conversation-transcript-types";
-import { reconcileCrashedInterruptionsForConversation } from "./conversation-interruption-reconciliation";
 
 export type { MaterializedTranscript, TranscriptRunReader } from "./conversation-transcript-projection";
 export {
@@ -40,12 +39,7 @@ export async function buildModelContext(input: {
   retainTokens: number;
   runReader: TranscriptRunReader;
 }): Promise<MaterializedTranscript> {
-  if (input.runReader.listInterruptedRuns) {
-    await reconcileCrashedInterruptionsForConversation({
-      runStore: { listInterruptedRuns: (conversationId) => input.runReader.listInterruptedRuns!(conversationId) },
-      transcriptStore: input.store,
-    }, input.conversationId);
-  }
+  await input.runReader.refresh?.();
   // fail-closed 读取前置：先等该会话写队列清空，禁止读到半更新状态
   await input.store.waitForIdle(input.conversationId);
   const snapshot = await input.store.read(input.conversationId);
@@ -64,11 +58,5 @@ export async function buildModelContext(input: {
 
 /** 轨迹尾窗预算：沿用 Harness 既有 token 预算体系，不另立标准。 */
 export function resolveTranscriptRetainTokens(contextWindowTokens: number): number {
-  const usable = Math.max(
-    1,
-    contextWindowTokens
-      - DEFAULT_HARNESS_CONFIG.reservedOutputTokens
-      - DEFAULT_HARNESS_CONFIG.safetyMarginTokens,
-  );
-  return Math.max(1, Math.floor(usable * DEFAULT_HARNESS_CONFIG.compactionThreshold));
+  return Math.max(1, Math.floor(resolveCompactionTriggerTokens(contextWindowTokens)));
 }

@@ -1,7 +1,7 @@
 import * as fs from "fs"
 import * as os from "os"
 import * as path from "path"
-import { describe, expect, it, vi } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 import {
   buildAgentRunOptions as buildAgentRunOptionsProduction,
   buildChannelSystem,
@@ -892,9 +892,10 @@ describe("build-options", () => {
       recordRelationshipTurn: async () => {},
     }
 
-    await onAgentRunFinished({ reply: "总结好了", toolResults: [] }, latestUserText, deps)
+    await onAgentRunFinished({ reply: "总结好了", toolResults: [] }, latestUserText, deps, undefined, "c1",
+      { vectorMemorySource: { userTurnId: "u1", assistantEntryId: "a1" } })
 
-    expect(scheduleMemoryWrite).toHaveBeenCalledWith("帮我总结这个 md", "总结好了", undefined)
+    expect(scheduleMemoryWrite).toHaveBeenCalledWith("帮我总结这个 md", "总结好了", "c1", { userTurnId: "u1", assistantEntryId: "a1" })
     expect(matchSticker).toHaveBeenCalledWith(
       "总结好了\n帮我总结这个 md",
       latestIndex,
@@ -902,7 +903,7 @@ describe("build-options", () => {
     )
   })
 
-  it("does not schedule memory writes when memory mode is off", async () => {
+  it.each(["off", "summary", "wiki"] as const)("keeps %s dispatch unchanged with vector provenance", async (memoryMode) => {
     const scheduleMemoryWrite = vi.fn()
     const scheduleSummaryTurn = vi.fn()
     const scheduleWikiTurn = vi.fn()
@@ -913,7 +914,7 @@ describe("build-options", () => {
         model: "",
         apiKey: "",
         runtimeSync: "off",
-        memoryMode: "off",
+        memoryMode,
       }),
       scheduleMemoryWrite,
       scheduleSummaryTurn,
@@ -936,12 +937,17 @@ describe("build-options", () => {
       deps,
       undefined,
       "conversation-a",
-      { assistantEntryId: "assistant-a", userTurnId: "user-a" },
+      { assistantEntryId: "assistant-a", userTurnId: "user-a",
+        vectorMemorySource: { userTurnId: "vector-user", assistantEntryId: "vector-reply" } },
     )
 
     expect(scheduleMemoryWrite).not.toHaveBeenCalled()
-    expect(scheduleSummaryTurn).not.toHaveBeenCalled()
-    expect(scheduleWikiTurn).not.toHaveBeenCalled()
+    expect(scheduleSummaryTurn).toHaveBeenCalledTimes(memoryMode === "summary" ? 1 : 0)
+    expect(scheduleWikiTurn).toHaveBeenCalledTimes(memoryMode === "wiki" ? 1 : 0)
+    if (memoryMode === "summary") expect(scheduleSummaryTurn).toHaveBeenCalledWith({
+      conversationId: "conversation-a", assistantEntryId: "assistant-a", userTurnId: "user-a",
+      userText: "记住这个信息", assistantText: "记住了",
+    })
   })
 
   it("skips sticker matching when reply and user content contain only code or math", async () => {
@@ -1051,6 +1057,144 @@ describe("build-options", () => {
 
     expect(deps.loadModelSettings).toHaveBeenCalledWith("p-b")
     expect(result.options.settings.model).toBe("by-profile:p-b")
+  })
+})
+
+describe("本轮图片附件回归", () => {
+  const tempDirs: string[] = []
+
+  afterEach(() => {
+    for (const dir of tempDirs) fs.rmSync(dir, { recursive: true, force: true })
+    tempDirs.length = 0
+  })
+
+  function createImageInput() {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-current-image-"))
+    tempDirs.push(dir)
+    const image = { name: "current.png", filePath: path.join(dir, "current.png"), mime: "image/png" }
+    fs.writeFileSync(image.filePath, Buffer.from([0x89, 0x50, 0x4e, 0x47]))
+    return {
+      image,
+      input: {
+        sessionId: "current-image-session",
+        mode: "chat",
+        executionMode: "chat",
+        currentUser: {
+          turnId: "current-image-turn", text: "请看这张图", visibleContent: "请看这张图",
+          attachments: [{ kind: "image", ...image }],
+        },
+        modelContext: {
+          messages: [{ role: "user", content: "请看这张图" }],
+          uncertainEffects: [], throughSeq: 1,
+        },
+      },
+    }
+  }
+
+  function imageBlocks(content: unknown) {
+    return Array.isArray(content) ? content.filter((block) => block.type === "image_url") : []
+  }
+
+  it.each([false, true])("本轮图片去重后直发，新旧字段同时存在=%s", async (withLegacy) => {
+    const { input, image } = createImageInput()
+    input.currentUser.attachments.push(
+      { kind: "image", ...image, filePath: path.dirname(image.filePath) + path.sep + "." + path.sep + image.name },
+      { kind: "document", ...image, name: "document.png" },
+    )
+    const result = await buildAgentRunOptions({
+      ...input,
+      ...(withLegacy ? { imageAttachments: [image] } : {}),
+    }, createBuildDeps())
+
+    const expected = [{ type: "image_url", image_url: { url: expect.stringMatching(/^data:image\/png;base64,/) } }]
+    expect(imageBlocks(result.options.messages.at(-1)?.content)).toEqual(expected)
+    expect(imageBlocks(result.options.cleanMessages?.at(-1)?.content)).toEqual(expected)
+    expect(JSON.stringify(result.options.messages)).toContain("【本轮附件路径】")
+  })
+
+  it("转述优先消费本轮图片，排除文档和旧字段中的其它图片", async () => {
+    const { input, image } = createImageInput()
+    input.currentUser.attachments.push({ kind: "document", ...image, name: "notes.png" })
+    const deps = createBuildDeps()
+    deps.loadModelSettings = () => ({
+      provider: "test", baseUrl: "https://example.test", model: "text-only", apiKey: "k", multimodal: false,
+      vision: { baseUrl: "https://vlm.test/v1", apiKey: "k", model: "vlm-model" },
+    })
+    deps.captionImageForFallback = vi.fn(async () => ({ ok: true, caption: "图片中有红色错误提示" }))
+    const result = await buildAgentRunOptions({
+      ...input,
+      imageAttachments: [image, { name: "stale.png", filePath: path.join(path.dirname(image.filePath), "stale.png") }],
+    }, deps)
+
+    expect(deps.captionImageForFallback).toHaveBeenCalledWith(image.filePath)
+    expect(deps.captionImageForFallback).toHaveBeenCalledTimes(2)
+    expect(result.options.messages.at(-1)?.content).toContain("current.png：图片中有红色错误提示")
+    expect(result.options.cleanMessages?.at(-1)?.content).toContain("current.png：图片中有红色错误提示")
+    expect(result.options.messages.at(-1)?.content).not.toContain("stale.png")
+    expect(result.options.imageCaptionFallback).toBeUndefined()
+  })
+
+  it("本轮图片直发失败后仍能生成转述降级消息", async () => {
+    const { input, image } = createImageInput()
+    const deps = createBuildDeps()
+    deps.captionImageForFallback = vi.fn(async () => ({ ok: true, caption: "画面是一张安装截图" }))
+    const result = await buildAgentRunOptions(input, deps)
+    expect(result.options.imageCaptionFallback).toBeDefined()
+
+    const fallback = await result.options.imageCaptionFallback!()
+    expect(deps.captionImageForFallback).toHaveBeenCalledWith(image.filePath)
+    expect(fallback.at(-1)?.content).toContain("current.png：画面是一张安装截图")
+    expect(imageBlocks(fallback.at(-1)?.content)).toHaveLength(0)
+  })
+
+  it("本轮图片无可用视觉路由时显示拒绝原因", async () => {
+    const { input } = createImageInput()
+    const deps = createBuildDeps()
+    deps.loadModelSettings = () => ({
+      provider: "test", baseUrl: "https://example.test", model: "text-only", apiKey: "k", multimodal: false,
+    })
+    const result = await buildAgentRunOptions(input, deps)
+    expect(result.options.messages.at(-1)?.content).toContain("【图片发送失败】")
+    expect(result.options.messages.at(-1)?.content).toContain("current.png")
+    expect(result.options.cleanMessages?.at(-1)?.content).toContain("【图片发送失败】")
+  })
+
+  it.each([undefined, " "])("本轮只有文档或无效图片时回退旧图片字段，路径=%s", async (filePath) => {
+    const { input, image } = createImageInput()
+    const result = await buildAgentRunOptions({
+      ...input,
+      currentUser: {
+        ...input.currentUser,
+        attachments: [
+          { kind: "document", ...image, name: "notes.png" },
+          { kind: "image", ...image, filePath },
+        ],
+      },
+      imageAttachments: [image],
+    }, createBuildDeps())
+    expect(imageBlocks(result.options.messages.at(-1)?.content)).toHaveLength(1)
+  })
+
+  it("渠道旧图片字段也按文件路径去重", async () => {
+    const { image } = createImageInput()
+    const result = await buildAgentRunOptions({
+      messages: [{ role: "user", content: "渠道图片" }],
+      imageAttachments: [image, { ...image, name: "duplicate.png" }],
+    }, createBuildDeps())
+    expect(imageBlocks(result.options.messages.at(-1)?.content)).toHaveLength(1)
+  })
+
+  it("文档和网页元素附件不会被读成图片", async () => {
+    const { input, image } = createImageInput()
+    const result = await buildAgentRunOptions({
+      ...input,
+      currentUser: {
+        ...input.currentUser,
+        attachments: [{ kind: "document", ...image }, { kind: "web-element", name: "selected-element" }],
+      },
+    }, createBuildDeps())
+    expect(imageBlocks(result.options.messages.at(-1)?.content)).toHaveLength(0)
+    expect(result.options.imageCaptionFallback).toBeUndefined()
   })
 })
 
@@ -1264,6 +1408,27 @@ describe("权威轨迹上下文源（CTA Phase 1）", () => {
       sessionId: "auto-compact-failure",
       currentUser: { turnId: "turn-1", text: "继续", visibleContent: "继续" },
     } as never, deps)).rejects.toThrow("TRANSCRIPT_COMPACTION_REQUIRED")
+  })
+
+  it("轮次内压缩入口绑定当前会话模型并重读已提交摘要", async () => {
+    const deps = createBuildDeps()
+    const selected = { provider: "current", baseUrl: "https://current.test", model: "selected-model", apiKey: "k", contextWindowTokens: 128_000 }
+    let compressed = false
+    deps.buildModelContext = vi.fn(async () => ({
+      messages: [{ role: "user" as const, content: compressed ? "已提交摘要" : "当前问题" }],
+      uncertainEffects: [], throughSeq: 8,
+    }))
+    deps.compactTranscript = vi.fn(async () => { compressed = true })
+    const built = await buildAgentRunOptions({
+      sessionId: "active-model", sessionModelSettings: selected,
+      currentUser: { turnId: "turn-1", text: "当前问题", visibleContent: "当前问题" },
+    } as never, deps)
+    const signal = new AbortController().signal
+    const messages = await built.options.compactTranscript!({ retainTokens: 20_000, transientMessages: [], signal })
+    expect(deps.compactTranscript).toHaveBeenCalledWith(expect.objectContaining({
+      conversationId: "active-model", trigger: "automatic", modelSettings: selected, retainTokens: 20_000, signal,
+    }))
+    expect(messages).toEqual([{ role: "user", content: "已提交摘要" }])
   })
 
   it("崩溃孤儿不确定效果并入 recoveryContext", async () => {

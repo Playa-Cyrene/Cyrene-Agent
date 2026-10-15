@@ -16,6 +16,7 @@ import type {
 } from "./vendors/types";
 import type { ModelRetryStatus } from "../../shared/model-retry";
 import { streamChatWithSdk } from "./vendors/sdk-stream/runtime";
+import { generateChatWithAiSdk } from "./vendors/model-runtime";
 import { classifyModelFailure } from "./vendors/model-error-classifier";
 import { runModelRequestWithRetry, type ModelRetryAttemptInput } from "./vendors/model-retry-runner";
 import { readRetryAfterMs } from "./vendors/model-retry-policy";
@@ -27,6 +28,7 @@ import { buildContextUsageSnapshot } from "./context-usage";
 import { isExplicitStreamUnsupported } from "./vendors/stream-support";
 import { composePromptLayers } from "./prompt-layers";
 import type { TranscriptSink } from "./transcript-sink";
+import { persistGeneratedImages, type GeneratedImageStore } from "../chats/generated-image-store";
 
 export interface ChatLoopOptions {
   settings: AgentLoopSettings;
@@ -43,12 +45,16 @@ export interface ChatLoopOptions {
   signal?: AbortSignal;
   /** 非流式降级时的展示节奏；测试可设为 0，生产默认 20ms。 */
   fallbackRevealIntervalMs?: number;
-  /** 默认使用官方 SDK；测试可注入可控流实现。 */
+  /** 默认使用统一 SDK 执行入口；调用方可注入流实现。 */
   streamChat?: typeof streamChatWithSdk;
+  generateChat?: typeof generateChatWithAiSdk;
   /** 当前对话模式：composePromptLayers 按模式选择提示词层组合。 */
   mode?: string;
   /** 权威轨迹提交端：canonical assistant 落盘（CTA Phase 1）。 */
   transcriptSink?: TranscriptSink;
+  conversationId?: string;
+  assistantTurnId?: string;
+  generatedImageStore?: GeneratedImageStore;
 }
 
 class StreamUnavailableError extends Error {
@@ -151,6 +157,7 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<AgentLoopRe
     explicitTransport: options.settings.explicitTransport,
     reasoning: options.settings.reasoning,
     manualReasoning: options.settings.manualReasoning,
+    imageGeneration: options.settings.imageGeneration,
   };
 
   const buildRequest = (reqMessages: ChatMessage[], stream: boolean): ChatRequest => ({
@@ -161,6 +168,7 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<AgentLoopRe
       mode: options.mode,
     }, reqMessages),
     stream,
+    ...(options.settings.imageGeneration?.enabled ? { imageGeneration: options.settings.imageGeneration } : {}),
     ...(options.soulSampling ?? {}),
   });
 
@@ -169,53 +177,13 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<AgentLoopRe
       ...buildRequest(messages, false),
     };
     const effectiveRequest = options.adapter.applyCacheHints?.(request, vendorConfig) ?? request;
-    const http = options.adapter.buildRequest(effectiveRequest, options.settings);
-    const controller = new AbortController();
-    const abort = () => controller.abort();
-    signal.addEventListener("abort", abort, { once: true });
-    if (signal.aborted) abort();
-    let timedOut = false;
-    const timer = setTimeout(() => { timedOut = true; abort(); }, remainingBudget());
-    try {
-      let response: Response;
-      try {
-        response = await fetch(http.url, {
-          method: "POST",
-          headers: http.headers,
-          body: http.body,
-          signal: controller.signal,
-        });
-      } catch (error) {
-        if (signal.aborted) throw error;
-        const failure = classifyModelFailure({ provider: options.adapter.id, model: effectiveRequest.model, error });
-        throw new AgentRuntimeError("E_MODEL_REQUEST_FAILED", "模型服务请求失败。", {
-          cause: error,
-          modelFailure: { ...failure, category: timedOut ? "TIMEOUT" : failure.category === "UNKNOWN" ? "NETWORK" : failure.category },
-        });
-      }
-      if (!response.ok) {
-        const body = await response.text().catch(() => "");
-        // [image-send] 链路日志④：服务端拒绝时打印完整错误体（Anthropic 400 会带具体 reason）。
-        console.error(`[image-send] ChatLoop 请求被拒 HTTP ${response.status}:`, body.slice(0, 500) || "(无响应体)");
-        let errorPayload: unknown;
-        try { errorPayload = JSON.parse(body); } catch { errorPayload = undefined; }
-        throw new AgentRuntimeError(
-          "E_MODEL_REQUEST_FAILED",
-          `模型请求失败：HTTP ${response.status}`,
-          {
-            modelFailure: classifyModelFailure({ provider: options.adapter.id, model: effectiveRequest.model, status: response.status, error: errorPayload }),
-            retryAfterMs: readRetryAfterMs(response.headers),
-          },
-        );
-      }
-      return options.adapter.parseResponse(await response.json());
-    } finally {
-      clearTimeout(timer);
-      signal.removeEventListener("abort", abort);
-    }
+    return (options.generateChat ?? generateChatWithAiSdk)({
+      adapter: options.adapter, request: effectiveRequest, config: vendorConfig,
+      timeoutMs: remainingBudget(), signal,
+    });
   };
 
-  const messageId = `msg-${Date.now()}`;
+  const messageId = options.assistantTurnId ?? `msg-${Date.now()}`;
   const reasoningMessageId = `${messageId}-reasoning`;
   let emittedStreamContent = false;
   let reasoningStarted = false;
@@ -283,10 +251,11 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<AgentLoopRe
         config: vendorConfig,
         timeoutMs: remainingBudget(),
         signal: attempt.signal,
+        onStreamActivity: attempt.onStreamActivity,
         onDelta,
       });
       emitTextDelta(timePrefixFilter.finish());
-      if (!text.trim()) {
+      if (!text.trim() && !response.generatedImages?.length) {
         if (response.text.trim()) return { response, needsReveal: true };
         throw new AgentRuntimeError("E_MODEL_RESPONSE_PARSE_FAILED", "模型流式响应没有返回可见文本");
       }
@@ -362,6 +331,7 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<AgentLoopRe
     }
 
     const response = result.response;
+    if (options.signal?.aborted) throw new Error("E_SOUL_ONLY_CANCELLED");
 
     if (result.needsReveal && response.thinking) {
       startReasoning();
@@ -377,27 +347,62 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<AgentLoopRe
     if (response.usage) {
       usageRecorder(response.usage.input, response.usage.output, 1, response.usage.cachedInput, response.usage.cacheCreation);
     }
-    const reply = stripLeakedChatTimeContext(stripToolProtocol(response.text))
-      || "刚才没有生成正常回复，请再试一次。";
+    // 推理展示回调也可能触发取消，不提交已取消请求的 assistant 历史。
+    if (options.signal?.aborted) throw new Error("E_SOUL_ONLY_CANCELLED");
+    const persistedImages = await persistGeneratedImages(
+      options.generatedImageStore,
+      options.conversationId ?? "default",
+      response.generatedImages,
+    );
+    if (options.signal?.aborted) throw new Error("E_SOUL_ONLY_CANCELLED");
+    const visibleResponseText = stripLeakedChatTimeContext(stripToolProtocol(response.text));
+    const imageSaveNotice = persistedImages.failedCount > 0
+      ? persistedImages.attachments.length > 0
+        ? "部分生成图片保存失败。"
+        : "图片生成失败，图片未能保存，请重试。"
+      : "";
+    let reply = [visibleResponseText, imageSaveNotice].filter(Boolean).join("\n\n");
+    if (!reply && persistedImages.attachments.length === 0) {
+      reply = "刚才没有生成正常回复，请再试一次。";
+    }
     // 权威轨迹：归一化后的可见回复作为 canonical assistant 提交。
     // 不从流式展示文本重建 rawAssistant / thinking / 厂商原始块，原样保留。
     const canonicalAssistant: ChatMessage = {
       ...response.assistantMessage,
       role: "assistant",
       content: reply,
+      ...(persistedImages.attachments.length ? { attachments: persistedImages.attachments } : {}),
     };
     await options.transcriptSink?.appendAssistant({ message: canonicalAssistant });
+    if (persistedImages.attachments.length > 0) {
+      options.onEvent?.({
+        type: "image_attachments",
+        messageId,
+        attachments: persistedImages.attachments,
+      });
+    }
     // 终态快照：把最终回复并入历史口径（与下一轮进入历史的文本一致）。
     emitContextUsage("terminal", reply);
-    if (result.needsReveal) {
-      startText();
+    if (imageSaveNotice && textStarted) {
+      const delta = `${visibleResponseText ? "\n\n" : ""}${imageSaveNotice}`;
       await emitFallbackText(
         options.onEvent,
         messageId,
-        reply,
+        delta,
         options.fallbackRevealIntervalMs ?? 20,
         options.signal,
       );
+    } else if (result.needsReveal || (!textStarted && reply.length > 0)) {
+      startText();
+      if (reply) {
+        await emitFallbackText(
+          options.onEvent,
+          messageId,
+          reply,
+          options.fallbackRevealIntervalMs ?? 20,
+          options.signal,
+        );
+      }
     }
     endText();
     return {

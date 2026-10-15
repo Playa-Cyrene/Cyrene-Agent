@@ -2,6 +2,7 @@ export interface OpenAIClientConfig {
   baseURL: string;
   apiKey: string;
   maxRetries: 0;
+  fetch?: typeof fetch;
 }
 
 export interface AnthropicClientConfig {

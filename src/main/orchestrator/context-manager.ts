@@ -1,5 +1,8 @@
 import type { ChatVendorAdapter, ChatMessage, ChatRequest, OpenAIContentBlock } from "./vendors/types";
 import type { AgentLoopSettings } from "./cyrene-agent";
+import { generateChatWithAiSdk } from "./vendors/model-runtime";
+import { getTimeoutSettings } from "../timeout-manager";
+import { recoverPortableMessage } from "./vendors/model-history";
 import { recordRequest, recordUsage } from "../token-usage-store";
 
 const COMPRESSION_PROMPT = `你正在帮"昔涟"整理对话记忆。请把下面这段较早的对话历史总结成一段简洁的摘要，供后续回复参考。
@@ -62,6 +65,7 @@ export function estimateMessageTokens(messages: ChatMessage[]): number {
 
 function formatConversation(messages: ChatMessage[]): string {
   return messages
+    .map(recoverPortableMessage)
     .map((m) => {
       const prefix = m.role === "user" ? "用户" : m.role === "assistant" ? "昔涟" : m.role;
       const text = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
@@ -101,30 +105,11 @@ export async function callSummarizeModel(
   };
 
   const effectiveRequest = adapter.applyCacheHints?.(request, vendorConfig) ?? request;
-  const http = adapter.buildRequest(effectiveRequest, settings);
-  const controller = new AbortController();
-  const abort = () => controller.abort();
-  signal?.addEventListener("abort", abort, { once: true });
-
-  try {
-    const response = await fetch(http.url, {
-      method: "POST",
-      headers: http.headers,
-      body: http.body,
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      const body = await response.text().catch(() => "");
-      throw new Error(`压缩请求失败：HTTP ${response.status}${body ? ` - ${body.slice(0, 200)}` : ""}`);
-    }
-    const parsed = adapter.parseResponse(await response.json());
-    // 压缩是一次真实 LLM 请求，与其他调用一样记入 Token 用量统计
-    recordRequest(settings.model);
-    if (parsed.usage) {
-      recordUsage(parsed.usage.input, parsed.usage.output, 1, parsed.usage.cachedInput, settings.model, parsed.usage.cacheCreation);
-    }
-    return parsed.text.trim() || "[压缩结果为空]";
-  } finally {
-    signal?.removeEventListener("abort", abort);
+  const parsed = await generateChatWithAiSdk({ adapter, request: effectiveRequest, config: vendorConfig,
+    signal, timeoutMs: getTimeoutSettings().chatRequestTimeout });
+  recordRequest(settings.model);
+  if (parsed.usage) {
+    recordUsage(parsed.usage.input, parsed.usage.output, 1, parsed.usage.cachedInput, settings.model, parsed.usage.cacheCreation);
   }
+  return parsed.text.trim() || "[压缩结果为空]";
 }

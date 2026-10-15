@@ -14,6 +14,7 @@ import { app } from "electron";
 import { toolRegistry } from "./registry/tool-registry";
 import { buildReplacedDiff, countLines, finalizeFileChanges } from "./registry/tool-evidence";
 import { applyStrReplaceEdits } from "./str-replace-core";
+import { resolveFileAccessPath } from "./file-access";
 import { currentUserTimezone } from "./built-in-tools";
 import { resolveTimeoutPolicy } from "../../runtime-policy";
 import { getDateLocale } from "../../locale-context";
@@ -271,7 +272,7 @@ function registerTranslateTool(): void {
       }
 
       // 动态 import 避免循环依赖；协议跟随档案配置（explicitTransport），与主链路同源
-      const { getAdapterForConfig } = await import("../vendors");
+      const { getAdapterForConfig } = await import("../vendors/index.js");
       const fromHint = args.from ? `（源语言：${args.from}）` : "（自动检测源语言）";
       const sysPrompt = `你是翻译器${fromHint}。把以下文本翻译成${to}，只输出译文，不要任何解释或额外文字。`;
       const ctrl = new AbortController();
@@ -360,8 +361,11 @@ function registerStrReplaceTool(): void {
       required: ["file_path"],
     },
     execute: async (args, ctx?) => {
-      const filePath = String(args.file_path || "");
+      let filePath = String(args.file_path || "");
       if (!filePath) return JSON.stringify({ success: false, errorCode: "INVALID_PATH", error: "file_path 不能为空", retryable: false });
+      const access = resolveFileAccessPath(path.resolve(ctx?.resolvedWorkspaceRoot ?? process.cwd(), filePath), "write", ctx);
+      if (!access.ok) return JSON.stringify({ success: false, errorCode: "PERMISSION_DENIED", category: "permission_denied", error: access.message, retryable: false });
+      filePath = access.path;
       if (!fs.existsSync(filePath)) {
         return JSON.stringify({
           success: false,

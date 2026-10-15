@@ -1,3 +1,5 @@
+import { disposeAllShellJobs } from "../orchestrator/tools/builtin-tools/shell-job-manager";
+import { closeConversationDatabases } from "../storage/conversation-database-client";
 /**
  * 默认应用依赖装配（真正的组合根胶水层）：
  * 持有全部业务子系统的导入与工厂闭包，把它们按窄依赖喂给各启动阶段。
@@ -29,7 +31,7 @@ import {
   reactChatWindow,
   setGetCurrentAppIconPath,
 } from "../windows/window-state";
-import { loadModelSettings, resolveModelSettingsProfile, saveModelSettings } from "../settings/model-settings";
+import { loadModelSettings, saveModelSettings } from "../settings/model-settings";
 import { getConversationTranscriptStore } from "../orchestrator/conversation-transcript-store";
 import { getHarnessRunStore } from "../orchestrator/harness/run-store";
 import { createModelBackedConversationTranscriptCompactor } from "../orchestrator/conversation-transcript-compactor";
@@ -70,7 +72,6 @@ import { clearLegacyStickerEmbeddingCache, loadStickerTextIndex } from "../stick
 import { toolRegistry } from "../orchestrator/tools/registry/tool-registry";
 import { pluginPromptRegistry } from "../../plugins/prompts";
 import type { PluginManager } from "../../plugins/manager";
-import { setLive2dWindowSender } from "../orchestrator/tools/built-in-tools";
 import { registerAllTools } from "../orchestrator/tools/registry/tool-registration";
 import { LspManager } from "../lsp/manager";
 import { initSandbox } from "../orchestrator/sandbox/sandbox-exec";
@@ -150,6 +151,10 @@ import { createExamDraftStore } from "../learn/exam-draft";
 import { registerExamPaperIpc } from "../learn/exam-paper-ipc";
 import { registerLearnExamPageIpc } from "../learn/exam-page-ipc";
 import { registerLearnExamTools } from "../orchestrator/learn-exam-tools";
+import { GmailAuthService } from "../email/gmail-auth-service";
+import { GmailService } from "../email/gmail-service";
+import { registerGmailIpc } from "../email/gmail-ipc";
+import { MailAttachmentStore } from "../email/mail-attachment-store";
 
 import { createIpcScope } from "./ipc-scope";
 import { createShutdownCoordinator } from "./shutdown";
@@ -259,10 +264,8 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
     createModelBackedConversationTranscriptCompactor({
       store: getConversationTranscriptStore(app.getPath("userData")),
       runReader: getHarnessRunStore(app.getPath("userData")),
-      loadModelSettings: () => resolveModelSettingsProfile(loadModelSettings()),
-      // 压缩阶段推给窗口：自动压缩发生在 run 开始前的主进程侧，
-      // 渲染端拿不到 AG-UI 事件，靠这条推送显示消息流尾部的呼吸提示。
-      onPhase: (phase, conversationId) => broadcastCompactionPhase(conversationId, phase),
+      // 统一向窗口推送运行前和运行中压缩的阶段及上下文占用。
+      onPhase: (phase, conversationId, usage) => broadcastCompactionPhase(conversationId, phase, usage),
     }));
   // 生命周期事件发布器：插件系统就绪前发布的事件没有监听器，直接丢弃
   const lifecyclePublisher = createLifecyclePublisher({
@@ -284,6 +287,8 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
   const readiness = createStartupReadiness();
   const activation = createWindowActivationBroker();
   const shutdown = createShutdownCoordinator({ readiness, timeoutMs: SHUTDOWN_TIMEOUT_MS });
+  shutdown.register({ id: "shell-jobs", phase: "stopLocalResources", dispose: disposeAllShellJobs });
+  shutdown.register({ id: "conversation-database", phase: "closePersistence", dispose: closeConversationDatabases });
 
   // 注入应用图标路径 getter（窗口工厂统一读取，避免循环依赖）。
   // 必须在 shell 阶段之前注入：聊天窗口壳与托盘在 shell 阶段创建时就会读取，
@@ -425,9 +430,6 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
           asrLanguage: generalSettings.asrLanguage,
         });
 
-        // Live2D 桌宠窗口发送器
-        setLive2dWindowSender((channel, payload) => shell.windowManager.sendToPetWindow(channel, payload));
-
         // Git：服务对象预创建；仓库监听只在打开仓库后启动
         // 探测结果在进程内缓存：成功过一次就不再重复探测，避免启动高峰期
         // 偶发超时导致 Git 面板误报"未检测到可用 Git"；探测失败不缓存，下次自动重试
@@ -449,6 +451,11 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
         const lsp = new LspManager({
           getServerOverrides: () => loadGeneralSettings().lspServerOverrides,
         });
+
+        // Gmail clients are lazy: service construction reads no mailbox data and starts no network request.
+        const gmailAuth = new GmailAuthService();
+        const mailAttachmentStore = new MailAttachmentStore();
+        const gmail = new GmailService(gmailAuth, { resolveAttachment: (reference) => mailAttachmentStore.resolve(reference) });
 
         // 截图：原生 helper IPC、全局热键。预热在 background 阶段执行。
         const initialSettings = loadGeneralSettings();
@@ -479,6 +486,9 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
           proactive: proactiveLifecycle,
           git,
           lsp,
+          gmailAuth,
+          gmail,
+          mailAttachmentStore,
           screenshot,
           music,
           update,
@@ -516,7 +526,7 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
       },
 
       // 工具注册：集中到一个显式入口（依赖沙箱/Git/LSP 就绪）
-      registerAllTools: (services) => registerAllTools({ lspManager: services.lsp }),
+      registerAllTools: (services) => registerAllTools({ lspManager: services.lsp, gmailService: services.gmail }),
 
       initRag: async () => {
         const modelSettings = loadModelSettings();
@@ -646,7 +656,7 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
           || (pluginManager?.isRunning(task.ownerPluginId) ?? false),
       }),
 
-      registerCoreIpc: ({ ipc, runtime, services }) => {
+      registerCoreIpc: async ({ ipc, runtime, services }) => {
         const transcriptCompactor = getTranscriptCompactor();
         // 设置变更反应：窗口/托盘/截图热键/主动服务联动
         onGeneralSettingsChanged((before, after) =>
@@ -674,6 +684,7 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
           syncPlaywrightMcp,
           syncFilesystemMcp,
         });
+        registerGmailIpc({ ipc, auth: services.gmailAuth, service: services.gmail, attachmentStore: services.mailAttachmentStore });
 
         // 项目公告：渲染端首次打开时拉一次，之后主进程每 6 小时对一次版本
         registerNewsIpc(ipc);
@@ -689,12 +700,12 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
         registerTtsIpc({ ipc, ttsSessionService: services.ttsSession });
 
         // 聊天会话存储 IPC（chats-store.initialize 建好 cyrene-chats 目录并加载 index）
-        registerChatsIpc(ipc, {
+        await registerChatsIpc(ipc, {
           llmClient: services.llm,
           isPrimaryModelBusy: hasActiveConversationRun,
           transcriptCompactor,
         });
-        registerMomentsIpc(ipc);
+        await registerMomentsIpc(ipc);
         registerCodeGitIpc({ ipc, service: services.git });
         // 会话工作区只读文件（右侧面板文件树 / 预览）
         registerWorkspaceFilesIpc(ipc);

@@ -7,7 +7,7 @@ const { getById, checkPermission, createTaskExecutor, createTaskCloser, isPlanRe
   createTaskCloser: vi.fn(() => vi.fn()),
   isPlanReadOnly: vi.fn(),
   taskStore: vi.fn(),
-  getTaskSessionStore: vi.fn(() => ({ listOpenCompanions: vi.fn(() => []) })),
+  getTaskSessionStore: vi.fn(() => ({ listOpenCompanions: vi.fn(async () => []) })),
   toolOutputStore: vi.fn(),
 }));
 
@@ -28,7 +28,7 @@ vi.mock("electron", () => ({ app: { getPath: vi.fn(() => "C:\\cyrene-runtime") }
 import { prepareToolRuntime } from "./tool-runtime";
 
 /** 构造一次 code 模式 run 的 tool runtime（Plan Guard 生效条件：code/chat + isPlanReadOnly）。 */
-function makeRuntime(permissionMode: "prompt" | "allow_all") {
+async function makeRuntime(permissionMode: "prompt" | "allow_all") {
   return prepareToolRuntime({
     options: {
       conversationId: "thread-1",
@@ -70,7 +70,7 @@ describe("harness tool runtime", () => {
   it("uses one signal for context, permission, and task execution", async () => {
     const controller = new AbortController();
     const clarify = vi.fn(async () => ({ answers: [] }));
-    const runtime = prepareToolRuntime({
+    const runtime = await prepareToolRuntime({
       options: {
         conversationId: "thread-1",
         conversationMode: "work",
@@ -115,7 +115,7 @@ describe("harness tool runtime", () => {
         description: "typecheck/test/build/lint",
         effectKind: "verification",
       });
-      const runtime = makeRuntime("allow_all");
+      const runtime = await makeRuntime("allow_all");
 
       expect(await runtime.checkPermission("run_verification", { kind: "test" })).toBe(false);
       expect(checkPermission).not.toHaveBeenCalled();
@@ -128,7 +128,7 @@ describe("harness tool runtime", () => {
         description: "write user memory",
         effectKind: "mutation",
       });
-      const runtime = makeRuntime("prompt");
+      const runtime = await makeRuntime("prompt");
 
       expect(await runtime.checkPermission("write_memory", { layer: "L2", content: "x" })).toBe(false);
       expect(checkPermission).not.toHaveBeenCalled();
@@ -141,7 +141,7 @@ describe("harness tool runtime", () => {
         description: "run shell command",
         effectKind: "unknown",
       });
-      const runtime = makeRuntime("allow_all");
+      const runtime = await makeRuntime("allow_all");
 
       expect(await runtime.checkPermission("run_shell", { command: "git status" })).toBe(false);
       expect(checkPermission).not.toHaveBeenCalled();
@@ -149,7 +149,7 @@ describe("harness tool runtime", () => {
 
     it("未注册工具（未声明 effectKind 的 MCP/插件工具）被拒——fail-closed", async () => {
       getById.mockReturnValue(undefined);
-      const runtime = makeRuntime("prompt");
+      const runtime = await makeRuntime("prompt");
 
       expect(await runtime.checkPermission("mcp-test-unknown", {})).toBe(false);
       expect(checkPermission).not.toHaveBeenCalled();
@@ -163,7 +163,7 @@ describe("harness tool runtime", () => {
         effectKind: "read",
       });
       checkPermission.mockResolvedValue({ allowed: false });
-      const runtime = makeRuntime("prompt");
+      const runtime = await makeRuntime("prompt");
 
       expect(await runtime.checkPermission("read_file", { path: "x" })).toBe(false);
       expect(checkPermission).toHaveBeenCalledTimes(1);
@@ -176,7 +176,7 @@ describe("harness tool runtime", () => {
         description: "search the web",
         effectKind: "read",
       });
-      const runtime = makeRuntime("allow_all");
+      const runtime = await makeRuntime("allow_all");
 
       expect(await runtime.checkPermission("web_search", { query: "x" })).toBe(true);
       expect(checkPermission).not.toHaveBeenCalled();
@@ -190,7 +190,7 @@ describe("harness tool runtime", () => {
         description: "typecheck/test/build/lint",
         effectKind: "verification",
       });
-      const runtime = makeRuntime("allow_all");
+      const runtime = await makeRuntime("allow_all");
 
       expect(await runtime.checkPermission("run_verification", { kind: "test" })).toBe(true);
       expect(checkPermission).not.toHaveBeenCalled();
