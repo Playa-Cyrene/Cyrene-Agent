@@ -127,6 +127,7 @@ export function AppearanceSettingsPage({ section, onSelectSection, onBackToWorks
   const contentRef = useRef<HTMLElement | null>(null);
   // 每次选择都发出新请求；同页重复搜索也要清除局部筛选，不能靠重挂载丢弃面板状态。
   const [searchReveal, setSearchReveal] = useState({ plugin: 0, tool: 0, skill: 0 });
+  const [pluginSearchView, setPluginSearchView] = useState<"installed" | "market">("installed");
 
   useEffect(() => {
     let disposed = false;
@@ -261,7 +262,10 @@ export function AppearanceSettingsPage({ section, onSelectSection, onBackToWorks
         <SettingsSearch section={section} onSelectSection={onSelectSection} getContentRoot={() => contentRef.current}
           onRevealEntry={(entry) => {
             const kind = entry.kind;
-            if (kind !== "setting") setSearchReveal((current) => ({ ...current, [kind]: current[kind] + 1 }));
+            if (entry.section === "plugins") {
+              setPluginSearchView(entry.settingKey === "pluginPanel.market.title" ? "market" : "installed");
+              setSearchReveal((current) => ({ ...current, plugin: current.plugin + 1 }));
+            } else if (kind !== "setting") setSearchReveal((current) => ({ ...current, [kind]: current[kind] + 1 }));
           }} />
         <nav className="cy-settings-sidebar__nav" aria-label={t("settingsPage.navigation")}>
         {SETTINGS_NAV_GROUPS.map((group, groupIndex) => (
@@ -281,7 +285,7 @@ export function AppearanceSettingsPage({ section, onSelectSection, onBackToWorks
 
       <main className="cy-workspace is-empty cy-settings-content" ref={contentRef}>
         <div className={`cy-settings-content__inner${section === "knowledge" ? " is-knowledge-settings" : ""}`}>
-          {section === "email" ? <EmailSettingsPanel /> : section === "browser" ? <BrowserControlSettingsPanel /> : section === "preferences" ? <PreferencesSettingsPanel /> : section === "models" ? <ModelSettingsPanel /> : section === "usage" ? <UsageStatsPanel /> : section === "general" ? <GeneralSettingsPanel /> : section === "toolToggle" ? <ToolToggleSettingsPanel searchRevealRequest={searchReveal.tool} /> : section === "tools" ? <ToolSettingsPanel musicSettingsNavigation={musicSettingsNavigation} /> : section === "subagents" ? <SubagentSettingsPanel /> : section === "plugins" ? <PluginSettingsPanel searchRevealRequest={searchReveal.plugin} /> : section === "memory" ? <MemorySettingsPanel /> : section === "knowledge" ? <KnowledgeBaseSettingsPanel /> : section === "cyrene" ? <CyreneSettingsPanel /> : section === "skill" ? <SkillSettingsPanel searchRevealRequest={searchReveal.skill} /> : section === "asr" ? <AsrSettingsPanel /> : section === "tts" ? <TtsSettingsPanel /> : section === "mcp" ? <McpSettingsPanel /> : section === "channels" ? <ChannelsSettingsPanel /> : section === "disclaimer" ? <DisclaimerSettingsPanel /> : <>
+          {section === "email" ? <EmailSettingsPanel /> : section === "browser" ? <BrowserControlSettingsPanel /> : section === "preferences" ? <PreferencesSettingsPanel /> : section === "models" ? <ModelSettingsPanel /> : section === "usage" ? <UsageStatsPanel /> : section === "general" ? <GeneralSettingsPanel /> : section === "toolToggle" ? <ToolToggleSettingsPanel searchRevealRequest={searchReveal.tool} /> : section === "tools" ? <ToolSettingsPanel musicSettingsNavigation={musicSettingsNavigation} /> : section === "subagents" ? <SubagentSettingsPanel /> : section === "plugins" ? <PluginSettingsPanel searchRevealRequest={searchReveal.plugin} searchRevealView={pluginSearchView} /> : section === "memory" ? <MemorySettingsPanel /> : section === "knowledge" ? <KnowledgeBaseSettingsPanel /> : section === "cyrene" ? <CyreneSettingsPanel /> : section === "skill" ? <SkillSettingsPanel searchRevealRequest={searchReveal.skill} /> : section === "asr" ? <AsrSettingsPanel /> : section === "tts" ? <TtsSettingsPanel /> : section === "mcp" ? <McpSettingsPanel /> : section === "channels" ? <ChannelsSettingsPanel /> : section === "disclaimer" ? <DisclaimerSettingsPanel /> : <>
             <h1>{t("settingsPage.appearance")}</h1>
             <p className="cy-settings-intro">{t("settingsPage.description")}</p>
 

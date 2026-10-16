@@ -3,8 +3,8 @@
  *
  * 设计约束（改动前请先读）：
  * - 条目必须能唯一推出归属分区，否则宁可不收——跳错页比搜不到更糟。
- *   因此只有 SECTION_BY_NAMESPACE 里显式登记的命名空间，以及外观页的扁平 key 前缀
- *   （APPEARANCE_KEY_PREFIXES）会被收录，其余顶层杂项一律跳过。
+ *   因此只收录 SECTION_BY_NAMESPACE 的命名空间、外观页扁平 key 前缀
+ *   （APPEARANCE_KEY_PREFIXES），以及 resolveSection 精确登记的迁移项和导航标题。
  * - i18n 里混着大量瞬时状态文案（已保存/失败/提示…），它们不会出现在可跳转的
  *   DOM 标签上，收进来只会制造垃圾结果，所以按 key 末段后缀剔除。
  * - 含 {{插值}} 的文案也剔除：索引没有运行时参数，无法可靠还原显示文本。
@@ -60,8 +60,6 @@ const SECTION_BY_NAMESPACE: ReadonlyArray<readonly [string, SettingsSection]> = 
   ["settingsPage.toolToggle.", "toolToggle"],
   ["settingsPage.tools.", "tools"],
   ["settingsPage.subagents.", "subagents"],
-  ["settingsPage.plugins.", "plugins"],
-  ["pluginPanel.", "plugins"],
   ["settingsPage.mcp.", "mcp"],
   ["settingsPage.memory.", "memory"],
   ["settingsPage.knowledgeBase.", "knowledge"],
@@ -132,6 +130,10 @@ const EMAIL_TOOL_KEYS = new Set([
 ].map((key) => `settingsPage.tools.${key}`));
 
 function resolveSection(fullKey: string): SettingsSection | null {
+  // 状态资源树不是设置分组；按路径段排除，避免误伤 stateStyle、statusBar 等真实设置名。
+  if (/(^|\.)(status|state)\./i.test(fullKey)) return null;
+  // 插件页只有两个可导航的标题；卡片动作、市场安装提示和旧 settingsPage.plugins 文案不作设置。
+  if (fullKey === "pluginPanel.title" || fullKey === "pluginPanel.market.title") return "plugins";
   if (EMAIL_TOOL_KEYS.has(fullKey)) return "email";
   // 旧邮件分组的标题和说明已被 emailSettings.smtpTitle / smtpDescription 替代，不再生成幽灵结果。
   if (fullKey === "settingsPage.tools.email" || fullKey === "settingsPage.tools.emailDescription") return null;

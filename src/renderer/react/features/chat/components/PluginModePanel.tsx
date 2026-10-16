@@ -20,6 +20,7 @@ import "./PluginModePanel.css";
 interface PluginModePanelProps {
   api?: PluginManagementApi;
   searchRevealRequest?: number;
+  searchRevealView?: PanelView;
 }
 
 // Cyrene 官方插件收录仓库（GitHub 为主，Gitee 为国内镜像），面板内展示并可在系统浏览器打开
@@ -95,7 +96,7 @@ export function resolveMarketAction(
   return { kind: "replace" };
 }
 
-export function PluginModePanel({ api: providedApi, searchRevealRequest = 0 }: PluginModePanelProps) {
+export function PluginModePanel({ api: providedApi, searchRevealRequest = 0, searchRevealView = "installed" }: PluginModePanelProps) {
   const { t } = useTranslation();
   // 统一反馈入口：删除插件走危险确认
   const feedback = useFeedback();
@@ -116,13 +117,13 @@ export function PluginModePanel({ api: providedApi, searchRevealRequest = 0 }: P
   const detailsRequestSeq = useRef(0);
 
   useEffect(() => {
-    // 搜索目录来自已安装插件；退出市场及详情并清空筛选，保留插件运行状态和进行中的操作。
+    // 插件身份定位走已安装视图，市场标题走市场视图；只恢复浏览状态，不触发安装或开关。
     if (searchRevealRequest > 0) {
-      setView("installed");
+      setView(searchRevealView);
       setFilter("");
       setDetailsPlugin(null);
     }
-  }, [searchRevealRequest]);
+  }, [searchRevealRequest, searchRevealView]);
 
   const reload = useCallback(async () => {
     if (!api) throw new Error(t("pluginPanel.apiUnavailable"));
@@ -339,7 +340,7 @@ export function PluginModePanel({ api: providedApi, searchRevealRequest = 0 }: P
       <header className="plugin-panel__header">
         <div className="plugin-panel__heading">
           <img className="plugin-panel__heading-icon" src={pluginIconUrl} alt="" />
-          <h1 className="plugin-panel__title">{inMarket ? t("pluginPanel.market.title") : t("pluginPanel.title")}</h1>
+          <h1 className="plugin-panel__title" data-settings-search-key={inMarket ? "pluginPanel.market.title" : "pluginPanel.title"}>{inMarket ? t("pluginPanel.market.title") : t("pluginPanel.title")}</h1>
           <p className="plugin-panel__subtitle">{inMarket ? t("pluginPanel.market.subtitle") : t("pluginPanel.subtitle")}</p>
           <p className="plugin-panel__subtitle plugin-panel__registry">
             {t("pluginPanel.registryPrefix")}

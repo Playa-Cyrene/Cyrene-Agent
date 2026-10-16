@@ -287,6 +287,8 @@ export function SettingsSearch({ section, onSelectSection, getContentRoot, onRev
 
   function leave() {
     if (!active) return;
+    // 先移回仍可见的输入框，再隐藏关闭按钮；此时 onFocus 仍看到搜索态，不会重新展开。
+    inputRef.current?.focus({ preventScroll: true });
     topBeforeLayout.current = boxRef.current?.getBoundingClientRect().top ?? null;
     setActive(false);
     setQuery("");

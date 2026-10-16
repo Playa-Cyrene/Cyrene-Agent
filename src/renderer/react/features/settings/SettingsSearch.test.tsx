@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import i18next from 'i18next';
 import { SettingsSearch } from './SettingsSearch';
+import { AppearanceSettingsPage, type SettingsSection } from './AppearanceSettingsPage';
 import { SETTINGS_NAV_ITEMS } from './settingsNavItems';
 import { buildSettingEntries, buildCatalogEntries, buildPluginEntries, searchSettings } from './settingsSearchIndex';
 import zh from '../../i18n/zh-CN.json';
@@ -21,6 +22,7 @@ vi.mock('@lobehub/icons',()=>{
  const Icon=Object.assign(()=>null,{Color:()=>null});
  return Object.fromEntries(['MCP','Anthropic','DeepSeek','Doubao','Gemini','Grok','Minimax','Kimi','OpenAI','Qwen','XiaomiMiMo','Zhipu'].map(name=>[name,Icon]));
 });
+vi.mock('@lobehub/ui/icons',()=>({Lark:()=>null}));
 // 挂载实际产品组件，IPC 使用隔离数据；模拟时钟和几何只验证行为，不代表像素验收。
 let host: HTMLDivElement;
 let root: Root;
@@ -332,5 +334,44 @@ describe('PR second review regressions',()=>{
   expect(options[1].tabIndex).toBe(-1);expect(document.activeElement).toBe(input());
   await fill('不存在的独有结果');expect(input().hasAttribute('aria-activedescendant')).toBe(false);expect(input().hasAttribute('aria-controls')).toBe(false);expect(host.querySelector('[role="status"]')?.textContent).toBe(zh.settingsPage.search.empty);
   await key('Escape');expect(input().getAttribute('aria-expanded')).toBe('false');expect(host.querySelector('[role="listbox"]')).toBeNull();
+ });
+});
+
+describe('PR third review regressions',()=>{
+ it.each([['zh-CN',zh],['en',en]])('R30 keeps navigable plugin headings but excludes actions and status trees in %s',(_locale,bundle)=>{
+  const entries=buildSettingEntries(bundle);
+  expect(entries.filter(x=>x.settingKey?.startsWith('pluginPanel.')).map(x=>x.settingKey).sort()).toEqual(['pluginPanel.market.title','pluginPanel.title']);
+  expect(entries.some(x=>/(^|\.)(status|state)\./i.test(x.settingKey??''))).toBe(false);
+  for(const key of ['pluginPanel.status.running','pluginPanel.status.disabled','settingsPage.emailSettings.state.connected']){
+   expect(entries.some(x=>x.settingKey===key)).toBe(false);
+  }
+  expect(entries.some(x=>x.settingKey==='settingsPage.emailSettings.clientId')).toBe(true);
+ });
+ it('R31 structural status filtering retains genuine settings with similar names',()=>{
+  const entries=buildSettingEntries({settingsPage:{general:{statusBar:'状态栏设置',stateStyle:'状态显示风格',state:{connected:'已连接',connectedDescription:'状态说明'},status:{running:'正在运行'}}}});
+  expect(entries.map(x=>x.settingKey).sort()).toEqual(['settingsPage.general.stateStyle','settingsPage.general.statusBar']);
+ });
+ it('R32 the real settings page reveals both plugin subviews and then an installed card',async()=>{
+  const plugin={id:'view-plugin',name:'切换视图插件',version:'1.0.0',description:'',author:'test',status:'disabled',enabled:false,source:'user',configuredEnabled:false};
+  w.plugins.list=async()=>({plugins:[plugin],issues:[]});w.plugins.marketList=async()=>({ok:true,plugins:[],sources:[]});
+  function Page(){const [section,setSection]=useState<SettingsSection>('appearance');return <AppProviders><AppearanceSettingsPage section={section} onSelectSection={setSection} onBackToWorkspace={()=>{}}/></AppProviders>}
+  await act(async()=>root.render(<Page/>));
+  for(const text of [zh.pluginPanel.market.title,zh.pluginPanel.title,zh.pluginPanel.market.title]){
+   await fill(text);await pick(text);await advance(1);await advance(350);
+   const heading=host.querySelector('.plugin-panel__title');expect(heading?.textContent).toBe(text);expect(heading?.classList.contains('cy-settings-search-flash')).toBe(true);
+  }
+  await fill('view-plugin');await pick('切换视图插件');await advance(1);await advance(350);
+  expect(host.querySelector('.plugin-panel__title')?.textContent).toBe(zh.pluginPanel.title);
+  expect(host.querySelector('.plugin-card-ui')?.classList.contains('cy-settings-search-flash')).toBe(true);
+  expect(host.querySelector('.plugin-card-ui')?.classList.contains('is-disabled')).toBe(true);
+ });
+ it('R33 activating the focused close button restores visible focus without reopening search',async()=>{
+  await mount();await fill('超时');const close=host.querySelector<HTMLButtonElement>('.cy-settings-search__close')!;
+  await act(async()=>close.focus());expect(document.activeElement).toBe(close);
+  await act(async()=>close.click());
+  expect(isActive()).toBe(false);expect(input().value).toBe('');expect(document.activeElement).toBe(input());
+  expect(close.getAttribute('aria-hidden')).toBe('true');expect(close.tabIndex).toBe(-1);
+  expect(input().getAttribute('aria-expanded')).toBe('false');expect(input().hasAttribute('aria-activedescendant')).toBe(false);
+  await fill('置顶');expect(isActive()).toBe(true);expect(labels()).toContain('保持置顶');
  });
 });
