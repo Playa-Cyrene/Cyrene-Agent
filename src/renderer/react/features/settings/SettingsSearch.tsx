@@ -26,6 +26,10 @@ const FLASH_TIMES = 3;
 const FLASH_DARK_MS = 400;
 const FLASH_BACK_MS = 200;
 
+function prefersReducedMotion(): boolean {
+  return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+}
+
 const EASE = "cubic-bezier(.4,0,.2,1)";
 
 function easeInOutCubic(t: number): number {
@@ -83,7 +87,7 @@ const ROW_CLIMB_LIMIT = 5;
 
 /** 优先最近的设置行，避免连同外层卡片里的其他设置一起闪烁；旧面板再回退到容器或标题。 */
 function rowOf(title: HTMLElement, root: HTMLElement): HTMLElement {
-  const row = title.closest<HTMLElement>(".cy-settings-row, .cy-model-field, .tool-card, .skill-card, .plugin-card-ui, label");
+  const row = title.closest<HTMLElement>(".cy-settings-row, .cy-model-field, .tool-card, .skill-card, .plugin-card-ui, .tool-panel__master, label");
   if (row && row !== root && root.contains(row)) return row;
   let node: HTMLElement | null = title.parentElement;
   let outermost: HTMLElement | null = null;
@@ -118,6 +122,11 @@ function scrollIntoCenter(container: HTMLElement | null, element: HTMLElement, d
     : document.documentElement.scrollHeight - window.innerHeight;
   const from = container ? container.scrollTop : window.scrollY;
   const to = Math.max(0, Math.min(maxScroll, from + desired));
+  if (duration === 0) {
+    if (container) container.scrollTop = to;
+    else window.scrollTo(0, to);
+    return () => {};
+  }
   if (Math.abs(to - from) < 2) return () => {};
   let frame = 0;
   const start = performance.now();
@@ -166,6 +175,8 @@ export function SettingsSearch({ section, onSelectSection, getContentRoot }: Set
   /** 插件 / 工具 / 技能：宿主运行时目录，挂载与重新进入搜索时独立刷新。 */
   const [runtime, setRuntime] = useState<SettingsSearchEntry[]>([]);
   const boxRef = useRef<HTMLDivElement | null>(null);
+  const resultsRef = useRef<HTMLDivElement>(null);
+  const keyboardSelectionRef = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const topBeforeLayout = useRef<number | null>(null);
   const navigationAbortRef = useRef<(() => void) | null>(null);
@@ -200,6 +211,21 @@ export function SettingsSearch({ section, onSelectSection, getContentRoot }: Set
   useEffect(() => setActiveIndex(0), [ordered]);
   useEffect(() => () => navigationAbortRef.current?.(), []);
 
+  useLayoutEffect(() => {
+    if (!keyboardSelectionRef.current) return;
+    keyboardSelectionRef.current = false;
+    const container = resultsRef.current;
+    const item = container?.querySelector<HTMLElement>(".cy-settings-search__item.is-active");
+    if (!container || !item) return;
+    // 只调整结果列表，保留输入焦点，避免 scrollIntoView 连带滚动整个设置页。
+    const viewport = container.getBoundingClientRect();
+    const bounds = item.getBoundingClientRect();
+    const top = viewport.top + container.clientTop;
+    const bottom = top + container.clientHeight;
+    if (bounds.top < top) container.scrollTop += bounds.top - top;
+    else if (bounds.bottom > bottom) container.scrollTop += bounds.bottom - bottom;
+  }, [activeIndex]);
+
   useEffect(() => {
     let disposed = false;
     const update = (kind: SettingsSearchEntry["kind"], entries: SettingsSearchEntry[]) => {
@@ -224,6 +250,12 @@ export function SettingsSearch({ section, onSelectSection, getContentRoot }: Set
     const current = box.getBoundingClientRect().top;
     const previous = topBeforeLayout.current;
     topBeforeLayout.current = current;
+    // CSS 媒体查询无法覆盖内联 FLIP 过渡，脚本必须同样遵循系统偏好。
+    if (prefersReducedMotion()) {
+      box.style.transition = "none";
+      box.style.transform = "none";
+      return;
+    }
     if (previous === null) return;
     const delta = previous - current;
     if (Math.abs(delta) < 1) return;
@@ -295,8 +327,9 @@ export function SettingsSearch({ section, onSelectSection, getContentRoot }: Set
       found = true;
       observer?.disconnect();
       row = rowOf(target, root);
-      cancelScroll = scrollIntoCenter(scrollContainerOf(row) ?? scrollContainerOf(target), row, SCROLL_MS);
-      later(flash, SCROLL_MS + 20);
+      const duration = prefersReducedMotion() ? 0 : SCROLL_MS;
+      cancelScroll = scrollIntoCenter(scrollContainerOf(row) ?? scrollContainerOf(target), row, duration);
+      later(flash, duration + 20);
     };
     // 在 React 提交跳页后开始观察；观察最近的内容根，根尚未挂载时暂借 body。
     later(() => {
@@ -320,6 +353,7 @@ export function SettingsSearch({ section, onSelectSection, getContentRoot }: Set
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       if (!ordered.length) return;
       event.preventDefault();
+      keyboardSelectionRef.current = true;
       const step = event.key === "ArrowDown" ? 1 : -1;
       setActiveIndex((current) => (current + step + ordered.length) % ordered.length);
       return;
@@ -389,7 +423,7 @@ export function SettingsSearch({ section, onSelectSection, getContentRoot }: Set
         </button>
       </div>
       {active && query.trim() && (
-        <div className="cy-settings-search__results">
+        <div className="cy-settings-search__results" ref={resultsRef}>
           {groups.length === 0 ? (
             <div className="cy-settings-search__empty">{t("settingsPage.search.empty")}</div>
           ) : groups.map((group) => (

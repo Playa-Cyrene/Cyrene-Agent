@@ -261,7 +261,7 @@ export function ToolToggleSettingsPanel() {
         {/* Chat 工具增强总开关：打开后才会出现 Chat 标签页 */}
         <div className="tool-panel__master">
           <div className="tool-panel__master-text">
-            <strong>{t("toolPanel.chatEnhanceTitle")}</strong>
+            <strong data-settings-search-key="toolPanel.chatEnhanceTitle">{t("toolPanel.chatEnhanceTitle")}</strong>
             <span>{t("toolPanel.chatEnhanceDesc")}</span>
           </div>
           <button

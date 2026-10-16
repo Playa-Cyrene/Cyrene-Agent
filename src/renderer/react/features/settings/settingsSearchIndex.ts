@@ -126,6 +126,8 @@ function flatten(value: unknown, prefix: string, out: Array<[string, string]>): 
 }
 
 function resolveSection(fullKey: string): SettingsSection | null {
+  // toolPanel 还含模式、状态等文案，只登记实际可跳转的总开关及其说明。
+  if (fullKey === "toolPanel.chatEnhanceTitle" || fullKey === "toolPanel.chatEnhanceDesc") return "toolToggle";
   for (const [prefix, section] of SECTION_BY_NAMESPACE) {
     if (fullKey.startsWith(prefix)) return section;
   }
@@ -154,7 +156,7 @@ export function buildSettingEntries(bundle: unknown): SettingsSearchEntry[] {
     const section = resolveSection(key);
     if (!section) continue;
     const last = key.slice(key.lastIndexOf(".") + 1);
-    const suffix = last.match(/(Description|Hint)$/i)?.[0];
+    const suffix = last.match(/(Description|Hint|Desc)$/i)?.[0];
     if (suffix) {
       if (text.trim() && !/\{\{/.test(text)) {
         const titleKey = key.slice(0, -suffix.length);
@@ -171,7 +173,8 @@ export function buildSettingEntries(bundle: unknown): SettingsSearchEntry[] {
 
   const entries: SettingsSearchEntry[] = [];
   for (const { entry, key } of titles.values()) {
-    const detail = details.get(key);
+    // 兼容 foo / fooDescription 与 fooTitle / fooDescription；直接同名关联优先，避免说明串到另一设置。
+    const detail = details.get(key) ?? (key.endsWith("Title") && !titles.has(key.slice(0, -5)) ? details.get(key.slice(0, -5)) : undefined);
     if (detail) entry.detail = detail;
     entries.push(entry);
   }
@@ -200,9 +203,9 @@ export function buildCatalogEntries(
   kind: "skill" | "tool",
   section: SettingsSection,
 ): SettingsSearchEntry[] {
-  // 工具面板不渲染全局停用项；不制造没有卡片可定位的结果。技能仍可显示停用项。
+  // 工具面板不渲染全局停用项；不制造没有卡片可定位的结果。技能面板同样隐藏全局停用项；模式开关关闭与全局停用不同。
   return items
-    .filter((item) => typeof item?.id === "string" && typeof item?.name === "string" && !item.deprecated && (kind !== "tool" || item.enabled !== false))
+    .filter((item) => typeof item?.id === "string" && typeof item?.name === "string" && !item.deprecated && item.enabled !== false)
     .map((item) => ({
       kind,
       section,

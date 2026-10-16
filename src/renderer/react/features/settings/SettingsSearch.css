@@ -216,6 +216,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .cy-settings-search__bar,
   .cy-settings-search__close,
   .cy-settings-search-flash-host,
   .cy-settings-search-flash-host :not(img, canvas, video, picture, iframe) {

@@ -197,3 +197,38 @@ describe('Navigation: preserve upstream sections',()=>{
   expect(searchSettings(entries,zh.settingsPage.emailSettings.title).some(entry=>entry.section==='email')).toBe(true);
  });
 });
+
+describe('PR review regressions',()=>{
+ it('R15 associates real TTS descriptions with sibling Title labels',()=>{
+  const hits=searchSettings(buildSettingEntries(zh),zh.settingsPage.tts.autoReadDescription);
+  expect(hits.some(entry=>entry.settingKey==='settingsPage.tts.autoReadTitle'&&entry.label===zh.settingsPage.tts.autoReadTitle)).toBe(true);
+ });
+ it('R16 description association is order independent and prefers the exact base',()=>{
+  const entries=buildSettingEntries({settingsPage:{general:{fooDescription:'第一说明',fooHint:'第二说明',fooTitle:'实际标题',barTitle:'其他标题',bar:'直接标题',barDescription:'只给直接标题'}}});
+  expect(searchSettings(entries,'第一说明')[0].settingKey).toBe('settingsPage.general.fooTitle');
+  expect(searchSettings(entries,'第二说明')[0].settingKey).toBe('settingsPage.general.fooTitle');
+  expect(searchSettings(entries,'只给直接标题').map(x=>x.settingKey)).toEqual(['settingsPage.general.bar']);
+ });
+ it('R17 globally disabled skills do not appear by name, ID or description',async()=>{
+  w.settings.getSkillCatalog=async()=>[{id:'disabled-skill',name:'全局停用技能',description:'独有停用说明',enabled:false},{id:'active-skill',name:'可用技能',enabled:true}];
+  await mount();for(const text of ['disabled-skill','全局停用技能','独有停用说明']){await fill(text);expect(labels()).toEqual([])}await fill('active-skill');expect(labels()).toEqual(['可用技能']);
+ });
+ it('R18 indexes the real tool master switch and its description',async()=>{
+  await mount(<ToolToggleSettingsPanel/>,'toolToggle');await fill(zh.toolPanel.chatEnhanceDesc);expect(labels()).toContain(zh.toolPanel.chatEnhanceTitle);
+  await pick(zh.toolPanel.chatEnhanceTitle);await advance(350);expect(host.querySelector('[data-settings-search-key="toolPanel.chatEnhanceTitle"]')?.closest('.tool-panel__master')?.classList.contains('cy-settings-search-flash')).toBe(true);
+ });
+ it('R19 keyboard wrapping scrolls only the results viewport and keeps input focus',async()=>{
+  w.settings.getToolCatalog=async()=>Array.from({length:12},(_,i)=>tool('keyboard-'+i,'键盘工具'+i));await mount();await fill('键盘工具');
+  const list=host.querySelector<HTMLElement>('.cy-settings-search__results')!;Object.defineProperty(list,'clientHeight',{value:168});
+  list.getBoundingClientRect=()=>({top:10,bottom:178,height:168,left:0,right:100,width:100,x:0,y:10,toJSON(){}});
+  const items=[...list.querySelectorAll<HTMLElement>('.cy-settings-search__item')];items.forEach((item,i)=>{item.getBoundingClientRect=()=>({top:10+i*56-list.scrollTop,bottom:10+(i+1)*56-list.scrollTop,height:56,left:0,right:100,width:100,x:0,y:0,toJSON(){}})});
+  await key('ArrowUp');expect(items.at(-1)?.classList.contains('is-active')).toBe(true);expect(list.scrollTop).toBe(504);expect(document.activeElement).toBe(input());
+  await key('ArrowDown');expect(list.scrollTop).toBe(0);expect(items[0].classList.contains('is-active')).toBe(true);expect(w.scrollTo).not.toHaveBeenCalled();
+ });
+ it('R20 reduced motion skips scripted FLIP and rAF scrolling',async()=>{
+  await mount(row('保持置顶'));w.matchMedia=()=>({matches:true});
+  const bar=host.querySelector<HTMLElement>('.cy-settings-search__bar')!;let calls=0;bar.getBoundingClientRect=()=>({top:++calls===1?100:0,bottom:136,height:36,left:0,right:100,width:100,x:0,y:0,toJSON(){}});
+  const main=host.querySelector('main')!;const target=host.querySelector<HTMLElement>('#target')!;Object.defineProperties(main,{clientHeight:{value:400},scrollHeight:{value:1000}});main.style.overflowY='auto';Object.defineProperty(target,'offsetHeight',{value:40});target.getBoundingClientRect=()=>({top:1000,bottom:1040,height:40,left:0,right:100,width:100,x:0,y:1000,toJSON(){}});
+  const raf=vi.spyOn(window,'requestAnimationFrame');await fill('保持置顶');expect(bar.style.transition).toBe('none');expect(bar.style.transform).toBe('none');await pick('保持置顶');await advance(1);expect(main.scrollTop).toBe(600);expect(raf).not.toHaveBeenCalled();await advance(350);expect(main.scrollTop).toBe(600);
+ });
+});
