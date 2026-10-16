@@ -20,6 +20,36 @@ const labels = new Set(entries.map((entry) => entry.label));
 const find = (label: string) => entries.find((entry) => entry.label === label);
 
 describe("设置搜索索引", () => {
+  it.each([['zh-CN', zhCN], ['en', en], ['ja-JP', ja]])("%s 音色描述是可检索字段标签，不是其他字段的说明", (_locale, resource) => {
+    const indexed = buildSettingEntries(resource);
+    const label = resource.settingsPage.tts.voiceDescription;
+    const hits = searchSettings(indexed, label);
+    expect(hits.some(entry => entry.settingKey === 'settingsPage.tts.voiceDescription' && entry.label === label && entry.section === 'tts')).toBe(true);
+    expect(indexed.filter(entry => entry.detail?.includes(label))).toEqual([]);
+  });
+
+  it.each([['zh-CN', zhCN], ['en', en], ['ja-JP', ja]])("%s 页面介绍关联同层 title，不能成为独立结果", (_locale, resource) => {
+    const indexed = buildSettingEntries(resource);
+    for (const page of ['general', 'knowledgeBase', 'mcp', 'tts'] as const) {
+      const key = `settingsPage.${page}.title`;
+      const intro = resource.settingsPage[page].description;
+      expect(indexed.find(entry => entry.settingKey === key)?.detail, key).toContain(intro);
+      expect(searchSettings(indexed, intro).some(entry => entry.settingKey === key), key).toBe(true);
+      expect(indexed.some(entry => entry.settingKey === `settingsPage.${page}.description`)).toBe(false);
+    }
+  });
+
+  it("同层说明关联不依赖资源顺序，不借用父级或邻页标题", () => {
+    const indexed = buildSettingEntries({settingsPage: {
+      general: {description: '先出现的页面介绍', title: '页面标题', nested: {description: '无标题的孤立介绍'}},
+      tts: {voice: '旧音色标签', voiceDescription: '音色描述字段', title: '语音页面', description: '后出现的语音介绍'},
+    }});
+    expect(searchSettings(indexed, '先出现的页面介绍').map(entry => entry.label)).toEqual(['页面标题']);
+    expect(searchSettings(indexed, '后出现的语音介绍').map(entry => entry.label)).toEqual(['语音页面']);
+    expect(searchSettings(indexed, '无标题的孤立介绍')).toEqual([]);
+    expect(searchSettings(indexed, '音色描述字段').map(entry => entry.label)).toEqual(['音色描述字段']);
+  });
+
   it.each([['zh-CN', zhCN], ['en', en], ['ja-JP', ja]])("%s 不收录 API Key 字段及其说明", (_locale, resource) => {
     const indexed = buildSettingEntries(resource);
     const excluded = ['settingsPage.modelSettings.apiKey', 'settingsPage.modelSettings.apiKeyOptional', 'settingsPage.tts.apiKey', 'settingsPage.asr.mosslandKey', 'settingsPage.asr.minimaxKey', 'settingsPage.tools.amapKey', 'settingsPage.tools.searchKey'];

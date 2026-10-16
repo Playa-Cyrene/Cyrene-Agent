@@ -263,6 +263,9 @@ const DETAIL_TITLE_KEYS: Readonly<Record<string, string>> = {
   "settingsPage.knowledgeBase.searchHint": "settingsPage.knowledgeBase.searchTitle",
 };
 
+// Description 也可能是字段名本身；只登记真实控件标签，避免把普通说明变成独立结果。
+const FIELD_LABEL_KEYS = new Set(["settingsPage.tts.voiceDescription"]);
+
 /** 由当前语言的 i18n 资源树构建设置项条目。 */
 export function buildSettingEntries(bundle: unknown): SettingsSearchEntry[] {
   const flat: Array<[string, string]> = [];
@@ -275,10 +278,11 @@ export function buildSettingEntries(bundle: unknown): SettingsSearchEntry[] {
     const section = resolveSection(key);
     if (!section) continue;
     const last = key.slice(key.lastIndexOf(".") + 1);
-    const suffix = last.match(/(Description|Hint|Desc)$/i)?.[0];
+    const suffix = FIELD_LABEL_KEYS.has(key) ? undefined : last.match(/(Description|Hint|Desc)$/i)?.[0];
     if (suffix) {
       if (text.trim() && !/\{\{/.test(text)) {
-        const titleKey = DETAIL_TITLE_KEYS[key] ?? key.slice(0, -suffix.length);
+        // 独立的 description / hint / desc 对应同层 title；不能把末尾点当成字段名前缀。
+        const titleKey = DETAIL_TITLE_KEYS[key] ?? (last === suffix ? key.slice(0, -last.length) + "title" : key.slice(0, -suffix.length));
         details.set(titleKey, [details.get(titleKey), text.trim()].filter(Boolean).join("\n"));
       }
       continue;

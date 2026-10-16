@@ -17,6 +17,8 @@ import { ToolToggleSettingsPanel } from './ToolToggleSettingsPanel';
 import { ModelSettingsPanel } from './ModelSettingsPanel';
 import { PluginModePanel } from '../chat/components/PluginModePanel';
 import { AppProviders } from '../../app/providers/AppProviders';
+import { TtsSettingsPanel } from './TtsSettingsPanel';
+import { GeneralSettingsPanel } from './GeneralSettingsPanel';
 
 // 图标入口间接导入浏览器专用 JSON；替身仅绕开无关资源，不替换待测面板。
 vi.mock('@lobehub/icons',()=>{
@@ -246,6 +248,26 @@ describe('Navigation: preserve upstream sections',()=>{
 });
 
 describe('PR review regressions',()=>{
+ it('音色描述标签可定位到真实 Mossland 字段，填写内容不参与检索',async()=>{
+  const saveSettings=vi.fn(async()=>({}));
+  w.tts={loadSettings:async()=>({ttsEngine:'mossland'}),saveSettings};
+  await mount(<AppProviders><TtsSettingsPanel/></AppProviders>,'tts');
+  const target=host.querySelector('[data-settings-search-key="settingsPage.tts.voiceDescription"]')!.closest('label')!;
+  const field=target.querySelector('input')!;
+  await act(async()=>{Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')!.set!.call(field,'私有音色正文917');field.dispatchEvent(new Event('input',{bubbles:true}))});
+  expect(field.value).toBe('私有音色正文917');
+  await fill('私有音色正文917');expect(labels()).toEqual([]);
+  await fill(zh.settingsPage.tts.voiceDescription);await pick(zh.settingsPage.tts.voiceDescription);await advance(350);
+  expect(target.classList.contains('cy-settings-search-flash-host')).toBe(true);
+  expect(field.value).toBe('私有音色正文917');expect(saveSettings).not.toHaveBeenCalled();
+ });
+ it('页面介绍检索后定位真实通用设置标题',async()=>{
+  await mount(<AppProviders><GeneralSettingsPanel/></AppProviders>,'general');
+  await fill(zh.settingsPage.general.description);expect(labels()).toContain(zh.settingsPage.general.title);
+  await pick(zh.settingsPage.general.title);await advance(350);
+  expect(host.querySelector('main h1')?.textContent).toBe(zh.settingsPage.general.title);
+  expect(host.querySelector('main h1')?.classList.contains('cy-settings-search-flash')).toBe(true);
+ });
  it('R15 associates real TTS descriptions with sibling Title labels',()=>{
   const hits=searchSettings(buildSettingEntries(zh),zh.settingsPage.tts.autoReadDescription);
   expect(hits.some(entry=>entry.settingKey==='settingsPage.tts.autoReadTitle'&&entry.label===zh.settingsPage.tts.autoReadTitle)).toBe(true);

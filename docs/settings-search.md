@@ -6,7 +6,7 @@
 
 | 内容 | 检索字段 | 边界 |
 | --- | --- | --- |
-| 设置项 | 当前界面语言的标题，以及同 key 前缀的 Description / Hint / Desc | 支持 fooTitle 与 fooDescription 配对；按显式登记的命名空间和前缀确定所属页，不合并同名标题 |
+| 设置项 | 当前界面语言的标题，以及同 key 前缀的 Description / Hint / Desc | 支持 fooTitle 与 fooDescription、同层 title 与 description 配对；按显式登记的命名空间和前缀确定所属页，不合并同名标题 |
 | 插件 | 名称、宿主 ID | 不检索插件 description 和插件内部设置 |
 | 工具 | 名称、宿主 ID、描述 | 排除 deprecated 非空、全局 enabled 为 false 或宿主 settingsSearchable 为 false 的工具；MCP 工具名含用户服务器名称，因此不进入全局搜索 |
 | 技能 | 名称、宿主 ID、描述 | 排除全局 enabled 为 false 和 source 为 user 的技能；模式开关关闭不等于全局停用 |
@@ -20,6 +20,8 @@
 用户目录技能的名称、说明和 ID 均不进入全局搜索，包括安装在用户目录的第三方技能；技能页原有目录、局部筛选和开关继续可用。MCP 工具注册时携带可选 settingsSearchable=false 标记，通过既有工具目录 IPC 传给渲染端；普通工具未声明时保留原搜索行为。该标记只限制全局搜索，不影响工具注册、调用、权限或工具页显示。涉及主进程的修改需要重新构建并重启应用，不能仅热更新渲染页面后验证。
 
 ## 交互约定
+
+说明关联按资源身份判断，不读取控件值。`settingsPage.tts.voiceDescription` 实际是“音色描述”字段标签，显式登记为独立条目；名称以 Description 结尾不代表它一定是辅助说明。新增同类控件需在 `FIELD_LABEL_KEYS` 登记，并验证不会把其标签挂到其他字段的说明中。独立的 description / hint / desc 只关联同层 title，没有对应标题时不借用父级或邻页标题。
 
 - 空查询不显示任何列表。点击输入框进入搜索态，侧栏品牌、返回按钮、导航和版本信息隐藏；关闭后恢复。
 - 小 × 只清空文字，大 × 或 Escape 关闭搜索；关闭前将焦点移回可见的输入框，避免焦点滞留在隐藏按钮上。方向键切换结果并在结果列表内滚动到可见位置，保留输入焦点，Enter 选择；输入框通过 combobox / listbox 与 aria-activedescendant 告知辅助技术当前选项；输入法组合期间不执行这些搜索操作。没有新增 Ctrl/Cmd+F 快捷键。
