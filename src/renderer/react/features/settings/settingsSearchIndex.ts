@@ -125,7 +125,16 @@ function flatten(value: unknown, prefix: string, out: Array<[string, string]>): 
   }
 }
 
+// SMTP 已迁入邮件页，但为兼容翻译资源仍沿用 tools 下的 key；精确覆盖，不能把所有工具都迁走。
+const EMAIL_TOOL_KEYS = new Set([
+  "emailEnabled", "smtpHost", "smtpPort", "smtpSecure", "smtpSecureDescription",
+  "smtpUser", "smtpPass", "fromName", "saveEmail",
+].map((key) => `settingsPage.tools.${key}`));
+
 function resolveSection(fullKey: string): SettingsSection | null {
+  if (EMAIL_TOOL_KEYS.has(fullKey)) return "email";
+  // 旧邮件分组的标题和说明已被 emailSettings.smtpTitle / smtpDescription 替代，不再生成幽灵结果。
+  if (fullKey === "settingsPage.tools.email" || fullKey === "settingsPage.tools.emailDescription") return null;
   // toolPanel 还含模式、状态等文案，只登记实际可跳转的总开关及其说明。
   if (fullKey === "toolPanel.chatEnhanceTitle" || fullKey === "toolPanel.chatEnhanceDesc") return "toolToggle";
   for (const [prefix, section] of SECTION_BY_NAMESPACE) {

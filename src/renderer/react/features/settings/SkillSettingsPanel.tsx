@@ -194,7 +194,7 @@ function isVisibleForMode(skill: SkillCatalogItem, mode: SkillMode, overrides: O
   return skill.modes.includes(mode);
 }
 
-export function SkillSettingsPanel() {
+export function SkillSettingsPanel({ searchRevealRequest = 0 }: { searchRevealRequest?: number } = {}) {
   const { t } = useTranslation();
   const [catalog, setCatalog] = useState<SkillCatalogItem[]>([]);
   const [overrides, setOverrides] = useState<Overrides>({});
@@ -203,6 +203,10 @@ export function SkillSettingsPanel() {
   const [filter, setFilter] = useState("");
   const [source, setSource] = useState<"all" | SkillSource>("all");
   const [tab, setTab] = useState<TabKey>("code");
+  useEffect(() => {
+    // 来源和关键词只控制目录视图，恢复它们不会启用技能或切换 Work / Code / Learn 模式。
+    if (searchRevealRequest > 0) { setFilter(""); setSource("all"); }
+  }, [searchRevealRequest]);
 
   const load = useCallback(async () => {
     const api = window.settings;

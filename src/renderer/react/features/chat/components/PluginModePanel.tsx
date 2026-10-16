@@ -19,6 +19,7 @@ import "./PluginModePanel.css";
 
 interface PluginModePanelProps {
   api?: PluginManagementApi;
+  searchRevealRequest?: number;
 }
 
 // Cyrene 官方插件收录仓库（GitHub 为主，Gitee 为国内镜像），面板内展示并可在系统浏览器打开
@@ -94,7 +95,7 @@ export function resolveMarketAction(
   return { kind: "replace" };
 }
 
-export function PluginModePanel({ api: providedApi }: PluginModePanelProps) {
+export function PluginModePanel({ api: providedApi, searchRevealRequest = 0 }: PluginModePanelProps) {
   const { t } = useTranslation();
   // 统一反馈入口：删除插件走危险确认
   const feedback = useFeedback();
@@ -113,6 +114,15 @@ export function PluginModePanel({ api: providedApi }: PluginModePanelProps) {
   const [detailsPlugin, setDetailsPlugin] = useState<MarketPluginEntry | null>(null);
   const [detailsState, setDetailsState] = useState<MarketDetailsState>({ phase: "idle" });
   const detailsRequestSeq = useRef(0);
+
+  useEffect(() => {
+    // 搜索目录来自已安装插件；退出市场及详情并清空筛选，保留插件运行状态和进行中的操作。
+    if (searchRevealRequest > 0) {
+      setView("installed");
+      setFilter("");
+      setDetailsPlugin(null);
+    }
+  }, [searchRevealRequest]);
 
   const reload = useCallback(async () => {
     if (!api) throw new Error(t("pluginPanel.apiUnavailable"));

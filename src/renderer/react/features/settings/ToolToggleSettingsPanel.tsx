@@ -152,13 +152,17 @@ function isVisibleForMode(tool: ToolCatalogItem, mode: ToolMode, overrides: Over
   return tool.modes.includes(mode);
 }
 
-export function ToolToggleSettingsPanel() {
+export function ToolToggleSettingsPanel({ searchRevealRequest = 0 }: { searchRevealRequest?: number } = {}) {
   const { t } = useTranslation();
   const [tools, setTools] = useState<ToolCatalogItem[]>([]);
   const [overrides, setOverrides] = useState<Overrides>({});
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("");
   const [tab, setTab] = useState<TabKey>("code");
+  useEffect(() => {
+    // 全局搜索只清除局部关键词；保留当前模式和所有工具开关。
+    if (searchRevealRequest > 0) setFilter("");
+  }, [searchRevealRequest]);
   // Chat 模式工具增强总开关（general-settings.chatToolsEnabled）
   const [chatToolsEnabled, setChatToolsEnabled] = useState(false);
   // 关总开关时若停在 Chat tab，回退到 Code（避免 tab 悬空）。

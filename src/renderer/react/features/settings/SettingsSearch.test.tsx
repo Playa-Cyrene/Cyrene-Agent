@@ -8,6 +8,9 @@ import { SETTINGS_NAV_ITEMS } from './settingsNavItems';
 import { buildSettingEntries, buildCatalogEntries, buildPluginEntries, searchSettings } from './settingsSearchIndex';
 import zh from '../../i18n/zh-CN.json';
 import en from '../../i18n/en.json';
+import { SkillSettingsPanel } from './SkillSettingsPanel';
+import { PluginSettingsPanel } from './PluginSettingsPanel';
+import { EmailSettingsPanel } from './EmailSettingsPanel';
 import { ToolToggleSettingsPanel } from './ToolToggleSettingsPanel';
 import { ModelSettingsPanel } from './ModelSettingsPanel';
 import { PluginModePanel } from '../chat/components/PluginModePanel';
@@ -31,9 +34,10 @@ function setApis(extra: Record<string,unknown>={}) {
 function Harness({children,initial='appearance'}:any) {
  const [section,setSection]=useState(initial);
  const content=useRef<HTMLElement>(null);
- return <><aside className="cy-settings-sidebar"><SettingsSearch section={section} onSelectSection={(s)=>{onSelect(s);setSection(s)}} getContentRoot={()=>content.current}/></aside><main ref={content} data-section={section}>{children}</main></>;
+ const [reveal,setReveal]=useState({plugin:0,tool:0,skill:0});
+ return <><aside className="cy-settings-sidebar"><SettingsSearch section={section} onSelectSection={(s)=>{onSelect(s);setSection(s)}} getContentRoot={()=>content.current} onRevealEntry={entry=>{const kind=entry.kind;if(kind!=='setting')setReveal(current=>({...current,[kind]:current[kind]+1}))}}/></aside><main ref={content} data-section={section}>{typeof children==='function'?children(reveal):children}</main></>;
 }
-async function mount(children:React.ReactNode=null,initial='appearance') {
+async function mount(children:React.ReactNode | ((reveal:{plugin:number;tool:number;skill:number})=>React.ReactNode)=null,initial='appearance') {
  await act(async()=>{root.render(<Harness initial={initial}>{children}</Harness>)});
 }
 async function advance(ms:number) {await act(async()=>{await vi.advanceTimersByTimeAsync(ms)})}
@@ -230,5 +234,103 @@ describe('PR review regressions',()=>{
   const bar=host.querySelector<HTMLElement>('.cy-settings-search__bar')!;let calls=0;bar.getBoundingClientRect=()=>({top:++calls===1?100:0,bottom:136,height:36,left:0,right:100,width:100,x:0,y:0,toJSON(){}});
   const main=host.querySelector('main')!;const target=host.querySelector<HTMLElement>('#target')!;Object.defineProperties(main,{clientHeight:{value:400},scrollHeight:{value:1000}});main.style.overflowY='auto';Object.defineProperty(target,'offsetHeight',{value:40});target.getBoundingClientRect=()=>({top:1000,bottom:1040,height:40,left:0,right:100,width:100,x:0,y:1000,toJSON(){}});
   const raf=vi.spyOn(window,'requestAnimationFrame');await fill('保持置顶');expect(bar.style.transition).toBe('none');expect(bar.style.transform).toBe('none');await pick('保持置顶');await advance(1);expect(main.scrollTop).toBe(600);expect(raf).not.toHaveBeenCalled();await advance(350);expect(main.scrollTop).toBe(600);
+ });
+});
+
+
+// 同页搜索要保留真实面板实例，不能用重新挂载掩盖局部筛选和模式丢失。
+describe('PR second review regressions',()=>{
+ async function localFilter(selector:string,value:string){
+  const field=host.querySelector<HTMLInputElement>(selector)!;
+  await act(async()=>{Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')!.set!.call(field,value);field.dispatchEvent(new Event('input',{bubbles:true}))});
+ }
+ it.each([['zh-CN',zh],['en',en]])('R21 routes migrated SMTP fields and descriptions to email in %s',(_locale,bundle)=>{
+  const entries=buildSettingEntries(bundle);
+  for(const name of ['emailEnabled','smtpHost','smtpPort','smtpSecure','smtpUser','smtpPass','fromName','saveEmail']){
+   expect(entries.find(x=>x.settingKey==='settingsPage.tools.'+name)?.section).toBe('email');
+  }
+  expect(searchSettings(entries,bundle.settingsPage.tools.smtpSecureDescription).some(x=>x.settingKey==='settingsPage.tools.smtpSecure'&&x.section==='email')).toBe(true);
+  expect(entries.find(x=>x.settingKey==='settingsPage.tools.weather')?.section).toBe('tools');
+  expect(entries.some(x=>x.settingKey==='settingsPage.tools.email')).toBe(false);
+ });
+ it('R22 finds the real email field without changing SMTP settings',async()=>{
+  w.settings.getGeneral=async()=>({emailEnabled:true});w.settings.saveGeneral=vi.fn();
+  await mount(<AppProviders><EmailSettingsPanel/></AppProviders>,'tools');
+  await fill(zh.settingsPage.tools.smtpSecureDescription);await pick(zh.settingsPage.tools.smtpSecure);await advance(350);
+  expect(onSelect).toHaveBeenCalledWith('email');
+  expect(host.querySelector('[data-settings-search-key="settingsPage.tools.smtpSecure"]')?.closest('.cy-settings-row')?.classList.contains('cy-settings-search-flash')).toBe(true);
+  expect(w.settings.saveGeneral).not.toHaveBeenCalled();
+ });
+ it('R23 disabled SMTP remains disabled when searching a conditional field',async()=>{
+  w.settings.saveGeneral=vi.fn();await mount(<AppProviders><EmailSettingsPanel/></AppProviders>,'email');
+  await fill(zh.settingsPage.tools.smtpHost);await pick(zh.settingsPage.tools.smtpHost);await advance(5500);
+  expect(host.querySelector('[data-settings-search-key="settingsPage.tools.smtpHost"]')).toBeNull();
+  expect(w.settings.saveGeneral).not.toHaveBeenCalled();expect(host.querySelector('.cy-settings-search-flash')).toBeNull();
+ });
+ it('R24 repeated same-page tool selection clears local filters and preserves the active mode',async()=>{
+  w.settings.getToolCatalog=async()=>[tool()];w.settings.setToolModeOverride=vi.fn();
+  await mount(reveal=><ToolToggleSettingsPanel searchRevealRequest={reveal.tool}/>,'toolToggle');
+  const mode=[...host.querySelectorAll<HTMLButtonElement>('.tool-panel__tab')].find(x=>x.textContent==='Work')!;
+  await act(async()=>mode.click());
+  for(let i=0;i<2;i++){
+   await localFilter('.tool-panel__search','does-not-match');expect(host.querySelector('.tool-card')).toBeNull();
+   await fill('read-file');await pick('读取文件');await advance(1);await advance(350);
+   expect(host.querySelector('.tool-card')?.classList.contains('cy-settings-search-flash')).toBe(true);
+   expect(host.querySelector<HTMLInputElement>('.tool-panel__search')?.value).toBe('');
+   expect(host.querySelector('.tool-panel__tab.is-active')).toBe(mode);
+  }
+  expect(onSelect).not.toHaveBeenCalled();expect(w.settings.setToolModeOverride).not.toHaveBeenCalled();
+ });
+ it('R25 skill search clears source and keyword filters while preserving mode overrides',async()=>{
+  w.settings.getSkillCatalog=async()=>[{id:'user-skill',name:'用户技能',description:'测试技能',enabled:true,source:'user',modes:null}];
+  w.settings.getSkillModeOverrides=async()=>({'user-skill':{work:false}});w.settings.setSkillModeOverride=vi.fn();
+  await mount(reveal=><SkillSettingsPanel searchRevealRequest={reveal.skill}/>,'skill');
+  const mode=[...host.querySelectorAll<HTMLButtonElement>('.skill-panel__tab')].find(x=>x.textContent==='Work')!;
+  const source=[...host.querySelectorAll<HTMLButtonElement>('.skill-panel__filter-tab')].find(x=>x.textContent===zh.skillPanel.sourceBuiltin)!;
+  await act(async()=>{mode.click();source.click()});await localFilter('.skill-panel__search','missing');expect(host.querySelector('.skill-card')).toBeNull();
+  await fill('user-skill');await pick('用户技能');await advance(1);await advance(350);
+  expect(host.querySelector('.skill-card')?.classList.contains('cy-settings-search-flash')).toBe(true);
+  expect(host.querySelector('.skill-panel__tab.is-active')).toBe(mode);
+  expect(host.querySelector('.skill-panel__filter-tab.is-active')?.textContent).toBe(zh.skillPanel.sourceAll);
+  expect(host.querySelector('.skill-card')?.classList.contains('is-off')).toBe(true);
+  expect(w.settings.setSkillModeOverride).not.toHaveBeenCalled();
+ });
+ it('R26 installed plugin search leaves marketplace and clears an earlier installed filter',async()=>{
+  const plugin={id:'target-plugin',name:'目标插件',version:'1.0.0',description:'',author:'test',status:'disabled',enabled:false,source:'user',configuredEnabled:false};
+  w.plugins.list=async()=>({plugins:[plugin],issues:[]});w.plugins.marketList=async()=>({ok:true,plugins:[],sources:[]});
+  await mount(reveal=><AppProviders><PluginSettingsPanel searchRevealRequest={reveal.plugin}/></AppProviders>,'plugins');
+  await localFilter('.plugin-panel__search','missing');expect(host.querySelector('.plugin-card-ui')).toBeNull();
+  await act(async()=>host.querySelector<HTMLButtonElement>('.plugin-panel__market-toggle')!.click());
+  expect(host.querySelector('.plugin-panel__search')).toBeNull();
+  await fill('target-plugin');await pick('目标插件');await advance(1);await advance(350);
+  expect(host.querySelector<HTMLInputElement>('.plugin-panel__search')?.value).toBe('');
+  expect(host.querySelector('.plugin-card-ui')?.classList.contains('cy-settings-search-flash')).toBe(true);
+  expect(host.querySelector('.plugin-card-ui')?.classList.contains('is-disabled')).toBe(true);
+ });
+ it('R27 editing a long query resets both selected result and viewport',async()=>{
+  w.settings.getToolCatalog=async()=>Array.from({length:12},(_,i)=>tool('viewport-'+i,'视口工具'+i));
+  await mount();await fill('视口工具');await key('ArrowUp');
+  const list=host.querySelector<HTMLElement>('.cy-settings-search__results')!;list.scrollTop=480;
+  await fill('工具');expect(host.querySelector('.cy-settings-search__results')).toBe(list);expect(list.scrollTop).toBe(0);
+  expect(list.querySelector('.cy-settings-search__item')?.classList.contains('is-active')).toBe(true);
+ });
+ it('R28 a late catalog result resets an already scrolled viewport',async()=>{
+  w.settings.getToolCatalog=async()=>Array.from({length:12},(_,i)=>tool('late-'+i,'异步工具'+i));
+  let resolve!:(value:any)=>void;w.plugins.list=()=>new Promise(r=>{resolve=r});
+  await mount();await fill('异步');await key('ArrowUp');const list=host.querySelector<HTMLElement>('.cy-settings-search__results')!;list.scrollTop=480;
+  await act(async()=>resolve([{id:'late-plugin',name:'异步插件'}]));expect(list.scrollTop).toBe(0);
+  expect(list.querySelector('.cy-settings-search__item')?.classList.contains('is-active')).toBe(true);
+ });
+ it('R29 keyboard navigation exposes a valid selected option and removes stale ARIA links',async()=>{
+  w.settings.getToolCatalog=async()=>[tool('a','读屏甲'),tool('b','读屏乙')];await mount();
+  expect(input().getAttribute('role')).toBe('combobox');expect(input().getAttribute('aria-expanded')).toBe('false');
+  await fill('读屏');const list=host.querySelector('[role="listbox"]')!;
+  expect(input().getAttribute('aria-controls')).toBe(list.id);expect(input().getAttribute('aria-expanded')).toBe('true');
+  const options=list.querySelectorAll<HTMLElement>('[role="option"]');expect(input().getAttribute('aria-activedescendant')).toBe(options[0].id);
+  await key('ArrowUp');expect(input().getAttribute('aria-activedescendant')).toBe(options[1].id);
+  expect(options[1].getAttribute('aria-selected')).toBe('true');expect(options[0].getAttribute('aria-selected')).toBe('false');
+  expect(options[1].tabIndex).toBe(-1);expect(document.activeElement).toBe(input());
+  await fill('不存在的独有结果');expect(input().hasAttribute('aria-activedescendant')).toBe(false);expect(input().hasAttribute('aria-controls')).toBe(false);expect(host.querySelector('[role="status"]')?.textContent).toBe(zh.settingsPage.search.empty);
+  await key('Escape');expect(input().getAttribute('aria-expanded')).toBe('false');expect(host.querySelector('[role="listbox"]')).toBeNull();
  });
 });

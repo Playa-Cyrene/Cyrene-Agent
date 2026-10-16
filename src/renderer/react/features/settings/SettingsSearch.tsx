@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import i18next from "i18next";
 import { Search, X } from "lucide-react";
 import { useTranslation } from "../../i18n";
@@ -164,10 +164,13 @@ export interface SettingsSearchProps {
   section: SettingsSection;
   onSelectSection: (section: SettingsSection) => void;
   getContentRoot: () => HTMLElement | null;
+  /** 定位前仅恢复目标面板的浏览视图，不重挂载面板或修改宿主设置。 */
+  onRevealEntry?: (entry: SettingsSearchEntry) => void;
 }
 
-export function SettingsSearch({ section, onSelectSection, getContentRoot }: SettingsSearchProps) {
+export function SettingsSearch({ section, onSelectSection, getContentRoot, onRevealEntry }: SettingsSearchProps) {
   const { t, locale } = useTranslation();
+  const resultsId = useId();
   const [active, setActive] = useState(false);
   const [catalogRevision, setCatalogRevision] = useState(0);
   const [query, setQuery] = useState("");
@@ -208,7 +211,12 @@ export function SettingsSearch({ section, onSelectSection, getContentRoot }: Set
   const ordered = useMemo(() => groups.flatMap((group) => group.items), [groups]);
 
   // 目录异步返回或语言切换会重排结果，不沿用旧列表中的位置。
-  useEffect(() => setActiveIndex(0), [ordered]);
+  useLayoutEffect(() => {
+    setActiveIndex(0);
+    keyboardSelectionRef.current = false;
+    // 查询、语言或目录刷新都可能重排列表；首项与视口必须一起复位，避免 Enter 选择屏外项。
+    if (resultsRef.current) resultsRef.current.scrollTop = 0;
+  }, [ordered]);
   useEffect(() => () => navigationAbortRef.current?.(), []);
 
   useLayoutEffect(() => {
@@ -343,6 +351,7 @@ export function SettingsSearch({ section, onSelectSection, getContentRoot }: Set
   function pick(entry: SettingsSearchEntry) {
     leave();
     if (entry.section !== section) onSelectSection(entry.section);
+    onRevealEntry?.(entry);
     locate(entry);
   }
 
@@ -364,6 +373,8 @@ export function SettingsSearch({ section, onSelectSection, getContentRoot }: Set
     }
   }
 
+  const hasResults = active && !!query.trim() && ordered.length > 0;
+  const optionId = (index: number) => `${resultsId}-option-${index}`;
   let ordinal = -1;
   const renderItem = (entry: SettingsSearchEntry, groupIcon: ReactNode) => {
     ordinal += 1;
@@ -372,6 +383,11 @@ export function SettingsSearch({ section, onSelectSection, getContentRoot }: Set
       <button
         key={`${entry.section}-${entry.label}-${index}`}
         type="button"
+        id={optionId(index)}
+        role="option"
+        aria-selected={index === activeIndex}
+        tabIndex={-1}
+        onMouseDown={(event) => event.preventDefault()}
         className={`cy-settings-search__item${index === activeIndex ? " is-active" : ""}`}
         onMouseEnter={() => setActiveIndex(index)}
         onClick={() => pick(entry)}
@@ -395,6 +411,11 @@ export function SettingsSearch({ section, onSelectSection, getContentRoot }: Set
             ref={inputRef}
             className="cy-settings-search__input"
             type="text"
+            role="combobox"
+            aria-autocomplete="list"
+            aria-expanded={hasResults}
+            aria-controls={hasResults ? resultsId : undefined}
+            aria-activedescendant={hasResults && ordered[activeIndex] ? optionId(activeIndex) : undefined}
             placeholder={t("settingsPage.search.placeholder")}
             aria-label={t("settingsPage.search.placeholder")}
             value={query}
@@ -423,15 +444,17 @@ export function SettingsSearch({ section, onSelectSection, getContentRoot }: Set
         </button>
       </div>
       {active && query.trim() && (
-        <div className="cy-settings-search__results" ref={resultsRef}>
-          {groups.length === 0 ? (
-            <div className="cy-settings-search__empty">{t("settingsPage.search.empty")}</div>
-          ) : groups.map((group) => (
-            <div className="cy-settings-search__group-card" key={group.groupSection}>
-              {group.items.map((entry, position) => renderItem(entry, position === 0 ? group.nav?.icon : null))}
-            </div>
-          ))}
-        </div>
+        groups.length === 0 ? (
+          <div className="cy-settings-search__empty" role="status">{t("settingsPage.search.empty")}</div>
+        ) : (
+          <div className="cy-settings-search__results" ref={resultsRef} id={resultsId} role="listbox" aria-label={t("settingsPage.search.placeholder")}>
+            {groups.map((group) => (
+              <div className="cy-settings-search__group-card" key={group.groupSection} role="group" aria-label={group.nav ? t(group.nav.labelKey) : undefined}>
+                {group.items.map((entry, position) => renderItem(entry, position === 0 ? group.nav?.icon : null))}
+              </div>
+            ))}
+          </div>
+        )
       )}
     </div>
   );
