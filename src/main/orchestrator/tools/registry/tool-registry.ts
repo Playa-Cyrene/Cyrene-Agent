@@ -69,6 +69,8 @@ export interface ToolDefinition {
   id: string;           // 工具唯一标识，如 "user_memory"
   name: string;         // 展示名，如 "导入文档"
   description: string;  // 一句话描述，供 LLM Router 的 Prompt 使用
+  /** 含用户填写内容的目录元数据不用于设置搜索；不影响工具展示、启用或执行。 */
+  settingsSearchable?: boolean;
   /** 工具目录里展示的一句话用途（可选）。未填时回落 description 第一行。
    *  只用于运行时生成的工具目录，完整参数仍走 tools Schema。 */
   catalogHint?: string;

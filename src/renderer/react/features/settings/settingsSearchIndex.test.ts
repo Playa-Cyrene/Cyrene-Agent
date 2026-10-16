@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import zhCN from "../../i18n/zh-CN.json";
+import en from "../../i18n/en.json";
+import ja from "../../i18n/ja-JP.json";
 import {
   buildCatalogEntries,
   buildPluginEntries,
@@ -18,6 +20,19 @@ const labels = new Set(entries.map((entry) => entry.label));
 const find = (label: string) => entries.find((entry) => entry.label === label);
 
 describe("设置搜索索引", () => {
+  it.each([['zh-CN', zhCN], ['en', en], ['ja-JP', ja]])("%s 不收录 API Key 字段及其说明", (_locale, resource) => {
+    const indexed = buildSettingEntries(resource);
+    const excluded = ['settingsPage.modelSettings.apiKey', 'settingsPage.modelSettings.apiKeyOptional', 'settingsPage.tts.apiKey', 'settingsPage.asr.mosslandKey', 'settingsPage.asr.minimaxKey', 'settingsPage.tools.amapKey', 'settingsPage.tools.searchKey'];
+    for (const key of excluded) expect(indexed.some(entry => entry.settingKey === key), key).toBe(false);
+    expect(indexed.some(entry => /^api\s*key$/i.test(entry.label))).toBe(false);
+    expect(indexed.some(entry => entry.settingKey === 'settingsPage.asr.engineTitle')).toBe(true);
+  });
+
+  it("API Key 排除按字段身份生效，不依赖翻译或转移说明", () => {
+    const indexed = buildSettingEntries({settingsPage:{asr:{mosslandKey:'自定义翻译',mosslandKeyHint:'独有字段说明',mosslandKeyTitle:'备用标题',engineTitle:'语音引擎'},tools:{amapKey:'地图凭据',amapKeyDescription:'另一个独有说明'}}});
+    expect(indexed.map(entry => entry.label)).toEqual(['语音引擎']);
+    expect(searchSettings(indexed,'独有')).toEqual([]);
+  });
   it("收录量足够覆盖各设置面板", () => {
     expect(entries.length).toBeGreaterThan(300);
     const sections = new Set(entries.map((entry) => entry.section));

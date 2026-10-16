@@ -34,7 +34,7 @@ export function BrowserControlSettingsPanel() {
           <p>{t("settingsPage.browserControl.sectionDescription")}</p>
         </div>
         <Card>
-          <div className="cy-settings-row">
+          <div className="cy-settings-row" data-settings-search-key="settingsPage.browserControl.clearCookies">
             <div className="cy-settings-row__copy">
               <strong><Cookie size={16} />{t("settingsPage.browserControl.clearCookies")}</strong>
               <span>{t("settingsPage.browserControl.clearCookiesDescription")}</span>

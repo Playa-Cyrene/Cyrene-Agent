@@ -9,6 +9,8 @@ import {
   buildCatalogEntries,
   buildPluginEntries,
   buildSettingEntries,
+  fold,
+  foldWithMap,
   searchSettings,
   type CatalogSearchSource,
   type SettingsSearchEntry,
@@ -51,16 +53,25 @@ function isVisible(element: HTMLElement, root: HTMLElement): boolean {
 }
 
 /** 身份标记只在当前内容区比较值，不拼 CSS 选择器，允许宿主 ID 含引号等特殊字符。 */
-function findTarget(root: HTMLElement, entry: SettingsSearchEntry): HTMLElement | null {
+function findTarget(root: HTMLElement, entry: SettingsSearchEntry, allowTextFallback: boolean): HTMLElement | null {
   const anchors = Array.from(root.querySelectorAll<HTMLElement>("[data-settings-search-key], [data-settings-search-id]"));
-  const anchor = anchors.find((node) => isVisible(node, root) && (entry.kind === "setting"
+  const matches = anchors.filter((node) => isVisible(node, root) && (entry.kind === "setting"
     ? !!entry.settingKey && node.dataset.settingsSearchKey === entry.settingKey
     : node.dataset.settingsSearchKind === entry.kind && node.dataset.settingsSearchId === entry.itemId));
-  if (anchor) return anchor;
+  if (matches.length) {
+    // 父子重复标记可以属于同一行；不同业务行共享 key 时不能任意挑第一行。
+    const rows = new Set(matches.map((node) => rowOf(node, root)));
+    return rows.size === 1 ? matches[0] : null;
+  }
   // 运行时目录必须按身份定位；不在当前模式下就不闪，不能误选同名卡片。
-  if (entry.kind !== "setting") return null;
+  if (entry.kind !== "setting" || !allowTextFallback) return null;
   const candidates = Array.from(root.querySelectorAll<HTMLElement>("h1,h2,h3,strong,span,label,button,p,div,li"))
-    .filter((node) => node.textContent?.trim() === entry.label && isVisible(node, root))
+    .filter((node) => {
+      const text = node.textContent?.trim();
+      // 仅兼容 antd 两字按钮插入的单个空格；一般标题里的空格属于身份，不能全局删除。
+      const twoHanButton = /^[\u4e00-\u9fff]{2}$/.test(entry.label) && !!node.closest("button.ant-btn");
+      return (text === entry.label || (twoHanButton && text === `${entry.label[0]} ${entry.label[1]}`)) && isVisible(node, root);
+    })
     .filter((node) => {
       const key = node.closest<HTMLElement>("[data-settings-search-key]")?.dataset.settingsSearchKey;
       return !key || key === entry.settingKey;
@@ -141,20 +152,31 @@ function scrollIntoCenter(container: HTMLElement | null, element: HTMLElement, d
   return () => cancelAnimationFrame(frame);
 }
 
-/** 命中的文字用稍亮粉色标出（大小写无关，全部出现位置）。 */
+/**
+ * 命中的文字用稍亮粉色标出（大小写无关，全部出现位置）。
+ * 匹配在折叠串上进行，但切片一律用 foldWithMap 映射回的原文下标：
+ * 直接拿折叠串下标切原文，遇到 İ 这类折叠会改变长度的字符就会整体错位。
+ */
 function highlightMatch(text: string, query: string): ReactNode {
-  const needle = query.trim().toLowerCase();
+  const needle = fold(query);
   if (!needle) return text;
-  const lower = text.toLowerCase();
+  const { folded, source, ends } = foldWithMap(text);
+  const ranges: Array<{ start: number; end: number }> = [];
+  for (let hit = folded.indexOf(needle); hit >= 0; hit = folded.indexOf(needle, hit + needle.length)) {
+    const start = source[hit];
+    const end = ends[hit + needle.length - 1];
+    // 同一字素展开后的多个命中只显示一次，避免复制原文或切出零宽高亮。
+    const previous = ranges[ranges.length - 1];
+    if (previous && start < previous.end) previous.end = Math.max(previous.end, end);
+    else ranges.push({ start, end });
+  }
   const parts: ReactNode[] = [];
   let cursor = 0;
-  let hit = lower.indexOf(needle, cursor);
   let order = 0;
-  while (hit >= 0) {
-    if (hit > cursor) parts.push(text.slice(cursor, hit));
-    parts.push(<mark key={order++} className="cy-settings-search__mark">{text.slice(hit, hit + needle.length)}</mark>);
-    cursor = hit + needle.length;
-    hit = lower.indexOf(needle, cursor);
+  for (const { start, end } of ranges) {
+    if (start > cursor) parts.push(text.slice(cursor, start));
+    parts.push(<mark key={order++} className="cy-settings-search__mark">{text.slice(start, end)}</mark>);
+    cursor = end;
   }
   if (cursor < text.length) parts.push(text.slice(cursor));
   return parts;
@@ -184,13 +206,14 @@ export function SettingsSearch({ section, onSelectSection, getContentRoot, onRev
   const topBeforeLayout = useRef<number | null>(null);
   const navigationAbortRef = useRef<(() => void) | null>(null);
 
-  // 语言切换即重建索引：静态条目取当前语言的资源树
+  // 静态索引只读界面翻译，不读取用户配置或表单值；语言切换时重建。
   const settings = useMemo(
     () => buildSettingEntries(i18next.getResourceBundle(locale, "translation")),
     [locale],
   );
   const entries = useMemo(() => [...settings, ...runtime], [settings, runtime]);
-  const results = useMemo(() => searchSettings(entries, query, 40), [entries, query]);
+  const allResults = useMemo(() => searchSettings(entries, query, Infinity), [entries, query]);
+  const results = useMemo(() => allResults.slice(0, 40), [allResults]);
 
   /** 按大项聚成卡片；卡片顺序按该大项首个命中的排名。 */
   const groups = useMemo(() => {
@@ -297,6 +320,9 @@ export function SettingsSearch({ section, onSelectSection, getContentRoot, onRev
   // 一次跳转独占观察器、定时器、动画帧和事件监听器；统一停止以防新旧跳转争抢滚动位置。
   const locate = useCallback((entry: SettingsSearchEntry) => {
     navigationAbortRef.current?.();
+    // 同页存在同名 key 时，可见的一行也可能属于另一个条件分支；用完整索引判断，不能只看搜索结果。
+    const buttonSpacedLabel = /^[\u4e00-\u9fff]{2}$/.test(entry.label) ? `${entry.label[0]} ${entry.label[1]}` : entry.label;
+    const allowTextFallback = !settings.some((other) => other.section === entry.section && (other.label === entry.label || other.label === buttonSpacedLabel) && other.settingKey !== entry.settingKey);
     let stopped = false;
     let found = false;
     let row: HTMLElement | null = null;
@@ -332,7 +358,7 @@ export function SettingsSearch({ section, onSelectSection, getContentRoot, onRev
       const root = getContentRoot();
       if (!root) return;
       revealTarget(root, entry);
-      const target = findTarget(root, entry);
+      const target = findTarget(root, entry, allowTextFallback);
       if (!target) return;
       found = true;
       observer?.disconnect();
@@ -348,7 +374,7 @@ export function SettingsSearch({ section, onSelectSection, getContentRoot, onRev
       lookup();
     }, 0);
     later(() => { if (!found) stop(); }, LOOKUP_TIMEOUT_MS);
-  }, [getContentRoot]);
+  }, [getContentRoot, settings]);
 
   function pick(entry: SettingsSearchEntry) {
     leave();
@@ -360,7 +386,6 @@ export function SettingsSearch({ section, onSelectSection, getContentRoot, onRev
   function onKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
     // 输入法确认/取消候选词不等于操作搜索；部分输入法只提供 229 而未标记 isComposing。
     if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229 || !active) return;
-    if (event.key === "Escape") { leave(); return; }
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       if (!ordered.length) return;
       event.preventDefault();
@@ -405,7 +430,13 @@ export function SettingsSearch({ section, onSelectSection, getContentRoot, onRev
   };
 
   return (
-    <div className={`cy-settings-search${active ? " is-active" : ""}`}>
+    <div className={`cy-settings-search${active ? " is-active" : ""}`} onKeyDown={(event) => {
+      // Escape 属于整个搜索区域；Tab 移到清空/关闭按钮后也应生效，方向键和 Enter 仍由输入框处理。
+      if (event.key !== "Escape" || !active || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+      event.preventDefault();
+      event.stopPropagation();
+      leave();
+    }}>
       <div className="cy-settings-search__bar" ref={boxRef}>
         <div className="cy-settings-search__field">
           <Search className="cy-settings-search__icon" size={15} strokeWidth={2} aria-hidden="true" />
@@ -458,6 +489,9 @@ export function SettingsSearch({ section, onSelectSection, getContentRoot, onRev
           </div>
         )
       )}
+      {active && allResults.length > results.length && <div className="cy-settings-search__more" role="status">
+        {t("settingsPage.search.more", { count: allResults.length - results.length })}
+      </div>}
     </div>
   );
 }

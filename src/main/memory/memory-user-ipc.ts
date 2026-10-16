@@ -377,6 +377,7 @@ export function registerMemoryUserToolIpc(deps: MemoryUserToolIpcDependencies): 
       enabled: t.enabled,
       modes: t.modes ?? null,
       chatBuiltin: t.chatBuiltin === true,
+      settingsSearchable: t.settingsSearchable !== false,
       deprecated: t.deprecated ?? null,
     }));
   });

@@ -177,6 +177,8 @@ export async function connectMcpServer(config: McpServerConfig): Promise<string[
     const toolDef: ToolDefinition = {
       id: toolId,
       name: "[" + config.name + "] " + mt.name,
+      // 展示名含用户填写的服务器名称；在来源处声明，渲染端不能靠方括号等格式猜来源。
+      settingsSearchable: false,
       description: mt.description || mt.name,
       enabled: true,
       effectKind: resolvedEffectKind,

@@ -875,6 +875,7 @@
       "placeholder": "設定を検索",
       "empty": "一致する設定がありません",
       "clear": "検索内容を消去",
+      "more": "ほかに {{count}} 件あります。検索条件を絞り込んでください。",
       "close": "検索を終了"
     },
       "knowledgeBase": {

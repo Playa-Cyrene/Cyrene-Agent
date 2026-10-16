@@ -36,6 +36,10 @@ export interface PluginSearchSource {
 
 /** 宿主工具/技能目录里本模块用到的字段。 */
 export interface CatalogSearchSource {
+  /** 技能目录已有的来源；用户目录的名称、说明和 ID 均不进入全局设置搜索。 */
+  source?: string;
+  /** 工具宿主明确标记含用户内容的元数据，兼容未携带该字段的内置目录。 */
+  settingsSearchable?: boolean;
   id: string;
   name: string;
   description?: string;
@@ -83,9 +87,10 @@ const STATUS_KEY_SUFFIX =
 
 /**
  * key 后缀不能覆盖所有正文，因此用句末标点再排除一部分非标题文案。
+ * 省略号结尾的是进行中状态（保存中…/Loading…），平时不在 DOM 里，收进来只会产生死链。
  * 这是候选过滤规则，不是完整的设置注册表；不以字符数限制正常的多语言长标题。
  */
-const SENTENCE_LIKE = /[。！？；.!?;]$/;
+const SENTENCE_LIKE = /[。！？；.!?;…]$/;
 
 
 /** 提供分区标题 key；侧栏和搜索分组的图标、顺序以 settingsNavItems 为准。 */
@@ -129,7 +134,105 @@ const EMAIL_TOOL_KEYS = new Set([
   "smtpUser", "smtpPass", "fromName", "saveEmail",
 ].map((key) => `settingsPage.tools.${key}`));
 
+/**
+ * API Key、私钥、Token 等凭据字段按产品检索范围排除，连同专属说明一起过滤；
+ * 用资源身份而非翻译文本，避免换语言后重新出现。
+ * neteaseModal 整段排除：字段只存在于弹窗内，跳分区打不开弹窗，结果是点不开的"死链"。
+ */
+const EXCLUDED_SETTING_PREFIXES = [
+  "settingsPage.modelSettings.apiKey", "settingsPage.modelSettings.localApiKey", "settingsPage.modelSettings.validationApiKey",
+  "settingsPage.tts.apiKey", "settingsPage.asr.mosslandKey", "settingsPage.asr.minimaxKey",
+  "settingsPage.tools.amapKey", "settingsPage.tools.searchKey", "settingsPage.tools.neteaseModal",
+  "settingsPage.asr.appKey", "settingsPage.asr.accessKeyId", "settingsPage.asr.accessKeySecret",
+  "settingsPage.emailSettings.clientSecret", "settingsPage.channels.qq.accessToken",
+  // 推理控制整段只存在于"配置并添加模型"弹窗内，搜索从不打开该弹窗。
+  "settingsPage.modelSettings.manual",
+] as const;
+
+/**
+ * 精确排除清单（第 7 轮真实面板可达性矩阵的结论）。这些 key 的文案只会出现在
+ * 搜索不负责打开的弹窗/气泡、title/aria-label/placeholder 属性、图表 tooltip 回调、
+ * 瞬时状态提示里，或同页存在多个同名实例导致文本回退必然歧义，或渲染层从未使用
+ * （孤儿 key）。收进索引只能制造点不开的死链；用资源身份排除，换语言也不会复活。
+ */
+const EXCLUDED_SETTING_KEYS = new Set([
+  // 自定义风格弹窗（偏好页）字段与按钮
+  "settingsPage.preferences.customStyleModalTitle", "settingsPage.preferences.diversity", "settingsPage.preferences.followModel",
+  "settingsPage.preferences.repetition", "settingsPage.preferences.light", "settingsPage.preferences.medium", "settingsPage.preferences.strong",
+  "settingsPage.preferences.reset", "settingsPage.preferences.cancel",
+  // 分段控件的"开启/关闭"档位在同页出现两次（手机信息分段 + 主动聊天），回退必然歧义
+  "settingsPage.preferences.on", "settingsPage.preferences.off",
+  // 添加服务器弹窗（MCP 页）字段；transport 文案在列表里是"本地进程 · 已连接"拼接，无法整体命中
+  "settingsPage.mcp.addTitle", "settingsPage.mcp.formMode", "settingsPage.mcp.jsonMode", "settingsPage.mcp.name",
+  "settingsPage.mcp.type", "settingsPage.mcp.transport.stdio", "settingsPage.mcp.transport.http", "settingsPage.mcp.transport.sse",
+  "settingsPage.mcp.command", "settingsPage.mcp.args", "settingsPage.mcp.url", "settingsPage.mcp.advanced",
+  "settingsPage.mcp.envLabel", "settingsPage.mcp.headersLabel", "settingsPage.mcp.jsonLabel",
+  "settingsPage.mcp.confirm", "settingsPage.mcp.cancel", "settingsPage.mcp.removeConfirmTitle",
+  // 侧栏分组名"MCP"不会出现在面板内容区
+  "settingsPage.mcp.menuLabel",
+  // 模型选项弹窗（配置并添加/修改模型）字段
+  "settingsPage.modelSettings.model", "settingsPage.modelSettings.contextWindow", "settingsPage.modelSettings.multimodal",
+  "settingsPage.modelSettings.modelOptionTitle", "settingsPage.modelSettings.modelOptionEditTitle", "settingsPage.modelSettings.modelOptionSave",
+  // 只存在于 title/aria-label 属性
+  "settingsPage.modelSettings.resetBaseUrl",
+  // 瞬时状态提示（删除档案/更新默认后短暂出现）
+  "settingsPage.modelSettings.deleted", "settingsPage.modelSettings.defaultUpdated",
+  // 用量页：三个提示只挂在 Info 图标的 title/aria-label 上；趋势 tooltip 文案只在 chart.js 回调里拼接；
+  // 清空确认弹窗标题/取消只在点击后打开
+  "settingsPage.usage.requestsCoverage", "settingsPage.usage.cachePartial", "settingsPage.usage.unitRequests",
+  "settingsPage.usage.trendTooltipRequests", "settingsPage.usage.trendTooltipCacheHit",
+  "settingsPage.usage.trendTooltipCacheMiss", "settingsPage.usage.trendTooltipCacheCreation",
+  "settingsPage.usage.clearTitle", "settingsPage.usage.cancel",
+  // 孤儿 key：渲染层从未使用
+  "settingsPage.usage.trendInput", "settingsPage.usage.trendOutput",
+  "settingsPage.emailSettings.connect", "settingsPage.emailSettings.reconnect",
+  // 记忆页 wiki 的保存/取消键在任何设置组件里都没渲染（WikiKnowledgePanel 只用了 corrected/saveFailed/deleted），
+  // 且与 L0/L1 卡片的保存/取消同文案，收进索引只会制造同部同名死链
+  "settingsPage.memory.wiki.save", "settingsPage.memory.wiki.cancel",
+  // 仅授权进行中/动作完成后短暂出现的状态文案
+  "settingsPage.emailSettings.cancelAuthorization", "settingsPage.emailSettings.notConnected", "settingsPage.emailSettings.disconnected",
+  // 渠道页：清空确认弹窗与二维码 alt 文本
+  "settingsPage.channels.clearTitle", "settingsPage.channels.cancel", "settingsPage.channels.wechat.qrAlt",
+  // 每个渠道卡片的"未连接"徽标同页出现多次
+  "settingsPage.channels.offline",
+  // 免责声明页：侧栏名不出现在正文；链接与拆分段落文本无法唯一回退（a/strong 拆分 textContent）
+  "settingsPage.disclaimer.navLabel",
+  "settingsPage.disclaimer.section5.p1Before",
+  "settingsPage.disclaimer.section6.bilibiliLink", "settingsPage.disclaimer.section6.bilibiliNote",
+  "settingsPage.disclaimer.section6.githubLabel", "settingsPage.disclaimer.section6.githubLink",
+  "settingsPage.disclaimer.section7.bilibiliLink", "settingsPage.disclaimer.section7.bilibiliNote",
+  "settingsPage.disclaimer.section7.githubLink", "settingsPage.disclaimer.section7.githubNote",
+  "settingsPage.disclaimer.section9.p1", "settingsPage.disclaimer.section9.upLink",
+  "settingsPage.disclaimer.section10.p1", "settingsPage.disclaimer.section10.contributorsLink",
+  // 工具页：同名"保存"按钮分布在多个条件行里；全权限确认弹窗的取消文案
+  "settingsPage.tools.save", "settingsPage.tools.fullAccessCancel",
+  // 语音合成页：引擎卡片角标是 <small>（不在回退标签名单里）；文件占位符与"选择音频"按钮同页多次出现
+  "settingsPage.tts.tagLocal", "settingsPage.tts.tagInterface", "settingsPage.tts.tagCloud",
+  "settingsPage.tts.noFile", "settingsPage.tts.optional", "settingsPage.tts.chooseFile",
+  // 语音识别页：引擎分组的 aria-label
+  "settingsPage.asr.engineLabel",
+  // 昔涟设置页：表情包弹窗字段与按钮
+  "settingsPage.cyrene.add", "settingsPage.cyrene.cancel", "settingsPage.cyrene.stickerFile",
+  "settingsPage.cyrene.chooseFile", "settingsPage.cyrene.noFile", "settingsPage.cyrene.stickerId",
+  "settingsPage.cyrene.stickerDescriptionField", "settingsPage.cyrene.stickerPhrases",
+  // 嵌入维度输入框的占位符
+  "settingsPage.cyrene.autoDetect",
+  // 知识库页：新建弹窗字段与只存在于 aria-label 的启用开关
+  "settingsPage.knowledgeBase.name", "settingsPage.knowledgeBase.scope", "settingsPage.knowledgeBase.cancel",
+  "settingsPage.knowledgeBase.collectionEnabled",
+  // 浏览器控制页：侧栏名与标题同文案（保留 title，可定位面板 h1）
+  "settingsPage.browserControl.navLabel",
+  // 外观页瞬时状态提示（重置后短暂出现）
+  "settingsPage.cyreneAvatarReset", "settingsPage.messageTypographyReset",
+]);
+
+/** 明文/密文切换按钮属于凭据字段的一部分，不单独作为设置结果出现。 */
+const SECRET_TOGGLE_KEY = /(?:^|\.)(?:show|hide)Secret$/;
+
 function resolveSection(fullKey: string): SettingsSection | null {
+  if (EXCLUDED_SETTING_PREFIXES.some((prefix) => fullKey.startsWith(prefix))) return null;
+  if (EXCLUDED_SETTING_KEYS.has(fullKey)) return null;
+  if (SECRET_TOGGLE_KEY.test(fullKey)) return null;
   // 状态资源树不是设置分组；按路径段排除，避免误伤 stateStyle、statusBar 等真实设置名。
   if (/(^|\.)(status|state)\./i.test(fullKey)) return null;
   // 插件页只有两个可导航的标题；卡片动作、市场安装提示和旧 settingsPage.plugins 文案不作设置。
@@ -211,8 +314,8 @@ export function buildPluginEntries(plugins: ReadonlyArray<PluginSearchSource>): 
 }
 
 /**
- * 工具与技能条目。目录是运行时从宿主拉的，收录描述文案不需要人工维护，
- * 所以连描述一起检索；插件则按功能边界只检索名称与 id，连插件清单的 description 也不索引。
+ * 目录来源不等于固定文案：用户技能的 frontmatter 和 MCP 的服务器名称也会出现在目录中。
+ * 排除用户来源及宿主标记的条目后才收录名称、ID 和说明；不改变目录面板自身的显示或开关。
  */
 export function buildCatalogEntries(
   items: ReadonlyArray<CatalogSearchSource>,
@@ -221,7 +324,8 @@ export function buildCatalogEntries(
 ): SettingsSearchEntry[] {
   // 工具面板不渲染全局停用项；不制造没有卡片可定位的结果。技能面板同样隐藏全局停用项；模式开关关闭与全局停用不同。
   return items
-    .filter((item) => typeof item?.id === "string" && typeof item?.name === "string" && !item.deprecated && item.enabled !== false)
+    .filter((item) => typeof item?.id === "string" && typeof item?.name === "string" && !item.deprecated && item.enabled !== false
+      && item.settingsSearchable !== false && !(kind === "skill" && item.source === "user"))
     .map((item) => ({
       kind,
       section,
@@ -231,17 +335,55 @@ export function buildCatalogEntries(
     }));
 }
 
-function normalize(value: string): string {
-  return value.trim().toLowerCase();
+/**
+ * 大小写折叠缓存。折叠会改变长度（İ → i + 组合点上点），所以匹配用折叠串，
+ * 但标注切片必须回到原文下标——见 foldWithMap。缓存避免每次按键都重算整份索引。
+ */
+const foldCache = new Map<string, string>();
+const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+function foldSegment(segment: string): string {
+  // 匹配和高亮必须用同一变换。统一希腊词尾 sigma；只对拉丁字母去重音，保留假名浊点等语义标记。
+  const lowered = segment.toLowerCase().normalize("NFD").replace(/ς/g, "σ");
+  return lowered.replace(/(\p{Script=Latin})\p{M}+/gu, "$1");
+}
+
+export function fold(value: string): string {
+  const cached = foldCache.get(value);
+  if (cached !== undefined) return cached;
+  const folded = foldSegment(value.trim());
+  if (foldCache.size > 4000) foldCache.clear();
+  foldCache.set(value, folded);
+  return folded;
+}
+
+/**
+ * 折叠文本并记录每个折叠字符对应的原文下标，供调用方把命中区间映射回原文。
+ * 每个 UTF-16 单元映射至完整字素的起止位置，支持一对多展开而不拆开代理对。
+ */
+export function foldWithMap(text: string): { folded: string; source: number[]; ends: number[] } {
+  const units: string[] = [];
+  const source: number[] = [];
+  const ends: number[] = [];
+  for (const { segment, index } of graphemes.segment(text)) {
+    const folded = foldSegment(segment);
+    units.push(folded);
+    // indexOf 返回 UTF-16 下标；每个 code unit 都映射到完整字素区间，避免拆开表情或组合字符。
+    for (let unit = 0; unit < folded.length; unit += 1) {
+      source.push(index);
+      ends.push(index + segment.length);
+    }
+  }
+  return { folded: units.join(""), source, ends };
 }
 
 /** 标题与运行时 id 的命中优先于说明；只做普通子串匹配，不把用户输入当正则表达式。 */
 function score(entry: SettingsSearchEntry, needle: string): number {
-  const label = normalize(entry.label);
+  const label = fold(entry.label);
   if (label.startsWith(needle)) return 0;
   if (label.includes(needle)) return 1;
-  if (entry.itemId && normalize(entry.itemId).includes(needle)) return 1;
-  if (entry.detail && normalize(entry.detail).includes(needle)) return 2;
+  if (entry.itemId && fold(entry.itemId).includes(needle)) return 1;
+  if (entry.detail && fold(entry.detail).includes(needle)) return 2;
   return -1;
 }
 
@@ -250,7 +392,7 @@ export function searchSettings(
   query: string,
   limit = 24,
 ): SettingsSearchEntry[] {
-  const needle = normalize(query);
+  const needle = fold(query);
   if (!needle) return [];
   return entries
     .map((entry) => ({ entry, value: score(entry, needle) }))

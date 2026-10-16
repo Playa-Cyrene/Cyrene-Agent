@@ -310,13 +310,13 @@ export function AppearanceSettingsPage({ section, onSelectSection, onBackToWorks
                     <div className="cy-settings-row__control cy-settings-avatar-control">
                       <img className="cy-settings-avatar-preview" src={cyreneAvatarUrl} alt={t("settingsPage.cyreneAvatar")} />
                       <Button disabled={avatarBusy} onClick={() => void uploadCyreneAvatar()}>{t("settingsPage.cyreneAvatarUpload")}</Button>
-                      <Button disabled={avatarBusy} onClick={() => void resetCyreneAvatar()}>{t("settingsPage.cyreneAvatarResetButton")}</Button>
+                      <Button disabled={avatarBusy} data-settings-search-key="settingsPage.cyreneAvatarResetButton" onClick={() => void resetCyreneAvatar()}>{t("settingsPage.cyreneAvatarResetButton")}</Button>
                     </div>
                   </div>
                   <div className="cy-settings-row">
                     <div className="cy-settings-row__copy"><strong>{t("settingsPage.messageTypography")}</strong><span>{t("settingsPage.messageTypographyDescription")}</span></div>
                     <div className="cy-settings-row__control cy-settings-button-group">
-                      <Button onClick={resetTypography}>{t("settingsPage.messageTypographyResetButton")}</Button>
+                      <Button data-settings-search-key="settingsPage.messageTypographyResetButton" onClick={resetTypography}>{t("settingsPage.messageTypographyResetButton")}</Button>
                     </div>
                   </div>
                   <div className="cy-settings-row">

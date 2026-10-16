@@ -173,6 +173,9 @@ describe("mcp-adapter transport split", () => {
 			args: ["server.js"],
 		});
 		const tool = toolRegistry.getById("test-error-explode");
+		// MCP 展示名包含用户服务器名称；标记仅限制设置搜索，不得禁用工具或改变调用参数。
+		expect(tool?.settingsSearchable).toBe(false);
+		expect(tool?.enabled).toBe(true);
 
 		await expect(tool?.execute({ value: "x" })).rejects.toThrow("E_MCP_TOOL_FAILED");
 		expect(callTool).toHaveBeenCalledWith({ name: "explode", arguments: { value: "x" } });

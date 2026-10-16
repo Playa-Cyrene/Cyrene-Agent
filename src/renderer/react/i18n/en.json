@@ -859,6 +859,7 @@
       "placeholder": "Search settings",
       "empty": "No matching settings",
       "clear": "Clear search",
+      "more": "{{count}} more results. Refine your search.",
       "close": "Exit search"
     },
       "knowledgeBase": {

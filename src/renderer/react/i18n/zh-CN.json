@@ -859,6 +859,7 @@
       "placeholder": "搜索设置项",
       "empty": "没有匹配的设置项",
       "clear": "清空搜索内容",
+      "more": "还有 {{count}} 条结果，请缩小搜索范围",
       "close": "退出搜索"
     },
       "knowledgeBase": {

@@ -61,7 +61,47 @@ beforeEach(async()=>{
  await i18next.changeLanguage('zh-CN');setApis();onSelect=vi.fn();
  host=document.createElement('div');document.body.append(host);root=createRoot(host);
 });
-afterEach(async()=>{await act(async()=>root.unmount());host.remove();vi.clearAllTimers();vi.useRealTimers();vi.restoreAllMocks();delete w.knowledgeBase});
+afterEach(async()=>{await act(async()=>root.unmount());host.remove();vi.clearAllTimers();vi.useRealTimers();vi.restoreAllMocks();delete w.knowledgeBase;delete w.tts});
+
+describe('Local review: identity, keyboard focus and user values',()=>{
+ it.each(['clear','close','item'])('Escape closes from the %s control and restores input focus',async(control)=>{
+  await mount();await fill('保持置顶');
+  const button=host.querySelector<HTMLButtonElement>(`.cy-settings-search__${control}`)!;
+  await act(async()=>button.focus());expect(document.activeElement).toBe(button);
+  await act(async()=>button.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true})));
+  expect(isActive()).toBe(false);expect(input().value).toBe('');expect(document.activeElement).toBe(input());
+  expect(onSelect).not.toHaveBeenCalled();
+ });
+ it('Enter on a focused clear button must not select the active result',async()=>{
+  await mount();await fill('保持置顶');const button=host.querySelector<HTMLButtonElement>('.cy-settings-search__clear')!;
+  await act(async()=>{button.focus();button.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));});
+  expect(onSelect).not.toHaveBeenCalled();expect(isActive()).toBe(true);
+ });
+ it('legacy IME Escape remains a composition action',async()=>{
+  await mount();await fill('保持置顶');await key('Escape',{keyCode:229});expect(isActive()).toBe(true);
+ });
+ it('an unkeyed namesake is rejected even when only one result matches the description',async()=>{
+  i18next.addResource('zh-CN','translation','settingsPage.general.auditUnkeyedAlpha','未标记的重复标题');
+  i18next.addResource('zh-CN','translation','settingsPage.general.auditUnkeyedBeta','未标记的重复标题');
+  i18next.addResource('zh-CN','translation','settingsPage.general.auditUnkeyedAlphaDescription','第一条专属说明');
+  await mount(row('未标记的重复标题'),'general');await fill('第一条专属说明');expect(labels()).toEqual(['未标记的重复标题']);
+  await pick('未标记的重复标题');await advance(350);expect(host.querySelector('.cy-settings-search-flash-host')).toBeNull();
+ });
+ it('same labels in different sections still allow a unique legacy target',async()=>{
+  i18next.addResource('zh-CN','translation','settingsPage.general.auditCrossSection','跨页同名标题');
+  i18next.addResource('zh-CN','translation','settingsPage.memory.auditCrossSection','跨页同名标题');
+  await mount(row('跨页同名标题'),'general');await fill('跨页同名标题');await pick('跨页同名标题');await advance(350);
+  expect(host.querySelector('#target')?.classList.contains('cy-settings-search-flash')).toBe(true);
+ });
+ it('user configuration and input values never become search entries',async()=>{
+  const values=['sk-user-private-917','https://user-private.example/917','user-private-917@example.com','用户自填名称917','用户自填正文917'];
+  const readConfig=vi.fn(async()=>({apiKey:values[0],baseUrl:values[1],account:values[2],name:values[3],prompt:values[4]}));
+  Object.assign(w.settings,{getConfig:readConfig,getGeneral:readConfig});w.tts={loadSettings:readConfig};
+  await mount(<>{values.map((value,index)=><label key={index}>固定字段标题<input defaultValue={value}/></label>)}</>);
+  for(const value of values){await fill(value);expect(labels()).toEqual([])}
+  expect(readConfig).not.toHaveBeenCalled();
+ });
+});
 
 describe('Controls: explicit intended behavior',()=>{
  it('C01 empty and whitespace searches display no list',async()=>{await mount();await fill('   ');expect(labels()).toEqual([]);expect(host.querySelector('.cy-settings-search__empty')).toBeNull()});
@@ -285,13 +325,13 @@ describe('PR second review regressions',()=>{
   expect(onSelect).not.toHaveBeenCalled();expect(w.settings.setToolModeOverride).not.toHaveBeenCalled();
  });
  it('R25 skill search clears source and keyword filters while preserving mode overrides',async()=>{
-  w.settings.getSkillCatalog=async()=>[{id:'user-skill',name:'用户技能',description:'测试技能',enabled:true,source:'user',modes:null}];
-  w.settings.getSkillModeOverrides=async()=>({'user-skill':{work:false}});w.settings.setSkillModeOverride=vi.fn();
+  w.settings.getSkillCatalog=async()=>[{id:'builtin-skill',name:'内置技能',description:'测试技能',enabled:true,source:'builtin',modes:null}];
+  w.settings.getSkillModeOverrides=async()=>({'builtin-skill':{work:false}});w.settings.setSkillModeOverride=vi.fn();
   await mount(reveal=><SkillSettingsPanel searchRevealRequest={reveal.skill}/>,'skill');
   const mode=[...host.querySelectorAll<HTMLButtonElement>('.skill-panel__tab')].find(x=>x.textContent==='Work')!;
-  const source=[...host.querySelectorAll<HTMLButtonElement>('.skill-panel__filter-tab')].find(x=>x.textContent===zh.skillPanel.sourceBuiltin)!;
+  const source=[...host.querySelectorAll<HTMLButtonElement>('.skill-panel__filter-tab')].find(x=>x.textContent===zh.skillPanel.sourceUser)!;
   await act(async()=>{mode.click();source.click()});await localFilter('.skill-panel__search','missing');expect(host.querySelector('.skill-card')).toBeNull();
-  await fill('user-skill');await pick('用户技能');await advance(1);await advance(350);
+  await fill('builtin-skill');await pick('内置技能');await advance(1);await advance(350);
   expect(host.querySelector('.skill-card')?.classList.contains('cy-settings-search-flash')).toBe(true);
   expect(host.querySelector('.skill-panel__tab.is-active')).toBe(mode);
   expect(host.querySelector('.skill-panel__filter-tab.is-active')?.textContent).toBe(zh.skillPanel.sourceAll);

@@ -821,7 +821,7 @@ export function ModelSettingsPanel() {
           <h1>{t("settingsPage.modelSettings.title")}</h1>
           <p className="cy-settings-intro">{t("settingsPage.modelSettings.description")}</p>
         </div>
-        <Button icon={<Plus size={16} />} onClick={() => startNewDraft()}>{t("settingsPage.modelSettings.addProfile")}</Button>
+        <Button icon={<Plus size={16} />} data-settings-search-key="settingsPage.modelSettings.addProfile" onClick={() => startNewDraft()}>{t("settingsPage.modelSettings.addProfile")}</Button>
       </header>
 
       <section className="cy-model-layout" aria-label={t("settingsPage.modelSettings.title")}>
@@ -992,7 +992,7 @@ export function ModelSettingsPanel() {
                         placeholder={t("settingsPage.modelSettings.modelListAddPlaceholder")}
                         aria-label={t("settingsPage.modelSettings.modelListAdd")}
                       />
-                      <Button type="text" size="small" onClick={() => openModelOptionModal()} aria-label={t("settingsPage.modelSettings.modelListAdd")} title={t("settingsPage.modelSettings.modelListAdd")}>
+                      <Button type="text" size="small" data-settings-search-key="settingsPage.modelSettings.modelListAdd" onClick={() => openModelOptionModal()} aria-label={t("settingsPage.modelSettings.modelListAdd")} title={t("settingsPage.modelSettings.modelListAdd")}>
                         <Plus size={14} />
                       </Button>
                     </div>
