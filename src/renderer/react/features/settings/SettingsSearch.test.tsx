@@ -12,6 +12,7 @@ import en from '../../i18n/en.json';
 import { SkillSettingsPanel } from './SkillSettingsPanel';
 import { PluginSettingsPanel } from './PluginSettingsPanel';
 import { EmailSettingsPanel } from './EmailSettingsPanel';
+import { KnowledgeBaseSettingsPanel } from './KnowledgeBaseSettingsPanel';
 import { ToolToggleSettingsPanel } from './ToolToggleSettingsPanel';
 import { ModelSettingsPanel } from './ModelSettingsPanel';
 import { PluginModePanel } from '../chat/components/PluginModePanel';
@@ -60,7 +61,7 @@ beforeEach(async()=>{
  await i18next.changeLanguage('zh-CN');setApis();onSelect=vi.fn();
  host=document.createElement('div');document.body.append(host);root=createRoot(host);
 });
-afterEach(async()=>{await act(async()=>root.unmount());host.remove();vi.clearAllTimers();vi.useRealTimers();vi.restoreAllMocks()});
+afterEach(async()=>{await act(async()=>root.unmount());host.remove();vi.clearAllTimers();vi.useRealTimers();vi.restoreAllMocks();delete w.knowledgeBase});
 
 describe('Controls: explicit intended behavior',()=>{
  it('C01 empty and whitespace searches display no list',async()=>{await mount();await fill('   ');expect(labels()).toEqual([]);expect(host.querySelector('.cy-settings-search__empty')).toBeNull()});
@@ -373,5 +374,37 @@ describe('PR third review regressions',()=>{
   expect(close.getAttribute('aria-hidden')).toBe('true');expect(close.tabIndex).toBe(-1);
   expect(input().getAttribute('aria-expanded')).toBe('false');expect(input().hasAttribute('aria-activedescendant')).toBe(false);
   await fill('置顶');expect(isActive()).toBe(true);expect(labels()).toContain('保持置顶');
+ });
+});
+
+describe('PR fourth review regressions',()=>{
+ it.each([['zh-CN',zh],['en',en]])('R34 knowledge search hints describe the heading rather than its sibling action in %s',(_locale,bundle)=>{
+  const entries=buildSettingEntries(bundle);const hint=bundle.settingsPage.knowledgeBase.searchHint;
+  expect(searchSettings(entries,hint).map(x=>x.settingKey)).toEqual(['settingsPage.knowledgeBase.searchTitle']);
+  expect(entries.find(x=>x.settingKey==='settingsPage.knowledgeBase.search')?.detail).toBeUndefined();
+  expect(entries.find(x=>x.settingKey==='settingsPage.knowledgeBase.searchTitle')?.detail).toBe(hint);
+ });
+ it.each([['zh-CN',zh],['en',en]])('R35 real knowledge panel highlights the described heading without invoking search in %s',async(locale,bundle)=>{
+  const collection={id:'test-collection',name:'回归资料集',scope:{kind:'global'},enabled:true,paths:[{path:'fixture.txt',kind:'file'}],createdAt:1,updatedAt:1,scanning:false,fileCount:1,errorCount:0};
+  w.knowledgeBase={getState:async()=>({enabled:true,collections:[collection]}),listWorkspaces:async()=>[],listDocuments:async()=>[],search:vi.fn(async()=>[])};
+  await act(async()=>{await i18next.changeLanguage(locale)});await mount(<AppProviders><KnowledgeBaseSettingsPanel/></AppProviders>,'knowledge');
+  // Ant Design 会给两个汉字的按钮插空格；按真实控件定位，不把排版空格误判为缺失按钮。
+  const action=[...host.querySelectorAll<HTMLButtonElement>('.cy-knowledge-search button')].find(button=>button.textContent?.replace(/\s/g,'')===bundle.settingsPage.knowledgeBase.search.replace(/\s/g,''))!;
+  expect(action).toBeTruthy();
+  await fill(bundle.settingsPage.knowledgeBase.searchHint);expect(labels()).toEqual([bundle.settingsPage.knowledgeBase.searchTitle]);
+  await pick(bundle.settingsPage.knowledgeBase.searchTitle);await advance(350);
+  const heading=host.querySelector('[data-settings-search-key="settingsPage.knowledgeBase.searchTitle"]');
+  expect(heading?.classList.contains('cy-settings-search-flash')).toBe(true);
+  expect(action.classList.contains('cy-settings-search-flash')).toBe(false);expect(action.closest('.cy-settings-search-flash')).toBeNull();
+  expect(w.knowledgeBase.search).not.toHaveBeenCalled();
+ });
+ it('R36 an explicit heading association is order independent and never falls back to an action when the heading is absent',()=>{
+  for(const fields of [
+   {searchHint:'独有分组说明',search:'执行查询',searchTitle:'资料查询分组'},
+   {searchTitle:'资料查询分组',search:'执行查询',searchHint:'独有分组说明'},
+  ]){
+   expect(searchSettings(buildSettingEntries({settingsPage:{knowledgeBase:fields}}),'独有分组说明').map(x=>x.settingKey)).toEqual(['settingsPage.knowledgeBase.searchTitle']);
+  }
+  expect(searchSettings(buildSettingEntries({settingsPage:{knowledgeBase:{search:'执行查询',searchHint:'独有分组说明'}}}),'独有分组说明')).toEqual([]);
  });
 });

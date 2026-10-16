@@ -36,7 +36,7 @@
 ## 后续维护
 
 - 新增设置分区时，同步维护 `settingsNavItems.tsx` 的导航定义与 `settingsSearchIndex.ts` 的命名空间映射，避免结果指向错误页面。
-- 翻译说明应与标题采用相同的路径和 key 前缀，例如 `requestTimeout` 与 `requestTimeoutHint`，或 `autoReadTitle` 与 `autoReadDescription`。直接同名标题优先于补 `Title` 的候选，说明不会按显示文字猜测关联，也不会独立成为结果。工具总开关 `toolPanel.chatEnhanceTitle` / `chatEnhanceDesc` 单独登记，避免收录该命名空间里的模式和状态提示。
+- 翻译说明应与标题采用相同的路径和 key 前缀，例如 `requestTimeout` 与 `requestTimeoutHint`，或 `autoReadTitle` 与 `autoReadDescription`。若同一前缀同时是按钮和标题，先在 `DETAIL_TITLE_KEYS` 登记真实配对，例如知识库 `searchHint → searchTitle`；未登记时直接同名标题优先于补 `Title` 的候选。显式目标不存在时不把说明转交给同名按钮，说明也不会独立成为结果。工具总开关 `toolPanel.chatEnhanceTitle` / `chatEnhanceDesc` 单独登记，避免收录该命名空间里的模式和状态提示。
 - 迁入邮件页的 SMTP 控件仍复用 `settingsPage.tools.*` 翻译，索引通过精确 key 集合覆盖其归属；新增相关控件需同步映射。搜索不会为了显示 SMTP 字段自动开启邮件发送。
 - 运行时面板的 `searchRevealRequest` 仅恢复浏览筛选，重复选择同一结果也要更新请求；勿用组件 key 强制重挂载，以免清掉进行中的操作。
 - 新增或调整运行时卡片时，保留卡片上的 `data-settings-search-kind` 与 `data-settings-search-id`，值使用宿主身份，不使用展示名称。

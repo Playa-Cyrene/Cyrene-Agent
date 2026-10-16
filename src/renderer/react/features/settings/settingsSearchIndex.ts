@@ -155,6 +155,11 @@ function isIndexable(key: string, text: string): boolean {
   return !STATUS_KEY_SUFFIX.test(key.slice(key.lastIndexOf(".") + 1));
 }
 
+// 同一前缀可能同时用于按钮和分组标题；按真实面板登记歧义说明的目标，不能仅凭 key 长短猜测。
+const DETAIL_TITLE_KEYS: Readonly<Record<string, string>> = {
+  "settingsPage.knowledgeBase.searchHint": "settingsPage.knowledgeBase.searchTitle",
+};
+
 /** 由当前语言的 i18n 资源树构建设置项条目。 */
 export function buildSettingEntries(bundle: unknown): SettingsSearchEntry[] {
   const flat: Array<[string, string]> = [];
@@ -170,7 +175,7 @@ export function buildSettingEntries(bundle: unknown): SettingsSearchEntry[] {
     const suffix = last.match(/(Description|Hint|Desc)$/i)?.[0];
     if (suffix) {
       if (text.trim() && !/\{\{/.test(text)) {
-        const titleKey = key.slice(0, -suffix.length);
+        const titleKey = DETAIL_TITLE_KEYS[key] ?? key.slice(0, -suffix.length);
         details.set(titleKey, [details.get(titleKey), text.trim()].filter(Boolean).join("\n"));
       }
       continue;
@@ -184,7 +189,7 @@ export function buildSettingEntries(bundle: unknown): SettingsSearchEntry[] {
 
   const entries: SettingsSearchEntry[] = [];
   for (const { entry, key } of titles.values()) {
-    // 兼容 foo / fooDescription 与 fooTitle / fooDescription；直接同名关联优先，避免说明串到另一设置。
+    // 精确登记的说明直接存于目标 key；其余兼容 foo / fooDescription 与 fooTitle / fooDescription。
     const detail = details.get(key) ?? (key.endsWith("Title") && !titles.has(key.slice(0, -5)) ? details.get(key.slice(0, -5)) : undefined);
     if (detail) entry.detail = detail;
     entries.push(entry);

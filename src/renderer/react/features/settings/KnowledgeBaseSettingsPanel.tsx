@@ -214,7 +214,7 @@ export function KnowledgeBaseSettingsPanel() {
     </section>
 
     {state?.collections.length ? <section className="cy-settings-section">
-      <div className="cy-settings-section__heading"><h2>{t(`${key}.searchTitle`)}</h2><p>{t(`${key}.searchHint`)}</p></div>
+      <div className="cy-settings-section__heading"><h2 data-settings-search-key={`${key}.searchTitle`}>{t(`${key}.searchTitle`)}</h2><p>{t(`${key}.searchHint`)}</p></div>
       <Card>
         {canSearch ? <>
           <div className="cy-knowledge-search">
