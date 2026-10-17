@@ -15,6 +15,7 @@ import { getLearnExamPageSession } from "../protocols/bootstrap";
 import { parseLearnExamPageRequest } from "../protocols/learn-exam-page-protocol";
 import { registerExamPageSource } from "../learn/exam-page-authority";
 import { appendBrowserObservationLog } from "./browser-observation-log";
+import { navigationErrorCode, parseHttpUrl } from "./http-url";
 import {
   capturePlaywrightPageSnapshot,
   cancelPlaywrightElementPicker,
@@ -52,15 +53,6 @@ interface BrowserObservationRecord {
   tabId: string;
   url: string;
   snapshot: RuntimeSnapshot;
-}
-
-function parseHttpUrl(input: string): URL | null {
-  try {
-    const url = new URL(input.trim());
-    return url.protocol === "http:" || url.protocol === "https:" ? url : null;
-  } catch {
-    return null;
-  }
 }
 
 function normalizeFaviconUrl(input: string, pageUrl: string): string | undefined {
@@ -856,10 +848,7 @@ export class BrowserPanelController {
     await this.readyPromise;
     if (this.disposed) return { ok: false, error: "unavailable" };
     const url = parseHttpUrl(input);
-    if (!url) {
-      const unsupported = /^[a-z][a-z\d+.-]*:/i.test(input.trim());
-      return { ok: false, error: unsupported ? "unsupported_protocol" : "invalid_url" };
-    }
+    if (!url) return { ok: false, error: navigationErrorCode(input) };
     const tab = this.createTab(true);
     this.applyBounds();
     this.publish();
@@ -1007,10 +996,7 @@ export class BrowserPanelController {
   private async navigateTab(tab: BrowserTab, input: string): Promise<BrowserPanelResult> {
     if (this.disposed || !this.tabs.includes(tab)) return { ok: false, error: "unavailable" };
     const url = parseHttpUrl(input);
-    if (!url) {
-      const unsupported = /^[a-z][a-z\d+.-]*:/i.test(input.trim());
-      return { ok: false, error: unsupported ? "unsupported_protocol" : "invalid_url" };
-    }
+    if (!url) return { ok: false, error: navigationErrorCode(input) };
     if (tab.kind === "exam") {
       tab.unregisterExamPage?.();
       tab.unregisterExamPage = undefined;

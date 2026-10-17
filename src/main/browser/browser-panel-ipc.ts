@@ -5,6 +5,7 @@ import type { IpcScope } from "../application/ipc-scope";
 import { BrowserPanelController } from "./browser-panel-controller";
 import { registerBrowserPageTools } from "./browser-page-tools";
 import { setBrowserPanelController } from "./browser-panel-runtime";
+import { normalizeAddressInput } from "./address-input";
 import type { LearnExamRecord } from "../../shared/learn-exam";
 
 const EXAM_ID_PATTERN = /^exam-[0-9a-f-]{36}$/i;
@@ -62,7 +63,8 @@ export function registerBrowserPanelIpc(input: {
   });
   input.ipc.handle(IPC.BROWSER_PANEL_NAVIGATE, (event, inputUrl: unknown) => {
     if (!authorized(event) || typeof inputUrl !== "string") return { ok: false, error: "unavailable" };
-    return controller.navigate(inputUrl);
+    // 地址栏手输地址允许省略协议；Agent 工具走 openInNewTab 等路径，仍要求完整 URL
+    return controller.navigate(normalizeAddressInput(inputUrl));
   });
   input.ipc.handle(IPC.BROWSER_PANEL_BACK, (event) => {
     if (!authorized(event)) return false;

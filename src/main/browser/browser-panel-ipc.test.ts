@@ -57,6 +57,32 @@ describe("BrowserPanel exam open IPC", () => {
   });
 });
 
+describe("BrowserPanel address bar IPC", () => {
+  afterEach(() => vi.clearAllMocks());
+
+  it("补全地址栏里省略的协议后再交给控制器", async () => {
+    const { handlers, mainContents } = register();
+    await handlers[IPC.BROWSER_PANEL_NAVIGATE]({ sender: mainContents }, "google.com");
+    await handlers[IPC.BROWSER_PANEL_NAVIGATE]({ sender: mainContents }, "localhost:3000");
+    expect(mocks.controller.navigate).toHaveBeenNthCalledWith(1, "https://google.com");
+    expect(mocks.controller.navigate).toHaveBeenNthCalledWith(2, "http://localhost:3000");
+  });
+
+  it("其他协议与普通文字原样交给控制器，由控制器给出原有错误码", async () => {
+    const { handlers, mainContents } = register();
+    await handlers[IPC.BROWSER_PANEL_NAVIGATE]({ sender: mainContents }, "javascript:alert(1)");
+    await handlers[IPC.BROWSER_PANEL_NAVIGATE]({ sender: mainContents }, "cyrene agent");
+    expect(mocks.controller.navigate).toHaveBeenNthCalledWith(1, "javascript:alert(1)");
+    expect(mocks.controller.navigate).toHaveBeenNthCalledWith(2, "cyrene agent");
+  });
+
+  it("非主窗口发来的导航请求被拒绝", async () => {
+    const { handlers } = register();
+    expect(await handlers[IPC.BROWSER_PANEL_NAVIGATE]({ sender: { id: 2 } }, "google.com")).toEqual({ ok: false, error: "unavailable" });
+    expect(mocks.controller.navigate).not.toHaveBeenCalled();
+  });
+});
+
 function register(getRecord: () => Promise<LearnExamRecord> = async () => record) {
   const mainContents = { id: 1, send: vi.fn(), isDestroyed: () => false };
   const win = { webContents: mainContents, isDestroyed: () => false };
