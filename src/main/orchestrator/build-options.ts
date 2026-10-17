@@ -193,7 +193,7 @@ export interface BuildOptionsDeps {
 }
 
 /** 所有入口都从 canonical journal 构建上下文；不再接受旁路历史消息。 */
-export type BuildOptionsInput = AguiRunInput;
+export type BuildOptionsInput = AguiRunInput & { signal?: AbortSignal };
 
 /** onRunFinished 副作用所需的 deps（与 BuildOptionsDeps 部分重叠） */
 export interface OnRunFinishedDeps {
@@ -619,7 +619,7 @@ export async function buildAgentRunOptions(
       : undefined);
   // 预算检查对传入与自建上下文一视同仁：长会话无论从桌面还是渠道入口进入，
   // 都必须先提交自动压缩检查点，再重读 journal 作为最终上下文。
-  if (input.currentUser && input.sessionId && transcriptContext) {
+  if (input.sessionId && transcriptContext) {
     const compactionTriggerTokens = resolveCompactionTriggerTokens(contextWindowTokens);
     const estimatedMessages = estimateMessageTokens(transcriptContext.messages);
     if (estimatedMessages >= compactionTriggerTokens) {
@@ -630,6 +630,7 @@ export async function buildAgentRunOptions(
           trigger: "automatic",
           retainTokens: Math.max(1, Math.floor(contextWindowTokens * DEFAULT_HARNESS_CONFIG.compactionRetainRatio)),
           modelSettings: settings,
+          signal: input.signal,
         });
       } catch (error) {
         console.error("[BuildOptions] transcript compaction failed", error);
@@ -658,7 +659,7 @@ export async function buildAgentRunOptions(
   // slim view for downstream helpers that only need { role, content }
   const slimMessages = messages as unknown as Array<{ role: string; content?: string }>;
   const latestUserText = stripTurnModelContextForSideEffects(
-    contentToText(messages.filter((m) => m.role === "user").at(-1)?.content) ?? "",
+    contentToText(messages.filter((m) => m.role === "user" && m.visibility !== "internal").at(-1)?.content) ?? "",
   );
   const executionMode = resolveExecutionMode(
     input.executionMode ?? ((input.style || "").startsWith("talk") ? "chat" : "work"),
@@ -1144,6 +1145,7 @@ export async function buildAgentRunOptions(
       capabilities,
       ...(availableSkills.length > 0 ? { availableSkills } : {}),
       resolvedWorkspaceRoot,
+      resolvedWorkspaceBinding: workspaceBinding ?? null,
     },
     latestUserText,
   };

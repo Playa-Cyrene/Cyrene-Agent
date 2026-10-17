@@ -265,6 +265,7 @@ export function createTaskExecutor(input: {
       mode: input.parent.mode,
       allowedSkillIds: new Set(taskSkills.map((skill) => skill.id)),
       permissionMode: input.parent.permissionMode,
+      allowUserInteraction: false,
       readOnly: accessMode === "read_only",
     };
 

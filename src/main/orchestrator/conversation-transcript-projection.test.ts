@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   buildFullModelContext,
+  isTranscriptRunSuperseded,
+  buildCompactionSourceView,
   buildModelContextFromCompactedView,
   reduceTranscriptProjection,
   type TranscriptRunReader,
@@ -80,6 +82,69 @@ function compactedFixture(): TranscriptEntry[] {
 }
 
 describe("conversation transcript projection", () => {
+  it("tracks source runs across later rewinds and retains archived active sources", () => {
+    nextSeq = 0;
+    const entries = [user("old", "original task"), assistant("old-answer", "shell started", undefined, "source-run"),
+      user("later", "later task"), assistant("later-answer", "later answer", undefined, "later-run")];
+    const rewind: TranscriptEntry = { seq: ++nextSeq, id: "rewind-later", at: nextSeq, kind: "turn_rewind",
+      payload: { anchorUserTurnId: "later", disposition: "keep_user", reason: "regenerate" } };
+    entries.push(rewind);
+    expect(isTranscriptRunSuperseded(entries, "source-run")).toBe(false);
+    expect(isTranscriptRunSuperseded(entries, "later-run")).toBe(true);
+    entries.push({ seq: ++nextSeq, id: "archive-source", at: nextSeq, kind: "compaction_checkpoint",
+      payload: { baseThroughSeq: rewind.seq, sourceThroughSeq: 2, sourceDigest: "fixture", replacement: { role: "system", content: "original task summary" }, trigger: "automatic" } });
+    expect(isTranscriptRunSuperseded(entries, "source-run")).toBe(false);
+    entries.push({ seq: ++nextSeq, id: "remove-original", at: nextSeq, kind: "turn_tombstone", payload: { targetUserTurnId: "old", reason: "pending_withdrawn" } });
+    expect(isTranscriptRunSuperseded(entries, "source-run")).toBe(true);
+  });
+  it("materializes background events for the model without inventing user UI messages, including incremental projection and rewind", () => {
+    const first = user("background-user", "run a command");
+    const seq = ++nextSeq;
+    const event: TranscriptEntry = { seq, id: "shell-completed:job-1", at: seq, kind: "background_event",
+      payload: { jobId: "job-1", message: { role: "user", visibility: "internal", content: "shell exited 0" } } };
+    const reply = assistant("background-answer", "command completed");
+    const entries = [first, event, reply];
+    expect(buildFullModelContext(entries, noRuns).messages).toEqual(expect.arrayContaining([event.payload.message]));
+    const full = reduceTranscriptProjection(entries);
+    expect(full.messages.map(message => message.content)).toEqual(["run a command", "command completed"]);
+    const seed = reduceTranscriptProjection([first]);
+    expect(reduceTranscriptProjection(entries, seed).messages).toEqual(full.messages);
+    const rewind: TranscriptEntry = { seq: ++nextSeq, id: "rewind-background", at: nextSeq, kind: "turn_rewind",
+      payload: { anchorUserTurnId: "background-user", disposition: "keep_user", reason: "regenerate" } };
+    expect(buildFullModelContext([...entries, rewind], noRuns).messages).toEqual([{ role: "user", content: "run a command" }]);
+  });
+  it("excludes retired completions and their obsolete compaction summary from every model view", () => {
+    const first = user("workspace-user", "run a command");
+    const event: TranscriptEntry = { seq: ++nextSeq, id: "shell-completed:A", at: nextSeq, kind: "background_event",
+      payload: { jobId: "A", sourceWorkspace: "A", message: { role: "user", visibility: "internal", content: "workspace A output" } } };
+    const checkpoint: TranscriptEntry = { seq: ++nextSeq, id: "checkpoint-with-A", at: nextSeq, kind: "compaction_checkpoint",
+      payload: { baseThroughSeq: 0, sourceThroughSeq: event.seq, sourceDigest: "digest",
+        replacement: { role: "system", content: "summary of workspace A output" }, trigger: "automatic" } };
+    const retirement: TranscriptEntry = { seq: ++nextSeq, id: "shell-retired:A", at: nextSeq, kind: "background_event_retired",
+      payload: { jobId: "A" } };
+    const current: TranscriptEntry = { seq: ++nextSeq, id: "shell-completed:B", at: nextSeq, kind: "background_event",
+      payload: { jobId: "B", sourceWorkspace: "B", message: { role: "user", visibility: "internal", content: "workspace B output" } } };
+    const entries = [first, event, checkpoint, retirement, current];
+    for (const materialize of [buildFullModelContext, buildModelContextFromCompactedView, buildCompactionSourceView]) {
+      expect(materialize(entries, noRuns).messages).toEqual([{ role: "user", content: "run a command" }, current.payload.message]);
+    }
+    expect(entries).toContain(event);
+    expect(reduceTranscriptProjection(entries).messages.map(message => message.content).filter(Boolean)).toEqual(["run a command"]);
+  });
+
+  it("invalidates a summary of an archived retired completion even without its original row", () => {
+    const entries: TranscriptEntry[] = [
+      { seq: 5, id: "archived-summary", at: 5, kind: "compaction_checkpoint", payload: {
+        baseThroughSeq: 4, sourceThroughSeq: 3, sourceDigest: "digest",
+        replacement: { role: "system", content: "STALE_ARCHIVED_A" }, trigger: "automatic",
+      } },
+      { seq: 6, id: "shell-retired:A", at: 6, kind: "background_event_retired", payload: { jobId: "A", sourceSeq: 2 } },
+      { seq: 7, id: "B", at: 7, turnId: "B", revision: 1, kind: "user", payload: { text: "workspace B" } },
+    ];
+    expect(buildModelContextFromCompactedView(entries, noRuns).messages).toEqual([{ role: "user", content: "workspace B" }]);
+    expect(buildCompactionSourceView(entries, noRuns).messages).toEqual([{ role: "user", content: "workspace B" }]);
+  });
+
   it("墓碑移除目标 user 及其尾部但不删除更早 UI 历史", () => {
     nextSeq = 0;
     const result = reduceTranscriptProjection([

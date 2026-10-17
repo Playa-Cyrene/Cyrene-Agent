@@ -191,6 +191,12 @@ function presentDraft(card: Record<string, unknown>): string {
   return json({ kind: "mail_draft_card", card });
 }
 
+function requireDraftCardInteraction(context?: ToolContext): void {
+  if (context?.allowUserInteraction === false) {
+    throw new ToolExecutionError("USER_CHOICE_UNAVAILABLE", "当前运行无法展示邮件草稿卡片，请在前台会话中起草。", "permission_denied");
+  }
+}
+
 function effectForDrafts(args: Record<string, unknown>): ToolEffectKind {
   switch (args.operation) {
     case "list":
@@ -456,7 +462,7 @@ export function registerGmailTools(service: GmailService): void {
             `永久删除 Gmail 草稿？\n主题：${safePreview(current.message.subject, 200)}\n收件人：${current.message.to.join("、") || "（未填写）"}`,
             [{ label: "永久删除草稿", value: "delete" }, CANCEL_OPTION],
             "cancel",
-            { sensitive: true, suppressToast: true, signal: context?.signal, runId: context?.runId },
+            { sensitive: true, suppressToast: true, signal: context?.signal, runId: context?.runId, allowPrompt: context?.allowUserInteraction },
           );
           if (choice !== "delete") return "[gmail_manage_drafts] 用户取消删除草稿。";
           await service.deleteDraft(String(args.draftId ?? ""));
@@ -502,9 +508,10 @@ export function registerGmailTools(service: GmailService): void {
       },
       required: ["subject", "bodyMarkdown"],
     },
-    execute: async (args) => {
+    execute: async (args, context) => {
       const draft = draftInput(args);
       try {
+        requireDraftCardInteraction(context);
         const provider = args.provider === "smtp" ? "smtp" : "gmail";
         if (provider === "smtp") {
           return presentDraft(cardFromDraft({ provider, from: getSmtpSenderIdentity() ?? "", draft }));
@@ -561,6 +568,7 @@ export function registerGmailTools(service: GmailService): void {
       const input = draftInput(args);
       try {
         if (args.action !== "draft" && args.action !== "send") return "[错误] Gmail 回复操作无效。";
+        if (args.action === "draft") requireDraftCardInteraction(context);
         if (args.action === "send") {
           const authorizationError = requireSendAuthorization(context);
           if (authorizationError) return authorizationError;
@@ -612,6 +620,7 @@ export function registerGmailTools(service: GmailService): void {
       const input = draftInput(args);
       try {
         if (args.action !== "draft" && args.action !== "send") return "[错误] Gmail 转发操作无效。";
+        if (args.action === "draft") requireDraftCardInteraction(context);
         if (args.action === "send") {
           if (!input.to.length) return "[错误] 转发收件人不能为空。";
           const authorizationError = requireSendAuthorization(context);
@@ -646,8 +655,11 @@ export function registerGmailTools(service: GmailService): void {
       properties: { messageId: { type: "string", description: "邮件 ID" }, attachmentId: { type: "string", description: "附件 ID" } },
       required: ["messageId", "attachmentId"],
     },
-    execute: async (args) => {
+    execute: async (args, context) => {
       try {
+        if (context?.allowUserInteraction === false) {
+          throw new ToolExecutionError("USER_CHOICE_UNAVAILABLE", "当前运行不支持附件保存对话框，请在前台会话中重试。", "permission_denied");
+        }
         const file = await service.downloadAttachment(String(args.messageId ?? ""), String(args.attachmentId ?? ""));
         const saved = await dialog.showSaveDialog({ defaultPath: file.filename, title: "保存 Gmail 附件" });
         if (saved.canceled || !saved.filePath) return "[gmail_download_attachment] 已取消保存附件。";

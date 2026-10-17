@@ -15,6 +15,7 @@ vi.mock("../../tools/registry/tool-registry", () => ({
   toolRegistry: { getEnabledTools: vi.fn(() => []) },
 }));
 vi.mock("electron", () => ({ app: { getPath: vi.fn(() => "C:\\cyrene-preparation") } }));
+vi.mock("../../../storage/persistent-execution-ledger", () => ({ createPersistentExecutionLedger: vi.fn() }));
 
 import { prepareHarnessRun } from "./run-preparation";
 
@@ -72,5 +73,18 @@ describe("harness run preparation", () => {
     } as never, new AbortController().signal);
 
     expect(runStore.get).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true, undefined])("filters interactive tools only for headless runs (interactive=%s)", async interactive => {
+    const prepared = await prepareHarnessRun({
+      runId: "quiz-filter", conversationId: "thread-1", conversationMode: "learn",
+      settings: { provider: "test", baseUrl: "", model: "model", apiKey: "" },
+      messages: [], toolSystemContent: "", soulSystemBaseContent: "persona",
+      harnessInteractiveTools: interactive,
+      capabilities: { tools: [{ id: "pop_quiz" }, { id: "learn_exam_publish" }, { id: "browser_control_start", browserControlPhase: "entry" },
+        { id: "browser_click", browserControlPhase: "active" }, { id: "read_file" }] },
+    } as never, new AbortController().signal);
+    expect(prepared.tools.map(tool => tool.id)).toEqual(interactive !== false
+      ? ["pop_quiz", "learn_exam_publish", "browser_control_start", "browser_click", "read_file"] : ["read_file"]);
   });
 });

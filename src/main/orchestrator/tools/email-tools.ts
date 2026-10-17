@@ -178,6 +178,7 @@ async function executeSendEmail(args: Record<string, unknown>, context?: ToolCon
     { label: "取消", value: "cancel" },
   ];
   const choice = await requestUserChoice(question, options, "cancel", {
+    allowPrompt: context?.allowUserInteraction,
     sensitive: true,
     suppressToast: true,
     signal: context?.signal,

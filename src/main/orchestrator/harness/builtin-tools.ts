@@ -713,7 +713,8 @@ export function isHarnessBuiltin(toolName: string): boolean {
 }
 
 export function isInteractiveHarnessBuiltin(toolName: string): boolean {
-  return toolName === ASK_USER_TOOL_ID || toolName === CONFIRM_UNCERTAIN_EFFECT_TOOL_ID;
+  return toolName === ASK_USER_TOOL_ID || toolName === CONFIRM_UNCERTAIN_EFFECT_TOOL_ID
+    || toolName === ENTER_PLAN_MODE_TOOL_ID || toolName === WRITE_PLAN_TOOL_ID || toolName === SUBMIT_PLAN_TOOL_ID;
 }
 
 /**
@@ -759,5 +760,6 @@ export function getHarnessBuiltinToolSpecs(options?: {
     : [taskSpec, ...(options?.includeCloseTask ? [closeTaskToolSpec] : [])];
   const plan = planToolSpecsFor(options?.planState);
   return [updateTodoToolSpec, ...interactive, ...task, readToolResultToolSpec, ...plan]
+    .filter((tool) => options?.includeInteractive !== false || !isInteractiveHarnessBuiltin(tool.name))
     .filter((tool) => !options?.allowedToolIds || options.allowedToolIds.has(tool.name));
 }

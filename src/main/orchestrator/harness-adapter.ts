@@ -97,6 +97,7 @@ export async function runHarnessWithAdapter(
     },
     ...(options.onToolFinished ? { onToolFinished: options.onToolFinished } : {}),
     ...(options.pollRunAdjustments ? { pollRunAdjustments: options.pollRunAdjustments } : {}),
+    ...(options.pollShellCompletions ? { pollShellCompletions: options.pollShellCompletions } : {}),
     requestUserClarification: options.requestUserClarification
       ? (card) => options.requestUserClarification!(card as never, signal)
       : undefined,

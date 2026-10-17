@@ -42,10 +42,14 @@ export interface ToolContext {
   allowedSkillIds?: ReadonlySet<string>;
   /** 本轮工具执行权限策略；allow_all 仅用于用户显式开启的无审批渠道。 */
   permissionMode?: "normal" | "allow_all";
+  /** 当前运行是否具备用户交互界面；与工具权限档位相互独立。 */
+  allowUserInteraction?: boolean;
   /** 子任务的只读契约；独立于主代理当前权限档位。 */
   readOnly?: boolean;
   /** 仅供前台 run_shell 观察输出；异常不得影响命令执行。 */
   onShellOutput?: (update: ShellOutputUpdate) => void;
+  /** 后台结束事件由主进程负责投递，不接受模型传入的回调。 */
+  onShellJobComplete?: (snapshot: import("../builtin-tools/shell-job-manager").ShellJobSnapshot) => void;
   /** 未来扩展兜底；当前为空对象，不预设字段。遵循"地基通用，上层克制"。 */
   metadata?: Record<string, unknown>;
 }
@@ -64,7 +68,7 @@ export interface ToolContext {
 export function extractLastUserQuery(messages: ChatMessage[]): string {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
-    if (m.role !== "user") continue;
+    if (m.role !== "user" || m.visibility === "internal") continue;
     const content = m.content;
     if (typeof content === "string") return content;
     // 多模态数组：拼 text 块（未来用，当前 content 永远是 string）。

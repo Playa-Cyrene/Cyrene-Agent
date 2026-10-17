@@ -177,13 +177,14 @@ export class ConversationTranscriptCompactor {
       const currentPrefix = afterSummary.entries.filter((entry) => entry.seq <= sourceThroughSeq);
       if (digest(currentPrefix) !== sourceDigest || afterSummary.entries.some((entry) => (
         entry.seq > before.throughSeq
-        && (entry.kind === "compaction_checkpoint" || entry.kind === "turn_rewind" || entry.kind === "turn_tombstone")
+        && (entry.kind === "compaction_checkpoint" || entry.kind === "turn_rewind" || entry.kind === "turn_tombstone" || entry.kind === "background_event_retired")
       ))) {
         throw createTranscriptCompactionRequiredError();
       }
 
+      const retirementSeq = before.entries.filter(entry => entry.kind === "background_event_retired").at(-1)?.seq;
       const checkpointInput: TranscriptAppendInput = {
-        id: `compaction:${sourceThroughSeq}:${sourceDigest}`,
+        id: `compaction:${sourceThroughSeq}:${sourceDigest}${retirementSeq ? `:retired:${retirementSeq}` : ""}`,
         at: this.now(),
         kind: "compaction_checkpoint",
         payload: {

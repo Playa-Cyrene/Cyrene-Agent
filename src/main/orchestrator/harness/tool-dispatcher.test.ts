@@ -32,6 +32,14 @@ function call(id: string, args: Record<string, unknown> = { to: "a@example.com" 
 }
 
 describe("dispatchToolCall truthful execution", () => {
+  it.each(["submit_plan", "pop_quiz"])("rejects stale %s calls without invoking interactive handlers", async name => {
+    const execute = vi.fn();
+    const result = await dispatchToolCall({ id: "hidden", name, arguments: "{}" }, {
+      state: state(), tools: [{ ...tool(execute), id: name }], includeInteractiveTools: false,
+    });
+    expect(result).toMatchObject({ outcome: "failure", category: "not_found" });
+    expect(execute).not.toHaveBeenCalled();
+  });
   it("binds shell output to the invocation ID without changing the tool result", async () => {
     const events: Array<{ type: string; toolCallId?: string; text?: string }> = [];
     const shellTool = {

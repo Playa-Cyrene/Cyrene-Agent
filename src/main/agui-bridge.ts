@@ -8,6 +8,7 @@
 // Agent 的 Observable 是内存流、跨不过进程边界。
 // 因此主进程统一持有运行并仅把事件发送给 Renderer。
 import { app, IpcMainInvokeEvent, WebContents } from "electron";
+import { randomUUID } from "node:crypto";
 import { getConversationDatabase } from "./storage/conversation-database-client";
 import type { DispatchReceipt } from "./storage/conversation-run-repository";
 import { getHarnessRunStore } from "./orchestrator/harness/run-store";
@@ -46,7 +47,7 @@ import { getConversationTranscriptStore } from "./orchestrator/conversation-tran
 import { createConversationSessionMigration } from "./orchestrator/conversation-session-migration";
 import { refreshWikiMemorySources } from "./memory/wiki-memory-scheduler";
 import { ConversationJournalService } from "./orchestrator/conversation-journal-service";
-import type { MaterializedTranscript } from "./orchestrator/conversation-transcript-projection";
+import { isTranscriptRunSuperseded, type MaterializedTranscript } from "./orchestrator/conversation-transcript-projection";
 import type { TranscriptPresentationPatch } from "./orchestrator/conversation-transcript-types";
 import {
   requestUserClarification,
@@ -55,6 +56,25 @@ import {
 import { cancelPendingApprovalsForRun } from "./permission";
 import { cancelPendingQuizzesForRun, takeQuizEvidenceForRun } from "./orchestrator/pop-quiz";
 import type { PluginPromptMode, PluginTurnCompletedEvent } from "../plugins/types";
+import { ShellCompletionDispatcher, type ShellCompletionSource } from "./orchestrator/shell-completion-dispatcher";
+
+let shellCompletions: ShellCompletionDispatcher | undefined;
+const backgroundRunControllers = new Map<AbortController, Promise<void>>();
+function shellWorkspaceIdentity(binding?: { workspaceRoot: string; boundAt: number }): string {
+  return JSON.stringify([binding?.workspaceRoot ?? null, binding?.boundAt ?? null]);
+}
+export async function disposeShellCompletionDispatch(): Promise<void> {
+  const disposed = shellCompletions?.dispose();
+  shellCompletions = undefined;
+  // abort 只发出取消信号；会话守卫的 settled 才代表轨迹、回执和清理已完成。
+  const settlements = [...backgroundRunControllers.values()];
+  for (const controller of backgroundRunControllers.keys()) controller.abort();
+  const results = await Promise.allSettled([disposed, ...settlements,
+    ...[...pendingBackgroundRetirements.keys()].map(retryBackgroundRetirements),
+  ]);
+  const failure = results.find(result => result.status === "rejected");
+  if (failure?.status === "rejected") throw failure.reason;
+}
 /**
  * 从 RUN_FINISHED 事件中提取规范的终态结果（terminal）。
  *
@@ -176,7 +196,7 @@ export interface AguiRunInput {
 }
 
 /** 调用方（index.ts）注入：把输入转成 agent 需要的 options（含 system prompt 拼接）。 */
-export type BuildOptionsFn = (input: AguiRunInput) => Promise<{
+export type BuildOptionsFn = (input: AguiRunInput & { signal?: AbortSignal }) => Promise<{
   options: CyreneRunOptions;
   /** 跑完后副作用需要的信息。 */
   latestUserText: string;
@@ -235,7 +255,11 @@ export function __hasActiveRunForTest(runId: string): boolean {
 // 无论 IPC 时序如何（如 F5 后立即发消息），正确性不依赖渲染端调度顺序。
 
 interface SessionActiveRun {
+  mode: ConversationMode;
   runId: string;
+  background: boolean;
+  completions: Map<string, ShellCompletionSource>;
+  retireCompletions: () => Promise<void>;
   /** 触发该 run 的 cancelled 流程（复用 AGUI_CANCEL 同款 abort 链路）。 */
   abort: () => void;
   /** run 终态结算完成（endLifecycle 释放守卫时 resolve）；takeover 等它保证旧 run checkpoint 已落盘。 */
@@ -243,6 +267,40 @@ interface SessionActiveRun {
 }
 
 const sessionActiveRuns = new Map<string, SessionActiveRun>();
+const pendingBackgroundRetirements = new Map<string, Set<SessionActiveRun>>();
+
+async function retryBackgroundRetirements(sessionId: string): Promise<void> {
+  const pending = pendingBackgroundRetirements.get(sessionId);
+  if (!pending) return;
+  for (const run of pending) {
+    await run.settled;
+    await run.retireCompletions();
+    pending.delete(run);
+  }
+  if (!pending.size) pendingBackgroundRetirements.delete(sessionId);
+}
+
+/** 会话变更或删除前停止后台续轮，结算完成前不得修改会话。 */
+export async function cancelBackgroundConversationRun(sessionId: string, suppressWake = true): Promise<void> {
+  if (suppressWake) shellCompletions?.suppressWake(sessionId);
+  const run = sessionActiveRuns.get(sessionId);
+  if (run?.background) {
+    let pending = pendingBackgroundRetirements.get(sessionId);
+    if (!pending) pendingBackgroundRetirements.set(sessionId, pending = new Set());
+    pending.add(run);
+    run.abort();
+  }
+  // 失败时保留来源，即使运行守卫已经释放，后续操作仍须先完成退休。
+  await retryBackgroundRetirements(sessionId);
+}
+
+/** 删除或工作区变更由 IPC 结算暂停令牌；失败不会改变用户原有的停止状态。 */
+export async function prepareBackgroundSessionMutation(sessionId: string): Promise<(committed?: boolean) => void> {
+  const finish = shellCompletions?.suspendWake(sessionId) ?? (() => {});
+  try { await cancelBackgroundConversationRun(sessionId, false); }
+  catch (error) { finish(false); throw error; }
+  return finish;
+}
 
 /** 单次 takeover 等待旧 run 结算的时间上限：结算链路自身故障时超时回顶部重检，而非无限挂起。 */
 let takeoverSettleTimeoutMs = 5_000;
@@ -335,11 +393,67 @@ export function registerAgUiIpc(
   }
 
   const onFinished = onRunFinished;
-  ipc.handle(IPC.AGUI_RUN, async (event: IpcMainInvokeEvent, rawInput: unknown) => {
+  const previousDispatchDisposed = disposeShellCompletionDispatch();
+  const retireCompletion = async (completion: ShellCompletionSource) => {
+    if (!await chatsStore.getSession(completion.conversationId)) {
+      inbox.discard(completion.conversationId);
+      return;
+    }
+    const entries = await transcriptStore.readAuditEntries(completion.conversationId);
+    const source = entries.find(entry => entry.kind === "background_event" && entry.payload.jobId === completion.snapshot.jobId)
+      ?? entries.find(entry => entry.kind === "background_event_pending" && entry.payload.jobId === completion.snapshot.jobId);
+    await transcriptStore.append(completion.conversationId, {
+      kind: "background_event_retired", id: `shell-retired:${completion.snapshot.jobId}`,
+      at: Date.now(), runId: completion.sourceRunId, payload: { jobId: completion.snapshot.jobId, sourceSeq: source?.seq },
+    });
+  };
+  const canDeliverCompletion = async (completion: ShellCompletionSource) => {
+    if (completion.sourceWorkspace !== shellWorkspaceIdentity((await chatsStore.getSession(completion.conversationId))?.workspaceBinding)) return false;
+    const entries = await transcriptStore.readAuditEntries(completion.conversationId);
+    if (entries.some(entry => entry.kind === "background_event_retired" && entry.payload.jobId === completion.snapshot.jobId)) return false;
+    return !isTranscriptRunSuperseded(entries, completion.sourceRunId);
+  };
+  const inbox = new ShellCompletionDispatcher({
+    append: async (completion, message) => {
+      await previousDispatchDisposed;
+      if (!await chatsStore.getSession(completion.conversationId)) {
+        inbox.discard(completion.conversationId);
+        return;
+      }
+      await transcriptStore.append(completion.conversationId, {
+        kind: "background_event_pending", id: `shell-completed:${completion.snapshot.jobId}`,
+        at: message.internal!.createdAt, runId: completion.sourceRunId,
+        payload: { jobId: completion.snapshot.jobId, sourceWorkspace: completion.sourceWorkspace, message },
+      });
+    },
+    deliver: async (completion, message) => {
+      const run = sessionActiveRuns.get(completion.conversationId);
+      if (run?.background) run.completions.set(completion.snapshot.jobId, completion);
+      // 收件事实不参与模型顺序；仅在请求边界提交可重放的投递位置。
+      await transcriptStore.append(completion.conversationId, {
+        kind: "background_event", id: "shell-delivered:" + completion.snapshot.jobId,
+        at: message.internal!.createdAt, runId: completion.sourceRunId,
+        payload: { jobId: completion.snapshot.jobId, sourceWorkspace: completion.sourceWorkspace, message },
+      });
+    },
+    retire: retireCompletion,
+    isBusy: sessionId => sessionActiveRuns.has(sessionId),
+    canDeliver: canDeliverCompletion,
+    wake: async (sessionId, eventId, completion) => {
+      if (!await chatsStore.getSession(sessionId)) { inbox.discard(sessionId); return; }
+      // 每次重试独立接纳，避免失败回执阻止尚未消费的事件再次启动。
+      await dispatchRun({}, { sessionId, assistantTurnId: `shell-reply:${eventId}:${randomUUID()}` }, true, completion);
+    },
+    onError: error => console.warn("[AgUiBridge] 后台任务通知失败:", error),
+  });
+  shellCompletions = inbox;
+  const dispatchRun = async (event: { sender?: WebContents }, rawInput: unknown, background = false, sourceCompletion?: ShellCompletionSource) => {
+    const sourceWorkspace = sourceCompletion?.sourceWorkspace;
+    await previousDispatchDisposed;
     if (!buildOptionsFn || !onFinished) {
       throw new Error("AG-UI 桥未初始化");
     }
-    lifecycle?.onUserMessage();
+    if (!background) lifecycle?.onUserMessage();
     lifecycle?.onConversationStarted();
     perf.beginTurn("desktop");
     let conversationEnded = false;
@@ -364,7 +478,7 @@ export function registerAgUiIpc(
         ? { ...(baseEvent as Record<string, unknown>), runId: (baseEvent as { runId?: unknown }).runId ?? runId }
         : baseEvent;
       const targets: WebContents[] = [];
-      if (!sender.isDestroyed()) targets.push(sender);
+      if (sender && !sender.isDestroyed()) targets.push(sender);
       const chatWin = getChatWindowFn();
       if (chatWin && !chatWin.isDestroyed() && chatWin.webContents !== sender) {
         targets.push(chatWin.webContents);
@@ -387,11 +501,16 @@ export function registerAgUiIpc(
     const session = await loadComposedSession(sessionId);
     if (!session) {
       endConversation();
+      if (background) { inbox.discard(sessionId); return { success: false, runId }; }
       throw new Error(`AGUI_RUN 会话不存在: ${sessionId}`);
     }
     const mode = session.mode ?? (session.purpose === "proactive-chat" ? "chat" : "work");
+    const runWorkspace = shellWorkspaceIdentity(session.workspaceBinding);
+    if (background && sourceWorkspace !== runWorkspace) throw new Error("SHELL_COMPLETION_WORKSPACE_CHANGED");
     if ((mode === "work" || mode === "code" || mode === "learn") && !session.workspaceBinding?.workspaceRoot) {
       endConversation();
+      // 结束事实已落盘；工作区解绑后等用户显式继续，不能每秒重试唤醒。
+      if (background) { inbox.discard(sessionId); return { success: false, runId }; }
       throw new Error(`${mode} 模式需要先绑定项目工作区`);
     }
 
@@ -441,16 +560,30 @@ export function registerAgUiIpc(
     // 检查 + 注册在同一同步代码块内完成（JS 单线程，get 与 set 之间无 await = 原子），
     // 早于下方 buildOptions（async，存在竞态窗口，F5 后立即发消息即命中）。
     // 渲染端 busy 队列不参与正确性论证：无论 IPC 时序如何，这里都是最终边界。
+    await retryBackgroundRetirements(sessionId);
     const runAbortController = new AbortController();
     let releaseSessionGuard: (() => void) | null = null;
     for (let takeovers = 0; ; takeovers++) {
       const existing = sessionActiveRuns.get(sessionId);
       if (!existing) {
+        // Learn 的 Vault 和工具注册为全局单例，检查与占用之间不能 await。
+        const activeLearn = mode === "learn" ? [...sessionActiveRuns.values()].find(run => run.mode === "learn") : undefined;
+        if (activeLearn) {
+          endConversation();
+          throw new Error(`LEARN_RUN_ACTIVE:${activeLearn.runId}`);
+        }
         let resolveSettled!: () => void;
         const settled = new Promise<void>((resolve) => { resolveSettled = resolve; });
         // 并发 takeover 中只有一个能走到这里（await 醒来后必须回顶部重新竞争）
+        const completions = new Map<string, ShellCompletionSource>();
         sessionActiveRuns.set(sessionId, {
+          mode,
           runId,
+          background,
+          completions,
+          retireCompletions: async () => {
+            for (const completion of completions.values()) await retireCompletion(completion);
+          },
           abort: () => runAbortController.abort(),
           settled,
         });
@@ -480,15 +613,37 @@ export function registerAgUiIpc(
 
     let admitted = false;
     try {
+      if (background && !inbox.canWake(sessionId)) {
+        releaseSessionGuard?.();
+        endConversation();
+        return { success: false, runId };
+      }
       const receipt = await database.call<DispatchReceipt>("runs.admit", sessionId, requestId, requestFacts, runId);
       if (receipt.duplicate) { releaseSessionGuard?.(); endConversation(); return duplicateAck(receipt); }
       const guard = sessionActiveRuns.get(sessionId);
       runId = receipt.runId;
       if (guard) guard.runId = runId;
       admitted = true;
+      if (background) {
+        if (!inbox.canWake(sessionId)) throw new Error("SHELL_COMPLETION_CANCELLED");
+        backgroundRunControllers.set(runAbortController, guard!.settled);
+      } else {
+        // 退出/重注册会清空内存队列，下一次主动运行从审计事实恢复尚未投递的结果。
+        const entries = await transcriptStore.readAuditEntries(sessionId);
+        const closed = new Set(entries.flatMap(entry => entry.kind === "background_event" || entry.kind === "background_event_retired"
+          ? [entry.payload.jobId] : []));
+        inbox.restore(sessionId, entries.flatMap(entry => entry.kind === "background_event_pending" && entry.runId && !closed.has(entry.payload.jobId)
+          ? [{ event: { conversationId: sessionId, sourceRunId: entry.runId, sourceWorkspace: entry.payload.sourceWorkspace,
+            snapshot: { jobId: entry.payload.jobId } }, message: entry.payload.message }] : []));
+        inbox.resume(sessionId);
+      }
     // ── 轨迹派发：canonical user/rewind → presentation → model context ──
     // renderer 的 messages（即使恶意/旧版载荷仍携带）永远不参与模型上下文。
     let modelContext: MaterializedTranscript | undefined;
+    if (background) {
+      if (!(await inbox.prepare(sessionId)).length) throw new Error("SHELL_COMPLETION_RETIRED");
+      modelContext = await journal.buildModelContext(sessionId);
+    }
     if (currentUser) {
       try {
         const currentMessage: ChatMessage = {
@@ -601,18 +756,23 @@ export function registerAgUiIpc(
       modelProfileId: session.modelProfileId,
       sessionModelSettings,
       executionMode: agentExecutionMode,
+      signal: runAbortController.signal,
+      ...(background ? { modelContext } : {}),
     }));
     } catch (error) {
       perf.dump();
       // run 未开跑即失败：清掉这期间可能落下的插话标记，条目回普通队列
       try { (await chatsStore.resetPendingAdjustByRun(sessionId, runId)); } catch { /* 复位尽力而为 */ }
-      releaseSessionGuard?.();
-      releaseSessionGuard = null;
-      endConversation();
       throw error;
     }
     const { options, latestUserText } = built;
+    if (background && runAbortController.signal.aborted) throw new Error("SHELL_COMPLETION_CANCELLED");
     options.executionMode = agentExecutionMode;
+    // 空闲续跑没有渲染端 Ask 会话，工具权限仍沿用正常检查。
+    if (background) {
+      options.harnessInteractiveTools = false;
+      options.allowPermissionPrompt = false;
+    }
     // 轨迹侧崩溃孤儿提示与派发侧（渠道）恢复上下文合并，互不覆盖
     const mergedRecoveryContext = [options.recoveryContext, input.recoveryContext]
       .filter((value): value is string => Boolean(value?.trim()))
@@ -623,11 +783,8 @@ export function registerAgUiIpc(
     // 一路传到 Agent / Harness adapter / ToolContext / 所有 AG-UI 事件。
     // ack.runId 与 RUN_STARTED.runId 必须一致。
     options.runId = runId;
-    // 轨迹写入总开关（CTA）：桌面 dispatch 带 userTurnId 才写轨迹——
-    // 缺 userTurnId 的兼容调用按渲染端消息走，sink 与插话轨迹端口都不注入，
-    // 否则模型回写没有对应 user 的孤立 assistant 条目。
-    // renderer 回退只切换读取源，不影响这里（带 userTurnId 时双写持续）。
-    const transcriptEnabled = Boolean(currentUser);
+    // 用户派发和已持久化后台事件都写 canonical 回复；旧无锚点调用仍不写轨迹。
+    const transcriptEnabled = Boolean(currentUser) || background;
     // 轨迹提交端（CTA）：每 run 一个 sink，entryId 全程确定性，canonical assistant /
     // tool_result 经它写入权威轨迹。
     // 渲染端 assistantTurnId 存在时透传（ChatLoop 单轮路径的 assistant 条目锚点）。
@@ -641,13 +798,28 @@ export function registerAgUiIpc(
     // 触发 harness 返回 cancelled，CyreneAgent 发出 RUN_FINISHED(result.status="cancelled")，
     // complete 回调自然清理。
     options.signal = runAbortController.signal;
+    const completionWorkspace = shellWorkspaceIdentity(options.resolvedWorkspaceBinding === undefined
+      ? session.workspaceBinding : options.resolvedWorkspaceBinding ?? undefined);
+    // 任务可能晚于 IPC 重新注册结束；投递到当前队列，保留启动时的来源身份。
+    options.onShellJobComplete = snapshot => shellCompletions?.enqueue({
+      conversationId: sessionId, sourceRunId: runId, snapshot, signal: runAbortController.signal,
+      sourceWorkspace: completionWorkspace,
+    });
+    const seenShellEvents = new Set((modelContext?.messages ?? options.messages)
+      .flatMap(message => message.internal ? [message.internal.id] : []));
+    options.pollShellCompletions = async () => (await shellCompletions?.take(sessionId) ?? []).filter(message => {
+      const id = message.internal!.id;
+      if (seenShellEvents.has(id)) return false;
+      seenShellEvents.add(id);
+      return true;
+    });
     // 插话轮询：把"插入当前运行下一步"的待发条目在模型请求边界提交并注入。
     // Chat 无工具链路是单请求运行，没有安全的下一步，不接轮询（IPC 侧同步拒绝）。
     // 数据库事务同时提交插话与队列变更，成功后才注入运行。
     if (mode !== "chat") options.pollRunAdjustments = createRunAdjustmentPoller(
       sessionId, runId, chatsStore, undefined, () => broadcastChatsChanged(),
     );
-    options.requestUserClarification = (card) => requestUserClarification(card, (cardData) => {
+    options.requestUserClarification = background ? undefined : (card) => requestUserClarification(card, (cardData) => {
       send({ type: "CUSTOM", name: "cyrene.choice", value: cardData, threadId, runId });
     }, (settlement) => {
       send({ type: "CUSTOM", name: "cyrene.choice.dismiss", value: settlement, threadId, runId });
@@ -687,7 +859,7 @@ export function registerAgUiIpc(
     // 桌面轮次事件：run 真正开跑时登记协调器（立即发布 turn:started）。
     // turn:finished 由协调器在"终态 + 渲染端落盘确认"双条件满足后发布一次。
     let detachPendingTurnWatchers: (() => void) | null = null;
-    if (pendingTurns) {
+    if (pendingTurns && sender && !background) {
       pendingTurns.beginTurn({
         runId,
         conversationId: sessionId,
@@ -745,6 +917,8 @@ export function registerAgUiIpc(
         try { unregisterObsidianTools(); } catch { /* ignore */ }
       }
       endConversation();
+      backgroundRunControllers.delete(runAbortController);
+      shellCompletions?.kick(sessionId);
     };
 
     // <think> 标签过滤器：按单条 assistant message 隔离（TEXT_MESSAGE_START ~ END）
@@ -792,6 +966,10 @@ export function registerAgUiIpc(
     // TEXT_MESSAGE_CONTENT 经 <think> 过滤后再转发；
     // complete/error 时做副作用，并补发一个终态事件让渲染端知道这轮结束。
     perf.mark("agent_run_start");
+    if (sourceCompletion && !await canDeliverCompletion(sourceCompletion)) {
+      throw new Error("SHELL_COMPLETION_SOURCE_CHANGED");
+    }
+    if (background && runAbortController.signal.aborted) throw new Error("SHELL_COMPLETION_CANCELLED");
     const sub = agent.runWithEvents(options).subscribe({
       next: (baseEvent) => {
         const eventType = (baseEvent as { type?: string })?.type;
@@ -982,7 +1160,7 @@ export function registerAgUiIpc(
           // cancelled / timeout / runtime_error 不跑成功收尾副作用
           // （sticker / memory / learn-progress / 历史召回）。
           // 这些副作用假定 run 已经成功产出回复；其他终态不能保证有可用 finalAnswer。
-          if (agent.lastResult && isSuccessfulCompletion) {
+          if (agent.lastResult && isSuccessfulCompletion && !background) {
             const lastResult = agent.lastResult;
             const effects = await perf.track("on_run_finished", async () => onFinished(lastResult, latestUserText, {
               source: "desktop",
@@ -1020,6 +1198,7 @@ export function registerAgUiIpc(
               // 取走本轮抽查的实测作答（take 语义：取后即清，避免重复计入）
               const quizEvidence = takeQuizEvidenceForRun(runId);
               void runLearnPostTurnHook({
+                workspaceRoot: session.workspaceBinding!.workspaceRoot,
                 adapter,
                 cfg: {
                   provider: options.settings.provider,
@@ -1039,6 +1218,7 @@ export function registerAgUiIpc(
         }
         // 先保存未注入的已发送消息并释放守卫，再让渲染端处理终态及后续发送。
         await endLifecycle();
+        if (background) broadcastChatsChanged();
         // runtime_error 已在 next 回调发过 RUN_ERROR，complete 不再补发终态事件。
         if (settlement?.status === "runtime_error") {
           pendingRunFinishedEvent = null;
@@ -1049,6 +1229,7 @@ export function registerAgUiIpc(
         perf.dump();
       },
     });
+    if (background) inbox.acknowledge(sessionId, seenShellEvents);
     // 同步 Observable 在 subscribe() 返回前可能已 complete 并 delete(runId)。
     // 若此时再无条件 set，会把已结算的 run 重新加入 map，留下幽灵 active run。
     // 仅在未结算（async、仍在运行）时才登记，供 cancel 取消用。
@@ -1063,7 +1244,10 @@ export function registerAgUiIpc(
     } catch (error) {
       if (admitted) await database.call("runs.terminal", runId, "failed", Date.now(), (error as Error).message).catch(failure => console.error("[AgUiBridge] 失败回执写入失败:", failure));
       releaseSessionGuard?.();
+      backgroundRunControllers.delete(runAbortController);
       endConversation();
+      // 后台失败由派发器统一延迟重试，不能用立即定时器覆盖退避。
+      if (!background) shellCompletions?.kick(sessionId);
       throw error;
     }
     } catch (error) {
@@ -1072,7 +1256,9 @@ export function registerAgUiIpc(
       if (input.sessionId && requestId) await getConversationDatabase(app.getPath("userData")).call("runs.failRequest", input.sessionId, requestId, (error as Error).message).catch(failure => console.error("[AgUiBridge] 接纳准备失败回执写入失败:", failure));
       throw error;
     }
-  });
+  };
+  // 后台结束派发只能由主进程发起，渲染端输入不能指定这一标记。
+  ipc.handle(IPC.AGUI_RUN, (event: IpcMainInvokeEvent, rawInput: unknown) => dispatchRun(event, rawInput));
 
   ipc.handle(IPC.AGUI_CANCEL, (_event, runId?: string) => {
     // 通过 abort signal 触发 harness 的 cancelled 流程，
@@ -1081,6 +1267,9 @@ export function registerAgUiIpc(
     // RUN_FINISHED → complete 回调清理 activeRuns + endLifecycle。
     // 每个 run 持有独立 AbortController，cancel 一个 runId 绝不影响其他 run。
     const abortRun = (id: string): void => {
+      for (const [sessionId, active] of sessionActiveRuns) {
+        if (active.runId === id) inbox.suppressWake(sessionId);
+      }
       const run = activeRuns.get(id);
       if (run && !run.abortController.signal.aborted) {
         run.abortController.abort();

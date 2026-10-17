@@ -88,6 +88,56 @@ describe("ConversationTranscriptCompactor", () => {
     expect(result.checkpointEntryId).toBeTruthy();
   });
 
+  it.each(["during-summary", "before-checkpoint", "before-archive", "after-archive"])("retires a completion %s without retaining its summary or losing unrelated history", async phase => {
+    const fixture = createFixture();
+    await seed(fixture);
+    const event = await fixture.store.append("c1", { kind: "background_event", id: "shell-completed:A", at: 1_000,
+      payload: { jobId: "A", sourceWorkspace: "A", message: { role: "user", visibility: "internal", content: "PRIVATE_A_OUTPUT".repeat(80) } } });
+    await fixture.journal.createRunSink({ conversationId: "c1", runId: "unrelated" })
+      .appendAssistant({ message: { role: "assistant", content: "independent historical note".repeat(40) } });
+    await fixture.journal.appendUser("c1", { turnId: "latest", text: "current question in B" });
+    const retire = () => fixture.store.append("c1", { kind: "background_event_retired", id: "shell-retired:A", at: 1_001,
+      payload: { jobId: "A", sourceSeq: event.seq } });
+    const commit = fixture.store.appendCompactionCheckpoint.bind(fixture.store);
+    const checkpointSpy = vi.spyOn(fixture.store, "appendCompactionCheckpoint").mockImplementation(async (id, input) => {
+      if (phase === "before-checkpoint") await retire();
+      return commit(id, input);
+    });
+    const archive = new ConversationTranscriptArchive(fixture.store);
+    const archiveThrough = archive.archiveThrough.bind(archive);
+    const spy = vi.spyOn(archive, "archiveThrough").mockImplementation(async (id, through) => {
+      if (phase === "before-archive") await retire();
+      await archiveThrough(id, through);
+      if (phase === "after-archive") {
+        expect((await fixture.store.read(id)).entries.some(entry => entry.id === event.id)).toBe(false);
+        await retire();
+      }
+    });
+    const summarize = vi.fn(async () => {
+      if (phase === "during-summary") await retire();
+      return "STALE_SUMMARY_WITH_A";
+    });
+    const compactor = new ConversationTranscriptCompactor({ store: fixture.store, summarize, archive });
+    try {
+      const compacting = compactor.compact({ conversationId: "c1", trigger: "automatic", retainTokens: 1 });
+      if (phase === "during-summary" || phase === "before-checkpoint") await expect(compacting).rejects.toThrow("TRANSCRIPT_COMPACTION_REQUIRED");
+      else expect(JSON.stringify((await compacting).compactedMessages)).not.toContain("STALE_SUMMARY_WITH_A");
+    } finally { spy.mockRestore(); checkpointSpy.mockRestore(); }
+    await closeConversationDatabases();
+    const context = await fixture.journal.buildModelContext("c1");
+    expect(JSON.stringify(context.messages)).not.toContain("PRIVATE_A_OUTPUT");
+    expect(JSON.stringify(context.messages)).not.toContain("STALE_SUMMARY_WITH_A");
+    expect(JSON.stringify(context.messages)).toContain("旧任务");
+    expect(JSON.stringify(context.messages)).toContain("independent historical note");
+    const audit = await fixture.store.readAuditEntries("c1");
+    expect(audit).toContainEqual(event);
+    const replacement = new ConversationTranscriptCompactor({ store: fixture.store, summarize: async () => "CLEAN_SUMMARY" });
+    const repaired = await replacement.compact({ conversationId: "c1", trigger: "automatic", retainTokens: 1 });
+    expect(JSON.stringify(repaired.compactedMessages)).toContain("CLEAN_SUMMARY");
+    expect(JSON.stringify(repaired.compactedMessages)).not.toContain("STALE_SUMMARY_WITH_A");
+    expect((await fixture.journal.buildModelContext("c1")).messages).toEqual(repaired.compactedMessages);
+  });
+
   it("摘要期间的新后缀不进入 sourceThroughSeq 也不丢失", async () => {
     const fixture = createFixture();
     await seed(fixture);

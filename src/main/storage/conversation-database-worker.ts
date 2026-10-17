@@ -320,7 +320,7 @@ async function execute(method: string, args: any[]): Promise<unknown> {
         const entries = database.entries(id);
         const p = input.payload;
         const prefix = entries.filter(e => e.seq <= p.sourceThroughSeq);
-        if (createHash('sha256').update(JSON.stringify(prefix)).digest('hex') !== p.sourceDigest || entries.some(e => e.seq > p.baseThroughSeq && ['compaction_checkpoint', 'turn_rewind', 'turn_tombstone'].includes(e.kind)))
+        if (createHash('sha256').update(JSON.stringify(prefix)).digest('hex') !== p.sourceDigest || entries.some(e => e.seq > p.baseThroughSeq && ['compaction_checkpoint', 'turn_rewind', 'turn_tombstone', 'background_event_retired'].includes(e.kind)))
           throw new ConversationStoreError('TRANSCRIPT_COMPACTION_REQUIRED');
         return database.append(id, input);
       });
@@ -332,8 +332,12 @@ async function execute(method: string, args: any[]): Promise<unknown> {
         const row = database.db.prepare('SELECT archived_through FROM conversations WHERE id=?').get(id)!;
         if (boundary <= Number(row.archived_through))
           return;
-        if (!database.entries(id).some(e => e.kind === 'compaction_checkpoint' && e.seq > boundary && e.payload.sourceThroughSeq >= boundary))
+        const entries = database.entries(id);
+        const checkpoint = entries.filter(e => e.kind === 'compaction_checkpoint' && e.seq > boundary && e.payload.sourceThroughSeq >= boundary).at(-1);
+        if (!checkpoint || checkpoint.kind !== 'compaction_checkpoint')
           throw new Error('TRANSCRIPT_ARCHIVE_BOUNDARY_NOT_COMMITTED');
+        if (entries.some(e => e.kind === 'background_event_retired' && e.seq > checkpoint.payload.baseThroughSeq))
+          throw new ConversationStoreError('TRANSCRIPT_COMPACTION_REQUIRED');
         database.db.prepare('UPDATE conversations SET archived_through=? WHERE id=?').run(boundary, id);
       });
     if (name === 'delete') {

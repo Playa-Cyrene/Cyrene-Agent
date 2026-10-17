@@ -60,6 +60,7 @@ interface ShellJob extends ShellJobRecord {
   terminalWaiters: Set<() => void>;
   logClosed?: Promise<void>;
   persisted?: Promise<void>;
+  onComplete?: (snapshot: ShellJobSnapshot) => void;
 }
 
 export interface ShellJobSnapshot {
@@ -170,6 +171,10 @@ function settleJob(
     job.logStream.end();
   });
   void persistTerminal(job);
+  // 日志关闭后输出才完整；结束通知与阻塞等待者独立。
+  void job.logClosed.then(() => {
+    if (!stopping && job.status !== "stopped" && job.reason !== "app_exiting") job.onComplete?.(snapshotJob(job));
+  }).catch(error => logger.warn(LogTag.BuiltinTools, `[shell_job] 完成通知失败 ${job.jobId}: ${String(error)}`));
   for (const wake of job.terminalWaiters) wake();
   job.terminalWaiters.clear();
   logger.info(LogTag.BuiltinTools, `[shell_job] ${job.jobId} → ${status}${job.reason ? ` (${job.reason})` : ""} bytes=${job.totalBytes}`);
@@ -262,6 +267,7 @@ function snapshotJob(job: ShellJobRecord, pid: number | null = null): ShellJobSn
  * 任务生命周期由内部状态机管理，与本轮 agent 调用解耦（取消本轮不杀后台任务）。
  */
 interface StartShellJobOptions {
+  onComplete?: (snapshot: ShellJobSnapshot) => void;
   spec: ShellSpawnSpec;
   /** 原始命令行（快照展示用） */
   command: string;
@@ -315,7 +321,7 @@ async function startJob(opts: StartShellJobOptions): Promise<{ jobId: string; lo
   logStream.on("error", err => {
     logger.warn(LogTag.BuiltinTools, `[shell_job] 日志写入失败 ${jobId}: ${err.message}`);
   });
-  const job: ShellJob = { ...record, logMaxBytes, logStream, terminalWaiters: new Set() };
+  const job: ShellJob = { ...record, logMaxBytes, logStream, terminalWaiters: new Set(), onComplete: opts.onComplete };
   jobs.set(jobId, job);
 
   let child: ChildProcess;

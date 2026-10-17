@@ -136,6 +136,11 @@ export async function runCyreneHarness(input: HarnessInput): Promise<HarnessResu
       }
     }
 
+    if (input.pollShellCompletions) {
+      try { run.messages.push(...await input.pollShellCompletions()); }
+      catch (error) { return finishRun(run, `后台任务通知提交失败：${errorMessage(error)}`, true, "error"); }
+      if (input.signal?.aborted) return cancelledResult(run);
+    }
     const promptLayers = buildRoundPromptLayers(run);
     const roundId = `round-${run.rounds}`;
     input.onEvent?.({ type: "round_start", roundId });
@@ -265,19 +270,23 @@ export async function runCyreneHarness(input: HarnessInput): Promise<HarnessResu
     // （progress_text），插话双写（权威轨迹 → 聊天历史）进入上下文后继续循环处理，
     // 不在结算前丢弃插话。
     let endAdjustments: RunAdjustmentMessage[];
+    let completions: ChatMessage[];
     try {
       endAdjustments = await input.pollRunAdjustments?.() ?? [];
+      completions = await input.pollShellCompletions?.() ?? [];
     } catch (error) {
       // 双写任一步失败（fail-closed）：pending 保留，终止运行，不假装注入成功
       return finishRun(run, `插话提交失败：${errorMessage(error)}`, true, "error");
     }
-    if (endAdjustments.length > 0) {
+    if (input.signal?.aborted) return cancelledResult(run);
+    if (endAdjustments.length > 0 || completions.length > 0) {
       const intermediate = run.streamController.commitProgressBuffer() + truncatedSuffix;
       input.onEvent?.({ type: "round_end", roundId });
       if (intermediate) {
         input.onEvent?.({ type: "progress_text", content: intermediate });
       }
-      applyRunAdjustments(run, endAdjustments);
+      if (endAdjustments.length) applyRunAdjustments(run, endAdjustments);
+      run.messages.push(...completions);
       // 本轮模型已产出回复且运行未结束：按工具轮口径推进轮次，
       // 让下一轮拿到新 roundId，轮次上限也能正确计数
       run.rounds++;

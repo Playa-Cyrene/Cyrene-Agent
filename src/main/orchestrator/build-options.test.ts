@@ -76,6 +76,14 @@ async function buildAgentRunOptions(
 }
 
 describe("build-options", () => {
+  it("keeps background facts in model context without treating them as the user's query", async () => {
+    const result = await buildAgentRunOptions({ sessionId: "background", mode: "chat", executionMode: "chat",
+      messages: [{ role: "user", content: "build the project" },
+        { role: "user", visibility: "internal", content: "[后台 Shell 任务结束事件] exitCode=0" }],
+    }, createBuildDeps());
+    expect(result.latestUserText).toBe("build the project");
+    expect(result.options.messages).toEqual(expect.arrayContaining([expect.objectContaining({ visibility: "internal", content: expect.stringContaining("exitCode=0") })]));
+  });
   it.each(["chat", "work", "learn", "code"] as const)("uses the explicit %s mode prompt", async (mode) => {
     const deps = createBuildDeps();
     deps.buildModePrompt = (target) => `[MODE:${target}]`;
@@ -381,6 +389,16 @@ describe("build-options", () => {
     expect(result.options.toolSystemContent).toContain("不得写入桌面")
   })
 
+  it("returns the exact workspace generation used for tool options", async () => {
+    const deps = createBuildDeps()
+    const binding = { workspaceRoot: "C:/projects/effective", displayName: "effective", boundAt: 27 }
+    deps.getWorkspaceBinding = vi.fn(async () => binding)
+    const result = await buildAgentRunOptions({ sessionId: "effective", messages: [{ role: "user", content: "continue" }], executionMode: "work" }, deps)
+    expect(result.options.resolvedWorkspaceRoot).toBe(binding.workspaceRoot)
+    expect(result.options.resolvedWorkspaceBinding).toEqual(binding)
+    expect(deps.getWorkspaceBinding).toHaveBeenCalledTimes(1)
+  })
+
   it("does not load a workspace when the main-process caller disables workspace inheritance", async () => {
     const deps = createBuildDeps()
     deps.getWorkspaceBinding = vi.fn(() => ({
@@ -399,6 +417,7 @@ describe("build-options", () => {
 
     expect(deps.getWorkspaceBinding).not.toHaveBeenCalled()
     expect(result.options.resolvedWorkspaceRoot).toBeUndefined()
+    expect(result.options.resolvedWorkspaceBinding).toBeNull()
     expect(result.options.toolSystemContent).not.toContain("可信根目录")
   })
 
@@ -1392,6 +1411,29 @@ describe("权威轨迹上下文源（CTA Phase 1）", () => {
     // 压缩后只发生一次重读（初始上下文来自传入值）
     expect(deps.buildModelContext).toHaveBeenCalledTimes(1)
     expect(built.options.cleanMessages).toContainEqual(expect.objectContaining({ content: expect.stringContaining("<cyrene_compaction_checkpoint>") }))
+  })
+
+  it("background preflight compaction receives the run cancellation signal", async () => {
+    const deps = createBuildDeps()
+    deps.loadModelSettings = () => ({ provider: "test", baseUrl: "https://example.test", model: "m", apiKey: "k", contextWindowTokens: 10_000 })
+    const controller = new AbortController()
+    let received: AbortSignal | undefined
+    let release!: () => void
+    deps.compactTranscript = vi.fn(async ({ signal }) => {
+      received = signal
+      await new Promise<void>(resolve => { release = resolve; signal?.addEventListener("abort", resolve, { once: true }) })
+      throw new Error("cancelled")
+    })
+    const building = buildAgentRunOptions({ sessionId: "preflight", signal: controller.signal,
+      modelContext: { messages: [{ role: "user", content: "历史".repeat(2_000) }], uncertainEffects: [], throughSeq: 8 },
+    } as never, deps)
+    const rejected = expect(building).rejects.toThrow("TRANSCRIPT_COMPACTION_REQUIRED")
+    try {
+      await vi.waitFor(() => expect(deps.compactTranscript).toHaveBeenCalled())
+      expect(received).toBe(controller.signal)
+      controller.abort()
+      expect(received?.aborted).toBe(true)
+    } finally { release(); await rejected }
   })
 
   it("自动 compaction 摘要失败时对外只报告 TRANSCRIPT_COMPACTION_REQUIRED", async () => {

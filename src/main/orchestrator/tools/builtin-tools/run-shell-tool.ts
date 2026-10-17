@@ -573,6 +573,7 @@ async function executeRunShell(args: Record<string, unknown>, context?: import("
     const spec = buildSpawnSpec(plan, resolvedShell);
     const { jobId, logFile } = await startShellJob({
       spec, command, shell: requestedShell, totalMs: timeoutPolicy.totalMs, signal: context?.signal,
+      onComplete: context?.onShellJobComplete,
     });
     logger.info(LogTag.BuiltinTools, `[run_shell] background ${jobId} started: command="${command}" totalMs=${timeoutPolicy.totalMs}`);
     return JSON.stringify({
@@ -583,7 +584,9 @@ async function executeRunShell(args: Record<string, unknown>, context?: import("
       status: "running",
       totalTimeoutMs: timeoutPolicy.totalMs,
       sandboxed: spec.ranViaSandbox,
-      note: "命令已在后台启动，不阻塞本轮。用 shell_job (action=status, job_id) 查询状态，可传 wait_ms=0-60000 阻塞等待；action=stop 终止。日志持续写入 logFile（stdout+stderr 合计上限 64MB，超限自动终止）。",
+      note: "命令已在后台启动，不阻塞本轮。" + (context?.onShellJobComplete
+        ? "任务结束会向原会话投递结果并继续处理，无需反复查询；用户取消本轮或应用退出后不自动唤醒。" : "")
+        + "用 shell_job (action=status, job_id) 查询状态，可传 wait_ms=0-60000 阻塞等待；action=stop 终止。日志持续写入 logFile（stdout+stderr 合计上限 64MB，超限自动终止）。",
     });
   }
 

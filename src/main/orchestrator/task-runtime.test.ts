@@ -80,6 +80,7 @@ describe("TaskRuntime", () => {
         runId: "child-run-1",
         resolvedWorkspaceRoot: "E:\\project",
         permissionMode: "normal",
+        allowUserInteraction: false,
         readOnly: false,
       }),
     }));

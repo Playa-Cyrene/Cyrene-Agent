@@ -1194,6 +1194,32 @@ describe("CyreneHarness run adjustments", () => {
     vi.unstubAllGlobals();
   });
 
+  it("background completion arriving at final settlement reaches the next model request without shell_job polling", async () => {
+    const { fn } = fakeFetchSequencer([assistantResponse({ text: "等待后台结果。" }), assistantResponse({ text: "已处理后台退出结果。" })]);
+    vi.stubGlobal("fetch", fn);
+    let polls = 0;
+    const pollShellCompletions = vi.fn(async (): Promise<ChatMessage[]> => ++polls === 2
+      ? [{ role: "user", visibility: "internal", content: "[后台 Shell 任务结束事件] job-one exited exitCode=7" }] : []);
+    const result = await runCyreneHarness({ systemPrompt: "test", messages: [{ role: "user", content: "运行任务" }],
+      tools: [], vendorConfig, pollShellCompletions });
+    expect(result.finalAnswer).toBe("已处理后台退出结果。");
+    expect(fakeStreamChatWithSdk).toHaveBeenCalledTimes(2);
+    expect(fakeStreamChatWithSdk.mock.calls[1][0].request.messages.at(-1)).toMatchObject({ content: expect.stringContaining("job-one exited exitCode=7") });
+    expect(mockedDispatch).not.toHaveBeenCalled();
+  });
+
+  it("does not issue a model request after cancellation while awaiting a completion", async () => {
+    const controller = new AbortController();
+    const pollShellCompletions = vi.fn(async (): Promise<ChatMessage[]> => {
+      controller.abort();
+      return [{ role: "user", visibility: "internal", content: "background result" }];
+    });
+    const result = await runCyreneHarness({ systemPrompt: "test", messages: [], tools: [], vendorConfig,
+      signal: controller.signal, pollShellCompletions });
+    expect(result.terminateReason).toBe("cancelled");
+    expect(fakeStreamChatWithSdk).not.toHaveBeenCalled();
+  });
+
   it("工具批次结束后：插话在下一次模型请求前按入队顺序进入上下文（核心事件顺序）", async () => {
     const { fn: fetchMock } = fakeFetchSequencer([
       assistantResponse({ toolCalls: [mutationToolCall("call-1")] }),

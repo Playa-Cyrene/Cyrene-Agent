@@ -26,6 +26,7 @@ import {
 import { getTimeoutSettings } from "./timeout-manager";
 import { createAbortError } from "./abort-utils";
 import { toastEvents } from "./toast/toast-events";
+import { ToolExecutionError } from "./orchestrator/tools/registry/tool-execution-error";
 
 const LOG_PREFIX = "[UserChoice]";
 // 卡片等待超时统一取 timeout-settings：普通询问卡用 userChoiceTimeout（设置页「询问等待时间」可调，默认 60s），
@@ -39,6 +40,8 @@ export interface ChoiceOption {
 }
 
 export interface RequestUserChoiceOptions {
+  /** 无交互界面的运行必须立即拒绝，不能用默认选项代替用户授权。 */
+  allowPrompt?: boolean;
   /** Omit question text from application logs because it contains user data. */
   sensitive?: boolean;
   /** Avoid copying the prompt into OS notification previews. */
@@ -116,6 +119,11 @@ export function requestUserChoice(
   defaultValue?: string,
   requestOptions: RequestUserChoiceOptions = {},
 ): Promise<string> {
+  if (requestOptions.allowPrompt === false) {
+    return Promise.reject(new ToolExecutionError(
+      "USER_CHOICE_UNAVAILABLE", "当前运行不支持用户确认，请在前台会话中重试。", "permission_denied",
+    ));
+  }
   return new Promise<string>((resolve, reject) => {
     const id = "choice-" + (++choiceCounter) + "-" + Date.now();
     const choiceTimeout = getTimeoutSettings().userChoiceTimeout;

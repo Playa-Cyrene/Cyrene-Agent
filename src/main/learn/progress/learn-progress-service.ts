@@ -21,9 +21,9 @@ const YAML_RE = /^---\s*\n([\s\S]*?)\n---/;
  * 从 progress.md 解析学习进度。
  * 文件不存在或解析失败时返回空进度。
  */
-export async function loadProgress(): Promise<LearnProgress> {
+export async function loadProgress(workspace = obsidianWorkspace): Promise<LearnProgress> {
   try {
-    const result = await obsidianWorkspace.readFile({ path: PROGRESS_FILE });
+    const result = await workspace.readFile({ path: PROGRESS_FILE });
     return parseProgressFile(result.content);
   } catch {
     // 文件不存在，返回默认
@@ -94,13 +94,13 @@ function parseProgressFile(content: string): LearnProgress {
  * 从文件系统创建默认进度文件。
  * 在 obsidianWorkspace 可用时调用。
  */
-export async function ensureProgressFile(): Promise<boolean> {
+export async function ensureProgressFile(workspace = obsidianWorkspace): Promise<boolean> {
   try {
-    await obsidianWorkspace.readFile({ path: PROGRESS_FILE });
+    await workspace.readFile({ path: PROGRESS_FILE });
     return true; // 已存在
   } catch {
     try {
-      await obsidianWorkspace.edit({
+      await workspace.edit({
         operation: "create",
         path: PROGRESS_FILE,
         content: defaultProgressContent(),
@@ -117,20 +117,20 @@ export async function ensureProgressFile(): Promise<boolean> {
  * 由于 workspace.edit 修改已有文件要求携带 expectedContentHash，
  * 写入流程固定为：先 read_file 拿 hash，再 replace_file 携带 hash。
  */
-export async function saveProgress(progress: LearnProgress): Promise<boolean> {
+export async function saveProgress(progress: LearnProgress, workspace = obsidianWorkspace): Promise<boolean> {
   try {
     const content = buildProgressFile(progress);
 
     // 文件不存在时创建；存在时携带 hash 替换（外部修改过则本轮放弃保存）
-    const existing = await obsidianWorkspace.readFile({ path: PROGRESS_FILE }).catch(() => null);
+    const existing = await workspace.readFile({ path: PROGRESS_FILE }).catch(() => null);
     if (!existing) {
-      await obsidianWorkspace.edit({
+      await workspace.edit({
         operation: "create",
         path: PROGRESS_FILE,
         content,
       });
     } else {
-      await obsidianWorkspace.edit({
+      await workspace.edit({
         operation: "replace_file",
         path: PROGRESS_FILE,
         content,

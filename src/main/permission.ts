@@ -234,6 +234,8 @@ export async function checkPermission(input: {
   /** 可选 runId，用于 cancel 时按 run 清理 pending 审批。 */
   runId?: string;
   signal?: AbortSignal;
+  /** 后台续轮没有所属会话的审批界面，遇到 ask 时直接拒绝。 */
+  allowPrompt?: boolean;
 }): Promise<{ allowed: boolean; reason?: string }> {
   if (input.signal?.aborted) throw createAbortError();
   const level = currentLevel;
@@ -246,6 +248,9 @@ export async function checkPermission(input: {
       allowed: false,
       reason: "当前档位「" + ACCESS_LEVEL_LABEL[level] + "」不允许此操作（risk=" + input.risk + "）。请到设置 → 昔涟 → 本地文件权限提升档位。",
     };
+  }
+  if (input.allowPrompt === false) {
+    return { allowed: false, reason: "后台续轮无法请求人工审批，请回到原会话继续操作。" };
   }
   // ask → 弹审批（不设超时，等用户回应或 run 终态取消）
   const approved = await requestApproval({

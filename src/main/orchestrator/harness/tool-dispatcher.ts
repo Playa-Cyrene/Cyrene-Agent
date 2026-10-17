@@ -243,6 +243,9 @@ export async function dispatchToolCall(
   }
 
   // ── 普通工具 ──
+  if (ctx.includeInteractiveTools === false && call.name === "pop_quiz") {
+    return { outcome: "failure", category: "not_found", tool: call.name, message: "当前渠道不支持交互式工具" };
+  }
   const tool = ctx.tools.find((t) => t.id === call.name);
 
   // 工具不存在

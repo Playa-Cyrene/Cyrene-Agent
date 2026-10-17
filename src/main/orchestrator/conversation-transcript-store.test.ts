@@ -54,6 +54,20 @@ afterEach(async () => {
 });
 
 describe("ConversationTranscriptStore SQLite", () => {
+  it("replays retired completion status after restart while retaining the original output for audit", async () => {
+    const { root, store } = createStore();
+    const event = await store.append("c1", { kind: "background_event", id: "shell-completed:A", at: 1_000,
+      payload: { jobId: "A", sourceWorkspace: "A", message: { role: "user", visibility: "internal", content: "A output" } } });
+    const retirement = { kind: "background_event_retired" as const, id: "shell-retired:A", at: 1_000, payload: { jobId: "A" } };
+    const first = await store.append("c1", retirement);
+    expect(await store.append("c1", retirement)).toEqual(first);
+    await closeConversationDatabases();
+    const restarted = new ConversationTranscriptStore(root);
+    const entries = (await restarted.read("c1")).entries;
+    const { buildModelContextFromCompactedView } = await import("./conversation-transcript-projection");
+    expect(buildModelContextFromCompactedView(entries, { get: () => null }).messages).toEqual([]);
+    expect(await restarted.readAuditEntries("c1")).toEqual([event, first]);
+  });
 it("stores presentation deltas and replays them after restart", async () => {
     const { root, store } = createStore();
     const patch = { delta: { processMessageUpserts: [{ id: "process-1", content: "继续检查" }] } };

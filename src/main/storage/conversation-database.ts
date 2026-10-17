@@ -236,6 +236,11 @@ export class ConversationDatabase {
       const row = this.db.prepare("SELECT max_seq FROM conversations WHERE id=?").get(id)!;
       const entry = { ...input, seq: Number(row.max_seq) + 1, at: input.at ?? Date.now() } as TranscriptEntry;
       this.insert(id, entry);
+      if (entry.kind === "background_event_retired") {
+        // 旧摘要失效时恢复归档事实，供模型投影排除退休结果后重建其余历史。
+        this.db.prepare("UPDATE conversations SET archived_through=0 WHERE id=? AND archived_through>=?")
+          .run(id, entry.payload.sourceSeq ?? 0);
+      }
       if (entry.kind === 'turn_rewind' || entry.kind === 'turn_tombstone') reconcileMemoryTurns(this, id);
       if (entry.kind === "tool_result" && entry.runId) {
         const operationId = `${entry.runId}:${entry.payload.toolCallId}`;

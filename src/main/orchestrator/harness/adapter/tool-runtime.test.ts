@@ -28,7 +28,7 @@ vi.mock("electron", () => ({ app: { getPath: vi.fn(() => "C:\\cyrene-runtime") }
 import { prepareToolRuntime } from "./tool-runtime";
 
 /** 构造一次 code 模式 run 的 tool runtime（Plan Guard 生效条件：code/chat + isPlanReadOnly）。 */
-async function makeRuntime(permissionMode: "prompt" | "allow_all") {
+async function makeRuntime(permissionMode: "prompt" | "allow_all", allowPermissionPrompt?: boolean, harnessInteractiveTools?: boolean) {
   return prepareToolRuntime({
     options: {
       conversationId: "thread-1",
@@ -37,6 +37,8 @@ async function makeRuntime(permissionMode: "prompt" | "allow_all") {
       messages: [{ role: "user", content: "做个计划" }],
       requestUserClarification: vi.fn(async () => ({ answers: [] })),
       permissionMode,
+      allowPermissionPrompt,
+      harnessInteractiveTools,
     } as never,
     signal: new AbortController().signal,
     prepared: {
@@ -52,6 +54,10 @@ async function makeRuntime(permissionMode: "prompt" | "allow_all") {
 }
 
 describe("harness tool runtime", () => {
+  it.each([undefined, true, false])("passes interaction availability independently of allow_all (%s)", async interactive => {
+    const runtime = await makeRuntime("allow_all", false, interactive);
+    expect(runtime.toolContext.allowUserInteraction).toBe(interactive);
+  });
   beforeEach(() => {
     getById.mockReset();
     checkPermission.mockReset();
@@ -70,6 +76,7 @@ describe("harness tool runtime", () => {
   it("uses one signal for context, permission, and task execution", async () => {
     const controller = new AbortController();
     const clarify = vi.fn(async () => ({ answers: [] }));
+    const onShellJobComplete = vi.fn();
     const runtime = await prepareToolRuntime({
       options: {
         conversationId: "thread-1",
@@ -77,6 +84,7 @@ describe("harness tool runtime", () => {
         settings: { provider: "test", baseUrl: "", model: "model", apiKey: "" },
         messages: [{ role: "user", content: "读文件" }],
         requestUserClarification: clarify,
+        onShellJobComplete,
         permissionMode: "prompt",
       } as never,
       signal: controller.signal,
@@ -92,6 +100,7 @@ describe("harness tool runtime", () => {
     });
 
     expect(runtime.toolContext.signal).toBe(controller.signal);
+    expect(runtime.toolContext.onShellJobComplete).toBe(onShellJobComplete);
     await runtime.checkPermission("read_file", { path: "x" });
     expect(checkPermission).toHaveBeenCalledWith(expect.objectContaining({
       runId: "run-1",
@@ -101,6 +110,15 @@ describe("harness tool runtime", () => {
     expect(createTaskExecutor).toHaveBeenCalledWith(expect.objectContaining({
       parent: expect.objectContaining({ signal: controller.signal }),
     }));
+  });
+
+  it("background permission checks forbid approval cards, including delegated tasks", async () => {
+    checkPermission.mockResolvedValue({ allowed: false });
+    const runtime = await makeRuntime("prompt", false);
+    expect(await runtime.checkPermission("read_file", {})).toBe(false);
+    expect(checkPermission).toHaveBeenCalledWith(expect.objectContaining({ allowPrompt: false, runId: "run-1" }));
+    const parent = createTaskExecutor.mock.calls[0][0] as { parent: { checkPermission: typeof runtime.checkPermission } };
+    expect(parent.parent.checkPermission).toBe(runtime.checkPermission);
   });
 
   describe("Plan 只读不变量（先于 allow_all，按 effectKind 判断）", () => {
@@ -182,7 +200,7 @@ describe("harness tool runtime", () => {
       expect(checkPermission).not.toHaveBeenCalled();
     });
 
-    it("非 Plan 模式行为不变：allow_all 直接放行全部工具", async () => {
+    it.each([undefined, false])("非 Plan 模式行为不变：allow_all 直接放行全部工具 (allowPrompt=%s)", async allowPrompt => {
       isPlanReadOnly.mockReturnValue(false);
       getById.mockReturnValue({
         id: "run_verification",
@@ -190,7 +208,7 @@ describe("harness tool runtime", () => {
         description: "typecheck/test/build/lint",
         effectKind: "verification",
       });
-      const runtime = await makeRuntime("allow_all");
+      const runtime = await makeRuntime("allow_all", allowPrompt);
 
       expect(await runtime.checkPermission("run_verification", { kind: "test" })).toBe(true);
       expect(checkPermission).not.toHaveBeenCalled();

@@ -44,6 +44,55 @@ afterEach(async () => {
 });
 
 describe("shell job SQLite lifecycle (isolated data, mocked processes)", () => {
+  it("run_shell forwards the host completion callback and advertises automatic delivery only when supported", async () => {
+    const { runShellTool } = await import("./run-shell-tool");
+    const onShellJobComplete = vi.fn();
+    const output = JSON.parse(await runShellTool.execute({ command: "echo fixture", run_in_background: true },
+      { userQuery: "fixture", permissionMode: "allow_all", resolvedWorkspaceRoot: mocks.root, onShellJobComplete }));
+    expect(output.jobId).toBeTruthy();
+    expect(output.note).toContain("无需反复查询");
+    child.emit("close", 0);
+    await expect.poll(() => onShellJobComplete.mock.calls.length).toBe(1);
+    expect(onShellJobComplete.mock.calls[0][0]).toMatchObject({ jobId: output.jobId, exitCode: 0 });
+  });
+  it.each(["exited", "failed", "output-limit"])("notifies %s exactly once after log close, without a status waiter", async terminal => {
+    const onComplete = vi.fn();
+    const { jobId } = await manager.startShellJob({ ...options(), onComplete, logMaxBytes: terminal === "output-limit" ? 4 : undefined });
+    child.stdout.emit("data", Buffer.from("done"));
+    if (terminal === "exited") {
+      Object.assign(child, { pid: 123456 });
+      child.emit("close", 7);
+    }
+    if (terminal === "failed") child.emit("error", new Error("fixture failure"));
+    await expect.poll(() => onComplete.mock.calls.length).toBe(1);
+    expect(onComplete.mock.calls[0][0]).toMatchObject({ jobId, pid: null, tail: "done", status: terminal === "output-limit" ? "failed" : terminal });
+    child.emit("close", 0);
+    await manager.stopShellJob(jobId);
+    expect(onComplete).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not wake the agent after an explicit stop, while status waiters still settle", async () => {
+    const onComplete = vi.fn();
+    const { jobId } = await manager.startShellJob({ ...options(), onComplete });
+    const waiting = manager.waitForShellJob(jobId, 60_000);
+    expect(await manager.stopShellJob(jobId)).toMatchObject({ status: "stopped" });
+    expect(await waiting).toMatchObject({ status: "stopped" });
+    child.emit("close", 0);
+    await manager.disposeAllShellJobs();
+    expect(onComplete).not.toHaveBeenCalled();
+  });
+
+  it("notifies timeout and never notifies app shutdown", async () => {
+    const onComplete = vi.fn();
+    await manager.startShellJob({ ...options(), onComplete, totalMs: 1_000 });
+    await expect.poll(() => onComplete.mock.calls.length, { timeout: 3_000 }).toBe(1);
+    expect(onComplete.mock.calls[0][0].status).toBe("timed_out");
+    const onShutdownComplete = vi.fn();
+    await manager.startShellJob({ ...options(), onComplete: onShutdownComplete });
+    await manager.disposeAllShellJobs();
+    expect(onShutdownComplete).not.toHaveBeenCalled();
+  });
+
   it("reads terminal output from SQLite after worker restart, with stable duration and no process handle", async () => {
     const { jobId } = await manager.startShellJob(options());
     child.stdout.emit("data", Buffer.from("hello😀"));

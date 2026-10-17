@@ -115,7 +115,7 @@ import { TtsSessionService } from "../tts/tts-session-service";
 import { registerTtsIpc } from "../tts/tts-ipc";
 import { loadUserProfile } from "../settings-store";
 import { getAppIconPath } from "../app-icon";
-import { hasActiveConversationRun, registerAgUiIpc } from "../agui-bridge";
+import { prepareBackgroundSessionMutation, disposeShellCompletionDispatch, hasActiveConversationRun, registerAgUiIpc } from "../agui-bridge";
 import { updateLocaleContext } from "../locale-context";
 import { registerCallIpc } from "../call/call-manager";
 import { initSkills, skillRegistry } from "../skills";
@@ -287,6 +287,7 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
   const readiness = createStartupReadiness();
   const activation = createWindowActivationBroker();
   const shutdown = createShutdownCoordinator({ readiness, timeoutMs: SHUTDOWN_TIMEOUT_MS });
+  shutdown.register({ id: "shell-completion-dispatch", phase: "quiesce", dispose: disposeShellCompletionDispatch });
   shutdown.register({ id: "shell-jobs", phase: "stopLocalResources", dispose: disposeAllShellJobs });
   shutdown.register({ id: "conversation-database", phase: "closePersistence", dispose: closeConversationDatabases });
 
@@ -703,6 +704,8 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
         await registerChatsIpc(ipc, {
           llmClient: services.llm,
           isPrimaryModelBusy: hasActiveConversationRun,
+          beforeWorkspaceBindingChange: prepareBackgroundSessionMutation,
+          beforeSessionDelete: prepareBackgroundSessionMutation,
           transcriptCompactor,
         });
         await registerMomentsIpc(ipc);

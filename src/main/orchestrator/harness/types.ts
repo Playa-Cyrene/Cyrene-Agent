@@ -306,6 +306,8 @@ export interface HarnessInput {
    * 结束路径拿到非空数组时不得结算，须把本轮回复转为中间过程并继续循环。
    */
   pollRunAdjustments?: () => Promise<RunAdjustmentMessage[]> | undefined;
+  /** 持久化后台事件，在与调整消息相同的安全边界消费。 */
+  pollShellCompletions?: () => Promise<ChatMessage[]>;
   /** 用户澄清函数（ask_user 内置工具使用） */
   requestUserClarification?: (card: unknown) => Promise<unknown>;
   /** 是否向模型公布并允许 Ask/不确定副作用确认工具；默认 true。 */

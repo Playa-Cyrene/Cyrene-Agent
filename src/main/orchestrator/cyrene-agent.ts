@@ -139,6 +139,8 @@ export interface CyreneRunOptions {
   harnessInteractiveTools?: boolean;
   /** 工具权限结算方式；手机端全部开启使用 allow_all 跳过逐项审批。 */
   permissionMode?: "normal" | "allow_all";
+  /** 无前端运行控制器的续轮不能创建人工审批卡片。 */
+  allowPermissionPrompt?: boolean;
   /** 直发图片被主模型接口拒绝时，懒加载 caption fallback 消息并重试。 */
   imageCaptionFallback?: () => Promise<ChatMessage[]>;
   /** 工具规则与目录 system prompt（进入 harness stablePrefix）。 */
@@ -193,6 +195,8 @@ export interface CyreneRunOptions {
    * 不能从用户消息、模型输出或 process.cwd() 推导。
    */
   resolvedWorkspaceRoot?: string;
+  /** 构建工具上下文时读取的绑定；null 表示明确未继承工作区。 */
+  resolvedWorkspaceBinding?: { workspaceRoot: string; boundAt: number } | null;
   /**
    * 外部取消信号。
    * - 由 AG-UI bridge 创建的 AbortController 注入，AGUI_CANCEL 调用 abort()。
@@ -211,6 +215,8 @@ export interface CyreneRunOptions {
    * Chat 无工具链路是单请求运行，不消费该回调。
    */
   pollRunAdjustments?: () => Promise<import("./harness/types").RunAdjustmentMessage[]> | undefined;
+  pollShellCompletions?: () => Promise<import("./vendors/types").ChatMessage[]>;
+  onShellJobComplete?: import("./tools/registry/tool-context").ToolContext["onShellJobComplete"];
   /**
    * Run 级轨迹提交端（CTA Phase 1）：canonical 消息权威落盘。
    * 桌面链路由上游创建并注入；缺省（渠道/插件/测试）不写轨迹。

@@ -605,6 +605,140 @@ describe("chats IPC mode filtering", () => {
     expect(mocks.openPath).toHaveBeenCalledWith(fs.realpathSync(workspaceRoot));
   });
 
+  it("settles background cancellation before deleting its conversation", async () => {
+    const { registerChatsIpc } = await import("./chats-ipc");
+    const store = await import("./chats-store");
+    const { getConversationTranscriptStore } = await import("../orchestrator/conversation-transcript-store");
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let interrupted = false;
+    const beforeSessionDelete = vi.fn(async (id: string) => {
+      await gate;
+      await getConversationTranscriptStore(mocks.userDataDir).append(id, {
+        kind: "interruption", id: "background-cancelled", at: 1_000, runId: "background",
+        payload: { reason: "user_cancel" },
+      });
+      interrupted = true;
+    });
+    await registerChatsIpc(undefined, { beforeSessionDelete });
+    const event = { sender: {} };
+    const session = await mocks.handlers.get(IPC.CHATS_CREATE)!(event, { mode: "code" }) as { id: string };
+    let finished = false;
+    const removing = (mocks.handlers.get(IPC.CHATS_DELETE)!(event, session.id) as Promise<boolean>)
+      .then(result => { finished = true; return result; });
+    try {
+      await expect.poll(() => beforeSessionDelete.mock.calls.length).toBe(1);
+      expect(beforeSessionDelete).toHaveBeenCalledWith(session.id);
+      expect(finished).toBe(false);
+      expect(await store.getSessionRecord(session.id)).not.toBeNull();
+    } finally { release(); await removing; }
+    expect(await removing).toBe(true);
+    expect(interrupted).toBe(true);
+    expect(await store.getSessionRecord(session.id)).toBeNull();
+  });
+
+  it.each(["false", "throw", "success"])("restores the deletion suspension only on rollback: %s", async outcome => {
+    const { registerChatsIpc } = await import("./chats-ipc");
+    const store = await import("./chats-store");
+    const rollback = vi.fn();
+    await registerChatsIpc(undefined, { beforeSessionDelete: async () => rollback });
+    const event = { sender: {} };
+    const session = await mocks.handlers.get(IPC.CHATS_CREATE)!(event, { mode: "code" }) as { id: string };
+    const deletion = vi.spyOn(store, "deleteSession");
+    if (outcome === "false") deletion.mockResolvedValueOnce(false);
+    if (outcome === "throw") deletion.mockRejectedValueOnce(new Error("DELETE_FAILED"));
+    try {
+      const deleting = mocks.handlers.get(IPC.CHATS_DELETE)!(event, session.id);
+      if (outcome === "throw") await expect(deleting).rejects.toThrow("DELETE_FAILED");
+      else expect(await deleting).toBe(outcome === "success");
+      expect(rollback).toHaveBeenCalledTimes(1);
+      expect(rollback).toHaveBeenCalledWith(outcome === "success");
+    } finally { deletion.mockRestore(); }
+  });
+
+  it("restores completion wakeups when wiki tombstoning fails", async () => {
+    const { registerChatsIpc } = await import("./chats-ipc");
+    const wiki = await import("../memory/wiki-memory-scheduler");
+    const store = await import("./chats-store");
+    const rollback = vi.fn();
+    await registerChatsIpc(undefined, { beforeSessionDelete: async () => rollback });
+    const event = { sender: {} };
+    const session = await mocks.handlers.get(IPC.CHATS_CREATE)!(event, { mode: "code" }) as { id: string };
+    fs.mkdirSync(path.join(mocks.userDataDir, "memory", "wiki"), { recursive: true });
+    const getter = vi.spyOn(wiki, "getWikiMemoryStore").mockReturnValue({ tombstoneConversation: async () => { throw new Error("WIKI_FAILED"); } } as never);
+    try {
+      expect(await mocks.handlers.get(IPC.CHATS_DELETE)!(event, session.id)).toBe(false);
+      expect(rollback).toHaveBeenCalledOnce();
+      expect(await store.getSessionRecord(session.id)).not.toBeNull();
+    } finally { getter.mockRestore(); }
+  });
+
+  it("does not tombstone a conversation when background cancellation fails", async () => {
+    const { registerChatsIpc } = await import("./chats-ipc");
+    const store = await import("./chats-store");
+    await registerChatsIpc(undefined, { beforeSessionDelete: async () => { throw new Error("CANCELLATION_FAILED"); } });
+    const event = { sender: {} };
+    const session = await mocks.handlers.get(IPC.CHATS_CREATE)!(event, { mode: "code" }) as { id: string };
+    await expect(mocks.handlers.get(IPC.CHATS_DELETE)!(event, session.id)).rejects.toThrow("CANCELLATION_FAILED");
+    expect(await store.getSessionRecord(session.id)).not.toBeNull();
+  });
+
+  it.each(["rebind", "clear"])("waits for background cancellation before a workspace %s is persisted", async action => {
+    const { registerChatsIpc } = await import("./chats-ipc");
+    const store = await import("./chats-store");
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const beforeWorkspaceBindingChange = vi.fn(async () => { await gate; });
+    await registerChatsIpc(undefined, { beforeWorkspaceBindingChange });
+    const event = { sender: {} };
+    const session = await mocks.handlers.get(IPC.CHATS_CREATE)!(event, { mode: "code" }) as { id: string };
+    const a = path.join(mocks.userDataDir, "A");
+    const b = path.join(mocks.userDataDir, "B");
+    fs.mkdirSync(a); fs.mkdirSync(b);
+    await store.setWorkspaceBinding(session.id, { workspaceRoot: a, displayName: "A", boundAt: 1 });
+    let finished = false;
+    const mutation = (action === "rebind"
+      ? mocks.handlers.get(IPC.CHATS_SET_WORKSPACE)!(event, { sessionId: session.id, workspaceRoot: b })
+      : mocks.handlers.get(IPC.CHATS_CLEAR_WORKSPACE)!(event, session.id)) as Promise<unknown>;
+    const changed = mutation.then(result => { finished = true; return result; });
+    try {
+      await expect.poll(() => beforeWorkspaceBindingChange.mock.calls.length).toBe(1);
+      expect(beforeWorkspaceBindingChange).toHaveBeenCalledWith(session.id);
+      expect(finished).toBe(false);
+      expect((await store.getWorkspaceBinding(session.id))?.workspaceRoot).toBe(a);
+    } finally { release(); await changed; }
+    expect(await changed).toEqual(expect.objectContaining({ ok: true }));
+    if (action === "clear") expect(await store.getWorkspaceBinding(session.id)).toBeUndefined();
+    else expect((await store.getWorkspaceBinding(session.id))?.workspaceRoot).toBe(fs.realpathSync(b));
+  });
+
+  it.each(["set", "clear"])("releases workspace suspension on every %s outcome", async action => {
+    const { registerChatsIpc } = await import("./chats-ipc");
+    const store = await import("./chats-store");
+    const finish = vi.fn();
+    await registerChatsIpc(undefined, { beforeWorkspaceBindingChange: async () => finish });
+    const event = { sender: {} };
+    const session = await mocks.handlers.get(IPC.CHATS_CREATE)!(event, { mode: "code" }) as { id: string };
+    const directory = path.join(mocks.userDataDir, "workspace"); fs.mkdirSync(directory);
+    const method = action === "set" ? "setWorkspaceBinding" : "clearWorkspaceBinding";
+    const mutation = vi.spyOn(store, method);
+    const invoke = () => action === "set"
+      ? mocks.handlers.get(IPC.CHATS_SET_WORKSPACE)!(event, { sessionId: session.id, workspaceRoot: directory })
+      : mocks.handlers.get(IPC.CHATS_CLEAR_WORKSPACE)!(event, session.id);
+    try {
+      mutation.mockRejectedValueOnce(new Error("BINDING_FAILED"));
+      if (action === "clear") await expect(invoke()).rejects.toThrow("BINDING_FAILED");
+      else expect(await invoke()).toMatchObject({ ok: false });
+      expect(finish).toHaveBeenLastCalledWith(false);
+      mutation.mockResolvedValueOnce(null);
+      expect(await invoke()).toMatchObject({ ok: false });
+      expect(finish).toHaveBeenCalledTimes(2);
+      expect(finish).toHaveBeenLastCalledWith(false);
+      expect(await invoke()).toMatchObject({ ok: true });
+      expect(finish).toHaveBeenLastCalledWith(true);
+    } finally { mutation.mockRestore(); }
+  });
+
   it("CHATS_SET_WORKSPACE：最近项目记录的目录已不存在时绑定被拒绝且不落库", async () => {
     const { registerChatsIpc } = await import("./chats-ipc");
     (await registerChatsIpc());
