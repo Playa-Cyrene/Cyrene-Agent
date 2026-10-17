@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Alert, Button, Spin } from "antd";
-import { Info, Monitor, Settings2 } from "lucide-react";
+import { FolderOpen, Info, Monitor, Settings2 } from "lucide-react";
 import packageJson from "../../../../../package.json";
 import { SettingsSegmented, SettingsSwitch } from "../../components/ui/SettingsControls";
 import { setUiLocale, useTranslation } from "../../i18n";
@@ -43,6 +43,7 @@ export function GeneralSettingsPanel() {
   const [loadError, setLoadError] = useState(false);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState("");
+  const [dataDir, setDataDir] = useState("");
   const updateState = useAppUpdate();
   const updateView = resolveAppUpdateView(updateState);
   // 版本称号（如 1.3.0 的"正式版"）随版本走，普通版本查不到就不显示
@@ -65,6 +66,15 @@ export function GeneralSettingsPanel() {
       setLoadError(true);
       setLoading(false);
     });
+    return () => { disposed = true; };
+  }, []);
+
+  // 数据目录只读展示；取不到时整行隐藏，不影响其余设置
+  useEffect(() => {
+    let disposed = false;
+    void window.settings?.getDataDir?.().then((dir) => {
+      if (!disposed && typeof dir === "string") setDataDir(dir);
+    }).catch(() => {});
     return () => { disposed = true; };
   }, []);
 
@@ -152,6 +162,18 @@ export function GeneralSettingsPanel() {
         <section className="cy-settings-section">
           <Card>
             <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong><Info size={16} /> {t("settingsPage.general.about")}</strong><span>{t("settingsPage.general.aboutDescription")} · v{packageJson.version}{versionTitleKey && ` · ${t(versionTitleKey)}`} · <a className="cy-settings-about__link" href={WEBSITE_URL} onClick={(event) => { event.preventDefault(); void window.system?.openExternal(WEBSITE_URL); }}>{t("ui.website.menuEntry")}</a></span></div></div>
+            {dataDir && (
+              <div className="cy-settings-row">
+                <div className="cy-settings-row__copy">
+                  <strong>{t("settingsPage.general.dataDir")}</strong>
+                  <span>{t("settingsPage.general.dataDirDescription")}</span>
+                  <span className="cy-settings-general__path" data-testid="settings-data-dir">{dataDir}</span>
+                </div>
+                <div className="cy-settings-row__control">
+                  <Button icon={<FolderOpen size={14} />} onClick={() => void window.settings?.openDataDir?.()}>{t("settingsPage.general.openDataDir")}</Button>
+                </div>
+              </div>
+            )}
             <div className="cy-settings-row">
               <div className="cy-settings-row__copy">
                 <strong>{t("settingsPage.general.softwareUpdate")}</strong>

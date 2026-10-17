@@ -20,6 +20,7 @@ import { getTimeoutSettings, saveTimeoutSettings } from "../timeout-manager";
 import type { syncVolcanoSearchMcp } from "./general-settings-lifecycle";
 import type { syncPlaywrightMcp, syncFilesystemMcp } from "../sync-mcp-builtin";
 import { broadcastChatsChanged } from "../chats/chats-ipc";
+import { openStorageFolder } from "../chats/chats-store";
 import { normalizeMemoryMode, type MemoryMode } from "../memory/memory-mode";
 import { getEffectiveUiTheme, watchSystemUiTheme } from "../system-ui-theme";
 
@@ -172,6 +173,13 @@ export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
     const filePath = ensureCustomStylePrompt();
     await shell.showItemInFolder(filePath);
     return { ok: true, filePath };
+  });
+
+  // 数据目录只读展示 + 打开：打开动作复用聊天存储已有的 openStorageFolder
+  ipc.handle(IPC.SETTINGS_GET_DATA_DIR, () => app.getPath("userData"));
+  ipc.handle(IPC.SETTINGS_OPEN_DATA_DIR, async () => {
+    await openStorageFolder();
+    return { ok: true };
   });
 
   ipc.on(IPC.SETTINGS_SET_PET_ALWAYS_ON_TOP, (_event, value: boolean) => {

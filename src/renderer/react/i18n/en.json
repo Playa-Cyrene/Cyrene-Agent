@@ -1344,6 +1344,9 @@
       "about": "About Cyrene",
       "aboutDescription": "A lightweight desktop companion for emotional support.",
       "softwareUpdate": "Software update",
+      "dataDir": "Data folder",
+      "dataDirDescription": "Chats, model profiles, plugins and other data are stored here",
+      "openDataDir": "Open folder",
       "save": "Save settings"
     },
     "usage": {

@@ -1368,6 +1368,9 @@
       "about": "キュレネについて",
       "aboutDescription": "軽量な感情コンパニオン型デスクトップ Agent",
       "softwareUpdate": "ソフトウェアアップデート",
+      "dataDir": "データフォルダー",
+      "dataDirDescription": "チャット履歴、モデルプロファイル、プラグインなどのデータはここに保存されます",
+      "openDataDir": "フォルダーを開く",
       "save": "設定を保存"
     },
     "usage": {

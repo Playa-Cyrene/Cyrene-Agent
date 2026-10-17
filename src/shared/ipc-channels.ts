@@ -154,6 +154,9 @@ export const IPC = {
   SETTINGS_PREVIEW_RUNTIME_SYNC: "settings:preview-runtime-sync",
   SETTINGS_OPEN_STICKER_MANAGER: "settings:open-sticker-manager",
   SETTINGS_OPEN_CUSTOM_STYLE_PROMPT: "settings:open-custom-style-prompt",
+  // 通用设置「数据目录」：只读取路径 / 在系统文件管理器中打开
+  SETTINGS_GET_DATA_DIR: "settings:get-data-dir",
+  SETTINGS_OPEN_DATA_DIR: "settings:open-data-dir",
   GMAIL_GET_STATUS: "gmail:get-status",
   GMAIL_GET_CLIENT_CONFIG: "gmail:get-client-config",
   GMAIL_SAVE_CLIENT_CONFIG: "gmail:save-client-config",

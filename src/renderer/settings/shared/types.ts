@@ -267,6 +267,8 @@ export interface SettingsApi {
   getGeneral: () => Promise<GeneralSettings>;
   saveGeneral: (config: Partial<GeneralSettings>) => Promise<GeneralSettings>;
   openCustomStylePrompt?: () => Promise<{ ok: boolean; filePath?: string; error?: string }>;
+  getDataDir?: () => Promise<string>;
+  openDataDir?: () => Promise<{ ok: boolean }>;
   getTimeoutSettings: () => Promise<TimeoutSettings>;
   saveTimeoutSettings: (config: Partial<TimeoutSettings>) => Promise<TimeoutSettings>;
   openSidebar: () => void;

@@ -526,6 +526,14 @@
   margin-top: 4px;
 }
 
+.cy-settings-general__path {
+  color: var(--rb-text-secondary);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
 .cy-settings-page .ant-segmented {
   height: 28px;
   min-height: 28px;
