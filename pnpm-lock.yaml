@@ -102,8 +102,8 @@ importers:
         specifier: ^0.12.1
         version: 0.12.1(@modelcontextprotocol/sdk@1.30.0(zod@4.6.7))(hono@4.12.25)(rxjs@7.8.1)(tree-sitter@0.22.4)(web-tree-sitter@0.24.7)(zod@4.6.7)
       marked:
-        specifier: ^16.4.2
-        version: 16.4.2
+        specifier: ^18.1.1
+        version: 18.1.1
       music-metadata:
         specifier: ^12.2.1
         version: 12.2.1
@@ -5923,11 +5923,6 @@ packages:
     engines: {node: '>= 20'}
     hasBin: true
 
-  marked@18.0.14:
-    resolution: {integrity: sha512-mBHK6FBHuBAlhgRe88w9F0O1AbwwXJUcQibUbC/QcdTbVGAD7aWza+xt3N6oT/jCZx3/OMeS+8rnuiHZcQ9s7A==}
-    engines: {node: '>= 20'}
-    hasBin: true
-
   marked@18.1.1:
     resolution: {integrity: sha512-zEGgrtUG8crk+TrMacJSVABU4DYDDkS8uqgU3ohrn/2fW9C2AEfUrO3m6IhpIpQpl7YcVpiXXC9cSMWDANT3dg==}
     engines: {node: '>= 20'}
@@ -9416,7 +9411,7 @@ snapshots:
       katex: 0.18.10
       leva: 0.10.1(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       lucide-react: 1.57.0(@types/react@19.3.0)(react@19.3.1)
-      marked: 18.0.14
+      marked: 18.1.1
       motion: 13.4.3(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       numeral: 2.0.6
       polished: 4.3.1
@@ -14435,8 +14430,6 @@ snapshots:
   markdown-table@3.0.4: {}
 
   marked@16.4.2: {}
-
-  marked@18.0.14: {}
 
   marked@18.1.1: {}
 
