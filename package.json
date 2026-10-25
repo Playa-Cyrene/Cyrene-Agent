@@ -180,6 +180,6 @@
     "vscode-languageserver-types": "^3.18.4",
     "wink-bm25-text-search": "^3.1.2",
     "ws": "^8.21.0",
-    "yaml": "^2.9.0"
+    "yaml": "^2.9.1"
   }
 }
