@@ -134,7 +134,7 @@
   "dependencies": {
     "@ag-ui/client": "1.0.0",
     "@ag-ui/core": "1.0.0",
-    "@ai-sdk/anthropic": "4.0.71",
+    "@ai-sdk/anthropic": "4.0.87",
     "@ai-sdk/openai": "4.0.83",
     "@ai-sdk/openai-compatible": "3.0.71",
     "@anthropic-ai/sandbox-runtime": "^0.0.80",
