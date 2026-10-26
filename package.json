@@ -167,7 +167,7 @@
     "marked": "^16.4.2",
     "music-metadata": "^12.2.1",
     "nodemailer": "^9.0.1",
-    "openai": "7.5.0",
+    "openai": "7.38.0",
     "package-manager-detector": "^1.8.0",
     "pdfkit": "^0.19.1",
     "playwright": "^1.63.0",
