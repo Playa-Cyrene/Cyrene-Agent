@@ -164,7 +164,7 @@
     "gray-matter": "^4.0.3",
     "js-yaml": "^5.0.0",
     "llamaindex": "^0.12.1",
-    "marked": "^16.4.2",
+    "marked": "^18.1.1",
     "music-metadata": "^12.2.1",
     "nodemailer": "^9.0.1",
     "openai": "7.5.0",
