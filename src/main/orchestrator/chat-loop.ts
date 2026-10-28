@@ -1,3 +1,4 @@
+import { modelMessageOrigin } from "./vendors/model-history";
 import { stripLeakedChatTimeContext } from "../chat-time-context";
 import { ChatTimeStreamPrefixFilter } from "../chat-time-stream-filter";
 import { recordUsage, recordRequest } from "../token-usage-store";
@@ -127,6 +128,7 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<AgentLoopRe
       type: "context_usage",
       contextUsage: buildContextUsageSnapshot({
         phase,
+        messageOrigin: modelMessageOrigin(options.adapter, options.settings),
         contextWindowTokens: options.settings.contextWindowTokens,
         personaContent: options.soulSystemBaseContent,
         ...(options.runtimeContext ? { runtimeContext: options.runtimeContext } : {}),

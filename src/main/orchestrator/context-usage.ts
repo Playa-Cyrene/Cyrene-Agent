@@ -12,8 +12,8 @@
 // - chat 模式不变量：messages 不得包含 composePromptLayers 追加的 <runtime_context>
 //   尾部消息，runtimeContext 由独立参数计量，否则双重计数。
 
-import type { ChatMessage } from "./vendors/types";
-import { estimateTokens, estimateMessageContentTokens } from "./context-manager";
+import type { ChatMessage, ModelMessageOrigin } from "./vendors/types";
+import { estimateTokens, estimateSingleMessageTokens } from "./context-manager";
 import { isCompactionCheckpointMessage } from "./harness/compaction";
 import type {
   ContextUsageCategory,
@@ -53,6 +53,8 @@ export interface ContextUsageSnapshotInput {
    * runtimeContext 由独立参数计量，避免双重计数。
    */
   messages: ChatMessage[];
+  /** 当前请求来源：仅重放兼容来源的私有内容。 */
+  messageOrigin?: ModelMessageOrigin;
 }
 
 function classifyMessage(message: ChatMessage): ContextUsageCategoryKey {
@@ -94,10 +96,8 @@ export function buildContextUsageSnapshot(input: ContextUsageSnapshotInput): Con
   }
 
   for (const message of input.messages) {
-    // 图片块按 DEFAULT_IMAGE_TOKEN_ESTIMATE 计量（不计 base64 全长），
-    // 与 estimateMessageTokens 同口径，防止计量与压缩判定分裂。
-    // +4 为角色/格式开销，与 estimateMessageTokens 一致。
-    buckets[classifyMessage(message)] += estimateMessageContentTokens(message.content ?? "") + 4;
+    // 与压缩预算共用请求投影：包括工具参数、当前来源可重放的私有内容及角色开销。
+    buckets[classifyMessage(message)] += estimateSingleMessageTokens(message, input.messageOrigin);
   }
 
   const categories: ContextUsageCategory[] = CATEGORY_KEYS.map((key) => ({ key, tokens: buckets[key] }));
@@ -118,6 +118,8 @@ export function buildCompactionContextUsageSnapshot(input: {
   phase: ContextUsagePhase;
   contextWindowTokens: number;
   messages: ChatMessage[];
+  /** 当前请求来源：仅重放兼容来源的私有内容。 */
+  messageOrigin?: ModelMessageOrigin;
   previous?: ContextUsageSnapshot;
 }): ContextUsageSnapshot {
   const computed = buildContextUsageSnapshot({ ...input, personaContent: "" });
