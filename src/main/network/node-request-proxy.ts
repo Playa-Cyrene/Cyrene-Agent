@@ -15,7 +15,8 @@
 /** 解析代理时用作探测地址；PAC 可能按地址分流，这里取典型的境外模型接口。 */
 export const PROXY_PROBE_URL = "https://generativelanguage.googleapis.com/";
 
-const LOCAL_NO_PROXY = "localhost,127.0.0.1,::1";
+// 全局 fetch 的 IPv6 回环主机名是 "[::1]"，裸写 "::1" 匹配不到；两种都保留以兼容其他读取方。
+const LOCAL_NO_PROXY = ["localhost", "127.0.0.1", "[::1]", "::1"];
 
 export type NodeRequestProxySource = "env" | "system" | "none" | "unsupported";
 
@@ -39,10 +40,22 @@ export function hasEnvProxy(env: ProxyEnv): boolean {
 }
 
 /**
+ * 合并用户已有的绕过列表（大小写两种变量都读）并追加本机地址。
+ * Node 读取时小写 no_proxy 优先，所以返回值要同时写入两种变量，避免旧的小写列表盖掉合并结果。
+ */
+export function noProxyWithLocal(env: ProxyEnv): string {
+  const entries = [env.no_proxy, env.NO_PROXY, ...LOCAL_NO_PROXY]
+    .flatMap((value) => (value ?? "").split(","))
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  return [...new Set(entries)].join(",");
+}
+
+/**
  * 把 Chromium 的代理规则（如 "PROXY 127.0.0.1:7890; DIRECT"）转成 Node 可用的代理环境变量。
  * 只取第一条规则：Chromium 按顺序尝试，第一条就是系统期望使用的代理。
  */
-export function proxyEnvFromChromiumRules(rules: string, noProxy?: string): { env: ProxyEnv; proxy: string } | null | "unsupported" {
+export function proxyEnvFromChromiumRules(rules: string, env: ProxyEnv = {}): { env: ProxyEnv; proxy: string } | null | "unsupported" {
   const first = rules.split(";").map((part) => part.trim()).find(Boolean);
   if (!first) return null;
   const [scheme, hostPort] = first.split(/\s+/, 2);
@@ -52,8 +65,9 @@ export function proxyEnvFromChromiumRules(rules: string, noProxy?: string): { en
   if (kind !== "PROXY" && kind !== "HTTPS") return "unsupported";
   const proxy = `${kind === "HTTPS" ? "https" : "http"}://${hostPort}`;
   if (!URL.canParse(proxy)) return null;
+  const noProxy = noProxyWithLocal(env);
   return {
-    env: { HTTP_PROXY: proxy, HTTPS_PROXY: proxy, NO_PROXY: noProxy ? `${noProxy},${LOCAL_NO_PROXY}` : LOCAL_NO_PROXY },
+    env: { HTTP_PROXY: proxy, HTTPS_PROXY: proxy, NO_PROXY: noProxy, no_proxy: noProxy },
     proxy,
   };
 }
@@ -64,11 +78,13 @@ export async function applyNodeRequestProxy(deps: {
   setGlobalProxyFromEnv: (env: ProxyEnv) => unknown;
 }): Promise<NodeRequestProxyResult> {
   if (hasEnvProxy(deps.env)) {
-    deps.setGlobalProxyFromEnv(deps.env);
+    // 原来没开 NODE_USE_ENV_PROXY 时本机请求一直直连；这里主动启用后也必须保证本机地址仍直连
+    const noProxy = noProxyWithLocal(deps.env);
+    deps.setGlobalProxyFromEnv({ ...deps.env, NO_PROXY: noProxy, no_proxy: noProxy });
     return { source: "env", proxy: redact(readEnv(deps.env, "HTTPS_PROXY") ?? readEnv(deps.env, "HTTP_PROXY")!) };
   }
   const rules = await deps.resolveProxy(PROXY_PROBE_URL);
-  const parsed = proxyEnvFromChromiumRules(rules, readEnv(deps.env, "NO_PROXY"));
+  const parsed = proxyEnvFromChromiumRules(rules, deps.env);
   if (parsed === "unsupported") return { source: "unsupported", rules };
   if (!parsed) return { source: "none", rules };
   deps.setGlobalProxyFromEnv(parsed.env);
