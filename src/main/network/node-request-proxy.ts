@@ -48,6 +48,8 @@ export function noProxyWithLocal(env: ProxyEnv): string {
     .flatMap((value) => (value ?? "").split(","))
     .map((entry) => entry.trim())
     .filter(Boolean);
+  // undici 只在整个值恰好为 "*" 时才全部直连；混进逗号列表里的 "*" 不再有通配含义
+  if (entries.includes("*")) return "*";
   return [...new Set(entries)].join(",");
 }
 
@@ -89,6 +91,36 @@ export async function applyNodeRequestProxy(deps: {
   if (!parsed) return { source: "none", rules };
   deps.setGlobalProxyFromEnv(parsed.env);
   return { source: "system", proxy: parsed.proxy, rules };
+}
+
+export interface NodeRequestProxyLogger {
+  info(message: string): void;
+  warn(message: string): void;
+}
+
+/**
+ * 启动入口：配置代理并记日志，失败不阻断启动。
+ * 失败时只记录错误码：Node 对无效代理地址抛出的 ERR_PROXY_INVALID_CONFIG 消息里就是完整代理 URL，
+ * 可能带用户名和密码，而 warn 日志会写入 userData/logs，用户排查时可能分享出去。
+ */
+export async function configureNodeRequestProxy(deps: Parameters<typeof applyNodeRequestProxy>[0] & {
+  log: NodeRequestProxyLogger;
+}): Promise<void> {
+  try {
+    const result = await applyNodeRequestProxy(deps);
+    if (result.source === "env" || result.source === "system") {
+      deps.log.info(`network proxy (${result.source}): ${result.proxy}`);
+    } else if (result.source === "unsupported") {
+      deps.log.warn(`system proxy not applied to Node requests (only HTTP/HTTPS proxies are supported): ${result.rules}`);
+    }
+  } catch (error) {
+    deps.log.warn(`failed to configure network proxy (${errorCode(error)}); check HTTP(S)_PROXY or the system proxy settings`);
+  }
+}
+
+function errorCode(error: unknown): string {
+  const code = (error as { code?: unknown } | null)?.code;
+  return typeof code === "string" && /^[A-Z0-9_]+$/.test(code) ? code : "unknown error";
 }
 
 /** 日志里不输出代理凭据。 */

@@ -163,7 +163,7 @@ import { createStartupReadiness } from "./readiness";
 import { createWindowActivationBroker } from "./window-activation";
 import { prepareBeforeReady } from "./pre-ready";
 import { startShell } from "./shell-bootstrap";
-import { applyNodeRequestProxy } from "../network/node-request-proxy";
+import { configureNodeRequestProxy } from "../network/node-request-proxy";
 import { startCore } from "./core-bootstrap";
 import { startBackground } from "./background";
 import { installUpdateShutdownFallback, type UpdateLifecycleLike } from "./electron-lifecycle";
@@ -182,21 +182,16 @@ function broadcastToAuxWindows(channel: string, payload: unknown): void {
 }
 
 /** 让 Node 自带的 fetch / http(s) 也走代理（见 network/node-request-proxy.ts）；失败只记日志，不阻断启动。 */
-async function configureNodeRequestProxy(): Promise<void> {
-  try {
-    const result = await applyNodeRequestProxy({
-      env: process.env,
-      resolveProxy: (url) => session.defaultSession.resolveProxy(url),
-      setGlobalProxyFromEnv: (env) => http.setGlobalProxyFromEnv(env),
-    });
-    if (result.source === "env" || result.source === "system") {
-      logger.info(LogTag.Runtime, `network proxy (${result.source}): ${result.proxy}`);
-    } else if (result.source === "unsupported") {
-      logger.warn(LogTag.Runtime, `system proxy not applied to Node requests (only HTTP/HTTPS proxies are supported): ${result.rules}`);
-    }
-  } catch (error) {
-    logger.warn(LogTag.Runtime, `failed to configure network proxy: ${error instanceof Error ? error.message : String(error)}`);
-  }
+function configureProxyForNodeRequests(): Promise<void> {
+  return configureNodeRequestProxy({
+    env: process.env,
+    resolveProxy: (url) => session.defaultSession.resolveProxy(url),
+    setGlobalProxyFromEnv: (env) => http.setGlobalProxyFromEnv(env),
+    log: {
+      info: (message) => logger.info(LogTag.Runtime, message),
+      warn: (message) => logger.warn(LogTag.Runtime, message),
+    },
+  });
 }
 
 async function reconcileUserMemoryIndex(): Promise<void> {
@@ -380,7 +375,7 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
     }),
 
     // 代理需要已就绪的 Electron session 才能查询，且必须早于 core 中的第一个模型 / 嵌入请求
-    startCore: (shell) => configureNodeRequestProxy().then(() => startCore({
+    startCore: (shell) => configureProxyForNodeRequests().then(() => startCore({
       shell,
       readiness,
       activation,

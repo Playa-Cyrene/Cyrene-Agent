@@ -1,7 +1,7 @@
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { applyNodeRequestProxy, hasEnvProxy, noProxyWithLocal, PROXY_PROBE_URL, proxyEnvFromChromiumRules } from "./node-request-proxy";
+import { applyNodeRequestProxy, configureNodeRequestProxy, hasEnvProxy, noProxyWithLocal, PROXY_PROBE_URL, proxyEnvFromChromiumRules } from "./node-request-proxy";
 
 describe("Chromium 代理规则转换", () => {
   it("PROXY 规则 → HTTP/HTTPS 代理，且本机地址直连", () => {
@@ -30,6 +30,14 @@ describe("Chromium 代理规则转换", () => {
   it("合并大小写两种绕过列表并去重，本机地址含 fetch 使用的 [::1]", () => {
     expect(noProxyWithLocal({ no_proxy: "a.example.com, localhost", NO_PROXY: "b.example.com,a.example.com" }))
       .toBe("a.example.com,localhost,b.example.com,127.0.0.1,[::1],::1");
+  });
+
+  it.each([
+    [{ NO_PROXY: "*" }],
+    [{ no_proxy: "*" }],
+    [{ no_proxy: "corp.example.com, *" }],
+  ])("绕过列表含独立的 * %j → 保持 *（全部直连），不追加本机地址", (env) => {
+    expect(noProxyWithLocal(env)).toBe("*");
   });
 
   it.each(["SOCKS5 127.0.0.1:7891", "SOCKS 127.0.0.1:1080; DIRECT"])("只有 SOCKS 代理 %j → 不支持，不改动", (rules) => {
@@ -150,6 +158,52 @@ describe("真实的 http.setGlobalProxyFromEnv：全局 fetch 的代理与本机
     expect(await fetchIpv6(`http://[::1]:${v6}/api/tags`)).not.toBe("via-proxy");
     expect(await fetchText(`http://localhost:${v4}/api/tags`)).toBe("DIRECT");
     expect(proxied).toEqual([]);
+  });
+
+  it.each([
+    ["环境变量分支", (proxy: string) => ({ HTTP_PROXY: proxy, HTTPS_PROXY: proxy, NO_PROXY: "*" }), "DIRECT"],
+    ["系统代理分支", () => ({ no_proxy: "*" }), "PROXY"],
+  ] as const)("%s：用户设置 NO_PROXY=* 时，全局 fetch 全部直连（含不在内置列表里的地址）", async (_label, envOf, rule) => {
+    const proxyPort = await startProxy();
+    // 127.0.0.2 不在内置本机列表里，只有通配 * 才会让它直连
+    const target = await startLocalService("127.0.0.2");
+    await applyNodeRequestProxy({
+      env: envOf(`http://127.0.0.1:${proxyPort}`),
+      resolveProxy: async () => (rule === "PROXY" ? `PROXY 127.0.0.1:${proxyPort}` : "DIRECT"),
+      setGlobalProxyFromEnv: (env) => { restore = http.setGlobalProxyFromEnv(env); },
+    });
+
+    expect(await fetchText(`http://127.0.0.2:${target}/v1/models`)).toBe("DIRECT");
+    expect(proxied).toEqual([]);
+  });
+
+  it("配置失败的日志不含代理用户名和密码（真实 setGlobalProxyFromEnv 抛出含完整 URL 的错误）", async () => {
+    const info = vi.fn();
+    const warn = vi.fn();
+    await configureNodeRequestProxy({
+      env: { HTTPS_PROXY: "http://review-user:review-test-password@127.0.0.1:99999" },
+      resolveProxy: async () => "DIRECT",
+      setGlobalProxyFromEnv: (env) => { restore = http.setGlobalProxyFromEnv(env); },
+      log: { info, warn },
+    });
+    expect(warn).toHaveBeenCalledTimes(1);
+    const logged = [...info.mock.calls, ...warn.mock.calls].flat().join("\n");
+    expect(logged).toContain("ERR_PROXY_INVALID_CONFIG");
+    expect(logged).not.toContain("review-test-password");
+    expect(logged).not.toContain("review-user");
+  });
+
+  it("配置成功的日志同样不含代理凭据", async () => {
+    const proxyPort = await startProxy();
+    const info = vi.fn();
+    await configureNodeRequestProxy({
+      env: { HTTPS_PROXY: `http://review-user:review-test-password@127.0.0.1:${proxyPort}` },
+      resolveProxy: async () => "DIRECT",
+      setGlobalProxyFromEnv: (env) => { restore = http.setGlobalProxyFromEnv(env); },
+      log: { info, warn: vi.fn() },
+    });
+    expect(info).toHaveBeenCalledTimes(1);
+    expect(info.mock.calls.flat().join("\n")).not.toContain("review-test-password");
   });
 
   it("环境变量分支：只设 HTTP(S)_PROXY、绕过列表只有公司域名时，本机服务仍直连，境外请求走代理", async () => {
