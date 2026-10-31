@@ -174,7 +174,7 @@ export function UsageStatsPanel() {
         <section className="cy-settings-section">
           <div className="cy-usage-empty">
             <BarChart3 size={36} aria-hidden="true" />
-            <strong>{t("settingsPage.usage.emptyTitle")}</strong>
+            <strong data-settings-search-id="settingsPage.usage.emptyTitle">{t("settingsPage.usage.emptyTitle")}</strong>
             <span>{t("settingsPage.usage.emptyDescription")}</span>
           </div>
         </section>
@@ -200,7 +200,7 @@ export function UsageStatsPanel() {
 
           <section className="cy-settings-section">
             <div className="cy-settings-section__heading">
-              <h2>{t("settingsPage.usage.heatmapTitle")}</h2>
+              <h2 data-settings-search-id="settingsPage.usage.heatmapTitle">{t("settingsPage.usage.heatmapTitle")}</h2>
             </div>
             <Card className="cy-usage-heatmap">
               <div className="cy-usage-heatmap__toolbar">
@@ -263,7 +263,7 @@ export function UsageStatsPanel() {
 
           <section className="cy-settings-section">
             <div className="cy-settings-section__heading">
-              <h2>{t("settingsPage.usage.trendsTitle")}</h2>
+              <h2 data-settings-search-id="settingsPage.usage.trendsTitle">{t("settingsPage.usage.trendsTitle")}</h2>
             </div>
             <Card className="cy-usage-card">
               <div className="cy-usage-card__toolbar">
@@ -280,7 +280,7 @@ export function UsageStatsPanel() {
 
           <section className="cy-settings-section">
             <div className="cy-settings-section__heading">
-              <h2>{t("settingsPage.usage.modelsTitle")}</h2>
+              <h2 data-settings-search-id="settingsPage.usage.modelsTitle">{t("settingsPage.usage.modelsTitle")}</h2>
             </div>
             <Card className="cy-usage-card">
               <ModelDonut models={report?.models ?? []} locale={locale} t={t} />

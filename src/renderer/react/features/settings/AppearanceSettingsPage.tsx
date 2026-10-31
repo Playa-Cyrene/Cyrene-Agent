@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Alert, Button, Spin } from "antd";
-import { ArrowLeft, AudioLines, BarChart3, BookOpen, Bot, Boxes, Brain, FileText, Globe, Headphones, Heart, Mail, Monitor, Palette, Power, Puzzle, Settings2, Smartphone, Sparkles, Type, Wrench } from "lucide-react";
+import { ArrowLeft, AudioLines, BarChart3, BookOpen, Bot, Boxes, Brain, FileText, Globe, Headphones, Heart, Mail, Monitor, Palette, Search, Power, Puzzle, Settings2, Smartphone, Sparkles, Type, Wrench } from "lucide-react";
 import { MCP } from "@lobehub/icons";
 import packageJson from "../../../../../package.json";
 import { normalizeUiThemeChoice, type UiThemeChoice } from "../../../../shared/ui-theme";
@@ -38,6 +38,9 @@ import { ChannelsSettingsPanel } from "./ChannelsSettingsPanel";
 import { SubagentSettingsPanel } from "./SubagentSettingsPanel";
 import { BrowserControlSettingsPanel } from "./BrowserControlSettingsPanel";
 import { EmailSettingsPanel } from "./EmailSettingsPanel";
+import { locateSettingsSearchTarget } from "./settings-search-navigation";
+import { SettingsSearchDialog } from "./SettingsSearchDialog";
+import type { SettingsSearchItem } from "./settings-search-index";
 import settingsLogoUrl from "../../../settings/100.png";
 import "../../components/ui/WindowControls.css";
 import "./AppearanceSettingsPage.css";
@@ -112,6 +115,10 @@ function SettingsNavItem({ section, currentSection, icon, label, onSelect }: Set
 
 export function AppearanceSettingsPage({ section, onSelectSection, onBackToWorkspace, musicSettingsNavigation = 0 }: AppearanceSettingsPageProps) {
   const { t } = useTranslation();
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchNotice, setSearchNotice] = useState(false);
+  const [searchTarget, setSearchTarget] = useState<SettingsSearchItem>();
+  const contentRef = useRef<HTMLDivElement>(null);
   const [values, setValues] = useState(defaults);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
@@ -154,6 +161,25 @@ export function AppearanceSettingsPage({ section, onSelectSection, onBackToWorks
 
     return () => { disposed = true; unsubscribeTheme?.(); };
   }, []);
+
+  useEffect(() => {
+    if (!searchTarget || section !== searchTarget.section) return;
+    const container = contentRef.current;
+    if (!container) return;
+    return locateSettingsSearchTarget(container, searchTarget.id, () => setSearchNotice(true));
+  }, [section, searchTarget]);
+
+  function selectSection(next: SettingsSection) {
+    setSearchTarget(undefined);
+    setSearchNotice(false);
+    onSelectSection(next);
+  }
+
+  function selectSearchResult(item: SettingsSearchItem) {
+    setSearchNotice(false);
+    setSearchTarget({ ...item });
+    onSelectSection(item.section);
+  }
 
   async function savePatch(patch: Record<string, unknown>, successMessage = t("settingsPage.saved")) {
     try {
@@ -241,12 +267,15 @@ export function AppearanceSettingsPage({ section, onSelectSection, onBackToWorks
   return (
     <div className="cy-page cy-settings-page">
       <header className="cy-page-windows cy-settings-titlebar">
+        <button className="cy-settings-search-trigger" type="button" onClick={() => setSearchOpen(true)}><Search size={15} />{t("settingsSearch.title")}</button>
         <WindowControls
           onMinimize={() => window.chat?.minimize()}
           onMaximize={() => window.chat?.toggleMaximize()}
           onClose={() => window.chat?.close()}
         />
       </header>
+
+      <SettingsSearchDialog open={searchOpen} onClose={() => setSearchOpen(false)} onSelect={selectSearchResult} />
 
       <aside className="cy-page-sidebar cy-settings-sidebar">
         <div className="cy-settings-brand"><img className="cy-settings-brand__logo" src={settingsLogoUrl} alt="" aria-hidden="true" /><span>昔涟</span></div>
@@ -255,30 +284,30 @@ export function AppearanceSettingsPage({ section, onSelectSection, onBackToWorks
         </Button>
         <nav className="cy-settings-sidebar__nav" aria-label={t("settingsPage.navigation")}>
         <div className="cy-settings-sidebar__group-title">{t("settingsPage.basicSettings")}</div>
-        <SettingsNavItem section="general" currentSection={section} icon={<Settings2 size={18} strokeWidth={1.8} />} label={t("settingsPage.general.title")} onSelect={onSelectSection} />
-        <SettingsNavItem section="appearance" currentSection={section} icon={<Palette size={18} strokeWidth={1.8} />} label={t("settingsPage.appearance")} onSelect={onSelectSection} />
-        <SettingsNavItem section="preferences" currentSection={section} icon={<Monitor size={18} strokeWidth={1.8} />} label={t("settingsPage.preferencesLabel")} onSelect={onSelectSection} />
-        <SettingsNavItem section="models" currentSection={section} icon={<Boxes size={18} strokeWidth={1.8} />} label={t("settingsPage.modelSettings.title")} onSelect={onSelectSection} />
-        <SettingsNavItem section="usage" currentSection={section} icon={<BarChart3 size={18} strokeWidth={1.8} />} label={t("settingsPage.usage.title")} onSelect={onSelectSection} />
-        <SettingsNavItem section="browser" currentSection={section} icon={<Globe size={18} strokeWidth={1.8} />} label={t("settingsPage.browserControl.navLabel")} onSelect={onSelectSection} />
-        <SettingsNavItem section="email" currentSection={section} icon={<Mail size={18} strokeWidth={1.8} />} label={t("settingsPage.emailSettings.title")} onSelect={onSelectSection} />
+        <SettingsNavItem section="general" currentSection={section} icon={<Settings2 size={18} strokeWidth={1.8} />} label={t("settingsPage.general.title")} onSelect={selectSection} />
+        <SettingsNavItem section="appearance" currentSection={section} icon={<Palette size={18} strokeWidth={1.8} />} label={t("settingsPage.appearance")} onSelect={selectSection} />
+        <SettingsNavItem section="preferences" currentSection={section} icon={<Monitor size={18} strokeWidth={1.8} />} label={t("settingsPage.preferencesLabel")} onSelect={selectSection} />
+        <SettingsNavItem section="models" currentSection={section} icon={<Boxes size={18} strokeWidth={1.8} />} label={t("settingsPage.modelSettings.title")} onSelect={selectSection} />
+        <SettingsNavItem section="usage" currentSection={section} icon={<BarChart3 size={18} strokeWidth={1.8} />} label={t("settingsPage.usage.title")} onSelect={selectSection} />
+        <SettingsNavItem section="browser" currentSection={section} icon={<Globe size={18} strokeWidth={1.8} />} label={t("settingsPage.browserControl.navLabel")} onSelect={selectSection} />
+        <SettingsNavItem section="email" currentSection={section} icon={<Mail size={18} strokeWidth={1.8} />} label={t("settingsPage.emailSettings.title")} onSelect={selectSection} />
         <div className="cy-settings-sidebar__group-title cy-settings-sidebar__group-title--spaced">{t("settingsPage.agentAbilities")}</div>
-        <SettingsNavItem section="toolToggle" currentSection={section} icon={<Power size={18} strokeWidth={1.8} />} label={t("settingsPage.toolToggle.title")} onSelect={onSelectSection} />
-        <SettingsNavItem section="tools" currentSection={section} icon={<Wrench size={18} strokeWidth={1.8} />} label={t("settingsPage.tools.title")} onSelect={onSelectSection} />
-        <SettingsNavItem section="subagents" currentSection={section} icon={<Bot size={18} strokeWidth={1.8} />} label={t("settingsPage.subagents.title")} onSelect={onSelectSection} />
-        <SettingsNavItem section="plugins" currentSection={section} icon={<Puzzle size={18} strokeWidth={1.8} />} label={t("pluginPanel.title")} onSelect={onSelectSection} />
-        <SettingsNavItem section="mcp" currentSection={section} icon={<MCP size={18} />} label={t("settingsPage.mcp.menuLabel")} onSelect={onSelectSection} />
-        <SettingsNavItem section="memory" currentSection={section} icon={<Brain size={18} strokeWidth={1.8} />} label={t("settingsPage.memory.title")} onSelect={onSelectSection} />
-        <SettingsNavItem section="knowledge" currentSection={section} icon={<BookOpen size={18} strokeWidth={1.8} />} label={t("settingsPage.knowledgeBase.title")} onSelect={onSelectSection} />
-        <SettingsNavItem section="cyrene" currentSection={section} icon={<Heart size={18} strokeWidth={1.8} />} label={t("settingsPage.cyrene.title")} onSelect={onSelectSection} />
-        <SettingsNavItem section="skill" currentSection={section} icon={<Sparkles size={18} strokeWidth={1.8} />} label={t("settingsPage.skill.title")} onSelect={onSelectSection} />
+        <SettingsNavItem section="toolToggle" currentSection={section} icon={<Power size={18} strokeWidth={1.8} />} label={t("settingsPage.toolToggle.title")} onSelect={selectSection} />
+        <SettingsNavItem section="tools" currentSection={section} icon={<Wrench size={18} strokeWidth={1.8} />} label={t("settingsPage.tools.title")} onSelect={selectSection} />
+        <SettingsNavItem section="subagents" currentSection={section} icon={<Bot size={18} strokeWidth={1.8} />} label={t("settingsPage.subagents.title")} onSelect={selectSection} />
+        <SettingsNavItem section="plugins" currentSection={section} icon={<Puzzle size={18} strokeWidth={1.8} />} label={t("pluginPanel.title")} onSelect={selectSection} />
+        <SettingsNavItem section="mcp" currentSection={section} icon={<MCP size={18} />} label={t("settingsPage.mcp.menuLabel")} onSelect={selectSection} />
+        <SettingsNavItem section="memory" currentSection={section} icon={<Brain size={18} strokeWidth={1.8} />} label={t("settingsPage.memory.title")} onSelect={selectSection} />
+        <SettingsNavItem section="knowledge" currentSection={section} icon={<BookOpen size={18} strokeWidth={1.8} />} label={t("settingsPage.knowledgeBase.title")} onSelect={selectSection} />
+        <SettingsNavItem section="cyrene" currentSection={section} icon={<Heart size={18} strokeWidth={1.8} />} label={t("settingsPage.cyrene.title")} onSelect={selectSection} />
+        <SettingsNavItem section="skill" currentSection={section} icon={<Sparkles size={18} strokeWidth={1.8} />} label={t("settingsPage.skill.title")} onSelect={selectSection} />
         <div className="cy-settings-sidebar__group-title cy-settings-sidebar__group-title--spaced">{t("settingsPage.externalChannels")}</div>
-        <SettingsNavItem section="channels" currentSection={section} icon={<Smartphone size={18} strokeWidth={1.8} />} label={t("settingsPage.channels.title")} onSelect={onSelectSection} />
+        <SettingsNavItem section="channels" currentSection={section} icon={<Smartphone size={18} strokeWidth={1.8} />} label={t("settingsPage.channels.title")} onSelect={selectSection} />
         <div className="cy-settings-sidebar__group-title cy-settings-sidebar__group-title--spaced">{t("settingsPage.voiceAbilities")}</div>
-        <SettingsNavItem section="tts" currentSection={section} icon={<AudioLines size={18} strokeWidth={1.8} />} label={t("settingsPage.tts.title")} onSelect={onSelectSection} />
-        <SettingsNavItem section="asr" currentSection={section} icon={<Headphones size={18} strokeWidth={1.8} />} label={t("settingsPage.asr.title")} onSelect={onSelectSection} />
+        <SettingsNavItem section="tts" currentSection={section} icon={<AudioLines size={18} strokeWidth={1.8} />} label={t("settingsPage.tts.title")} onSelect={selectSection} />
+        <SettingsNavItem section="asr" currentSection={section} icon={<Headphones size={18} strokeWidth={1.8} />} label={t("settingsPage.asr.title")} onSelect={selectSection} />
         <div className="cy-settings-sidebar__group-title cy-settings-sidebar__group-title--spaced">{t("settingsPage.usageNotice")}</div>
-        <SettingsNavItem section="disclaimer" currentSection={section} icon={<FileText size={18} strokeWidth={1.8} />} label={t("settingsPage.disclaimer.navLabel")} onSelect={onSelectSection} />
+        <SettingsNavItem section="disclaimer" currentSection={section} icon={<FileText size={18} strokeWidth={1.8} />} label={t("settingsPage.disclaimer.navLabel")} onSelect={selectSection} />
         </nav>
         <div className="cy-settings-sidebar__footer">
           v{packageJson.version}
@@ -287,8 +316,9 @@ export function AppearanceSettingsPage({ section, onSelectSection, onBackToWorks
       </aside>
 
       <main className="cy-workspace is-empty cy-settings-content">
-        <div className={`cy-settings-content__inner${section === "knowledge" ? " is-knowledge-settings" : ""}`}>
-          {section === "email" ? <EmailSettingsPanel /> : section === "browser" ? <BrowserControlSettingsPanel /> : section === "preferences" ? <PreferencesSettingsPanel /> : section === "models" ? <ModelSettingsPanel /> : section === "usage" ? <UsageStatsPanel /> : section === "general" ? <GeneralSettingsPanel /> : section === "toolToggle" ? <ToolToggleSettingsPanel /> : section === "tools" ? <ToolSettingsPanel musicSettingsNavigation={musicSettingsNavigation} /> : section === "subagents" ? <SubagentSettingsPanel /> : section === "plugins" ? <PluginSettingsPanel /> : section === "memory" ? <MemorySettingsPanel /> : section === "knowledge" ? <KnowledgeBaseSettingsPanel /> : section === "cyrene" ? <CyreneSettingsPanel /> : section === "skill" ? <SkillSettingsPanel /> : section === "asr" ? <AsrSettingsPanel /> : section === "tts" ? <TtsSettingsPanel /> : section === "mcp" ? <McpSettingsPanel /> : section === "channels" ? <ChannelsSettingsPanel /> : section === "disclaimer" ? <DisclaimerSettingsPanel /> : <>
+        <div ref={contentRef} className={`cy-settings-content__inner${section === "knowledge" ? " is-knowledge-settings" : ""}`}>
+          {searchNotice && <Alert className="cy-settings-alert" type="info" showIcon message={t("settingsSearch.unavailable")} />}
+          {section === "email" ? <EmailSettingsPanel /> : section === "browser" ? <BrowserControlSettingsPanel /> : section === "preferences" ? <PreferencesSettingsPanel /> : section === "models" ? <ModelSettingsPanel searchTarget={searchTarget} /> : section === "usage" ? <UsageStatsPanel /> : section === "general" ? <GeneralSettingsPanel /> : section === "toolToggle" ? <ToolToggleSettingsPanel /> : section === "tools" ? <ToolSettingsPanel musicSettingsNavigation={musicSettingsNavigation} /> : section === "subagents" ? <SubagentSettingsPanel /> : section === "plugins" ? <PluginSettingsPanel /> : section === "memory" ? <MemorySettingsPanel /> : section === "knowledge" ? <KnowledgeBaseSettingsPanel /> : section === "cyrene" ? <CyreneSettingsPanel /> : section === "skill" ? <SkillSettingsPanel /> : section === "asr" ? <AsrSettingsPanel /> : section === "tts" ? <TtsSettingsPanel /> : section === "mcp" ? <McpSettingsPanel /> : section === "channels" ? <ChannelsSettingsPanel /> : section === "disclaimer" ? <DisclaimerSettingsPanel /> : <>
             <h1>{t("settingsPage.appearance")}</h1>
             <p className="cy-settings-intro">{t("settingsPage.description")}</p>
 
@@ -297,19 +327,19 @@ export function AppearanceSettingsPage({ section, onSelectSection, onBackToWorks
               <>
               <section className="cy-settings-section">
                 <div className="cy-settings-section__heading">
-                  <h2><Type size={18} />{t("settingsPage.interface")}</h2>
+                  <h2 data-settings-search-id="settingsPage.interface"><Type size={18} />{t("settingsPage.interface")}</h2>
                   <p>{t("settingsPage.interfaceDescription")}</p>
                 </div>
                 <Card>
                   <div className="cy-settings-row">
-                    <div className="cy-settings-row__copy"><strong>{t("settingsPage.theme")}</strong><span>{t("settingsPage.themeDescription")}</span></div>
+                    <div className="cy-settings-row__copy"><strong data-settings-search-id="settingsPage.theme">{t("settingsPage.theme")}</strong><span>{t("settingsPage.themeDescription")}</span></div>
                     <SettingsSegmented value={values.uiTheme} onChange={(value) => void selectTheme(value as UiThemeChoice)} options={[{ label: t("settingsPage.themeSystem"), value: "system" }, { label: t("settingsPage.themePearlWhite"), value: "pearl-white" }, { label: t("settingsPage.themeCharcoalPink"), value: "charcoal-pink" }]} />
                   </div>
                   <div className="cy-settings-row">
-                    <div className="cy-settings-row__copy"><strong>{t("settingsPage.uiFont")}</strong><span>{t("settingsPage.defaultFont")}</span></div>
+                    <div className="cy-settings-row__copy"><strong data-settings-search-id="settingsPage.uiFont">{t("settingsPage.uiFont")}</strong><span>{t("settingsPage.defaultFont")}</span></div>
                   </div>
                   <div className="cy-settings-row">
-                    <div className="cy-settings-row__copy"><strong>{t("settingsPage.cyreneAvatar")}</strong><span>{t("settingsPage.cyreneAvatarDescription")}</span></div>
+                    <div className="cy-settings-row__copy"><strong data-settings-search-id="settingsPage.cyreneAvatar">{t("settingsPage.cyreneAvatar")}</strong><span>{t("settingsPage.cyreneAvatarDescription")}</span></div>
                     <div className="cy-settings-row__control cy-settings-avatar-control">
                       <img className="cy-settings-avatar-preview" src={cyreneAvatarUrl} alt={t("settingsPage.cyreneAvatar")} />
                       <Button disabled={avatarBusy} onClick={() => void uploadCyreneAvatar()}>{t("settingsPage.cyreneAvatarUpload")}</Button>
@@ -317,34 +347,34 @@ export function AppearanceSettingsPage({ section, onSelectSection, onBackToWorks
                     </div>
                   </div>
                   <div className="cy-settings-row">
-                    <div className="cy-settings-row__copy"><strong>{t("settingsPage.messageTypography")}</strong><span>{t("settingsPage.messageTypographyDescription")}</span></div>
+                    <div className="cy-settings-row__copy"><strong data-settings-search-id="settingsPage.messageTypography">{t("settingsPage.messageTypography")}</strong><span>{t("settingsPage.messageTypographyDescription")}</span></div>
                     <div className="cy-settings-row__control cy-settings-button-group">
                       <Button onClick={resetTypography}>{t("settingsPage.messageTypographyResetButton")}</Button>
                     </div>
                   </div>
                   <div className="cy-settings-row">
-                    <div className="cy-settings-row__copy"><strong>{t("settingsPage.messageFontSize")}</strong><span>{t("settingsPage.messageFontSizeDescription")}</span></div>
+                    <div className="cy-settings-row__copy"><strong data-settings-search-id="settingsPage.messageFontSize">{t("settingsPage.messageFontSize")}</strong><span>{t("settingsPage.messageFontSizeDescription")}</span></div>
                     <div className="cy-settings-row__control cy-settings-slider">
                       <SettingsSlider min={MESSAGE_TYPOGRAPHY_RANGES.fontSize.min} max={MESSAGE_TYPOGRAPHY_RANGES.fontSize.max} step={0.5} value={values.messageTypography.fontSize} ariaLabel={t("settingsPage.messageFontSize")} onChange={(value) => updateTypography("fontSize", value)} onChangeComplete={() => saveTypography()} />
                       <span>{values.messageTypography.fontSize}px</span>
                     </div>
                   </div>
                   <div className="cy-settings-row">
-                    <div className="cy-settings-row__copy"><strong>{t("settingsPage.messageLineHeight")}</strong><span>{t("settingsPage.messageLineHeightDescription")}</span></div>
+                    <div className="cy-settings-row__copy"><strong data-settings-search-id="settingsPage.messageLineHeight">{t("settingsPage.messageLineHeight")}</strong><span>{t("settingsPage.messageLineHeightDescription")}</span></div>
                     <div className="cy-settings-row__control cy-settings-slider">
                       <SettingsSlider min={MESSAGE_TYPOGRAPHY_RANGES.lineHeight.min} max={MESSAGE_TYPOGRAPHY_RANGES.lineHeight.max} step={0.05} value={values.messageTypography.lineHeight} ariaLabel={t("settingsPage.messageLineHeight")} onChange={(value) => updateTypography("lineHeight", value)} onChangeComplete={() => saveTypography()} />
                       <span>{values.messageTypography.lineHeight}</span>
                     </div>
                   </div>
                   <div className="cy-settings-row">
-                    <div className="cy-settings-row__copy"><strong>{t("settingsPage.messageLetterSpacing")}</strong><span>{t("settingsPage.messageLetterSpacingDescription")}</span></div>
+                    <div className="cy-settings-row__copy"><strong data-settings-search-id="settingsPage.messageLetterSpacing">{t("settingsPage.messageLetterSpacing")}</strong><span>{t("settingsPage.messageLetterSpacingDescription")}</span></div>
                     <div className="cy-settings-row__control cy-settings-slider">
                       <SettingsSlider min={MESSAGE_TYPOGRAPHY_RANGES.letterSpacing.min} max={MESSAGE_TYPOGRAPHY_RANGES.letterSpacing.max} step={0.1} value={values.messageTypography.letterSpacing} ariaLabel={t("settingsPage.messageLetterSpacing")} onChange={(value) => updateTypography("letterSpacing", value)} onChangeComplete={() => saveTypography()} />
                       <span>{values.messageTypography.letterSpacing}px</span>
                     </div>
                   </div>
                   <div className="cy-settings-row">
-                    <div className="cy-settings-row__copy"><strong>{t("settingsPage.messageFontWeight")}</strong><span>{t("settingsPage.messageFontWeightDescription")}</span></div>
+                    <div className="cy-settings-row__copy"><strong data-settings-search-id="settingsPage.messageFontWeight">{t("settingsPage.messageFontWeight")}</strong><span>{t("settingsPage.messageFontWeightDescription")}</span></div>
                     <div className="cy-settings-row__control cy-settings-slider">
                       <SettingsSlider min={MESSAGE_TYPOGRAPHY_RANGES.fontWeight.min} max={MESSAGE_TYPOGRAPHY_RANGES.fontWeight.max} step={50} value={values.messageTypography.fontWeight} ariaLabel={t("settingsPage.messageFontWeight")} onChange={(value) => updateTypography("fontWeight", value)} onChangeComplete={() => saveTypography()} />
                       <span>{values.messageTypography.fontWeight}</span>
@@ -358,20 +388,20 @@ export function AppearanceSettingsPage({ section, onSelectSection, onBackToWorks
 
               <section className="cy-settings-section">
                 <div className="cy-settings-section__heading">
-                  <h2><Monitor size={18} />{t("settingsPage.pet")}</h2>
+                  <h2 data-settings-search-id="settingsPage.pet"><Monitor size={18} />{t("settingsPage.pet")}</h2>
                   <p>{t("settingsPage.petDescription")}</p>
                 </div>
                 <Card>
                   <div className="cy-settings-row">
-                    <div className="cy-settings-row__copy"><strong>{t("settingsPage.petAlwaysOnTop")}</strong><span>{t("settingsPage.petAlwaysOnTopDescription")}</span></div>
+                    <div className="cy-settings-row__copy"><strong data-settings-search-id="settingsPage.petAlwaysOnTop">{t("settingsPage.petAlwaysOnTop")}</strong><span>{t("settingsPage.petAlwaysOnTopDescription")}</span></div>
                     <SettingsSwitch ariaLabel={t("settingsPage.petAlwaysOnTop")} checked={values.petAlwaysOnTop} onChange={(checked) => updatePetBoolean("petAlwaysOnTop", checked)} />
                   </div>
                   <div className="cy-settings-row">
-                    <div className="cy-settings-row__copy"><strong>{t("settingsPage.petVisible")}</strong><span>{t("settingsPage.petVisibleDescription")}</span></div>
+                    <div className="cy-settings-row__copy"><strong data-settings-search-id="settingsPage.petVisible">{t("settingsPage.petVisible")}</strong><span>{t("settingsPage.petVisibleDescription")}</span></div>
                     <SettingsSwitch ariaLabel={t("settingsPage.petVisible")} checked={values.petVisible} onChange={(checked) => updatePetBoolean("petVisible", checked)} />
                   </div>
                   <div className="cy-settings-row">
-                    <div className="cy-settings-row__copy"><strong>{t("settingsPage.petZoom")}</strong><span>{t("settingsPage.petZoomDescription")}</span></div>
+                    <div className="cy-settings-row__copy"><strong data-settings-search-id="settingsPage.petZoom">{t("settingsPage.petZoom")}</strong><span>{t("settingsPage.petZoomDescription")}</span></div>
                     <div className="cy-settings-row__control cy-settings-slider">
                       <SettingsSlider min={0.5} max={2} step={0.1} value={values.petZoom} ariaLabel={t("settingsPage.petZoom")} onChange={(value) => updateNumber("petZoom", value)} onChangeComplete={(zoom) => { window.settings?.setPetZoom(zoom); setStatus(t("settingsPage.applied")); }} />
                       <span>{Math.round(values.petZoom * 100)}%</span>

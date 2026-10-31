@@ -115,13 +115,13 @@ export function SubagentSettingsPanel() {
         <>
           <section className="cy-settings-section">
             <div className="cy-settings-section__heading">
-              <h2><Bot size={18} />{t("settingsPage.subagents.personaTitle")}</h2>
+              <h2 data-settings-search-id="settingsPage.subagents.personaTitle"><Bot size={18} />{t("settingsPage.subagents.personaTitle")}</h2>
               <p>{t("settingsPage.subagents.personaDescription")}</p>
             </div>
             <Card>
               <div className="cy-settings-row">
                 <div className="cy-settings-row__copy">
-                  <strong>{t("settingsPage.subagents.personaToggle")}</strong>
+                  <strong data-settings-search-id="settingsPage.subagents.personaToggle">{t("settingsPage.subagents.personaToggle")}</strong>
                   <span>{personaEnabled ? t("settingsPage.subagents.personaEnabledHint") : t("settingsPage.subagents.personaDisabledHint")}</span>
                 </div>
                 <SettingsSwitch
@@ -135,13 +135,13 @@ export function SubagentSettingsPanel() {
           </section>
           <section className="cy-settings-section">
             <div className="cy-settings-section__heading">
-              <h2><Cpu size={18} />{t("settingsPage.subagents.modelTitle")}</h2>
+              <h2 data-settings-search-id="settingsPage.subagents.modelTitle"><Cpu size={18} />{t("settingsPage.subagents.modelTitle")}</h2>
               <p>{t("settingsPage.subagents.modelDescription")}</p>
             </div>
             <Card>
               <div className="cy-settings-row">
                 <div className="cy-settings-row__copy">
-                  <strong>{t("settingsPage.subagents.modelLabel")}</strong>
+                  <strong data-settings-search-id="settingsPage.subagents.modelLabel">{t("settingsPage.subagents.modelLabel")}</strong>
                   <span>{modelChoices.length === 0 ? t("settingsPage.subagents.noModels") : t("settingsPage.subagents.modelHint")}</span>
                 </div>
                 <SettingsSelect

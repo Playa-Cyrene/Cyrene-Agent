@@ -8,6 +8,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ModelSettingsPanel } from "./ModelSettingsPanel";
 import { MODEL_PRESETS } from "../../../settings/api/presets";
+import { locateSettingsSearchTarget } from "./settings-search-navigation";
 
 // 图标库带浏览器专用资源，jsdom 里统一替换为空组件
 vi.mock("@lobehub/icons", () => {
@@ -77,12 +78,12 @@ function installSettings(profiles: unknown[], defaultId?: string) {
   return settings;
 }
 
-async function renderPanel() {
+async function renderPanel(searchTarget?: { id: string }) {
   const host = document.createElement("div");
   document.body.append(host);
   const root = createRoot(host);
   roots.push(root);
-  await act(async () => { root.render(createElement(ModelSettingsPanel)); });
+  await act(async () => { root.render(createElement(ModelSettingsPanel, { searchTarget })); });
   return host;
 }
 
@@ -140,6 +141,72 @@ afterEach(async () => {
   document.body.innerHTML = "";
   delete (window as Window & { settings?: unknown }).settings;
   vi.restoreAllMocks();
+});
+
+describe("模型设置搜索定位", () => {
+  it("首次跳转时等待配置加载，再展开并定位运行参数", async () => {
+    const settings = installSettings([], undefined);
+    let finishLoading!: (catalog: { profiles: never[] }) => void;
+    settings.listModelProfiles.mockImplementationOnce(() => new Promise((resolve) => { finishLoading = resolve; }));
+    const id = "settingsPage.modelSettings.requestTimeout";
+    const host = await renderPanel({ id });
+    expect(host.querySelector(".cy-settings-loading")).not.toBeNull();
+    vi.spyOn(HTMLElement.prototype, "getClientRects").mockReturnValue([{}] as unknown as DOMRectList);
+    HTMLElement.prototype.scrollIntoView = vi.fn();
+    const unavailable = vi.fn();
+    const dispose = locateSettingsSearchTarget(host, id, unavailable);
+    try {
+      await act(async () => { finishLoading({ profiles: [] }); });
+      expect(host.querySelector(".cy-model-runtime-section .ant-collapse-header")?.getAttribute("aria-expanded")).toBe("true");
+      expect(host.querySelector(`[data-settings-search-id="${id}"]`)?.closest(".cy-model-field")?.classList.contains("cy-settings-search-highlight--item")).toBe(true);
+      expect(unavailable).not.toHaveBeenCalled();
+      expect(settings.saveTimeoutSettings).not.toHaveBeenCalled();
+    } finally {
+      dispose();
+    }
+  });
+
+  it.each([
+    ["requestTimeout", ".cy-model-runtime-section"],
+    ["retryCount", ".cy-model-runtime-section"],
+    ["userWait", ".cy-model-runtime-section"],
+    ["parallel", ".cy-model-runtime-section"],
+    ["testTimeout", ".cy-model-runtime-section"],
+    ["disableMaxToken", ".cy-model-advanced"],
+    ["thinkingOverride", ".cy-model-advanced"],
+  ])("搜索 %s 时展开对应面板并完成定位，且不保存配置", async (name, panelSelector) => {
+    const settings = installSettings([MULTI_PROFILE], "p-multi");
+    const host = await renderPanel();
+    const header = () => host.querySelector<HTMLElement>(`${panelSelector} .ant-collapse-header`)!;
+    expect(header().getAttribute("aria-expanded")).toBe("false");
+    const id = `settingsPage.modelSettings.${name}`;
+    const root = roots[roots.length - 1];
+    const navigate = () => act(async () => {
+      root.render(createElement(ModelSettingsPanel, { searchTarget: { id } }));
+    });
+    await navigate();
+    expect(header().getAttribute("aria-expanded")).toBe("true");
+    const otherPanel = panelSelector === ".cy-model-advanced" ? ".cy-model-runtime-section" : ".cy-model-advanced";
+    expect(host.querySelector(`${otherPanel} .ant-collapse-header`)?.getAttribute("aria-expanded")).toBe("false");
+    const target = host.querySelector<HTMLElement>(`[data-settings-search-id="${id}"]`)!;
+    vi.spyOn(HTMLElement.prototype, "getClientRects").mockReturnValue([{}] as unknown as DOMRectList);
+    HTMLElement.prototype.scrollIntoView = vi.fn();
+    const unavailable = vi.fn();
+    const dispose = locateSettingsSearchTarget(host, id, unavailable);
+    expect(target.closest(".cy-model-field, .cy-model-switch-row")?.classList.contains("cy-settings-search-highlight--item")).toBe(true);
+    expect(unavailable).not.toHaveBeenCalled();
+    dispose();
+
+    // 手动收起后再次选择同一搜索结果，也应重新展开。
+    await act(async () => { header().click(); });
+    expect(header().getAttribute("aria-expanded")).toBe("false");
+    await navigate();
+    expect(header().getAttribute("aria-expanded")).toBe("true");
+    expect(settings.saveConfig).not.toHaveBeenCalled();
+    expect(settings.saveGeneral).not.toHaveBeenCalled();
+    expect(settings.saveTimeoutSettings).not.toHaveBeenCalled();
+    expect(settings.saveModelProfile).not.toHaveBeenCalled();
+  });
 });
 
 describe("模型清单编辑组件", () => {
