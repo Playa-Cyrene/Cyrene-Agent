@@ -98,6 +98,7 @@ export async function initMcpManager(options: { signal?: AbortSignal } = {}): Pr
     // Built-in sync may have already connected this server before restore.
     // Reuse it without taking ownership of its cancellation cleanup.
     if (getMcpServerStates().some((state) => state.id === config.id && state.connected)) {
+      connected++;
       continue;
     }
     try {
