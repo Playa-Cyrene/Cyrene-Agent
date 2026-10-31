@@ -143,7 +143,7 @@
     "@anthropic-ai/sdk": "^0.126.0",
     "@ast-grep/napi": "^0.45.1",
     "@googleapis/gmail": "^22.0.1",
-    "@larksuiteoapi/node-sdk": "^1.68.0",
+    "@larksuiteoapi/node-sdk": "^1.76.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@modelcontextprotocol/server-filesystem": "2026.8.31",
     "@node-rs/jieba": "^2.0.4",
