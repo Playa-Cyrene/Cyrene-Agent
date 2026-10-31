@@ -259,7 +259,9 @@ export function registerDocumentTools(): void {
         return "[错误] sheets 不能为空。本次收到的参数键：" + (Object.keys(args).join(", ") || "（空）");
       }
 
-      const ExcelJS = await import("exceljs");
+      const excelModule = await import("exceljs");
+      // 原生动态导入 CommonJS 时 Workbook 位于 default；兼容命名导出的运行环境。
+      const ExcelJS = excelModule.default ?? excelModule;
       const workbook = new ExcelJS.Workbook();
 
       // 选主题（预设 + 自定义颜色覆盖）
