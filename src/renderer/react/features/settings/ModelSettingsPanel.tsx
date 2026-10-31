@@ -213,7 +213,17 @@ function defaultModelOption(): ModelOptionDraft {
   return { multimodal: true, contextWindowTokens: "256000" };
 }
 
-export function ModelSettingsPanel() {
+const searchTargetPanels: Record<string, "advanced" | "runtime"> = {
+  "settingsPage.modelSettings.disableMaxToken": "advanced",
+  "settingsPage.modelSettings.thinkingOverride": "advanced",
+  "settingsPage.modelSettings.requestTimeout": "runtime",
+  "settingsPage.modelSettings.retryCount": "runtime",
+  "settingsPage.modelSettings.userWait": "runtime",
+  "settingsPage.modelSettings.parallel": "runtime",
+  "settingsPage.modelSettings.testTimeout": "runtime",
+};
+
+export function ModelSettingsPanel({ searchTarget }: { searchTarget?: { id: string } } = {}) {
   const { t } = useTranslation();
   const [profiles, setProfiles] = useState<ModelProfile[]>([]);
   const [defaultProfileId, setDefaultProfileId] = useState<string>();
@@ -254,6 +264,7 @@ export function ModelSettingsPanel() {
   const [thinkingOverride, setThinkingOverride] = useState<-1 | 0 | 1>(0);
   const [disableMaxToken, setDisableMaxToken] = useState(false);
   const [runtime, setRuntime] = useState(runtimeDefaults);
+  const [expandedPanels, setExpandedPanels] = useState<{ advanced: string[]; runtime: string[] }>({ advanced: [], runtime: [] });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -282,6 +293,12 @@ export function ModelSettingsPanel() {
     value: item.providerName,
     label: <span className="cy-model-provider-option">{providerIcon(item.providerName, 20)}<span>{item.shortName}</span></span>,
   }));
+
+  useEffect(() => {
+    const panel = searchTarget && searchTargetPanels[searchTarget.id];
+    // 每次选择结果都展开对应面板，包含手动收起后再次选择同一项的情况。
+    if (panel) setExpandedPanels((current) => ({ ...current, [panel]: [panel] }));
+  }, [searchTarget]);
 
   useEffect(() => {
     let disposed = false;
@@ -1033,7 +1050,7 @@ export function ModelSettingsPanel() {
                 <label className="cy-model-field"><span data-settings-search-id="settingsPage.modelSettings.visionModel">{t("settingsPage.modelSettings.visionModel")}</span><SettingsInput value={vision.model} onChange={(event) => setVision((current) => ({ ...current, model: event.target.value }))} placeholder="gpt-4o / qwen-vl-max" /></label>
                 <div className="cy-model-field cy-model-vision-action"><span data-settings-search-id="settingsPage.modelSettings.visionTestLabel">{t("settingsPage.modelSettings.visionTestLabel")}</span><Button loading={testingVision} onClick={() => void testVision()} icon={<Eye size={15} />}>{t("settingsPage.modelSettings.testVision")}</Button>{visionStatus && <small>{visionStatus}</small>}</div>
               </div>
-              <Collapse className="cy-model-advanced" items={[{
+              <Collapse className="cy-model-advanced" activeKey={expandedPanels.advanced} onChange={(keys) => setExpandedPanels((current) => ({ ...current, advanced: Array.isArray(keys) ? keys : [keys] }))} items={[{
                 key: "advanced",
                 label: <span className="cy-model-advanced__label"><ChevronDown size={15} />{t("settingsPage.modelSettings.advancedOptions")}</span>,
                 children: <div className="cy-model-advanced__controls">
@@ -1151,7 +1168,7 @@ export function ModelSettingsPanel() {
       </Modal>
 
       <section className="cy-model-runtime-section">
-        <Collapse items={[{
+        <Collapse activeKey={expandedPanels.runtime} onChange={(keys) => setExpandedPanels((current) => ({ ...current, runtime: Array.isArray(keys) ? keys : [keys] }))} items={[{
           key: "runtime",
           label: <span className="cy-model-runtime-title"><Wrench size={17} /><span><strong>{t("settingsPage.modelSettings.runtimeTitle")}</strong><small>{t("settingsPage.modelSettings.runtimeDescription")}</small></span></span>,
           children: runtimePanel,

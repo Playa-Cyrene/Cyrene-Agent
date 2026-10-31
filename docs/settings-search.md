@@ -7,6 +7,7 @@
 - 按当前语言的设置名称和所属页匹配，支持多个关键词。
 - 搜索历史仅记录关键词搜索；通过分类逐层进入设置项不写入历史。历史保存在本地，最多 30 条，支持单条删除与确认清空。
 - 选择结果跳转至设置页并滚动高亮；条件项未显示时提示不可用，不自动修改设置。
+- 模型页的高级选项和运行参数在搜索命中时自动展开对应折叠面板；手动收起后再次选择同一结果会重新展开，不保存或修改配置值。
 - 新增搜索项需同时更新 settings-search-index.ts 和对应 data-settings-search-id。
 
 验证：node node_modules/vitest/vitest.mjs run src/renderer/react/features/settings src/renderer/react/i18n；node node_modules/typescript/bin/tsc -p tsconfig.renderer.json；node node_modules/vite/bin/vite.js build。
