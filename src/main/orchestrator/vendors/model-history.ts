@@ -91,12 +91,13 @@ function toolInput(call: ToolCall): unknown {
 
 type AssistantPart = Exclude<AssistantContent, string>[number];
 
-/** 从通用消息生成请求副本；签名等私有内容仅在完全兼容的来源重放。 */
+/** 从通用消息生成请求副本；签名等私有内容仅在完全兼容的来源重放。
+ * target 未知时仅做可移植投影，供未绑定模型的预算估算使用。 */
 export function projectModelHistory(
-  history: ChatMessage[], target: ModelMessageOrigin,
+  history: ChatMessage[], target: ModelMessageOrigin | undefined,
   onDiagnostic?: (diagnostic: HistoryProjectionDiagnostic) => void,
 ): ModelMessage[] {
-  const diagnostic: HistoryProjectionDiagnostic = { code: "HISTORY_PORTABLE_PROJECTION", transport: target.transport,
+  const diagnostic: HistoryProjectionDiagnostic = { code: "HISTORY_PORTABLE_PROJECTION", transport: target?.transport ?? "openai",
     nativeMessages: 0, portableMessages: 0, omittedPrivateParts: 0, legacyMessages: 0 };
   const result: ModelMessage[] = [];
   const callNames = new Map<string, string>();
@@ -145,7 +146,7 @@ export function projectModelHistory(
         portable.push({ type: "tool-call", toolCallId: wireId(call.id), toolName: call.name, input: toolInput(call) });
       }
       const replay = message.providerReplay;
-      const native = readAssistantReplay(message, target);
+      const native = target ? readAssistantReplay(message, target) : undefined;
       let content = portable;
       if (native) {
         content = native;
@@ -174,7 +175,7 @@ export function projectModelHistory(
       } else {
         diagnostic.portableMessages++;
         if (original.rawAssistant !== undefined) diagnostic.legacyMessages++;
-        const legacyReasoning = legacyDeepSeekReasoning(message, target);
+        const legacyReasoning = target ? legacyDeepSeekReasoning(message, target) : undefined;
         if (legacyReasoning && portable.length) {
           content = [{ type: "reasoning", text: legacyReasoning }, ...portable];
           diagnostic.legacyMessages++;

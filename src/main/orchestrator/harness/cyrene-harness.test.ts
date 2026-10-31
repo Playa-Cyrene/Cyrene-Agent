@@ -20,6 +20,7 @@ import path from "node:path";
 const { fakeAdapter, fakeStreamChatWithSdk, recordUsage, recordRequest } = vi.hoisted(() => {
   const adapter = {
     id: "fake",
+    transport: "openai" as const,
     buildRequest: (req: unknown) => ({
       url: "https://fake.local/chat",
       method: "POST" as const,
@@ -72,6 +73,7 @@ vi.mock("../../token-usage-store", () => ({ recordUsage, recordRequest }));
 
 import { runCyreneHarness } from "./cyrene-harness";
 import { getAdapterForConfig } from "../vendors";
+import { modelMessageOrigin } from "../vendors/model-history";
 import { dispatchToolCall, resolveToolDispatchSideEffect } from "./tool-dispatcher";
 import type { ToolDispatchResult } from "./tool-dispatcher";
 import type { HarnessCacheDiagnostic, HarnessEvent, HarnessInput, HarnessToolFinishedEvent, HarnessToolLifecycleEvent, RunAdjustmentMessage } from "./types";
@@ -296,19 +298,48 @@ describe("CyreneHarness completion", () => {
       ...fakeAdapter,
       applyCacheHints: (req: Record<string, unknown>) => ({ ...req, extraBody: { prompt_cache_key: "kimi-cache-key" } }),
     };
-    vi.mocked(getAdapterForConfig).mockReturnValueOnce(adapterWithHints as never);
     fakeStreamChatWithSdk.mockResolvedValueOnce(assistantResponse({ text: "完成。" }));
 
-    await runCyreneHarness({
-      systemPrompt: "you are a test agent",
-      messages: [{ role: "user", content: "完成任务" }],
-      tools: [],
-      vendorConfig,
+    // 预算、容量快照与请求共用当前适配器；不依赖工厂仅被调用一次。
+    await vi.mocked(getAdapterForConfig).withImplementation(() => adapterWithHints as never, async () => {
+      await runCyreneHarness({
+        systemPrompt: "you are a test agent",
+        messages: [{ role: "user", content: "完成任务" }],
+        tools: [],
+        vendorConfig,
+      });
     });
 
     expect(fakeStreamChatWithSdk).toHaveBeenCalledWith(expect.objectContaining({
       request: expect.objectContaining({ extraBody: { prompt_cache_key: "kimi-cache-key" } }),
     }));
+  });
+
+  it("Harness 快照使用本轮模型来源，只计入同来源 reasoning 重放", async () => {
+    const sourceOrigin = modelMessageOrigin(fakeAdapter as never, vendorConfig);
+    const history: ChatMessage[] = [{ role: "user", content: "继续" }, {
+      role: "assistant", content: "已读取", providerReplay: {
+        version: 1, origin: sourceOrigin, content: [
+          { type: "reasoning", text: "r".repeat(8000) },
+          { type: "text", text: "已读取" },
+        ],
+      },
+    }];
+    const totals: number[] = [];
+    for (const model of [vendorConfig.model, "different-model"]) {
+      fakeStreamChatWithSdk.mockResolvedValueOnce(assistantResponse({ text: "完成。" }));
+      await runCyreneHarness({
+        systemPrompt: "test", messages: structuredClone(history), tools: [],
+        vendorConfig: { ...vendorConfig, model },
+        onEvent: (event) => {
+          if (event.type === "context_usage" && event.snapshot.phase === "preRequest") {
+            totals.push(event.snapshot.totalTokens);
+          }
+        },
+      });
+    }
+    expect(totals).toHaveLength(2);
+    expect(totals[0] - totals[1]).toBe(2000);
   });
 
   it("records each Harness model response and preserves its provider-reported cache tokens", async () => {

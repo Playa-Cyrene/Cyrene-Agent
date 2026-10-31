@@ -1,3 +1,4 @@
+import { modelMessageOrigin } from "./vendors/model-history";
 import { createHash } from "node:crypto";
 import type { ConversationTranscriptStore } from "./conversation-transcript-store";
 import { ConversationTranscriptArchive } from "./conversation-transcript-archive";
@@ -123,7 +124,10 @@ export class ConversationTranscriptCompactor {
     // 已有有效检查点时输入为"旧摘要 + 后缀"，二次压缩不会丢弃第一次摘要；
     // previousReplacement 用于识别压缩器未产出新摘要的失败路径。
     const full = buildCompactionSourceView(before.entries, this.runReader);
-    const cutIndex = findSafeCutPointForRetainedTokens(full.messages, retainTokens);
+    const messageOrigin = request.modelSettings
+      ? modelMessageOrigin(getAdapterForConfig(request.modelSettings), request.modelSettings)
+      : undefined;
+    const cutIndex = findSafeCutPointForRetainedTokens(full.messages, retainTokens, messageOrigin);
     if (cutIndex <= 0) throw createTranscriptCompactionRequiredError();
 
     const sourceThroughSeq = Math.max(...full.sourceSeqs.slice(0, cutIndex), 0);
@@ -140,6 +144,7 @@ export class ConversationTranscriptCompactor {
         contextWindowTokens: request.modelSettings.contextWindowTokens ?? 256_000,
         messages: [...messages, ...(request.transientMessages ?? [])],
         previous: previousUsage,
+        messageOrigin,
       })
       : undefined;
     let phaseUsage = buildUsage(full.messages, "preCompaction");
@@ -150,6 +155,7 @@ export class ConversationTranscriptCompactor {
     try {
       compacted = await compressForAgentLoop({
         messages: full.messages,
+        messageOrigin,
         retainTokens,
         summarize: async (history) => {
           try {

@@ -1,3 +1,5 @@
+import { getAdapterForConfig } from "../orchestrator/vendors";
+import { modelMessageOrigin } from "../orchestrator/vendors/model-history";
 // 聊天会话 IPC 桥接：把 chats-store 的纯数据 API 暴露给渲染进程。
 //
 // 写操作成功后会向渲染窗口广播 `chats:changed`，以便：
@@ -84,13 +86,13 @@ async function recordCompactionUsage(
 ): Promise<void> {
   previous ??= (await chatsStore.getSessionView(sessionId))?.currentContextUsage;
   const sessionRecord = (await chatsStore.getSessionView(sessionId));
-  const contextWindowTokens = (sessionRecord
-    ? resolveSessionModelSettings(loadModelSettings(), sessionRecord).contextWindowTokens
-    : undefined) ?? 256000;
+  const settings = sessionRecord ? resolveSessionModelSettings(loadModelSettings(), sessionRecord) : undefined;
+  const contextWindowTokens = settings?.contextWindowTokens ?? 256000;
   const usage = buildCompactionContextUsageSnapshot({
     phase: "preRequest",
     contextWindowTokens,
     messages: compactedMessages,
+    messageOrigin: settings ? modelMessageOrigin(getAdapterForConfig(settings), settings) : undefined,
     previous,
   });
   (await chatsStore.setSessionContextUsage(sessionId, usage));

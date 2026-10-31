@@ -1,3 +1,5 @@
+import { getAdapterForConfig } from "../vendors";
+import { modelMessageOrigin } from "../vendors/model-history";
 /**
  * Harness 可观测性（observability）：上下文容量快照 + 缓存结构诊断。
  *
@@ -41,6 +43,7 @@ export function emitContextUsage(run: HarnessRun, phase: ContextUsagePhase): voi
       ...(usageParts.skillLayerContent ? { skillLayerContent: usageParts.skillLayerContent } : {}),
       toolSpecs: run.allToolSpecs,
       messages: run.messages,
+      messageOrigin: modelMessageOrigin(getAdapterForConfig(input.vendorConfig), input.vendorConfig),
     }),
   });
 }

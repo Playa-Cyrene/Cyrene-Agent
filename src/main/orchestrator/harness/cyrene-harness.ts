@@ -1,3 +1,5 @@
+import { getAdapterForConfig } from "../vendors";
+import { modelMessageOrigin } from "../vendors/model-history";
 /**
  * CyreneHarness 核心循环
  *
@@ -545,6 +547,7 @@ function compactIfNeeded(run: HarnessRun, promptLayers: PromptLayers): Promise<v
     config.reservedOutputTokens,
     config.safetyMarginTokens,
     config.compactionThreshold,
+    modelMessageOrigin(getAdapterForConfig(run.input.vendorConfig), run.input.vendorConfig),
   );
   if (!budget.needsCompaction) return undefined;
   return runCompaction(run, roundSystemPrompt, budget);
@@ -565,6 +568,7 @@ async function runCompaction(run: HarnessRun, roundSystemPrompt: string, budget:
     ? [...await input.compactTranscript({ retainTokens, transientMessages, signal: input.signal }), ...transientMessages]
     : await compressForAgentLoop({
       messages: run.messages,
+      messageOrigin: modelMessageOrigin(getAdapterForConfig(input.vendorConfig), input.vendorConfig),
       retainTokens,
       summarize: (history) => summarizeHistory(
         input.vendorConfig,

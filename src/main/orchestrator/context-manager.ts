@@ -1,8 +1,9 @@
-import type { ChatVendorAdapter, ChatMessage, ChatRequest, OpenAIContentBlock } from "./vendors/types";
+import type { ChatVendorAdapter, ChatMessage, ChatRequest, ModelMessageOrigin, OpenAIContentBlock } from "./vendors/types";
 import type { AgentLoopSettings } from "./cyrene-agent";
 import { generateChatWithAiSdk } from "./vendors/model-runtime";
 import { getTimeoutSettings } from "../timeout-manager";
-import { recoverPortableMessage } from "./vendors/model-history";
+import { projectModelHistory, recoverPortableMessage } from "./vendors/model-history";
+import { AgentRuntimeError } from "./agent-runtime-error";
 import { recordRequest, recordUsage } from "../token-usage-store";
 
 const COMPRESSION_PROMPT = `你正在帮"昔涟"整理对话记忆。请把下面这段较早的对话历史总结成一段简洁的摘要，供后续回复参考。
@@ -57,10 +58,49 @@ export function estimateMessageContentTokens(
   return sum;
 }
 
-export function estimateMessageTokens(messages: ChatMessage[]): number {
-  return messages.reduce((sum, m) => {
-    return sum + estimateMessageContentTokens(m.content ?? "") + 4; // +4 为角色/格式开销
+/**
+ * 按请求投影计量 assistant，而不是累加展示用 thinking / rawAssistant / replay 副本。
+ * target 缺省时只计可移植内容；运行时须传当前模型来源，才能计入实际重放的私有块。
+ * 仍是粗略估算，不是厂商 tokenizer；图片保持固定估算，不累计 base64。
+ */
+export function estimateSingleMessageTokens(message: ChatMessage, target?: ModelMessageOrigin): number {
+  if (message.role !== "assistant") {
+    return estimateMessageContentTokens(message.content ?? "") + 4;
+  }
+  let projected: ReturnType<typeof projectModelHistory>;
+  try {
+    projected = projectModelHistory([message], target);
+  } catch (error) {
+    if (!(error instanceof AgentRuntimeError) || error.code !== "E_MODEL_RESPONSE_PARSE_FAILED") throw error;
+    // 损坏的持久化工具参数不能阻断预算/快照。仅粗估便携语义与原始参数，
+    // 不解析参数、不重放私有副本，也不修改历史；真实请求投影仍严格报错。
+    const portable = recoverPortableMessage(message);
+    const imageDescriptions = (portable.attachments ?? [])
+      .filter(attachment => attachment.kind === "image" && attachment.source === "model")
+      .map(image => `已生成图片：${image.name}`);
+    return 4 + estimateMessageContentTokens(portable.content ?? "")
+      + estimateTokens(imageDescriptions.join("\n"))
+      + (portable.toolCalls ?? []).reduce((sum, call) =>
+        sum + estimateTokens(call.id + call.name + call.arguments), 0);
+  }
+  return projected.reduce((sum, entry) => {
+    if (typeof entry.content === "string") return sum + estimateTokens(entry.content) + 4;
+    return sum + 4 + entry.content.reduce((total, part) => {
+      let tokens = 0;
+      if (part.type === "text" || part.type === "reasoning") tokens = estimateTokens(part.text);
+      else if (part.type === "tool-call") {
+        tokens = estimateTokens(part.toolCallId + part.toolName + JSON.stringify(part.input));
+      } else if (part.type === "file" || part.type === "image" || part.type === "reasoning-file") tokens = DEFAULT_IMAGE_TOKEN_ESTIMATE;
+      else return total + estimateTokens(JSON.stringify(part));
+      // 签名/加密 reasoning 等私有数据也会随有效重放发送；只估算，不记录内容。
+      if ("providerOptions" in part && part.providerOptions) tokens += estimateTokens(JSON.stringify(part.providerOptions));
+      return total + tokens;
+    }, 0);
   }, 0);
+}
+
+export function estimateMessageTokens(messages: ChatMessage[], target?: ModelMessageOrigin): number {
+  return messages.reduce((sum, message) => sum + estimateSingleMessageTokens(message, target), 0);
 }
 
 function formatConversation(messages: ChatMessage[]): string {
