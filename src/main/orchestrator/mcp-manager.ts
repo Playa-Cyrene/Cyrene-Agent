@@ -95,6 +95,11 @@ export async function initMcpManager(options: { signal?: AbortSignal } = {}): Pr
       console.log(LOG_PREFIX, "restore aborted, remaining servers skipped:", config.name);
       break;
     }
+    // 内置同步会先连接并持久化新服务；恢复阶段应复用它，避免覆盖工具所有权。
+    if (getMcpServerStates().some((state) => state.id === config.id && state.connected)) {
+      connected++;
+      continue;
+    }
     try {
       await connectMcpServer(config);
       connected++;

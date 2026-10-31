@@ -105,6 +105,35 @@ describe("listMcpServerConfigs", () => {
 });
 
 describe("initMcpManager 启动自动连接", () => {
+  it("复用内置同步阶段已连接的服务，不覆盖工具列表或重复创建进程", async () => {
+    writeConfigFile([stdioConfig]);
+    const states = [{ id: "srv", connected: true, toolCount: 1, toolIds: ["srv-tool1"] }];
+    adapterMocks.getMcpServerStates.mockReturnValue(states);
+
+    await initMcpManager();
+
+    expect(adapterMocks.connectMcpServer).not.toHaveBeenCalled();
+    expect(adapterMocks.disconnectMcpServer).not.toHaveBeenCalled();
+    expect(adapterMocks.getMcpServerStates()).toEqual(states);
+  });
+
+  it("已连接服务不阻塞后续恢复，失去连接的服务仍会重连", async () => {
+    const second = { ...stdioConfig, id: "second" };
+    const third = { ...stdioConfig, id: "third" };
+    writeConfigFile([stdioConfig, second, third]);
+    adapterMocks.getMcpServerStates.mockReturnValue([
+      { id: "srv", connected: true, toolIds: ["srv-tool1"] },
+      { id: "second", connected: false, toolIds: [] },
+    ]);
+    adapterMocks.connectMcpServer.mockResolvedValue([]);
+
+    await initMcpManager();
+
+    expect(adapterMocks.connectMcpServer).toHaveBeenCalledTimes(2);
+    expect(adapterMocks.connectMcpServer).toHaveBeenNthCalledWith(1, second);
+    expect(adapterMocks.connectMcpServer).toHaveBeenNthCalledWith(2, third);
+  });
+
   it("无配置时跳过连接", async () => {
     await initMcpManager();
     expect(adapterMocks.connectMcpServer).not.toHaveBeenCalled();
