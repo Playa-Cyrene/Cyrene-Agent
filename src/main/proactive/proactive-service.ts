@@ -39,7 +39,7 @@ export interface ProactiveChatServiceDeps {
   saveState: (state: ProactiveState) => void | boolean;
   getSnapshot: () => ProactiveRuntimeSnapshot;
   buildMessages: (candidate: ProactiveCandidate, state: ProactiveState) => Promise<ChatMessage[]>;
-  runModel: (messages: ChatMessage[]) => Promise<ProactiveModelResult>;
+  runModel: (messages: ChatMessage[], deliveryTarget?: ProactiveDeliveryTarget) => Promise<ProactiveModelResult>;
   getFallback: (candidate: ProactiveCandidate) => Promise<ProactiveFallback | null>;
   commitMessage: (input: ProactiveCommitInput) => Promise<ProactiveCommitResult>;
   /** Local journal commits require a durable intent; legacy external channels do not. */
@@ -211,7 +211,7 @@ export function createProactiveChatService(deps: ProactiveChatServiceDeps): Proa
       const generationEpoch = initialState.proactiveEpoch;
       try {
         const messages = await deps.buildMessages(candidate, initialState);
-        const result = await deps.runModel(messages);
+        const result = await deps.runModel(messages, frozenDeliveryTarget);
         const stateAfterModel = deps.loadState();
         if (stateAfterModel.proactiveEpoch !== generationEpoch) {
           deps.log?.("generation_discarded", { scene: candidate.sceneId, reason: "stale_epoch" });

@@ -12,7 +12,7 @@ import { resolveChatContextTimezone } from "../chat-time-context";
 import { buildAlwaysOnContext, buildMemoryInjection } from "../orchestrator";
 import { loadPromptFile } from "../prompts/prompt-loader";
 import type { GeneralSettings } from "../settings/general-settings";
-import { loadModelSettings } from "../settings/model-settings";
+import { loadModelSettings, resolveSessionModelSettings } from "../settings/model-settings";
 import { loadUserProfile } from "../settings-store";
 import { createProactiveChatService } from "./proactive-service";
 import type {
@@ -244,8 +244,21 @@ export function createProactiveLifecycle(options: ProactiveLifecycleOptions): Pr
       },
       getSnapshot: getProactiveRuntimeSnapshot,
       buildMessages: async (candidate) => buildProactiveAgentMessages(candidate),
-      runModel: async (messages) => {
-        const settings = loadModelSettings();
+      runModel: async (messages, deliveryTarget) => {
+        // Resolve the delivery conversation, not whichever ordinary chat is open.
+        // Use the route frozen by the service before building messages.
+        const target = deliveryTarget ?? options.loadGeneralSettings().proactiveDeliveryTarget;
+        const sessionId = target === "local"
+          ? (await chatsStore.listSessions()).find((session) => session.purpose === "proactive-chat")?.id
+          : undefined;
+        // Like ordinary channel Chat, external routes use the default profile.
+        // Their channel:<...> history IDs are not desktop Chat records, and
+        // sharing desktop history does not currently inherit its model binding.
+        const session = sessionId ? await chatsStore.getSessionRecord(sessionId) : null;
+        if (sessionId && !session) return { kind: "error", reason: "session_unavailable" };
+        // A not-yet-created local proactive conversation follows Chat's default
+        // profile chain without creating a session just to generate a candidate.
+        const settings = resolveSessionModelSettings(loadModelSettings(), session ?? {});
         if (!settings.apiKey) return { kind: "error", reason: "missing_api_key" };
         return runProactiveModel({
           settings: {

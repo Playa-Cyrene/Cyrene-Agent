@@ -183,6 +183,19 @@ describe("proactive chat service", () => {
     expect(ctx.state.proactiveCommitSequence).toBeUndefined();
   });
 
+  it("passes the frozen delivery route to model generation after message building", async () => {
+    let target: "local" | "wechat" = "local";
+    const runModel = vi.fn(async () => ({ kind: "send" as const, text: "固定本地消息" }));
+    const ctx = setup({
+      getDeliveryTarget: () => target,
+      buildMessages: async () => { target = "wechat"; return []; },
+      runModel,
+    });
+    await ctx.service.evaluateCandidate(candidate);
+    expect(runModel).toHaveBeenCalledWith([], "local");
+    expect(ctx.commitMessage).toHaveBeenCalledWith(expect.objectContaining({ deliveryTarget: "local" }));
+  });
+
   it("freezes a local target before model completion", async () => {
     let target: "local" | "wechat" = "local";
     const commitMessage = vi.fn(async () => ({ kind: "committed" as const }));
