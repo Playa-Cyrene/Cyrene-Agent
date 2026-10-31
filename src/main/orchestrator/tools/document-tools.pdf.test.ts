@@ -4,9 +4,13 @@ import * as os from "os";
 import * as path from "path";
 import { inflateSync } from "zlib";
 
-const state = vi.hoisted(() => ({ root: "", font: "ttc", failText: false, failStream: false, failFont: false, failPublish: false, prematureClose: false, failFinalWrite: false, failFirstFont: false }));
+const state = vi.hoisted(() => ({ root: "", tempRoot: "", tempMode: 0, tempActualMode: 0, tempDirectoryMode: 0, font: "ttc", failText: false, failStream: false, failFont: false, failPublish: false, prematureClose: false, failFinalWrite: false, failFirstFont: false }));
 const registry = new Map<string, { execute: (args: Record<string, unknown>) => Promise<string> }>();
 vi.mock("./registry/tool-registry", () => ({ toolRegistry: { register: (tool: { id: string; execute: (args: Record<string, unknown>) => Promise<string> }) => registry.set(tool.id, tool) } }));
+vi.mock("os", async (original) => {
+  const actual = await original<typeof import("os")>();
+  return { ...actual, tmpdir: () => state.tempRoot || actual.tmpdir() };
+});
 vi.mock("electron", () => ({ app: { getPath: () => state.root } }));
 vi.mock("../../external-content-paths", () => ({ findSkillPath: () => null }));
 vi.mock("fs", async (original) => {
@@ -20,7 +24,14 @@ vi.mock("fs", async (original) => {
   return { ...actual,
     existsSync: (file: fs.PathLike) => mapped(file) === undefined ? actual.existsSync(file) : !!mapped(file),
     createWriteStream: (file: fs.PathLike, options?: Parameters<typeof actual.createWriteStream>[1]) => {
+      if (options && typeof options === "object" && options.flags === "wx") {
+        state.tempMode = Number(options.mode);
+        state.tempDirectoryMode = actual.statSync(path.dirname(String(file))).mode & 0o777;
+      }
       const stream = actual.createWriteStream(state.failStream || (state.failPublish && String(file).endsWith("report.pdf")) ? state.root : file, options);
+      if (options && typeof options === "object" && options.flags === "wx") {
+        stream.once("open", () => { state.tempActualMode = actual.statSync(file).mode & 0o777; });
+      }
       if (state.prematureClose) stream.destroy();
       if (state.failFinalWrite && String(file).endsWith("report.pdf")) stream.once("open", () => stream.destroy(new Error("injected final write failure")));
       return stream;
@@ -51,8 +62,16 @@ function decodedStreams(bytes: Buffer): string {
     try { return inflateSync(Buffer.from(m[1], "latin1")).toString(); } catch { return m[1]; }
   }).join("\n");
 }
-beforeEach(() => { state.root = fs.mkdtempSync(path.join(os.tmpdir(), "pdf-regression-")); state.font = "ttc"; state.failText = false; state.failStream = false; state.failFont = false; state.failPublish = false; state.prematureClose = false; state.failFinalWrite = false; state.failFirstFont = false; });
-afterEach(async () => { await new Promise((resolve) => setTimeout(resolve, 50)); fs.rmSync(state.root, { recursive: true, force: true }); vi.restoreAllMocks(); });
+beforeEach(() => { state.root = fs.mkdtempSync(path.join(os.tmpdir(), "pdf-regression-")); state.tempRoot = path.join(state.root, "system-temp"); fs.mkdirSync(state.tempRoot); state.tempMode = 0; state.tempActualMode = 0; state.tempDirectoryMode = 0; state.font = "ttc"; state.failText = false; state.failStream = false; state.failFont = false; state.failPublish = false; state.prematureClose = false; state.failFinalWrite = false; state.failFirstFont = false; });
+afterEach(async () => {
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  try { expect(fs.readdirSync(state.tempRoot)).toEqual([]); }
+  finally {
+    fs.rmSync(state.root, { recursive: true, force: true });
+    state.tempRoot = "";
+    vi.restoreAllMocks();
+  }
+});
 describe("PDF 实际字体和失败输出保护", () => {
   for (const font of ["ttc", "simsun", "ttf"]) it(`使用真实 ${font} 生成含中文 Unicode 映射的完整 PDF`, async () => {
     state.font = font;
@@ -151,6 +170,29 @@ describe("PDF 实际字体和失败输出保护", () => {
     await expect(write()).rejects.toThrow();
     expect(fs.readFileSync(output(), "utf8")).toBe("old PDF");
     expect(fs.readdirSync(path.dirname(output()))).toEqual(["report.pdf"]);
+  });
+
+  it("在系统临时目录创建私有中间输出，不要求目标父目录可创建目录", async () => {
+    const mkdtemp = vi.spyOn(fs.promises, "mkdtemp");
+    await write();
+    expect(mkdtemp).toHaveBeenCalledWith(path.join(state.tempRoot, "cyrene-pdf-"));
+    expect(state.tempMode).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect(state.tempDirectoryMode).toBe(0o700);
+      expect(state.tempActualMode).toBe(0o600);
+    }
+  });
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)("父目录 0555 但已有 PDF 可写时仍能覆盖", async () => {
+    const dir = path.dirname(output());
+    fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(output(), "old PDF", { mode: 0o600 });
+    const inode = fs.statSync(output()).ino;
+    fs.chmodSync(dir, 0o555);
+    try {
+      expect(await write()).toContain("已生成");
+      expect(fs.readFileSync(output()).subarray(0, 5).toString()).toBe("%PDF-");
+      expect(fs.statSync(output()).mode & 0o777).toBe(0o600);
+      expect(fs.statSync(output()).ino).toBe(inode);
+    } finally { fs.chmodSync(dir, 0o755); }
   });
 
 });

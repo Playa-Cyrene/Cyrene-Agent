@@ -10,6 +10,7 @@
 
 import * as fs from "fs";
 import * as path from "path";
+import * as os from "os";
 import { pipeline } from "stream/promises";
 import { app } from "electron";
 import { toolRegistry } from "./registry/tool-registry";
@@ -521,8 +522,9 @@ export function registerDocumentTools(): void {
         { file: "C:\\Windows\\Fonts\\simsun.ttc", face: "SimSun" },
         { file: "C:\\Windows\\Fonts\\simhei.ttf", face: undefined },
       ];
-      // 先在独占临时目录完成生成；字体/排版失败不能截断已有目标。
-      const temporaryDir = await fs.promises.mkdtemp(path.join(dir, ".cyrene-pdf-"));
+      // 系统临时目录不要求目标父目录可创建子目录；mkdtemp 创建本次独占目录（POSIX 权限 0700）。
+      // 先完成生成，字体/排版失败不能截断已有目标。
+      const temporaryDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "cyrene-pdf-"));
       let writing: Promise<void> | undefined;
       try {
         let fontFailed = false;
@@ -543,7 +545,7 @@ export function registerDocumentTools(): void {
         // 无系统字体时保留旧默认降级；已有字体全坏时不能静默生成缺字的中文 PDF。
         if (fontFailed) throw fontError;
         const temporaryPath = path.join(temporaryDir, "output.pdf");
-        writing = pipeline(doc, fs.createWriteStream(temporaryPath, { flags: "wx" }));
+        writing = pipeline(doc, fs.createWriteStream(temporaryPath, { flags: "wx", mode: 0o600 }));
         // 同步排版可能先抛错；立即接住异步流错误，finally 再等待流关闭。
         void writing.catch(() => {});
         doc.fontSize(22).text(String(args.title || ""), { align: "center" });
