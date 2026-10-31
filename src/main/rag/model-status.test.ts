@@ -40,7 +40,7 @@ import {
 // checkRerankerModelInstalled now takes no arguments (only "standard" exists)
 void checkRerankerModelInstalled;
 
-const REQUIRED_FILES = ["tokenizer.json", "config.json", "onnx/model_quantized.onnx"];
+const REQUIRED_FILES = ["tokenizer.json", "tokenizer_config.json", "config.json", "onnx/model_quantized.onnx"];
 
 function ensureFakeDir(...parts: string[]): string {
   const dir = path.join(ISOLATED_ROOT, ...parts);
@@ -253,5 +253,84 @@ describe("model-status: getModelInstallStatus aggregate", () => {
     const status = getModelInstallStatus();
     expect(status.embedding.bgem3).toBe(true);
     expect(status.reranker.standard).toBe(true);
+  });
+});
+
+
+describe("model-status: tokenizer configuration completeness", () => {
+  const modelCases = [
+    { kind: "embedding" as const, key: "bgem3", parts: ["Xenova", "bge-m3"], cacheName: "bge-m3" },
+    { kind: "reranker" as const, key: "standard", parts: ["bge-reranker-base"], cacheName: "bge-reranker-base" },
+  ];
+  const locations = ["project", "env"] as const;
+  const cases = modelCases.flatMap((model) => locations.map((location) => ({ ...model, location })));
+
+  function installAt(location: typeof locations[number], parts: string[]): { base: string; dir: string } {
+    const folder = location === "env" ? "override-models" : "models";
+    const base = path.join(ISOLATED_ROOT, folder);
+    if (location === "env") process.env.CYRENE_MODELS_DIR = base;
+    return { base, dir: ensureFakeDir(folder, ...parts) };
+  }
+
+  it.each(cases)("accepts complete $kind in $location without optional tokenizer assets", ({ kind, key, parts, location }) => {
+    const { base, dir } = installAt(location, parts);
+
+    const detail = getModelInstallStatusDetail(kind, key);
+    expect(detail.installed).toBe(true);
+    expect(detail.source).toBe("project");
+    expect(detail.matchedAt).toBe(dir);
+    expect(detail.missingFiles).toEqual([]);
+    expect(getProjectModelBaseDir(kind, key)).toBe(base);
+    expect(fs.existsSync(path.join(dir, "special_tokens_map.json"))).toBe(false);
+  });
+
+  it.each(cases)("rejects $kind in $location missing only tokenizer_config.json", ({ kind, key, parts, location }) => {
+    const { dir } = installAt(location, parts);
+    fs.unlinkSync(path.join(dir, "tokenizer_config.json"));
+
+    const detail = getModelInstallStatusDetail(kind, key);
+    expect(detail.installed).toBe(false);
+    expect(detail.missingFiles).toEqual(["tokenizer_config.json"]);
+    expect(detail.requiredFiles).toContain("tokenizer_config.json");
+    expect(getProjectModelBaseDir(kind, key)).toBeNull();
+  });
+
+  it.each(cases)("does not let complete HF assets hide incomplete $kind in $location", ({ kind, key, parts, cacheName, location }) => {
+    const { dir } = installAt(location, parts);
+    fs.unlinkSync(path.join(dir, "tokenizer_config.json"));
+    // embedding supports HF fallback; reranker does not. Neither may conceal
+    // the incomplete project candidate (including an explicit env override).
+    ensureHfCache(cacheName);
+
+    const detail = getModelInstallStatusDetail(kind, key);
+    expect(detail.installed).toBe(false);
+    expect(detail.source).toBeNull();
+    expect(detail.existingProjectDir).toBe(dir);
+    expect(detail.missingFiles).toEqual(["tokenizer_config.json"]);
+    expect(getProjectModelBaseDir(kind, key)).toBeNull();
+  });
+
+  it.each([true, false])("embedding HF cache installed matches tokenizer_config presence=%s", (hasTokenizerConfig) => {
+    const dir = ensureHfCache("bge-m3");
+    if (!hasTokenizerConfig) fs.unlinkSync(path.join(dir, "tokenizer_config.json"));
+
+    const detail = getModelInstallStatusDetail("embedding", "bgem3");
+    expect(detail.installed).toBe(hasTokenizerConfig);
+    expect(detail.source).toBe(hasTokenizerConfig ? "hf-cache" : null);
+    expect(detail.matchedAt).toBe(hasTokenizerConfig ? dir : null);
+    expect(checkEmbeddingModelInstalled("bgem3")).toBe(hasTokenizerConfig);
+  });
+
+  it.each([true, false])("reranker HF-only layout remains unsupported with tokenizer_config presence=%s", (hasTokenizerConfig) => {
+    const dir = ensureHfCache("bge-reranker-base");
+    if (!hasTokenizerConfig) fs.unlinkSync(path.join(dir, "tokenizer_config.json"));
+
+    const detail = getModelInstallStatusDetail("reranker", "standard");
+    expect(detail.installed).toBe(false);
+    expect(detail.source).toBeNull();
+    expect(detail.matchedAt).toBeNull();
+    expect(detail.existingProjectDir).toBeNull();
+    expect(checkRerankerModelInstalled()).toBe(false);
+    expect(getProjectModelBaseDir("reranker", "standard")).toBeNull();
   });
 });
