@@ -95,6 +95,11 @@ describe("Review 基线捕获（写盘前）", () => {
     const baselines = listBaselines("run-xlsx-1");
     expect(baselines).toHaveLength(1);
     expect(baselines[0]).toMatch(/\.binary$/);
+    const { default: ExcelJS } = await import("exceljs");
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(path.join(tmpDir, "report.xlsx"));
+    expect(workbook.getWorksheet("S1")?.getCell("A1").value).toBe("列A");
+    expect(workbook.getWorksheet("S1")?.getCell("A2").value).toBe(1);
   }, 15_000);
 
   it("write_word 覆盖已有文件时保存 binary 基线", async () => {
