@@ -210,25 +210,25 @@ export function PreferencesSettingsPanel() {
       {loading ? <div className="cy-settings-loading"><Spin /></div> : (
         <>
           <section className="cy-settings-section">
-            <div className="cy-settings-section__heading"><h2><SlidersHorizontal size={18} />{t("settingsPage.preferences.messaging")}</h2><p>{t("settingsPage.preferences.messagingDescription")}</p></div>
+            <div className="cy-settings-section__heading"><h2 data-settings-search-id="settingsPage.preferences.messaging"><SlidersHorizontal size={18} />{t("settingsPage.preferences.messaging")}</h2><p>{t("settingsPage.preferences.messagingDescription")}</p></div>
             <Card>
               <div className="cy-settings-row">
-                <div className="cy-settings-row__copy"><strong>{t("settingsPage.preferences.mobileSegmentation")}</strong><span>{t("settingsPage.preferences.mobileSegmentationDescription")}</span></div>
+                <div className="cy-settings-row__copy"><strong data-settings-search-id="settingsPage.preferences.mobileSegmentation">{t("settingsPage.preferences.mobileSegmentation")}</strong><span>{t("settingsPage.preferences.mobileSegmentationDescription")}</span></div>
                 <SettingsSegmented value={values.mobileMessageSegmentation} options={[{ label: t("settingsPage.preferences.off"), value: "off" }, { label: t("settingsPage.preferences.on"), value: "on" }]} onChange={(value) => update("mobileMessageSegmentation", value as MobileMessageSegmentationMode)} />
               </div>
               <div className="cy-settings-row">
-                <div className="cy-settings-row__copy"><strong>{t("settingsPage.preferences.customStyle")}</strong><span>{t("settingsPage.preferences.customStyleDescription")}</span></div>
+                <div className="cy-settings-row__copy"><strong data-settings-search-id="settingsPage.preferences.customStyle">{t("settingsPage.preferences.customStyle")}</strong><span>{t("settingsPage.preferences.customStyleDescription")}</span></div>
                 <div className="cy-settings-row__control cy-settings-button-group">
                   <Button onClick={() => { setStyleDraft(values.customStyle); setStyleOpen(true); }} icon={<SlidersHorizontal size={15} />}>{t("settingsPage.preferences.customStyleButton")}</Button>
                   <Button onClick={() => void openCustomPrompt()} icon={<FileText size={15} />}>{t("settingsPage.preferences.openPrompt")}</Button>
                 </div>
               </div>
               <div className="cy-settings-row">
-                <div className="cy-settings-row__copy"><strong>{t("settingsPage.preferences.proactiveChat")}</strong><span>{t("settingsPage.preferences.proactiveChatDescription")}</span></div>
+                <div className="cy-settings-row__copy"><strong data-settings-search-id="settingsPage.preferences.proactiveChat">{t("settingsPage.preferences.proactiveChat")}</strong><span>{t("settingsPage.preferences.proactiveChatDescription")}</span></div>
                 <SettingsSegmented value={values.proactiveChatMode} options={[{ label: t("settingsPage.preferences.off"), value: "off" }, { label: t("settingsPage.preferences.on"), value: "on" }]} onChange={(value) => update("proactiveChatMode", value as ProactiveChatMode)} />
               </div>
               {values.proactiveChatMode === "on" && <div className="cy-settings-row">
-                <div className="cy-settings-row__copy"><strong>{t("settingsPage.preferences.deliveryTarget")}</strong><span>{t("settingsPage.preferences.deliveryTargetDescription")}</span></div>
+                <div className="cy-settings-row__copy"><strong data-settings-search-id="settingsPage.preferences.deliveryTarget">{t("settingsPage.preferences.deliveryTarget")}</strong><span>{t("settingsPage.preferences.deliveryTargetDescription")}</span></div>
                 <SettingsSegmented
                   value={values.proactiveDeliveryTarget}
                   options={([
@@ -243,23 +243,23 @@ export function PreferencesSettingsPanel() {
           </section>
 
           <section className="cy-settings-section">
-            <div className="cy-settings-section__heading"><h2>{t("settingsPage.preferences.moments")}</h2><p>{t("settingsPage.preferences.momentsDescription")}</p></div>
+            <div className="cy-settings-section__heading"><h2 data-settings-search-id="settingsPage.preferences.moments">{t("settingsPage.preferences.moments")}</h2><p>{t("settingsPage.preferences.momentsDescription")}</p></div>
             <Card>
-              <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.preferences.momentsEnabled")}</strong><span>{t("settingsPage.preferences.momentsEnabledDescription")}</span></div><SettingsSwitch ariaLabel={t("settingsPage.preferences.momentsEnabled")} checked={values.momentsEnabled} onChange={(checked) => update("momentsEnabled", checked)} /></div>
+              <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong data-settings-search-id="settingsPage.preferences.momentsEnabled">{t("settingsPage.preferences.momentsEnabled")}</strong><span>{t("settingsPage.preferences.momentsEnabledDescription")}</span></div><SettingsSwitch ariaLabel={t("settingsPage.preferences.momentsEnabled")} checked={values.momentsEnabled} onChange={(checked) => update("momentsEnabled", checked)} /></div>
               {values.momentsEnabled && <>
-                <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.preferences.momentsPosting")}</strong><span>{t("settingsPage.preferences.momentsPostingDescription")}</span></div><SettingsSwitch ariaLabel={t("settingsPage.preferences.momentsPosting")} checked={values.cyreneMomentsPostingEnabled} onChange={(checked) => update("cyreneMomentsPostingEnabled", checked)} /></div>
-                <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.preferences.momentsReactions")}</strong><span>{t("settingsPage.preferences.momentsReactionsDescription")}</span></div><SettingsSwitch ariaLabel={t("settingsPage.preferences.momentsReactions")} checked={values.cyreneMomentsReactionsEnabled} onChange={(checked) => update("cyreneMomentsReactionsEnabled", checked)} /></div>
-                <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.preferences.characterReactions")}</strong><span>{t("settingsPage.preferences.characterReactionsDescription")}</span></div><SettingsSwitch ariaLabel={t("settingsPage.preferences.characterReactions")} checked={values.momentsCharacterReactionsEnabled} onChange={(checked) => update("momentsCharacterReactionsEnabled", checked)} /></div>
-                <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.preferences.liveliness")}</strong><span>{t("settingsPage.preferences.livelinessDescription")}</span></div><SettingsSegmented value={values.momentsLiveliness} options={[{ label: t("settingsPage.preferences.quiet"), value: "quiet" }, { label: t("settingsPage.preferences.natural"), value: "natural" }, { label: t("settingsPage.preferences.lively"), value: "lively" }]} onChange={(value) => update("momentsLiveliness", value as Liveliness)} /></div>
+                <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong data-settings-search-id="settingsPage.preferences.momentsPosting">{t("settingsPage.preferences.momentsPosting")}</strong><span>{t("settingsPage.preferences.momentsPostingDescription")}</span></div><SettingsSwitch ariaLabel={t("settingsPage.preferences.momentsPosting")} checked={values.cyreneMomentsPostingEnabled} onChange={(checked) => update("cyreneMomentsPostingEnabled", checked)} /></div>
+                <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong data-settings-search-id="settingsPage.preferences.momentsReactions">{t("settingsPage.preferences.momentsReactions")}</strong><span>{t("settingsPage.preferences.momentsReactionsDescription")}</span></div><SettingsSwitch ariaLabel={t("settingsPage.preferences.momentsReactions")} checked={values.cyreneMomentsReactionsEnabled} onChange={(checked) => update("cyreneMomentsReactionsEnabled", checked)} /></div>
+                <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong data-settings-search-id="settingsPage.preferences.characterReactions">{t("settingsPage.preferences.characterReactions")}</strong><span>{t("settingsPage.preferences.characterReactionsDescription")}</span></div><SettingsSwitch ariaLabel={t("settingsPage.preferences.characterReactions")} checked={values.momentsCharacterReactionsEnabled} onChange={(checked) => update("momentsCharacterReactionsEnabled", checked)} /></div>
+                <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong data-settings-search-id="settingsPage.preferences.liveliness">{t("settingsPage.preferences.liveliness")}</strong><span>{t("settingsPage.preferences.livelinessDescription")}</span></div><SettingsSegmented value={values.momentsLiveliness} options={[{ label: t("settingsPage.preferences.quiet"), value: "quiet" }, { label: t("settingsPage.preferences.natural"), value: "natural" }, { label: t("settingsPage.preferences.lively"), value: "lively" }]} onChange={(value) => update("momentsLiveliness", value as Liveliness)} /></div>
               </>}
             </Card>
           </section>
 
           <section className="cy-settings-section">
-            <div className="cy-settings-section__heading"><h2>{t("settingsPage.preferences.context")}</h2><p>{t("settingsPage.preferences.contextDescription")}</p></div>
+            <div className="cy-settings-section__heading"><h2 data-settings-search-id="settingsPage.preferences.context">{t("settingsPage.preferences.context")}</h2><p>{t("settingsPage.preferences.contextDescription")}</p></div>
             <Card>
-              <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.preferences.chatSocialContext")}</strong><span>{t("settingsPage.preferences.chatSocialContextDescription")}</span></div><SettingsSwitch ariaLabel={t("settingsPage.preferences.chatSocialContext")} checked={values.chatSocialContextEnabled} onChange={(checked) => update("chatSocialContextEnabled", checked)} /></div>
-              <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.preferences.cita")}</strong><span>{t("settingsPage.preferences.citaDescription")}</span></div><SettingsSwitch ariaLabel={t("settingsPage.preferences.cita")} checked={values.citaEnabled} onChange={(checked) => update("citaEnabled", checked)} /></div>
+              <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong data-settings-search-id="settingsPage.preferences.chatSocialContext">{t("settingsPage.preferences.chatSocialContext")}</strong><span>{t("settingsPage.preferences.chatSocialContextDescription")}</span></div><SettingsSwitch ariaLabel={t("settingsPage.preferences.chatSocialContext")} checked={values.chatSocialContextEnabled} onChange={(checked) => update("chatSocialContextEnabled", checked)} /></div>
+              <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong data-settings-search-id="settingsPage.preferences.cita">{t("settingsPage.preferences.cita")}</strong><span>{t("settingsPage.preferences.citaDescription")}</span></div><SettingsSwitch ariaLabel={t("settingsPage.preferences.cita")} checked={values.citaEnabled} onChange={(checked) => update("citaEnabled", checked)} /></div>
             </Card>
           </section>
 

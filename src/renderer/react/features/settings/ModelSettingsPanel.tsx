@@ -781,27 +781,27 @@ export function ModelSettingsPanel() {
     <div className="cy-model-runtime">
       <div className="cy-model-runtime__grid">
         <label className="cy-model-field">
-          <span>{t("settingsPage.modelSettings.requestTimeout")}</span>
+          <span data-settings-search-id="settingsPage.modelSettings.requestTimeout">{t("settingsPage.modelSettings.requestTimeout")}</span>
           <InputNumber min={10} max={600} step={5} value={runtime.modelRequestTimeoutSec} onChange={(value) => setRuntime((current) => ({ ...current, modelRequestTimeoutSec: value }))} addonAfter={t("settingsPage.modelSettings.seconds")} />
           <small>{t("settingsPage.modelSettings.requestTimeoutHint")}</small>
         </label>
         <label className="cy-model-field">
-          <span>{t("settingsPage.modelSettings.retryCount")}</span>
+          <span data-settings-search-id="settingsPage.modelSettings.retryCount">{t("settingsPage.modelSettings.retryCount")}</span>
           <InputNumber min={0} max={10} step={1} value={runtime.modelRequestMaxRetries} onChange={(value) => setRuntime((current) => ({ ...current, modelRequestMaxRetries: value }))} />
           <small>{t("settingsPage.modelSettings.retryCountHint")}</small>
         </label>
         <label className="cy-model-field">
-          <span>{t("settingsPage.modelSettings.userWait")}</span>
+          <span data-settings-search-id="settingsPage.modelSettings.userWait">{t("settingsPage.modelSettings.userWait")}</span>
           <InputNumber min={1} value={runtime.userChoiceTimeoutSec} onChange={(value) => setRuntime((current) => ({ ...current, userChoiceTimeoutSec: value }))} addonAfter={t("settingsPage.modelSettings.seconds")} />
           <small>{t("settingsPage.modelSettings.userWaitHint")}</small>
         </label>
         <label className="cy-model-field">
-          <span>{t("settingsPage.modelSettings.parallel")}</span>
+          <span data-settings-search-id="settingsPage.modelSettings.parallel">{t("settingsPage.modelSettings.parallel")}</span>
           <SettingsInput className="cy-model-runtime__parallel" type="number" min={1} max={MAX_PARALLEL_TOOL_CALLS} step={1} value={runtime.maxParallelToolCalls ?? ""} aria-label={t("settingsPage.modelSettings.parallel")} onChange={(event) => setRuntime((current) => ({ ...current, maxParallelToolCalls: event.target.value === "" ? null : Number(event.target.value) }))} />
           <small>{t("settingsPage.modelSettings.parallelHint")}</small>
         </label>
         <label className="cy-model-field">
-          <span>{t("settingsPage.modelSettings.testTimeout")}</span>
+          <span data-settings-search-id="settingsPage.modelSettings.testTimeout">{t("settingsPage.modelSettings.testTimeout")}</span>
           <InputNumber min={1} step={1000} value={runtime.testTimeout} onChange={(value) => setRuntime((current) => ({ ...current, testTimeout: value }))} addonAfter="ms" />
           <small>{t("settingsPage.modelSettings.testTimeoutHint")}</small>
         </label>
@@ -828,7 +828,7 @@ export function ModelSettingsPanel() {
         <div className="cy-model-sidebar">
           <aside className="cy-model-list">
             <div className="cy-model-list__heading">
-              <strong>{t("settingsPage.modelSettings.profiles")}</strong>
+              <strong data-settings-search-id="settingsPage.modelSettings.profiles">{t("settingsPage.modelSettings.profiles")}</strong>
               <span>{profiles.length}</span>
             </div>
             <div className="cy-model-list__items">
@@ -852,7 +852,7 @@ export function ModelSettingsPanel() {
               {profiles.length === 0 && <Empty className="cy-model-empty" image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("settingsPage.modelSettings.noProfiles")} />}
               <Card as="button" className={`cy-model-profile cy-model-profile--draft ${!activeId ? "is-active" : ""}`} type="button" onClick={() => startNewDraft()}>
                 <span className="cy-model-profile__icon"><Plus size={18} /></span>
-                <span className="cy-model-profile__copy"><strong>{t("settingsPage.modelSettings.newProfile")}</strong><small>{t("settingsPage.modelSettings.newProfileHint")}</small></span>
+                <span className="cy-model-profile__copy"><strong data-settings-search-id="settingsPage.modelSettings.newProfile">{t("settingsPage.modelSettings.newProfile")}</strong><small>{t("settingsPage.modelSettings.newProfileHint")}</small></span>
               </Card>
             </div>
             <p className="cy-model-list__footnote">{t("settingsPage.modelSettings.localStorageNote")}</p>
@@ -884,16 +884,16 @@ export function ModelSettingsPanel() {
               <div className="cy-model-section-heading"><h3><Cpu size={17} />{t("settingsPage.modelSettings.providerSection")}</h3><p>{t("settingsPage.modelSettings.providerDescription")}</p></div>
               <div className="cy-model-fields cy-model-fields--two">
                 <label className="cy-model-field">
-                  <span>{t("settingsPage.modelSettings.provider")}</span>
+                  <span data-settings-search-id="settingsPage.modelSettings.provider">{t("settingsPage.modelSettings.provider")}</span>
                   <Select options={providerOptions} value={customMode ? MODEL_PRESETS.find((item) => item.shortName === "自定义")?.providerName : provider} onChange={changeProvider} optionLabelProp="label" />
                 </label>
                 <label className="cy-model-field">
-                  <span>{t("settingsPage.modelSettings.profileName")}</span>
+                  <span data-settings-search-id="settingsPage.modelSettings.profileName">{t("settingsPage.modelSettings.profileName")}</span>
                   <SettingsInput value={displayName} onChange={(event) => setDisplayName(event.target.value)} maxLength={80} />
                 </label>
               </div>
               {customMode && <div className="cy-model-custom-mode">
-                <span>{t("settingsPage.modelSettings.customEndpointType")}</span>
+                <span data-settings-search-id="settingsPage.modelSettings.customEndpointType">{t("settingsPage.modelSettings.customEndpointType")}</span>
                 <Radio.Group value={customMode} onChange={(event) => changeCustomMode(event.target.value)} optionType="button" buttonStyle="solid">
                   <Radio.Button value="cloud">{t("settingsPage.modelSettings.customCloud")}</Radio.Button>
                   <Radio.Button value="local">{t("settingsPage.modelSettings.customLocal")}</Radio.Button>
@@ -906,17 +906,17 @@ export function ModelSettingsPanel() {
               <div className="cy-model-section-heading"><h3><Wrench size={17} />{t("settingsPage.modelSettings.connectionSection")}</h3><p>{t("settingsPage.modelSettings.connectionDescription")}</p></div>
               <div className="cy-model-fields">
                 <label className="cy-model-field">
-                  <span>{t("settingsPage.modelSettings.apiKey")}</span>
+                  <span data-settings-search-id="settingsPage.modelSettings.apiKey">{t("settingsPage.modelSettings.apiKey")}</span>
                   <SettingsPasswordInput showLabel={t("settingsPage.asr.showSecret")} hideLabel={t("settingsPage.asr.hideSecret")} value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={customMode === "local" ? t("settingsPage.modelSettings.apiKeyOptional") : "sk-…"} autoComplete="new-password" />
                   {customMode === "local" && <small>{t("settingsPage.modelSettings.localApiKeyHint")}</small>}
                 </label>
                 <label className="cy-model-field">
-                  <span>{t("settingsPage.modelSettings.baseUrl")}</span>
+                  <span data-settings-search-id="settingsPage.modelSettings.baseUrl">{t("settingsPage.modelSettings.baseUrl")}</span>
                   <Input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder={customMode === "local" ? "http://127.0.0.1:11434/v1" : "https://api.example.com/v1"} addonAfter={<Button type="text" size="small" aria-label={t("settingsPage.modelSettings.resetBaseUrl")} title={t("settingsPage.modelSettings.resetBaseUrl")} onClick={() => setBaseUrl(transportUrl(preset, transport))}><RefreshCw size={13} /></Button>} />
                   {endpointPreview && <small className="cy-model-endpoint-preview">{t("settingsPage.modelSettings.endpointPreview")}: <code>{endpointPreview}</code></small>}
                 </label>
                 <div className="cy-model-field">
-                  <span>{t("settingsPage.modelSettings.transport")}</span>
+                  <span data-settings-search-id="settingsPage.modelSettings.transport">{t("settingsPage.modelSettings.transport")}</span>
                   <Radio.Group value={transport} onChange={(event) => changeTransport(event.target.value)} optionType="button" buttonStyle="solid" className="cy-model-transport">
                     <Radio.Button value="openai"><span className="cy-model-transport-option"><OpenAI size={16} aria-hidden="true" /><code>{t("settingsPage.modelSettings.transportOpenAI")}</code></span></Radio.Button>
                     <Radio.Button value="anthropic"><span className="cy-model-transport-option"><Anthropic size={16} aria-hidden="true" /><code>{t("settingsPage.modelSettings.transportAnthropic")}</code></span></Radio.Button>
@@ -924,7 +924,7 @@ export function ModelSettingsPanel() {
                   </Radio.Group>
                 </div>
                 <div className="cy-model-field">
-                  <span>{t("settingsPage.modelSettings.modelList")}</span>
+                  <span data-settings-search-id="settingsPage.modelSettings.modelList">{t("settingsPage.modelSettings.modelList")}</span>
                   <div className="cy-model-list-editor">
                     <Radio.Group
                       className="cy-model-list-options"
@@ -1005,7 +1005,7 @@ export function ModelSettingsPanel() {
             <div className="cy-model-card__section">
               <div className="cy-model-section-heading"><h3><ImageIcon size={17} />{t("settingsPage.modelSettings.imageGenerationTitle")}</h3><p>{t("settingsPage.modelSettings.imageGenerationDescription")}</p></div>
               <div className="cy-model-option-form__switch">
-                <div><strong>{t("settingsPage.modelSettings.imageGenerationEnable")}</strong><small>{t("settingsPage.modelSettings.imageGenerationEnableHint")}</small></div>
+                <div><strong data-settings-search-id="settingsPage.modelSettings.imageGenerationEnable">{t("settingsPage.modelSettings.imageGenerationEnable")}</strong><small>{t("settingsPage.modelSettings.imageGenerationEnableHint")}</small></div>
                 <SettingsSwitch
                   ariaLabel={t("settingsPage.modelSettings.imageGenerationEnable")}
                   checked={imageGenerationEnabled}
@@ -1014,7 +1014,7 @@ export function ModelSettingsPanel() {
                 />
               </div>
               <label className="cy-model-field">
-                <span>{t("settingsPage.modelSettings.imageGenerationModel")}</span>
+                <span data-settings-search-id="settingsPage.modelSettings.imageGenerationModel">{t("settingsPage.modelSettings.imageGenerationModel")}</span>
                 <SettingsInput
                   value={imageGenerationModel}
                   onChange={(event) => setImageGenerationModel(event.target.value)}
@@ -1030,15 +1030,15 @@ export function ModelSettingsPanel() {
               <div className="cy-model-fields cy-model-fields--two">
                 <label className="cy-model-field"><span>{t("settingsPage.modelSettings.baseUrl")}</span><SettingsInput value={vision.baseUrl} onChange={(event) => setVision((current) => ({ ...current, baseUrl: event.target.value }))} placeholder="https://api.openai.com/v1" /></label>
                 <label className="cy-model-field"><span>{t("settingsPage.modelSettings.apiKey")}</span><SettingsPasswordInput showLabel={t("settingsPage.asr.showSecret")} hideLabel={t("settingsPage.asr.hideSecret")} value={vision.apiKey} onChange={(event) => setVision((current) => ({ ...current, apiKey: event.target.value }))} autoComplete="new-password" /></label>
-                <label className="cy-model-field"><span>{t("settingsPage.modelSettings.visionModel")}</span><SettingsInput value={vision.model} onChange={(event) => setVision((current) => ({ ...current, model: event.target.value }))} placeholder="gpt-4o / qwen-vl-max" /></label>
-                <div className="cy-model-field cy-model-vision-action"><span>{t("settingsPage.modelSettings.visionTestLabel")}</span><Button loading={testingVision} onClick={() => void testVision()} icon={<Eye size={15} />}>{t("settingsPage.modelSettings.testVision")}</Button>{visionStatus && <small>{visionStatus}</small>}</div>
+                <label className="cy-model-field"><span data-settings-search-id="settingsPage.modelSettings.visionModel">{t("settingsPage.modelSettings.visionModel")}</span><SettingsInput value={vision.model} onChange={(event) => setVision((current) => ({ ...current, model: event.target.value }))} placeholder="gpt-4o / qwen-vl-max" /></label>
+                <div className="cy-model-field cy-model-vision-action"><span data-settings-search-id="settingsPage.modelSettings.visionTestLabel">{t("settingsPage.modelSettings.visionTestLabel")}</span><Button loading={testingVision} onClick={() => void testVision()} icon={<Eye size={15} />}>{t("settingsPage.modelSettings.testVision")}</Button>{visionStatus && <small>{visionStatus}</small>}</div>
               </div>
               <Collapse className="cy-model-advanced" items={[{
                 key: "advanced",
                 label: <span className="cy-model-advanced__label"><ChevronDown size={15} />{t("settingsPage.modelSettings.advancedOptions")}</span>,
                 children: <div className="cy-model-advanced__controls">
-                  <div className="cy-model-switch-row"><div><strong>{t("settingsPage.modelSettings.disableMaxToken")}</strong><small>{t("settingsPage.modelSettings.disableMaxTokenDescription")}</small></div><SettingsSwitch ariaLabel={t("settingsPage.modelSettings.disableMaxToken")} checked={disableMaxToken} onChange={setDisableMaxToken} disabled={!customMode} /></div>
-                  <div className="cy-model-field"><span>{t("settingsPage.modelSettings.thinkingOverride")}</span><Radio.Group value={thinkingOverride} onChange={(event) => setThinkingOverride(event.target.value)} optionType="button" buttonStyle="solid" disabled={!customMode}>
+                  <div className="cy-model-switch-row"><div><strong data-settings-search-id="settingsPage.modelSettings.disableMaxToken">{t("settingsPage.modelSettings.disableMaxToken")}</strong><small>{t("settingsPage.modelSettings.disableMaxTokenDescription")}</small></div><SettingsSwitch ariaLabel={t("settingsPage.modelSettings.disableMaxToken")} checked={disableMaxToken} onChange={setDisableMaxToken} disabled={!customMode} /></div>
+                  <div className="cy-model-field"><span data-settings-search-id="settingsPage.modelSettings.thinkingOverride">{t("settingsPage.modelSettings.thinkingOverride")}</span><Radio.Group value={thinkingOverride} onChange={(event) => setThinkingOverride(event.target.value)} optionType="button" buttonStyle="solid" disabled={!customMode}>
                     <Radio.Button value={0}>{t("settingsPage.modelSettings.thinkingAuto")}</Radio.Button><Radio.Button value={1}>{t("settingsPage.modelSettings.thinkingOn")}</Radio.Button><Radio.Button value={-1}>{t("settingsPage.modelSettings.thinkingOff")}</Radio.Button>
                   </Radio.Group><small>{t("settingsPage.modelSettings.customOnly")}</small></div>
                 </div>,

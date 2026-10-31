@@ -1,0 +1,94 @@
+.cy-settings-search-trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: min(300px, calc(100vw - 340px));
+  min-width: 100px;
+  height: 30px;
+  padding: 0 12px;
+  margin-inline: auto;
+  border: 1px solid var(--rb-border-default);
+  border-radius: var(--rb-radius-sm, 8px);
+  background: var(--rb-surface-workspace);
+  color: var(--rb-text-secondary);
+  font: var(--rb-text-caption);
+  cursor: pointer;
+  app-region: no-drag;
+  -webkit-app-region: no-drag;
+}
+.cy-settings-titlebar { left: 20px; display: flex; align-items: center; height: 30px; }
+.cy-settings-titlebar .cy-window-controls { position: absolute; right: 0; }
+.cy-settings-search-modal .ant-modal-container,
+.cy-settings-search-modal .ant-modal-content {
+  --settings-search-radius: var(--rb-radius-sm, 8px);
+  padding: 16px;
+  border: 1px solid var(--rb-border-default);
+  border-radius: var(--settings-search-radius);
+  background: var(--rb-surface-workspace);
+  box-shadow: 0 18px 60px rgb(26 24 32 / 20%);
+}
+.cy-settings-search-modal .ant-modal-header { background: transparent; }
+.cy-settings-search-modal .ant-modal-title { color: var(--rb-text-primary); }
+.cy-settings-search { display: flex; flex-direction: column; gap: 16px; color: var(--rb-text-primary); }
+.cy-settings-search > .ant-input-affix-wrapper { min-height: 36px; border-radius: var(--settings-search-radius); background: var(--rb-surface-workspace); }
+.cy-settings-search button { color: inherit; font: inherit; cursor: pointer; }
+.cy-settings-search button:focus-visible,
+.cy-settings-search-trigger:focus-visible { outline: 2px solid var(--rb-accent); outline-offset: 2px; }
+.cy-settings-search__categories { display: flex; flex-wrap: wrap; gap: 10px; }
+.cy-settings-search__categories button {
+  display: flex; flex: 1 1 90px; align-items: center; justify-content: center; flex-direction: column; gap: 9px;
+  min-height: 82px; padding: 12px 8px; border: 1px solid var(--rb-border-default);
+  border-radius: var(--settings-search-radius); background: var(--rb-surface-elevated);
+}
+.cy-settings-search__categories svg { color: var(--rb-text-secondary); }
+.cy-settings-search__results { max-height: min(40vh, 360px); overflow-y: auto; overflow-x: hidden; }
+.cy-settings-search__result { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px; padding: 10px; border: 0; border-radius: var(--settings-search-radius); background: transparent; text-align: left; }
+.cy-settings-search__result > span { flex: 1; min-width: 0; display: grid; gap: 3px; }
+.cy-settings-search__result strong { font-weight: 500; overflow-wrap: anywhere; }
+.cy-settings-search__section { padding: 10px; color: var(--rb-text-secondary); font-size: 12px; }
+.cy-settings-search__result.is-active,
+.cy-settings-search__categories button:hover { background: var(--rb-surface-hover); }
+.cy-settings-search__back { display: flex; align-items: center; gap: 6px; align-self: flex-start; max-width: 100%; border: 0; background: transparent; text-align: left; }
+.cy-settings-search__back > svg { flex: none; }
+.cy-settings-search__back > span { min-width: 0; overflow-wrap: anywhere; }
+.cy-settings-search .is-entering { --search-enter-x: 28px; animation: cy-settings-search-enter 100ms cubic-bezier(.16, 1, .3, 1) both; }
+.cy-settings-search .is-entering[data-direction="back"] { --search-enter-x: -28px; }
+@keyframes cy-settings-search-enter {
+  from { transform: translateX(var(--search-enter-x)); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cy-settings-search .is-entering { animation: none; }
+}
+.cy-settings-search__history { border-top: 1px solid var(--rb-border-subtle); padding-top: 10px; }
+.cy-settings-search__history-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; color: var(--rb-text-secondary); font-size: 12px; }
+.cy-settings-search__history-heading > div { display: flex; align-items: center; gap: 10px; }
+.cy-settings-search__history-heading button { display: inline-flex; align-items: center; border: 0; padding: 4px; background: transparent; }
+.cy-settings-search__history-heading button:disabled { opacity: .4; cursor: default; }
+.cy-settings-search__chips { position: relative; display: flex; flex-wrap: wrap; align-content: flex-start; gap: 8px; max-height: 112px; overflow: hidden; }
+.cy-settings-search__chip { position: relative; display: flex; max-width: 100%; height: 32px; flex: none; border-radius: var(--settings-search-radius); background: color-mix(in srgb, var(--rb-text-secondary) 16%, var(--rb-surface-workspace)); }
+.cy-settings-search__chip > button:first-child { max-width: 100%; padding: 0 12px; border: 0; border-radius: inherit; background: transparent; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.cy-settings-search__chip:has(.cy-settings-search__delete) > button:first-child { padding-right: 28px; }
+.cy-settings-search__chip .cy-settings-search__delete { position: absolute; top: 1px; right: 1px; display: grid; place-items: center; width: 18px; height: 18px; padding: 0; border: 0; border-radius: var(--settings-search-radius); background: transparent; color: var(--rb-danger, #e05260); }
+.cy-settings-search__empty { margin: 0; padding: 12px 4px; color: var(--rb-text-secondary); font-size: 12px; text-align: center; }
+[data-settings-search-id] { scroll-margin-block: 24px; }
+.cy-settings-search-highlight {
+  outline: 2px solid var(--rb-accent);
+  outline-offset: 5px;
+  border-radius: var(--rb-radius-sm, 8px);
+  animation: cy-settings-search-flash 500ms ease-in-out 3;
+}
+@keyframes cy-settings-search-flash {
+  0%, 100% { outline-color: var(--rb-accent); }
+  50% { outline-color: color-mix(in srgb, var(--rb-accent) 15%, transparent); }
+}
+.cy-settings-search-highlight--item {
+  outline: none;
+  border-radius: 12px;
+  box-shadow: inset 0 0 0 1px var(--rb-border-strong, var(--rb-border-default));
+  animation-name: cy-settings-search-item-flash;
+}
+@keyframes cy-settings-search-item-flash {
+  0%, 100% { box-shadow: inset 0 0 0 1px var(--rb-accent); }
+  50% { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--rb-accent) 15%, transparent); }
+}

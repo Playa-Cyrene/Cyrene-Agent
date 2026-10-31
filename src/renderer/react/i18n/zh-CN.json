@@ -2310,5 +2310,21 @@
       "reaction_exists": "已经赞过了",
       "moments_disabled": "动态功能已关闭"
     }
+  },
+  "settingsSearch": {
+    "unavailable": "已打开相关设置页面；该项目可能需要先启用对应功能，或当前尚未加载完成。",
+    "title": "搜索设置",
+    "placeholder": "搜索设置名称或关键词",
+    "results": "搜索结果",
+    "empty": "未找到相关设置",
+    "history": "搜索历史",
+    "manage": "管理",
+    "done": "完成",
+    "clear": "清空历史记录",
+    "delete": "删除“{{query}}”",
+    "noHistory": "暂无搜索历史",
+    "clearConfirm": "清空全部搜索历史？",
+    "clearDescription": "此操作将删除所有已保存的搜索记录，无法恢复。",
+    "cancel": "取消"
   }
 }

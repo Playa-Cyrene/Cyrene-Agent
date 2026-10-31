@@ -1111,3 +1111,7 @@
   line-height: var(--cy-msg-line-height, 1.85);
   letter-spacing: var(--cy-msg-spacing, 0.8px);
 }
+
+/* 空白标题栏可拖动；搜索框与窗口按钮仍单独响应点击。 */
+.cy-settings-page .cy-settings-titlebar { app-region: drag; -webkit-app-region: drag; }
+.cy-settings-page .cy-window-controls { app-region: no-drag; -webkit-app-region: no-drag; }
