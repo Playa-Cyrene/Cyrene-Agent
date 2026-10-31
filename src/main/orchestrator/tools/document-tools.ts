@@ -10,6 +10,8 @@
 
 import * as fs from "fs";
 import * as path from "path";
+import { randomUUID } from "node:crypto";
+import { pipeline } from "node:stream/promises";
 import { app } from "electron";
 import { toolRegistry } from "./registry/tool-registry";
 import type { ToolContext } from "./registry/tool-context";
@@ -514,32 +516,45 @@ export function registerDocumentTools(): void {
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
       captureBaseline(context, outputPath);
       const doc = new PDFKit.default();
-      const stream = fs.createWriteStream(outputPath);
-      doc.pipe(stream);
+      // 生成失败时保留原文件；流彻底关闭后再清理临时产物。
+      const temporaryPath = path.join(dir, `.${path.basename(outputPath)}.${randomUUID()}.tmp`);
+      const stream = fs.createWriteStream(temporaryPath, { flags: "wx" });
+      const completion = pipeline(doc, stream);
+      try {
+        // TTC 是字体集合，必须指定集合中的字体名，不能直接当单个字体使用。
+        const fontCandidates = [
+          { file: "C:\\Windows\\Fonts\\msyh.ttc", family: "MicrosoftYaHei" },
+          { file: "C:\\Windows\\Fonts\\simsun.ttc", family: "SimSun" },
+          { file: "C:\\Windows\\Fonts\\simhei.ttf", family: undefined },
+        ];
+        for (const { file, family } of fontCandidates) {
+          if (!fs.existsSync(file)) continue;
+          try {
+            if (family) doc.font(file, family);
+            else doc.font(file);
+            break;
+          } catch (error) {
+            console.warn(LOG_PREFIX, "PDF 字体加载失败，尝试下一字体:", file, error);
+          }
+        }
 
-      // 中文字体：Windows 用微软雅黑，找不到则用默认（中文会乱码但能生成）
-      const fontCandidates = [
-        "C:\\Windows\\Fonts\\msyh.ttc",
-        "C:\\Windows\\Fonts\\simsun.ttc",
-        "C:\\Windows\\Fonts\\simhei.ttf",
-      ];
-      for (const f of fontCandidates) {
-        if (fs.existsSync(f)) { doc.font(f); break; }
+        doc.fontSize(22).text(String(args.title || ""), { align: "center" });
+        doc.moveDown();
+        doc.fontSize(12);
+        for (const p of (args.paragraphs as string[]) || []) {
+          doc.text(p, { align: "left" });
+          doc.moveDown(0.5);
+        }
+        doc.end();
+        await completion;
+        await fs.promises.rename(temporaryPath, outputPath);
+      } catch (error) {
+        doc.destroy();
+        stream.destroy();
+        await completion.catch(() => undefined);
+        await fs.promises.rm(temporaryPath, { force: true });
+        throw error;
       }
-
-      doc.fontSize(22).text(String(args.title || ""), { align: "center" });
-      doc.moveDown();
-      doc.fontSize(12);
-      for (const p of (args.paragraphs as string[]) || []) {
-        doc.text(p, { align: "left" });
-        doc.moveDown(0.5);
-      }
-      doc.end();
-
-      await new Promise<void>((resolve, reject) => {
-        stream.on("finish", () => resolve());
-        stream.on("error", reject);
-      });
       console.log(LOG_PREFIX, "PDF 已生成:", outputPath);
       return `[write_pdf] 已生成：${outputPath}`;
     },

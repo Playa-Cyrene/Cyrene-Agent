@@ -111,28 +111,45 @@ describe("Review 基线捕获（写盘前）", () => {
     expect(baselines[0]).toMatch(/\.binary$/);
   });
 
-  it("write_pdf 基线捕获先于生成（生成失败也不影响基线）", async () => {
+  it("write_pdf 使用系统字体生成完整 PDF，同时保存覆盖前的 binary 基线", async () => {
     fs.writeFileSync(path.join(tmpDir, "report.pdf"), Buffer.from([0x25, 0x50, 0x44, 0x46, 0, 0, 1]));
 
-    // 本机 msyh.ttc 与 pdfkit 的 subset 不兼容，doc.text() 会抛错——
-    // 恰好验证 write-ahead 语义：基线在任何写盘/生成动作之前已保存
-    let threw = false;
-    try {
-      await getTool("write_pdf").execute(
-        { filename: "report.pdf", title: "标题", paragraphs: ["段落一"] },
-        { runId: "run-pdf-1" },
-      );
-    } catch {
-      threw = true;
-    }
+    const result = await getTool("write_pdf").execute(
+      { filename: "report.pdf", title: "标题", paragraphs: ["段落一"] },
+      { runId: "run-pdf-1" },
+    );
+    expect(result).toContain("已生成");
+    const pdf = fs.readFileSync(path.join(tmpDir, "report.pdf"));
+    expect(pdf.subarray(0, 5).toString()).toBe("%PDF-");
+    expect(pdf.subarray(-30).toString()).toContain("%%EOF");
 
     const baselines = listBaselines("run-pdf-1");
     expect(baselines).toHaveLength(1);
     expect(baselines[0]).toMatch(/\.binary$/);
-    if (threw) {
-      // 生成失败时原二进制不应被截断破坏（createWriteStream 未成功写入）
-      // 等待 pdfkit 内部流动作结束，避免延迟 open 撞上目录清理
-      await new Promise((r) => setTimeout(r, 50));
-    }
   }, 15_000);
+
+  it("PDF 渲染失败保留原文件并关闭、清理临时输出", async () => {
+    const original = Buffer.from("old PDF contents");
+    fs.writeFileSync(path.join(tmpDir, "report.pdf"), original);
+    const { default: PDFDocument } = await import("pdfkit");
+    vi.spyOn(PDFDocument.prototype, "text").mockImplementation(() => {
+      throw new Error("PDF rendering failed");
+    });
+
+    await expect(getTool("write_pdf").execute(
+      { filename: "report.pdf", title: "标题", paragraphs: ["段落"] },
+    )).rejects.toThrow("PDF rendering failed");
+
+    expect(fs.readFileSync(path.join(tmpDir, "report.pdf"))).toEqual(original);
+    expect(fs.readdirSync(tmpDir)).toEqual(["report.pdf"]);
+  });
+
+  it("PDF 最终写入失败清理临时文件，不破坏同名目录", async () => {
+    fs.mkdirSync(path.join(tmpDir, "report.pdf"));
+    await expect(getTool("write_pdf").execute(
+      { filename: "report.pdf", title: "标题", paragraphs: [] },
+    )).rejects.toThrow();
+    expect(fs.readdirSync(tmpDir)).toEqual(["report.pdf"]);
+    expect(fs.statSync(path.join(tmpDir, "report.pdf")).isDirectory()).toBe(true);
+  });
 });
