@@ -10,6 +10,7 @@
 
 import * as fs from "fs";
 import * as path from "path";
+import { pipeline } from "stream/promises";
 import { app } from "electron";
 import { toolRegistry } from "./registry/tool-registry";
 import type { ToolContext } from "./registry/tool-context";
@@ -514,32 +515,54 @@ export function registerDocumentTools(): void {
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
       captureBaseline(context, outputPath);
       const doc = new PDFKit.default();
-      const stream = fs.createWriteStream(outputPath);
-      doc.pipe(stream);
-
-      // 中文字体：Windows 用微软雅黑，找不到则用默认（中文会乱码但能生成）
+      // TTC 是字体集合，必须选择具体 PostScript face；独立 TTF 不需要 face。
       const fontCandidates = [
-        "C:\\Windows\\Fonts\\msyh.ttc",
-        "C:\\Windows\\Fonts\\simsun.ttc",
-        "C:\\Windows\\Fonts\\simhei.ttf",
+        { file: "C:\\Windows\\Fonts\\msyh.ttc", face: "MicrosoftYaHei" },
+        { file: "C:\\Windows\\Fonts\\simsun.ttc", face: "SimSun" },
+        { file: "C:\\Windows\\Fonts\\simhei.ttf", face: undefined },
       ];
-      for (const f of fontCandidates) {
-        if (fs.existsSync(f)) { doc.font(f); break; }
+      // 先在独占临时目录完成生成；字体/排版失败不能截断已有目标。
+      const temporaryDir = await fs.promises.mkdtemp(path.join(dir, ".cyrene-pdf-"));
+      let writing: Promise<void> | undefined;
+      try {
+        let fontFailed = false;
+        let fontError: unknown;
+        for (const { file, face } of fontCandidates) {
+          if (!fs.existsSync(file)) continue;
+          try {
+            if (face) doc.font(file, face);
+            else doc.font(file);
+            fontFailed = false;
+            break;
+          } catch (error) {
+            fontFailed = true;
+            fontError = error;
+            console.warn(LOG_PREFIX, "PDF 字体加载失败，尝试下一字体:", file, error);
+          }
+        }
+        // 无系统字体时保留旧默认降级；已有字体全坏时不能静默生成缺字的中文 PDF。
+        if (fontFailed) throw fontError;
+        const temporaryPath = path.join(temporaryDir, "output.pdf");
+        writing = pipeline(doc, fs.createWriteStream(temporaryPath, { flags: "wx" }));
+        // 同步排版可能先抛错；立即接住异步流错误，finally 再等待流关闭。
+        void writing.catch(() => {});
+        doc.fontSize(22).text(String(args.title || ""), { align: "center" });
+        doc.moveDown();
+        doc.fontSize(12);
+        for (const p of (args.paragraphs as string[]) || []) {
+          doc.text(p, { align: "left" });
+          doc.moveDown(0.5);
+        }
+        doc.end();
+        await writing;
+        // 沿用原 createWriteStream 的目标权限、inode 和符号链接语义。
+        // 最终写盘不是原子事务；磁盘故障仍可能部分写入，但清理绝不能删除目标。
+        await pipeline(fs.createReadStream(temporaryPath), fs.createWriteStream(outputPath));
+      } finally {
+        doc.destroy();
+        await writing?.catch(() => {});
+        await fs.promises.rm(temporaryDir, { recursive: true, force: true });
       }
-
-      doc.fontSize(22).text(String(args.title || ""), { align: "center" });
-      doc.moveDown();
-      doc.fontSize(12);
-      for (const p of (args.paragraphs as string[]) || []) {
-        doc.text(p, { align: "left" });
-        doc.moveDown(0.5);
-      }
-      doc.end();
-
-      await new Promise<void>((resolve, reject) => {
-        stream.on("finish", () => resolve());
-        stream.on("error", reject);
-      });
       console.log(LOG_PREFIX, "PDF 已生成:", outputPath);
       return `[write_pdf] 已生成：${outputPath}`;
     },
