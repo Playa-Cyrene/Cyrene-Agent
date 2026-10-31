@@ -7,7 +7,8 @@ import {
 
 // 不调用真实 API：以 SDK 请求使用的投影规则覆盖工具与私有重放边界。
 import type { ChatMessage, ModelMessageOrigin } from "./vendors/types";
-import { estimateTokens } from "./context-manager";
+import { projectModelHistory } from "./vendors/model-history";
+import { estimateSingleMessageTokens, estimateTokens } from "./context-manager";
 import { buildContextUsageSnapshot, buildCompactionContextUsageSnapshot } from "./context-usage";
 import { computeTokenBudget, findSafeCutPointForRetainedTokens } from "./harness/compaction";
 
@@ -148,5 +149,71 @@ describe("请求投影预算（Related #263）", () => {
       { role: "tool", toolCallId: "call_1", content: "ok" }, { role: "user", content: "next" }];
     expect(findSafeCutPointForRetainedTokens(messages, 2000, origin)).toBe(1);
     expect(findSafeCutPointForRetainedTokens(messages, 2000, { ...origin, model: "other" })).toBe(0);
+  });
+});
+
+
+describe("损坏历史的预算回退", () => {
+  it.each(["not-json", "{", "null", "[]", "42", '\"text\"'])("参数 %s 不阻断估算，真实请求仍拒绝", (args) => {
+    const message: ChatMessage = { role: "assistant", content: "current", toolCalls: [
+      { id: "call_bad", name: "write_file", arguments: args },
+      { id: "call_good", name: "read_file", arguments: '{"path":"ok"}' },
+    ] };
+    const before = structuredClone(message);
+    expect(estimateSingleMessageTokens(message, origin)).toBe(4 + estimateTokens("current")
+      + estimateTokens("call_badwrite_file" + args) + estimateTokens('call_goodread_file{"path":"ok"}'));
+    expect(() => projectModelHistory([message], origin)).toThrow("历史工具参数无效");
+    expect(message).toEqual(before);
+  });
+
+  it("回退恢复旧 rawAssistant 工具和正文，不计私有或过期副本", () => {
+    const message: ChatMessage = { role: "assistant", content: "current", thinking: "private".repeat(10000),
+      rawAssistant: [
+        { type: "message", content: [{ type: "output_text", text: "stale".repeat(10000) }] },
+        { type: "function_call", call_id: "legacy", name: "write_file", arguments: "broken".repeat(1000) },
+      ], providerReplay: replayMessage().providerReplay };
+    const before = structuredClone(message);
+    const expected = 4 + estimateTokens("current") + estimateTokens("legacywrite_file" + "broken".repeat(1000));
+    expect(estimateMessageTokens([message], origin)).toBe(expected);
+    expect(estimateMessageTokens([message], { ...origin, model: "other" })).toBe(expected);
+    expect(estimateMessageTokens([message])).toBe(expected);
+    expect(message).toEqual(before);
+  });
+
+  it("无显式便携字段时恢复旧正文、坏参数和生成图片说明，不计图片路径", () => {
+    const message: ChatMessage = { role: "assistant", rawAssistant: [
+      { type: "text", text: "legacy text" },
+      { type: "function_call", call_id: "legacy", name: "write_file", arguments: "not-json" },
+    ], attachments: [{ id: "image", kind: "image", source: "model", name: "result.png", mime: "image/png",
+      status: "done", byteLength: 1000000, filePath: "/private/".repeat(10000) }] };
+    const before = structuredClone(message);
+    expect(estimateSingleMessageTokens(message)).toBe(4 + estimateTokens("legacy text")
+      + estimateTokens("已生成图片：result.png") + estimateTokens("legacywrite_filenot-json"));
+    expect(message).toEqual(before);
+    expect(() => projectModelHistory([message], origin)).toThrow("历史工具参数无效");
+  });
+
+  it("不把非历史解析错误悄悄当成预算回退", () => {
+    const message: ChatMessage = { role: "assistant", content: "current",
+      get rawAssistant() { throw new Error("unexpected programming error"); } };
+    expect(() => estimateSingleMessageTokens(message, origin)).toThrow("unexpected programming error");
+  });
+
+  it("一条损坏历史不会丢掉相邻有效重放，预算、快照和安全切点仍可计算", () => {
+    const broken: ChatMessage = { role: "assistant", toolCalls: [
+      { id: "bad", name: "write_file", arguments: "broken".repeat(4000) },
+    ] };
+    const messages: ChatMessage[] = [replayMessage(), { role: "tool", toolCallId: "call_1", content: "ok" },
+      { role: "user", content: "next" }, broken, { role: "tool", toolCallId: "bad", content: "failed" }];
+    const expected = portableTokens + privateTokens + 5 + 5
+      + 4 + estimateTokens("badwrite_file" + "broken".repeat(4000)) + 6;
+    expect(estimateMessageTokens(messages, origin)).toBe(expected);
+    expect(computeTokenBudget("", [], messages, 4000, 500, 100, 0.75, origin))
+      .toMatchObject({ estimatedInput: expected, needsCompaction: true });
+    expect(buildContextUsageSnapshot({ phase: "preRequest", personaContent: "", contextWindowTokens: 4000,
+      messages, messageOrigin: origin }).totalTokens).toBe(expected);
+    expect(buildCompactionContextUsageSnapshot({ phase: "preCompaction", contextWindowTokens: 4000,
+      messages, messageOrigin: origin }).totalTokens).toBe(expected);
+    expect(findSafeCutPointForRetainedTokens(messages, 2000, origin)).toBe(3);
   });
 });

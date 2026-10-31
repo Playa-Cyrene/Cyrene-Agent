@@ -3,6 +3,7 @@ import type { AgentLoopSettings } from "./cyrene-agent";
 import { generateChatWithAiSdk } from "./vendors/model-runtime";
 import { getTimeoutSettings } from "../timeout-manager";
 import { projectModelHistory, recoverPortableMessage } from "./vendors/model-history";
+import { AgentRuntimeError } from "./agent-runtime-error";
 import { recordRequest, recordUsage } from "../token-usage-store";
 
 const COMPRESSION_PROMPT = `你正在帮"昔涟"整理对话记忆。请把下面这段较早的对话历史总结成一段简洁的摘要，供后续回复参考。
@@ -66,7 +67,22 @@ export function estimateSingleMessageTokens(message: ChatMessage, target?: Model
   if (message.role !== "assistant") {
     return estimateMessageContentTokens(message.content ?? "") + 4;
   }
-  const projected = projectModelHistory([message], target);
+  let projected: ReturnType<typeof projectModelHistory>;
+  try {
+    projected = projectModelHistory([message], target);
+  } catch (error) {
+    if (!(error instanceof AgentRuntimeError) || error.code !== "E_MODEL_RESPONSE_PARSE_FAILED") throw error;
+    // 损坏的持久化工具参数不能阻断预算/快照。仅粗估便携语义与原始参数，
+    // 不解析参数、不重放私有副本，也不修改历史；真实请求投影仍严格报错。
+    const portable = recoverPortableMessage(message);
+    const imageDescriptions = (portable.attachments ?? [])
+      .filter(attachment => attachment.kind === "image" && attachment.source === "model")
+      .map(image => `已生成图片：${image.name}`);
+    return 4 + estimateMessageContentTokens(portable.content ?? "")
+      + estimateTokens(imageDescriptions.join("\n"))
+      + (portable.toolCalls ?? []).reduce((sum, call) =>
+        sum + estimateTokens(call.id + call.name + call.arguments), 0);
+  }
   return projected.reduce((sum, entry) => {
     if (typeof entry.content === "string") return sum + estimateTokens(entry.content) + 4;
     return sum + 4 + entry.content.reduce((total, part) => {
