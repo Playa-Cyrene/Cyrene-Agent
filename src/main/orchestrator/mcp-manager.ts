@@ -95,6 +95,11 @@ export async function initMcpManager(options: { signal?: AbortSignal } = {}): Pr
       console.log(LOG_PREFIX, "restore aborted, remaining servers skipped:", config.name);
       break;
     }
+    // Built-in sync may have already connected this server before restore.
+    // Reuse it without taking ownership of its cancellation cleanup.
+    if (getMcpServerStates().some((state) => state.id === config.id && state.connected)) {
+      continue;
+    }
     try {
       await connectMcpServer(config);
       connected++;

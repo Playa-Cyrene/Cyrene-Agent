@@ -177,3 +177,45 @@ describe("pruneMcpServersByIds 白名单清理", () => {
     expect(fs.statSync(configFilePath()).mtimeMs).toBe(before);
   });
 });
+
+describe("initMcpManager 保留已连接实例", () => {
+  it.each([[[]], [["srv-read"]]])("跳过已连接服务（工具列表 %j）", async (toolIds) => {
+    writeConfigFile([stdioConfig]);
+    adapterMocks.getMcpServerStates.mockReturnValue([
+      { id: "srv", connected: true, toolCount: toolIds.length, toolIds },
+    ]);
+    await initMcpManager();
+    expect(adapterMocks.connectMcpServer).not.toHaveBeenCalled();
+    expect(adapterMocks.disconnectMcpServer).not.toHaveBeenCalled();
+  });
+
+  it("未连接的同 ID 状态不能阻止恢复", async () => {
+    writeConfigFile([stdioConfig]);
+    adapterMocks.getMcpServerStates.mockReturnValue([{ id: "srv", connected: false }]);
+    adapterMocks.connectMcpServer.mockResolvedValue(["srv-read"]);
+    await initMcpManager();
+    expect(adapterMocks.connectMcpServer).toHaveBeenCalledWith(stdioConfig);
+  });
+
+  it("先前失败后再次恢复仍可重试", async () => {
+    writeConfigFile([stdioConfig]);
+    adapterMocks.connectMcpServer.mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValueOnce(["srv-read"]);
+    await initMcpManager();
+    await initMcpManager();
+    expect(adapterMocks.connectMcpServer).toHaveBeenCalledTimes(2);
+  });
+
+  it("恢复取消不清理此前已连接的服务，只清理本轮迟到连接", async () => {
+    writeConfigFile([stdioConfig, { ...stdioConfig, id: "other" }]);
+    adapterMocks.getMcpServerStates.mockReturnValue([{ id: "srv", connected: true }]);
+    const controller = new AbortController();
+    adapterMocks.connectMcpServer.mockImplementationOnce(async () => {
+      controller.abort();
+      return ["other-read"];
+    });
+    await initMcpManager({ signal: controller.signal });
+    expect(adapterMocks.connectMcpServer).toHaveBeenCalledTimes(1);
+    expect(adapterMocks.disconnectMcpServer).toHaveBeenCalledExactlyOnceWith("other");
+  });
+});
