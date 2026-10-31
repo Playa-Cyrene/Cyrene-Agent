@@ -14,7 +14,8 @@ export interface ModelInstallStatus {
 }
 
 // All models require these files to be considered "installed"
-const REQUIRED_FILES = ["tokenizer.json", "config.json", "onnx/model_quantized.onnx"];
+// transformers.js 的 tokenizer 加载还会读取 tokenizer_config.json。
+const REQUIRED_FILES = ["tokenizer.json", "tokenizer_config.json", "config.json", "onnx/model_quantized.onnx"];
 
 // Possible sub-paths for each model.
 //

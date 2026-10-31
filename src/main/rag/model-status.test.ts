@@ -40,7 +40,7 @@ import {
 // checkRerankerModelInstalled now takes no arguments (only "standard" exists)
 void checkRerankerModelInstalled;
 
-const REQUIRED_FILES = ["tokenizer.json", "config.json", "onnx/model_quantized.onnx"];
+const REQUIRED_FILES = ["tokenizer.json", "tokenizer_config.json", "config.json", "onnx/model_quantized.onnx"];
 
 function ensureFakeDir(...parts: string[]): string {
   const dir = path.join(ISOLATED_ROOT, ...parts);
@@ -136,6 +136,19 @@ describe("model-status: getProjectModelsDirCandidates priority", () => {
 });
 
 describe("model-status: project-side detection", () => {
+  it.each([
+    ["embedding", "bgem3", ["models", "Xenova", "bge-m3"]],
+    ["reranker", "standard", ["models", "bge-reranker-base"]],
+  ] as const)("%s 缺 tokenizer_config.json 时安装状态和加载路径都拒绝不完整模型", (kind, key, parts) => {
+    const modelDir = ensureFakeDir(...parts);
+    fs.unlinkSync(path.join(modelDir, "tokenizer_config.json"));
+
+    const detail = getModelInstallStatusDetail(kind, key);
+    expect(detail.installed).toBe(false);
+    expect(detail.missingFiles).toEqual(["tokenizer_config.json"]);
+    expect(getProjectModelBaseDir(kind, key)).toBeNull();
+  });
+
   it("bgem3 installed under models/Xenova/bge-m3 → source='project'", () => {
     ensureFakeDir("models", "Xenova", "bge-m3");
     const detail = getModelInstallStatusDetail("embedding", "bgem3");
