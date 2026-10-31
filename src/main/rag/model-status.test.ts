@@ -40,7 +40,7 @@ import {
 // checkRerankerModelInstalled now takes no arguments (only "standard" exists)
 void checkRerankerModelInstalled;
 
-const REQUIRED_FILES = ["tokenizer.json", "config.json", "onnx/model_quantized.onnx"];
+const REQUIRED_FILES = ["tokenizer.json", "tokenizer_config.json", "config.json", "onnx/model_quantized.onnx"];
 
 function ensureFakeDir(...parts: string[]): string {
   const dir = path.join(ISOLATED_ROOT, ...parts);
@@ -253,5 +253,51 @@ describe("model-status: getModelInstallStatus aggregate", () => {
     const status = getModelInstallStatus();
     expect(status.embedding.bgem3).toBe(true);
     expect(status.reranker.standard).toBe(true);
+  });
+});
+
+
+describe("model-status: tokenizer configuration completeness", () => {
+  it.each([
+    { kind: "embedding" as const, key: "bgem3", parts: ["Xenova", "bge-m3"] },
+    { kind: "reranker" as const, key: "standard", parts: ["bge-reranker-base"] },
+  ])("rejects $kind missing only tokenizer_config.json", ({ kind, key, parts }) => {
+    const dir = ensureFakeDir("models", ...parts);
+    fs.unlinkSync(path.join(dir, "tokenizer_config.json"));
+
+    const detail = getModelInstallStatusDetail(kind, key);
+    expect(detail.installed).toBe(false);
+    expect(detail.missingFiles).toEqual(["tokenizer_config.json"]);
+    expect(detail.requiredFiles).toContain("tokenizer_config.json");
+    expect(getProjectModelBaseDir(kind, key)).toBeNull();
+  });
+
+  it("recognizes a complete model in an alternate supported base directory", () => {
+    const base = path.join(ISOLATED_ROOT, "override-models");
+    process.env.CYRENE_MODELS_DIR = base;
+    const dir = ensureFakeDir("override-models", "Xenova", "bge-m3");
+
+    expect(getProjectModelBaseDir("embedding", "bgem3")).toBe(base);
+    expect(getModelInstallStatusDetail("embedding", "bgem3").matchedAt).toBe(dir);
+    // Optional tokenizer assets must not be promoted to required files.
+    expect(fs.existsSync(path.join(dir, "special_tokens_map.json"))).toBe(false);
+  });
+
+  it("rejects HF cache missing only tokenizer_config.json", () => {
+    const dir = ensureHfCache("bge-m3");
+    fs.unlinkSync(path.join(dir, "tokenizer_config.json"));
+
+    expect(checkEmbeddingModelInstalled("bgem3")).toBe(false);
+  });
+
+  it("does not hide a missing project tokenizer config behind a complete HF cache", () => {
+    const dir = ensureFakeDir("models", "Xenova", "bge-m3");
+    fs.unlinkSync(path.join(dir, "tokenizer_config.json"));
+    ensureHfCache("bge-m3");
+
+    const detail = getModelInstallStatusDetail("embedding", "bgem3");
+    expect(detail.installed).toBe(false);
+    expect(detail.source).toBeNull();
+    expect(detail.missingFiles).toEqual(["tokenizer_config.json"]);
   });
 });

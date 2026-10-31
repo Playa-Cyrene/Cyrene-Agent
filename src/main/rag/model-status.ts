@@ -13,8 +13,9 @@ export interface ModelInstallStatus {
   reranker: { standard: boolean };
 }
 
-// All models require these files to be considered "installed"
-const REQUIRED_FILES = ["tokenizer.json", "config.json", "onnx/model_quantized.onnx"];
+// Both supported pipelines use transformers.js tokenizers, which require
+// tokenizer.json and tokenizer_config.json even when models are loaded locally.
+const REQUIRED_FILES = ["tokenizer.json", "tokenizer_config.json", "config.json", "onnx/model_quantized.onnx"];
 
 // Possible sub-paths for each model.
 //
