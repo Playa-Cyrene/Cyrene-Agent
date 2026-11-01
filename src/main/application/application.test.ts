@@ -146,3 +146,40 @@ describe("createApplication", () => {
     expect(events).toContain("activate");
   });
 });
+
+describe("application startup cancellation", () => {
+  it("does not start the shell if exit was already requested", async () => {
+    const deps = makeApplicationDeps([]);
+    await deps.shutdown.requestControlledShutdown({ reason: "exit", finalAction: vi.fn() });
+    await createApplication(deps).start();
+    expect(deps.startShell).not.toHaveBeenCalled();
+    expect(deps.dialog.showErrorBox).not.toHaveBeenCalled();
+  });
+
+  it("does not start background work after core resolves during shutdown", async () => {
+    const deps = makeApplicationDeps([]);
+    deps.startCore = vi.fn(async () => {
+      await deps.shutdown.requestControlledShutdown({ reason: "exit", finalAction: vi.fn() });
+      return makeCore();
+    });
+    const app = createApplication(deps);
+    await app.start().catch((error) => app.handleFatalStartup(error));
+    expect(deps.startBackground).not.toHaveBeenCalled();
+    expect(deps.dialog.showErrorBox).not.toHaveBeenCalled();
+    expect(deps.logFatal).not.toHaveBeenCalled();
+  });
+
+  it("still reports genuine initialization failures even when shutdown was requested", async () => {
+    const deps = makeApplicationDeps([]);
+    const failure = new Error("database corrupt");
+    deps.startCore = vi.fn(async () => {
+      await deps.shutdown.requestControlledShutdown({ reason: "exit", finalAction: vi.fn() });
+      throw failure;
+    });
+    const app = createApplication(deps);
+    await app.start().catch((error) => app.handleFatalStartup(error));
+    expect(deps.logFatal).toHaveBeenCalledWith(failure);
+    expect(deps.dialog.showErrorBox).toHaveBeenCalledOnce();
+    expect(deps.startBackground).not.toHaveBeenCalled();
+  });
+});

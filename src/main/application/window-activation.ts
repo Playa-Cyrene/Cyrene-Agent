@@ -37,7 +37,7 @@ export function createWindowActivationBroker(): WindowActivationBroker {
     const current = actions;
     if (!current) return;
     void Promise.resolve()
-      .then(() => current.activate(request))
+      .then(() => { if (!stopped) return current.activate(request); })
       .catch(() => { /* 激活失败不影响启动门状态 */ });
   }
 
@@ -67,7 +67,7 @@ export function createWindowActivationBroker(): WindowActivationBroker {
       for (const request of queued) {
         chain = chain.then(() => {
           const current = actions;
-          if (!current) return;
+          if (!current || stopped) return;
           return Promise.resolve(current.activate(request)).catch(() => { /* 同 dispatch */ });
         });
       }

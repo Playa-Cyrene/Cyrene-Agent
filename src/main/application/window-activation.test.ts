@@ -80,4 +80,32 @@ describe("createWindowActivationBroker", () => {
     expect(focusLoading).not.toHaveBeenCalled();
     expect(activate).not.toHaveBeenCalled();
   });
+  it("does not dispatch a ready request queued immediately before stop", async () => {
+    const activate = vi.fn();
+    const broker = createWindowActivationBroker();
+    broker.bind({ activate, focusLoading: vi.fn() });
+    await broker.markReady();
+    broker.request({ kind: "chat" });
+    broker.stop();
+    await Promise.resolve();
+    expect(activate).not.toHaveBeenCalled();
+  });
+
+  it("stops draining queued activation after an in-flight activation settles", async () => {
+    let finish!: () => void;
+    const gate = new Promise<void>((resolve) => { finish = resolve; });
+    const activate = vi.fn(() => gate);
+    const broker = createWindowActivationBroker();
+    broker.bind({ activate, focusLoading: vi.fn() });
+    broker.request({ kind: "chat" });
+    broker.request({ kind: "music" });
+    const ready = broker.markReady();
+    await Promise.resolve();
+    expect(activate).toHaveBeenCalledOnce();
+    broker.stop();
+    finish();
+    await ready;
+    expect(activate).toHaveBeenCalledOnce();
+  });
+
 });

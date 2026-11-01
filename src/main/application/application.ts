@@ -14,6 +14,7 @@ import type { WindowActivationBroker } from "./window-activation";
 import type { PreReadyResult } from "./pre-ready";
 import type { ShellResult } from "./shell-bootstrap";
 import type { CoreResult } from "./core-bootstrap";
+import { checkStartupActive, StartupCancelledError } from "./startup-cancellation";
 import type { BackgroundHandle } from "./background";
 
 export interface ApplicationDependencies {
@@ -61,19 +62,27 @@ export function createApplication(deps: ApplicationDependencies): Application {
     },
 
     async start(): Promise<void> {
-      shell = await deps.startShell();
-      const core = await deps.startCore(shell);
-      deps.readiness.transition("background-starting");
-      const background = deps.startBackground(core);
-      context = {
-        readiness: deps.readiness,
-        activation: deps.activation,
-        shutdown: deps.shutdown,
-        shell,
-        core,
-        background,
-      };
-      await background.settled;
+      try {
+        checkStartupActive(deps.shutdown);
+        shell = await deps.startShell();
+        checkStartupActive(deps.shutdown);
+        const core = await deps.startCore(shell);
+        checkStartupActive(deps.shutdown);
+        deps.readiness.transition("background-starting");
+        const background = deps.startBackground(core);
+        context = {
+          readiness: deps.readiness,
+          activation: deps.activation,
+          shutdown: deps.shutdown,
+          shell,
+          core,
+          background,
+        };
+        await background.settled;
+      } catch (error) {
+        if (error instanceof StartupCancelledError && deps.shutdown.isStopping()) return;
+        throw error;
+      }
     },
 
     installLifecycleHandlers(): void {
