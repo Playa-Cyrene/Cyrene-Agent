@@ -23,10 +23,54 @@ export const CLAUDE_REGISTRY = defineVendor({
   },
   models: [
     {
+      model: "claude-fable-5-1",
+      recommendedFor: ["chat"],
+      unknownCapabilities: [
+        {
+          feature: "sampling",
+          transport: "anthropic",
+          note: "官方说明非默认 temperature/top_p/top_k 返回 400；未加采样白名单即不注入采样参数。",
+        },
+      ],
+    },
+    {
+      model: "claude-opus-5-5",
+      recommendedFor: ["chat"],
+      unknownCapabilities: [
+        {
+          feature: "sampling",
+          transport: "anthropic",
+          note: "官方说明非默认 temperature/top_p/top_k 返回 400；未加采样白名单即不注入采样参数。",
+        },
+      ],
+    },
+    {
+      model: "claude-sonnet-5-5",
+      recommendedFor: ["chat"],
+      unknownCapabilities: [
+        {
+          feature: "sampling",
+          transport: "anthropic",
+          note: "官方说明非默认 temperature/top_p/top_k 返回 400；未加采样白名单即不注入采样参数。",
+        },
+      ],
+    },
+    {
       model: "claude-fable-5",
       recommendedFor: ["chat"],
       unknownCapabilities: [
         { feature: "sampling", transport: "anthropic", note: "现有采样白名单未覆盖该型号。" },
+      ],
+    },
+    {
+      model: "claude-opus-5",
+      recommendedFor: ["chat"],
+      unknownCapabilities: [
+        {
+          feature: "sampling",
+          transport: "anthropic",
+          note: "官方说明非默认 temperature/top_p/top_k 返回 400；未加采样白名单即不注入采样参数。",
+        },
       ],
     },
     {
@@ -67,8 +111,14 @@ export const CLAUDE_REGISTRY = defineVendor({
     },
     {
       model: "claude-sonnet-5",
-      recommendedFor: [],
-      note: "历史清单保留名称；不改写用户请求。",
+      recommendedFor: ["chat"],
+      unknownCapabilities: [
+        {
+          feature: "sampling",
+          transport: "anthropic",
+          note: "官方说明非默认 temperature/top_p/top_k 返回 400；未加采样白名单即不注入采样参数。",
+        },
+      ],
     },
   ],
   shortName: "Claude",
@@ -91,6 +141,25 @@ export const CLAUDE_REGISTRY = defineVendor({
         },
       },
     },
+    // Fable 5.1 / Opus 5.5 / Opus 5 / Sonnet 5.5：output_config.format 结构化输出（官方结构化输出文档），
+    // 按完整名称匹配；下方历史规则的 fable-5 / sonnet-5 分支只匹配无后缀或日期后缀，不会误吞这几个名称。
+    {
+      id: "claude-current-structured-output",
+      transport: "anthropic",
+      modelPattern: /^claude-(?:fable-5-1|opus-5-5|opus-5|sonnet-5-5)$/i,
+      tier: "A",
+      mode: "provider_json_schema",
+      verification: "official",
+      metadata: {
+        status: "supported",
+        evidence: {
+          kind: "official",
+          url: "https://platform.claude.com/docs/en/build-with-claude/structured-outputs",
+          checkedAt: "2026-11-01",
+          transports: ["anthropic"],
+        },
+      },
+    },
     {
       id: "claude-structured-output",
 
@@ -104,30 +173,135 @@ export const CLAUDE_REGISTRY = defineVendor({
   ],
   reasoningRules: [
     // ── claude（Anthropic）──
-    { modelPattern: /^claude-fable-5/i, modelInferencePattern: /^claude-fable-5/i, metadata: legacyMetadata("迁自 src/shared/vendor-registry/entries/claude.ts"), capability: {
+    // 依据官方 effort / 思考文档与模型总览（核验 2026-11-01）。具体型号在前，同前缀的旧型号在后。
+    // supportsDisable=false 的型号思考始终开启：本项目把「关闭」折叠为开启并按默认档位发送，
+    // 不会发出 thinking:{type:"disabled"}；思考开启时 must-call 走 tool_choice:auto，
+    // 也避开了 Fable 5.1 / Opus 5.5 / Sonnet 5.5 对 any / tool 强制工具调用的 400。
+    // Fable 5.1：思考始终开启，disabled 返回 400；五档 effort，默认 high。
+    { modelPattern: /^claude-fable-5-1$/i, modelInferencePattern: /^claude-fable-5-1$/i, metadata: {
+      status: "supported",
+      evidence: {
+        kind: "official",
+        url: "https://platform.claude.com/docs/en/build-with-claude/effort",
+        checkedAt: "2026-11-01",
+        transports: ["anthropic"],
+      },
+    }, capability: {
+      control: "toggle-effort",
+      supportedEfforts: ["low", "medium", "high", "xhigh", "max"],
+      defaultEffort: "high",
+      requestStyle: "anthropic-adaptive",
+      supportsDisable: false,
+    } },
+    // Fable 5：同样思考始终开启（此前的规则允许关闭，会发出被拒绝的 disabled）。
+    { modelPattern: /^claude-fable-5(?:$|-\d{8})/i, modelInferencePattern: /^claude-fable-5(?:$|-\d{8})/i, metadata: {
+      status: "supported",
+      evidence: {
+        kind: "official",
+        url: "https://platform.claude.com/docs/en/build-with-claude/effort",
+        checkedAt: "2026-11-01",
+        transports: ["anthropic"],
+      },
+    }, capability: {
+      control: "toggle-effort",
+      supportedEfforts: ["low", "medium", "high", "xhigh", "max"],
+      defaultEffort: "high",
+      requestStyle: "anthropic-adaptive",
+      supportsDisable: false,
+    } },
+    // Opus 5.5：思考始终开启，任何档位下 disabled 都返回 400；默认 medium（比 Opus 5 低一档）。
+    { modelPattern: /^claude-opus-5-5$/i, modelInferencePattern: /^claude-opus-5-5$/i, metadata: {
+      status: "supported",
+      evidence: {
+        kind: "official",
+        url: "https://platform.claude.com/docs/en/build-with-claude/effort",
+        checkedAt: "2026-11-01",
+        transports: ["anthropic"],
+      },
+    }, capability: {
+      control: "toggle-effort",
+      supportedEfforts: ["low", "medium", "high", "xhigh", "max"],
+      defaultEffort: "medium",
+      requestStyle: "anthropic-adaptive",
+      supportsDisable: false,
+    } },
+    // Opus 5：思考默认开启；disabled 只在 high 及以下接受。关闭时本项目不发送 effort，
+    // 服务端取默认 high，因此可以开放关闭。
+    { modelPattern: /^claude-opus-5$/i, modelInferencePattern: /^claude-opus-5$/i, metadata: {
+      status: "supported",
+      evidence: {
+        kind: "official",
+        url: "https://platform.claude.com/docs/en/build-with-claude/effort",
+        checkedAt: "2026-11-01",
+        transports: ["anthropic"],
+      },
+    }, capability: {
       control: "toggle-effort",
       supportedEfforts: ["low", "medium", "high", "xhigh", "max"],
       defaultEffort: "high",
       requestStyle: "anthropic-adaptive",
       supportsDisable: true,
     } },
-    { modelPattern: /^claude-sonnet-5/i, modelInferencePattern: /^claude-sonnet-5/i, metadata: legacyMetadata("迁自 src/shared/vendor-registry/entries/claude.ts"), capability: {
+    // Sonnet 5.5：disabled 返回 400（关闭前置思考需改用 between_tools，本项目暂不支持），默认 high。
+    { modelPattern: /^claude-sonnet-5-5$/i, modelInferencePattern: /^claude-sonnet-5-5$/i, metadata: {
+      status: "supported",
+      evidence: {
+        kind: "official",
+        url: "https://platform.claude.com/docs/en/build-with-claude/effort",
+        checkedAt: "2026-11-01",
+        transports: ["anthropic"],
+      },
+    }, capability: {
+      control: "toggle-effort",
+      supportedEfforts: ["low", "medium", "high", "xhigh", "max"],
+      defaultEffort: "high",
+      requestStyle: "anthropic-adaptive",
+      supportsDisable: false,
+    } },
+    // Sonnet 5：自适应思考，可关闭，默认 high。
+    { modelPattern: /^claude-sonnet-5(?:$|-\d{8})/i, modelInferencePattern: /^claude-sonnet-5(?:$|-\d{8})/i, metadata: {
+      status: "supported",
+      evidence: {
+        kind: "official",
+        url: "https://platform.claude.com/docs/en/build-with-claude/effort",
+        checkedAt: "2026-11-01",
+        transports: ["anthropic"],
+      },
+    }, capability: {
       control: "toggle-effort",
       supportedEfforts: ["low", "medium", "high", "xhigh", "max"],
       defaultEffort: "high",
       requestStyle: "anthropic-adaptive",
       supportsDisable: true,
     } },
-    { modelPattern: /^claude-opus-4-(8|7|6)/i, modelInferencePattern: /^claude-opus-4-(8|7|6)/i, metadata: legacyMetadata("迁自 src/shared/vendor-registry/entries/claude.ts"), capability: {
+    // Opus 4.8 / 4.7：五档 effort（xhigh 自 Opus 4.7 起提供），可关闭。
+    { modelPattern: /^claude-opus-4-[78]/i, modelInferencePattern: /^claude-opus-4-[78]/i, metadata: {
+      status: "supported",
+      evidence: {
+        kind: "official",
+        url: "https://platform.claude.com/docs/en/build-with-claude/effort",
+        checkedAt: "2026-11-01",
+        transports: ["anthropic"],
+      },
+    }, capability: {
       control: "toggle-effort",
       supportedEfforts: ["low", "medium", "high", "xhigh", "max"],
       defaultEffort: "high",
       requestStyle: "anthropic-adaptive",
       supportsDisable: true,
     } },
-    { modelPattern: /^claude-sonnet-4-6/i, modelInferencePattern: /^claude-sonnet-4-6/i, metadata: legacyMetadata("迁自 src/shared/vendor-registry/entries/claude.ts"), capability: {
+    // Opus 4.6 / Sonnet 4.6：没有 xhigh，最高为 max（此前的规则误列 xhigh、漏了 max）。
+    { modelPattern: /^claude-(?:opus|sonnet)-4-6/i, modelInferencePattern: /^claude-(?:opus|sonnet)-4-6/i, metadata: {
+      status: "supported",
+      evidence: {
+        kind: "official",
+        url: "https://platform.claude.com/docs/en/build-with-claude/effort",
+        checkedAt: "2026-11-01",
+        transports: ["anthropic"],
+      },
+    }, capability: {
       control: "toggle-effort",
-      supportedEfforts: ["low", "medium", "high", "xhigh"],
+      supportedEfforts: ["low", "medium", "high", "max"],
       defaultEffort: "high",
       requestStyle: "anthropic-adaptive",
       supportsDisable: true,

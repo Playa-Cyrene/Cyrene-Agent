@@ -239,6 +239,38 @@ describe("G2 Claude + reasoning 透传", () => {
     expect(body.thinking).toEqual({ type: "disabled" });
     expect((body.output_config as Record<string, unknown> | undefined)?.effort).toBeUndefined();
   });
+
+  // 官方 effort / 思考文档（核验 2026-11-01）：Fable 5.1 / Fable 5 / Opus 5.5 / Sonnet 5.5 发送
+  // thinking:{type:"disabled"} 返回 400；Opus 5 只在 high 及以下接受关闭；Opus 5.5 默认 medium。
+  const claudeBody = (model: string, reasoning?: ReasoningPreference) => JSON.parse(adapter.buildRequest(
+    { model, messages: [{ role: "user", content: "hi" }], maxTokens: 100 },
+    cfgOf(claudeCap, { model, ...(reasoning ? { reasoning } : {}) }),
+  ).body) as Record<string, unknown>;
+
+  test.each(["claude-fable-5-1", "claude-fable-5", "claude-opus-5-5", "claude-sonnet-5-5"])("%s + off → 仍发送自适应思考，不发 disabled", (model) => {
+    const body = claudeBody(model, { mode: "off" });
+    expect(body.thinking).toEqual({ type: "adaptive" });
+  });
+
+  test("claude-opus-5-5 未设置档位 → 默认 medium；所选 xhigh 照常发送", () => {
+    expect((claudeBody("claude-opus-5-5").output_config as Record<string, unknown>).effort).toBe("medium");
+    expect((claudeBody("claude-opus-5-5", { mode: "on", effort: "xhigh" }).output_config as Record<string, unknown>).effort).toBe("xhigh");
+  });
+
+  test.each(["claude-fable-5-1", "claude-sonnet-5-5"])("%s 未设置档位 → 默认 high", (model) => {
+    expect((claudeBody(model).output_config as Record<string, unknown>).effort).toBe("high");
+  });
+
+  test("claude-opus-5 + off → thinking.disabled 且不带 effort（服务端取默认 high，避开 xhigh/max 下关闭的 400）", () => {
+    const body = claudeBody("claude-opus-5", { mode: "off" });
+    expect(body.thinking).toEqual({ type: "disabled" });
+    expect((body.output_config as Record<string, unknown> | undefined)?.effort).toBeUndefined();
+  });
+
+  test.each(["claude-opus-4-6", "claude-sonnet-4-6"])("%s 不支持 xhigh：所选 xhigh 收敛到默认 high，max 照常发送", (model) => {
+    expect((claudeBody(model, { mode: "on", effort: "xhigh" }).output_config as Record<string, unknown>).effort).toBe("high");
+    expect((claudeBody(model, { mode: "on", effort: "max" }).output_config as Record<string, unknown>).effort).toBe("max");
+  });
 });
 
 describe("kimi-k3.1-pro 请求体", () => {
