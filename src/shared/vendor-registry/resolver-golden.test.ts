@@ -64,6 +64,30 @@ describe("resolveReasoningCapability — 行为基准", () => {
   });
 
   // 预期值按官方文档独立填写（effort 文档，核验 2026-10-08），不从注册表复制。
+  // 预期值按官方模型总览与 effort 文档独立填写（核验 2026-11-01），不从注册表复制。
+  test.each([
+    ["claude-fable-5-1", "high", false],
+    ["claude-opus-5-5", "medium", false],
+    ["claude-opus-5", "high", true],
+    ["claude-sonnet-5-5", "high", false],
+  ] as const)("claude + %s → 自适应思考，五档 effort，默认 %s，可关闭=%s", (model, defaultEffort, supportsDisable) => {
+    const cap = resolveReasoningCapability("claude", model);
+    expect(cap.requestStyle).toBe("anthropic-adaptive");
+    expect(cap.supportedEfforts).toEqual(["low", "medium", "high", "xhigh", "max"]);
+    expect(cap.defaultEffort).toBe(defaultEffort);
+    expect(cap.supportsDisable).toBe(supportsDisable);
+  });
+
+  test("新一代 Claude 规则可跨厂商推断：托管端点使用同一型号名", () => {
+    expect(resolveReasoningCapability("unknown-provider", "claude-opus-5-5").defaultEffort).toBe("medium");
+    expect(resolveReasoningCapability("unknown-provider", "claude-sonnet-5-5").supportsDisable).toBe(false);
+  });
+
+  test("邻近反例：未发布的 claude-sonnet-5-6 / claude-opus-5-1 不套用新规则，落兜底", () => {
+    expect(resolveReasoningCapability("claude", "claude-sonnet-5-6")).toBe(UNKNOWN_REASONING_CAPABILITY);
+    expect(resolveReasoningCapability("claude", "claude-opus-5-1")).toBe(UNKNOWN_REASONING_CAPABILITY);
+  });
+
   test("claude + claude-haiku-5-5 → 自适应思考，五档 effort，默认 medium，可关闭", () => {
     const cap = resolveReasoningCapability("claude", "claude-haiku-5-5");
     expect(cap.control).toBe("toggle-effort");

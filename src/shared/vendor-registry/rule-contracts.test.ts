@@ -25,8 +25,12 @@ const CASES: readonly [string, readonly string[], ReasoningCapability][] = [
   ["chatgpt", ["gpt-5", "gpt-5-mini"], effort(["minimal", "low", "medium", "high"])],
   ["chatgpt", ["o1-preview", "o3-mini"], effort(three)],
   ["chatgpt", ["o4-mini"], effort(["medium", "high"])],
-  ["claude", ["claude-fable-5", "claude-sonnet-5", "claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6"], claude()],
-  ["claude", ["claude-sonnet-4-6"], claude(["low", "medium", "high", "xhigh"])],
+  // 官方 effort / 思考文档（核验 2026-11-01）：Fable 5 / 5.1、Opus 5.5、Sonnet 5.5 的思考不能关闭；
+  // Opus 5.5 默认 medium；Opus 4.6 / Sonnet 4.6 没有 xhigh，最高为 max。
+  ["claude", ["claude-opus-5", "claude-sonnet-5", "claude-opus-4-8", "claude-opus-4-7"], claude()],
+  ["claude", ["claude-fable-5-1", "claude-fable-5", "claude-sonnet-5-5"], { ...claude(), supportsDisable: false }],
+  ["claude", ["claude-opus-5-5"], { ...claude(), supportsDisable: false, defaultEffort: "medium" }],
+  ["claude", ["claude-opus-4-6", "claude-sonnet-4-6"], claude(["low", "medium", "high", "max"])],
   ["deepseek", ["deepseek-flash", "deepseek-v4-pro", "deepseek-v4-flash-vision-exp"], effort(["low", "high", "max"], {
     control: "toggle-effort", requestStyle: "thinking-type", defaultEffort: "high", autoEffort: "high",
   })],
