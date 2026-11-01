@@ -6,6 +6,7 @@ import { SettingsSegmented, SettingsSwitch } from "../../components/ui/SettingsC
 import { setUiLocale, useTranslation } from "../../i18n";
 import { normalizeUiLanguage, type UiLanguage } from "../../../../shared/ui-language";
 import { Card } from "../../components/ui/Card";
+import { ReleaseNotes } from "./ReleaseNotes";
 import { useAppUpdate } from "../../hooks/useAppUpdate";
 import { resolveAppUpdateView, resolveVersionTitleKey, WEBSITE_URL } from "./app-update-view";
 
@@ -202,7 +203,7 @@ export function GeneralSettingsPanel() {
               <div className="cy-settings-row__copy">
                 <strong data-settings-search-id="settingsPage.general.softwareUpdate">{t("settingsPage.general.softwareUpdate")}</strong>
                 <span>{t(updateView.label.key, updateView.label.params)}</span>
-                {updateState.releaseNotes && <span className="cy-settings-general__notice">{updateState.releaseNotes}</span>}
+                {updateState.releaseNotesHtml && <ReleaseNotes html={updateState.releaseNotesHtml} />}
               </div>
               <div className="cy-settings-row__control">
                 {updateView.busy && <Spin size="small" />}
