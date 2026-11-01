@@ -38,6 +38,18 @@ describe("更新说明转成可安全渲染的 HTML", () => {
     expect(releaseNotesToSafeHtml("可靠性更新")).toBe("<p>可靠性更新</p>");
   });
 
+  it("Markdown 代码片段里的标签按文字保留，其余 Markdown 照常转换", () => {
+    const html = releaseNotesToSafeHtml("## 修复\n\n- 修复 `<webview>` 的导航行为\n\n```\n<script>alert(1)</script>\n```")!;
+    expect(html).toContain("<h2>修复</h2>");
+    expect(html).toContain("<li>修复 <code>&lt;webview&gt;</code> 的导航行为</li>");
+    expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+    expect(html).not.toContain("<script>");
+  });
+
+  it("以普通文字开头、中间含行内标签的说明按 Markdown 处理", () => {
+    expect(releaseNotesToSafeHtml("新增 <kbd>Ctrl</kbd> 快捷键说明")).toBe("<p>新增 Ctrl 快捷键说明</p>");
+  });
+
   it("空白或净化后为空的说明返回 null，不显示空框", () => {
     expect(releaseNotesToSafeHtml("   ")).toBeNull();
     expect(releaseNotesToSafeHtml("<script>alert(1)</script>")).toBeNull();
