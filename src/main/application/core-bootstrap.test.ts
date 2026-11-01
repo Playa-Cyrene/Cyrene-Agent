@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { createApplication } from "./application";
 import { createShutdownCoordinator } from "./shutdown";
 import { createStartupReadiness } from "./readiness";
 import { createWindowActivationBroker } from "./window-activation";
@@ -18,6 +19,9 @@ function makeServices(): CoreServices {
     screenshot: { shutdown: vi.fn() } as never,
     music: { shutdown: vi.fn(async () => ({})) } as never,
     update: {} as never,
+    gmailAuth: { shutdown: vi.fn(async () => undefined) } as never,
+    gmail: {} as never,
+    mailAttachmentStore: { clear: vi.fn() } as never,
   };
 }
 
@@ -216,4 +220,225 @@ describe("startCore", () => {
     expect(calls.indexOf("plugins-stop")).toBeGreaterThan(-1);
     expect(calls.indexOf("plugins-stop")).toBeLessThan(calls.indexOf("channels-stop"));
   });
+});
+
+function deferred<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+}
+
+describe("startup interrupted by shutdown", () => {
+  it.each(["initSkills", "initSandbox", "initRag", "registerCoreIpc"] as const)(
+    "does not start later stages after shutdown during %s", async (stage) => {
+      const gate = deferred();
+      const entered = deferred();
+      const calls: string[] = [];
+      const deps = makeCoreDeps(calls, { [stage]: () => { entered.resolve(); return gate.promise; } });
+      const starting = startCore(deps);
+      const result = expect(starting).rejects.toThrow("startup cancelled by shutdown");
+      await entered.promise;
+      const final = vi.fn();
+      const stopping = deps.shutdown.requestControlledShutdown({ reason: "test", finalAction: final });
+      expect(final).not.toHaveBeenCalled();
+      gate.resolve();
+      await result;
+      await stopping;
+      expect(final).toHaveBeenCalledOnce();
+      expect(deps.readiness.getPhase()).toBe("stopped");
+      expect(deps.chatLoad).not.toHaveBeenCalled();
+      expect(calls).not.toContain("reveal");
+      expect(deps.activation.isReady()).toBe(false);
+      if (stage === "initSkills") expect(calls).not.toContain("services");
+      if (stage === "initSandbox") expect(calls).not.toContain("plan");
+      if (stage === "initRag") expect(calls).not.toContain("runtime");
+    },
+  );
+
+  it("cleans late plugin startup before channels and persistence close", async () => {
+    const gate = deferred();
+    const entered = deferred();
+    const calls: string[] = [];
+    const stopPlugin = vi.fn(async () => { calls.push("plugin-stop"); });
+    const deps = makeCoreDeps(calls, {
+      startPlugins: async () => { entered.resolve(); await gate.promise; return { stop: stopPlugin } as never; },
+    });
+    deps.shutdown.register({ id: "db", phase: "closePersistence", dispose: () => { calls.push("db-close"); } });
+    const starting = startCore(deps);
+    const result = expect(starting).rejects.toThrow("startup cancelled");
+    await entered.promise;
+    const final = vi.fn();
+    const stopping = deps.shutdown.requestControlledShutdown({ reason: "test", finalAction: final });
+    const repeat = deps.shutdown.requestControlledShutdown({ reason: "again", finalAction: vi.fn() });
+    gate.resolve();
+    await result;
+    await Promise.all([stopping, repeat]);
+    expect(stopPlugin).toHaveBeenCalledOnce();
+    expect(calls.indexOf("plugin-stop")).toBeLessThan(calls.indexOf("channels-stop"));
+    expect(calls.indexOf("channels-stop")).toBeLessThan(calls.indexOf("db-close"));
+    expect(final).toHaveBeenCalledOnce();
+    expect(deps.chatLoad).not.toHaveBeenCalled();
+  });
+
+  it("does not delay shutdown on a page load that needs window disposal to settle", async () => {
+    const page = deferred();
+    const entered = deferred();
+    const calls: string[] = [];
+    const deps = makeCoreDeps(calls);
+    vi.mocked(deps.shell.chat.load).mockImplementation(() => { entered.resolve(); return page.promise; });
+    deps.shutdown.register({ id: "close-window", phase: "stopLocalResources", dispose: () => {
+      page.reject(Object.assign(new Error("ERR_FAILED (-2) loading file:///test/index.html"), { code: "ERR_FAILED", errno: -2 }));
+    } });
+    const starting = startCore(deps);
+    const result = expect(starting).rejects.toThrow("startup cancelled");
+    await entered.promise;
+    await deps.shutdown.requestControlledShutdown({ reason: "test", finalAction: vi.fn() });
+    await result;
+    expect(calls).not.toContain("reveal");
+    expect(deps.petWindowCreated).toBe(false);
+  });
+
+  it("does not transition to core-ready after a successful load finishes during shutdown", async () => {
+    const page = deferred();
+    const entered = deferred();
+    const deps = makeCoreDeps([]);
+    vi.mocked(deps.shell.chat.load).mockImplementation(() => { entered.resolve(); return page.promise; });
+    const starting = startCore(deps);
+    const result = expect(starting).rejects.toThrow("startup cancelled");
+    await entered.promise;
+    await deps.shutdown.requestControlledShutdown({ reason: "test", finalAction: vi.fn() });
+    page.resolve();
+    await result;
+    expect(deps.readiness.getPhase()).toBe("stopped");
+    expect(deps.petWindowCreated).toBe(false);
+  });
+
+  it.each([false, true])("preserves a real load failure (stopping=%s)", async (stopping) => {
+    const gate = deferred();
+    const entered = deferred();
+    const deps = makeCoreDeps([]);
+    const error = new Error("renderer configuration invalid");
+    vi.mocked(deps.shell.chat.load).mockImplementation(() => { entered.resolve(); return gate.promise; });
+    const starting = startCore(deps);
+    const result = expect(starting).rejects.toBe(error);
+    await entered.promise;
+    if (stopping) await deps.shutdown.requestControlledShutdown({ reason: "test", finalAction: vi.fn() });
+    gate.reject(error);
+    await result;
+  });
+
+  it("does not classify ERR_FAILED as cancellation during normal startup", async () => {
+    const deps = makeCoreDeps([]);
+    const error = Object.assign(new Error("ERR_FAILED (-2) loading file:///missing.html"), { code: "ERR_FAILED", errno: -2 });
+    vi.mocked(deps.shell.chat.load).mockRejectedValue(error);
+    await expect(startCore(deps)).rejects.toBe(error);
+  });
+
+  it("honors the existing shutdown deadline and cleans a plugin returning after it", async () => {
+    vi.useFakeTimers();
+    try {
+      const entered = deferred();
+      const gate = deferred();
+      const pluginStopped = deferred();
+      const stop = vi.fn(() => pluginStopped.promise);
+      const calls: string[] = [];
+      const deps = makeCoreDeps(calls, { startPlugins: async () => { entered.resolve(); await gate.promise; return { stop } as never; } });
+      const starting = startCore(deps);
+      const result = expect(starting).rejects.toThrow("startup cancelled");
+      await entered.promise;
+      const final = vi.fn();
+      const stopping = deps.shutdown.requestControlledShutdown({ reason: "test", finalAction: final });
+      await vi.advanceTimersByTimeAsync(1000);
+      await stopping;
+      expect(final).toHaveBeenCalledOnce();
+      gate.resolve();
+      await result;
+      await vi.advanceTimersByTimeAsync(0);
+      expect(stop).toHaveBeenCalledOnce();
+      expect(calls).not.toContain("channels-stop");
+      pluginStopped.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(calls).toContain("channels-stop");
+      expect(deps.chatLoad).not.toHaveBeenCalled();
+    } finally { vi.useRealTimers(); }
+  });
+  it("cancels while adapter registration is pending without starting plugins", async () => {
+    const gate = deferred();
+    const entered = deferred();
+    const calls: string[] = [];
+    const stop = vi.fn(async () => undefined);
+    const deps = makeCoreDeps(calls, {
+      createChannels: () => ({ initialize: () => entered.resolve(), adaptersRegistered: gate.promise, shutdown: stop } as never),
+    });
+    const result = expect(startCore(deps)).rejects.toThrow("startup cancelled");
+    await entered.promise;
+    const stopping = deps.shutdown.requestControlledShutdown({ reason: "test", finalAction: vi.fn() });
+    gate.resolve();
+    await result;
+    await stopping;
+    expect(stop).toHaveBeenCalledOnce();
+    expect(calls).not.toContain("plugins-start");
+  });
+
+  it.each(["resolve", "reject"])("cancels onboarding load during shutdown (%s)", async (outcome) => {
+    const gate = deferred();
+    const entered = deferred();
+    const deps = makeCoreDeps([], { loadGeneralSettings: () => ({ petVisible: true, disclaimerAcceptedVersion: "old" }) as never });
+    deps.shell.windowManager.createOnboardingWindow = vi.fn(() => { entered.resolve(); return gate.promise as never; });
+    const result = expect(startCore(deps)).rejects.toThrow("startup cancelled");
+    await entered.promise;
+    await deps.shutdown.requestControlledShutdown({ reason: "test", finalAction: vi.fn() });
+    if (outcome === "resolve") gate.resolve();
+    else gate.reject(new Error("ERR_ABORTED (-3) loading file:///onboarding.html"));
+    await result;
+    expect(deps.petWindowCreated).toBe(false);
+    expect(deps.activation.isReady()).toBe(false);
+  });
+
+  it("does not mark startup windows or activate after stopping during reveal", async () => {
+    const gate = deferred();
+    const entered = deferred();
+    const calls: string[] = [];
+    const deps = makeCoreDeps(calls, { revealStartupWindows: async (options) => {
+      entered.resolve();
+      await gate.promise;
+      expect(options.isStopping?.()).toBe(true);
+    } });
+    const result = expect(startCore(deps)).rejects.toThrow("startup cancelled");
+    await entered.promise;
+    await deps.shutdown.requestControlledShutdown({ reason: "test", finalAction: vi.fn() });
+    gate.resolve();
+    await result;
+    expect(calls).not.toContain("mark-startup-windows");
+    expect(deps.activation.isReady()).toBe(false);
+  });
+
+  it("settles application startup without a fatal dialog when shutdown interrupts the real core loader", async () => {
+    const entered = deferred();
+    const page = deferred();
+    const deps = makeCoreDeps([]);
+    vi.mocked(deps.shell.chat.load).mockImplementation(() => { entered.resolve(); return page.promise; });
+    deps.shutdown.register({ id: "window", phase: "stopLocalResources", dispose: () => {
+      page.reject(new Error("ERR_FAILED (-2) loading file:///test/index.html"));
+    } });
+    const showErrorBox = vi.fn();
+    const logFatal = vi.fn();
+    const startBackground = vi.fn();
+    const app = createApplication({
+      app: { whenReady: vi.fn(), quit: vi.fn(), on: vi.fn(), removeListener: vi.fn() },
+      dialog: { showErrorBox }, readiness: deps.readiness, activation: deps.activation,
+      shutdown: deps.shutdown, prepare: () => ({ isPrimaryProcess: true }),
+      startShell: async () => deps.shell, startCore: () => startCore(deps), startBackground, logFatal,
+    });
+    const starting = app.start().catch((error) => app.handleFatalStartup(error));
+    await entered.promise;
+    await deps.shutdown.requestControlledShutdown({ reason: "test", finalAction: vi.fn() });
+    await starting;
+    expect(startBackground).not.toHaveBeenCalled();
+    expect(logFatal).not.toHaveBeenCalled();
+    expect(showErrorBox).not.toHaveBeenCalled();
+    expect(deps.readiness.getPhase()).toBe("stopped");
+  });
+
 });

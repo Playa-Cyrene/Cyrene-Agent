@@ -81,3 +81,20 @@ describe("revealStartupWindows", () => {
     expect(chatWindow.state.visible).toBe(true);
   });
 });
+
+it("does not reveal windows after shutdown begins during minimum splash delay", async () => {
+  let stopped = false;
+  const chatWindow = createFakeWindow();
+  const onboardingWindow = createFakeWindow();
+  const splashWindow = createFakeWindow(true);
+  await revealStartupWindows({
+    splashWindow, chatWindow, onboardingWindow, showOnboardingWindow: true,
+    loadingShownAt: 0, now: () => 0, minimumDurationMs: 2500,
+    isStopping: () => stopped,
+    sleep: async () => { stopped = true; },
+  });
+  expect(chatWindow.state.visible).toBe(false);
+  expect(onboardingWindow.state.visible).toBe(false);
+  // Window shutdown owns closing, reveal does not fight it.
+  expect(splashWindow.state.destroyed).toBe(false);
+});

@@ -34,6 +34,7 @@ import type { SchedulerSubsystem } from "../scheduler/bootstrap";
 import type { GeneralSettings } from "../settings/general-settings";
 import type { WindowManager } from "../windows/window-manager";
 import type { PluginManager } from "../../plugins/manager";
+import { checkStartupActive, isCancelledPageLoad, StartupCancelledError } from "./startup-cancellation";
 import { CURRENT_DISCLAIMER_VERSION } from "../../shared/disclaimer";
 
 export interface CoreServices {
@@ -118,148 +119,195 @@ async function timedStep<T>(name: string, fn: () => T | Promise<T>): Promise<T> 
 
 export async function startCore(deps: CoreDependencies): Promise<CoreResult> {
   const { shell, readiness, activation, shutdown } = deps;
-
-  // 升级迁移：必须在任何 prompts/skills 读取之前
-  deps.migrateStagedExternalContent();
-
-  // Skill 系统：失败只降级，不阻塞聊天
-  try {
-    await timedStep("initSkills", () => deps.initSkills());
-  } catch (error) {
-    console.error("[Core] initSkills failed:", error);
-    readiness.markDegraded({ capability: "skills", message: degradedMessage(error), at: Date.now(), error });
+  checkStartupActive(shutdown);
+  // 仅等待资源装配结算，避免清理阶段先于异步装配登记资源。
+  // 不等待页面加载/reveal（它们可能依赖窗口关闭）；总等待仍受 shutdown 的现有期限约束。
+  let releaseConstruction!: () => void;
+  const constructing = new Promise<void>((resolve) => { releaseConstruction = resolve; });
+  const unregisterConstruction = shutdown.register({
+    id: "core-startup", phase: "quiesce", dispose: () => constructing,
+  });
+  const cleanupPhases = ["stopActiveWork", "stopExternalConsumers", "stopLocalResources"] as const;
+  type CleanupPhase = typeof cleanupPhases[number];
+  const cleanups: Array<{ phase: CleanupPhase; dispose(): Promise<void> }> = [];
+  function registerResource(input: { id: string; phase: CleanupPhase; dispose(): void | Promise<void> }): void {
+    let disposed: Promise<void> | undefined;
+    const dispose = () => disposed ??= Promise.resolve().then(() => input.dispose());
+    cleanups.push({ phase: input.phase, dispose });
+    shutdown.register({ ...input, dispose });
   }
-
-  // 低成本服务（runtimeState/tts/embedding/proactive/git/lsp/screenshot/music/update）
-  const services = deps.createLowCostServices();
-
-  // SRT 沙箱：失败不阻塞启动（fallback 到直接 spawn）
   try {
-    await timedStep("initSandbox", () => deps.initSandbox());
-  } catch (error) {
-    console.error("[Core] initSandbox failed at startup:", error);
-    readiness.markDegraded({ capability: "sandbox", message: degradedMessage(error), at: Date.now(), error });
+    // 升级迁移：必须在任何 prompts/skills 读取之前
+    deps.migrateStagedExternalContent();
+
+    // Skill 系统：失败只降级，不阻塞聊天
+    try {
+      await timedStep("initSkills", () => deps.initSkills());
+    } catch (error) {
+      console.error("[Core] initSkills failed:", error);
+      readiness.markDegraded({ capability: "skills", message: degradedMessage(error), at: Date.now(), error });
+    }
+
+    checkStartupActive(shutdown);
+
+    // 低成本服务（runtimeState/tts/embedding/proactive/git/lsp/screenshot/music/update）
+    const services = deps.createLowCostServices();
+    registerResource({
+      id: "screenshot",
+      phase: "stopLocalResources",
+      dispose: async () => { await services.screenshot.shutdown(); },
+    });
+    registerResource({
+      id: "lsp",
+      phase: "stopLocalResources",
+      dispose: async () => { await services.lsp.disposeAll(); },
+    });
+    registerResource({
+      id: "git",
+      phase: "stopLocalResources",
+      dispose: async () => { await services.git.dispose(); },
+    });
+    registerResource({
+      id: "music",
+      phase: "stopLocalResources",
+      dispose: async () => { await services.music.shutdown(); },
+    });
+    registerResource({
+      id: "gmail-auth",
+      phase: "stopLocalResources",
+      dispose: async () => { await services.gmailAuth.shutdown(); },
+    });
+    registerResource({
+      id: "mail-attachments",
+      phase: "stopLocalResources",
+      dispose: async () => { services.mailAttachmentStore.clear(); },
+    });
+
+    // SRT 沙箱：失败不阻塞启动（fallback 到直接 spawn）
+    try {
+      await timedStep("initSandbox", () => deps.initSandbox());
+    } catch (error) {
+      console.error("[Core] initSandbox failed at startup:", error);
+      readiness.markDegraded({ capability: "sandbox", message: degradedMessage(error), at: Date.now(), error });
+    }
+
+    checkStartupActive(shutdown);
+    deps.initPlanMode();
+    deps.registerAllTools(services);
+
+    // RAG：失败记录降级，聊天仍允许启动
+    try {
+      await timedStep("initRag", () => deps.initRag());
+    } catch (error) {
+      console.error("[Core] RAG init FAILED:", error);
+      readiness.markDegraded({ capability: "rag", message: degradedMessage(error), at: Date.now(), error });
+    }
+
+    checkStartupActive(shutdown);
+    const runtime = deps.createRuntime(services);
+
+    // channels 只装配并同步注册内置 adapter；网络启动仍在 background 阶段。
+    const channels = deps.createChannels(runtime, services);
+    registerResource({ id: "channels", phase: "stopExternalConsumers", dispose: async () => { await channels.shutdown(); } });
+    await timedStep("channels-adapters", async () => {
+      channels.initialize();
+      await channels.adaptersRegistered;
+    });
+
+    checkStartupActive(shutdown);
+
+    // scheduler store 先加载并注册 IPC，再启动插件：插件调度服务写入的是
+    // 已加载的 store，不会覆盖磁盘任务；插件启停联动也在此时接线。
+    const scheduler = deps.createScheduler(runtime, services);
+    scheduler.initialize();
+
+    // 插件严格晚于内置 adapter id 预留，避免插件抢占 feishu/wechat/qq 等内置 id。
+    const plugins = await timedStep("startPlugins", () => deps.startPlugins(services, scheduler, runtime));
+    registerResource({ id: "plugins", phase: "stopActiveWork", dispose: async () => { await plugins.stop(); } });
+    checkStartupActive(shutdown);
+
+    // 注册聊天渲染进程可能调用的全部 IPC 处理器 —— 必须先于 chat.load()
+    await deps.registerCoreIpc({ ipc: shell.ipc, runtime, services, channels, scheduler });
+    checkStartupActive(shutdown);
+
+    // 提醒中心装配：IPC 注册先于 toast 窗口预加载（渲染页加载即可能 invoke getAll）
+    deps.wireToastCenter({ ipc: shell.ipc, windowManager: shell.windowManager });
+
+    releaseConstruction();
+    unregisterConstruction();
+
+    // 全部处理器就绪后才加载聊天页面；页面加载失败属于致命错误（向上抛出）
+    try {
+      await timedStep("chat-load", () => shell.chat.load());
+    } catch (error) {
+      if (shutdown.isStopping() && isCancelledPageLoad(error)) throw new StartupCancelledError();
+      throw error;
+    }
+    checkStartupActive(shutdown);
+
+    // 桌宠：窗口始终创建，petVisible 只决定是否显示（隐藏时不闪现）。
+    // 始终创建是为了保证托盘"显示/隐藏桌宠"与设置面板开关随时能把窗口救回来，
+    // 且 alwaysOnTop / zoom / live2d 生命周期在隐藏状态下同样完成接线。
+    const generalSettings = deps.loadGeneralSettings();
+    // 启动期一次性完整应用通用设置（登录项同步等）；此时桌宠未创建，show/hide 为 no-op
+    deps.applyGeneralSettings(generalSettings, services);
+    // showOnReady=petVisible：页面就绪才显示，避免空窗口闪现；创建本身在核心 IPC 注册之后
+    const disclaimerAccepted = generalSettings.disclaimerAcceptedVersion === undefined
+      || generalSettings.disclaimerAcceptedVersion === CURRENT_DISCLAIMER_VERSION;
+    let onboardingWindow = null;
+    try {
+      onboardingWindow = disclaimerAccepted ? null : await shell.windowManager.createOnboardingWindow?.() ?? null;
+    } catch (error) {
+      if (shutdown.isStopping() && isCancelledPageLoad(error)) throw new StartupCancelledError();
+      throw error;
+    }
+    checkStartupActive(shutdown);
+    shell.windowManager.createPetWindow(generalSettings.petVisible && disclaimerAccepted);
+    shell.windowManager.onPetWindowReady((win) => {
+      shell.live2dWindowLifecycle.attach(win);
+    });
+    shell.windowManager.onPetWindowClosed(() => {
+      shell.live2dWindowLifecycle.clear();
+    });
+    shell.windowManager.setPetWindowAlwaysOnTop(generalSettings.petAlwaysOnTop);
+    shell.windowManager.applyPetWindowZoom(generalSettings.petZoom);
+
+    readiness.transition("core-ready");
+
+    // 等待最短展示时长 → 关闭 Loading → 显示欢迎窗或聊天主窗 → 放行启动期间的激活请求
+    await deps.revealStartupWindows({
+      splashWindow: shell.splashWindow,
+      chatWindow: shell.chat.window,
+      onboardingWindow,
+      showOnboardingWindow: !disclaimerAccepted,
+      loadingShownAt: shell.loadingShownAt,
+      minimumDurationMs: deps.minimumSplashMs,
+      isStopping: () => shutdown.isStopping(),
+    });
+    checkStartupActive(shutdown);
+    // 窗口已对用户可见的时刻锚点：在此之后打印结束的后台任务，都是“窗口出来后还在跑”的部分
+    console.log(`[StartupTiming] core/windows-revealed (at ${Math.round(performance.now())}ms)`);
+    deps.markStartupWindowsReady();
+
+    // 主窗口可激活：消费启动期间排队的激活请求
+    await activation.markReady();
+    checkStartupActive(shutdown);
+    console.log(`[StartupTiming] core/startCore-total ${Math.round(performance.now())}ms`);
+
+    return { runtime, services, channels, plugins, scheduler };
+  } finally {
+    releaseConstruction();
+    unregisterConstruction();
+    if (shutdown.isFinalizing()) {
+      // 总超时已放弃等待时，迟到资源仍执行一次清理；不延长退出期限。
+      void (async () => {
+        for (const phase of cleanupPhases) {
+          const results = await Promise.allSettled(cleanups.filter((entry) => entry.phase === phase).map((entry) => entry.dispose()));
+          for (const result of results) {
+            if (result.status === "rejected") console.error("[Core] late cleanup failed:", result.reason);
+          }
+        }
+      })();
+    }
   }
-
-  deps.initPlanMode();
-  deps.registerAllTools(services);
-
-  // RAG：失败记录降级，聊天仍允许启动
-  try {
-    await timedStep("initRag", () => deps.initRag());
-  } catch (error) {
-    console.error("[Core] RAG init FAILED:", error);
-    readiness.markDegraded({ capability: "rag", message: degradedMessage(error), at: Date.now(), error });
-  }
-
-  const runtime = deps.createRuntime(services);
-
-  // channels 只装配并同步注册内置 adapter；网络启动仍在 background 阶段。
-  const channels = deps.createChannels(runtime, services);
-  await timedStep("channels-adapters", async () => {
-    channels.initialize();
-    await channels.adaptersRegistered;
-  });
-
-  // scheduler store 先加载并注册 IPC，再启动插件：插件调度服务写入的是
-  // 已加载的 store，不会覆盖磁盘任务；插件启停联动也在此时接线。
-  const scheduler = deps.createScheduler(runtime, services);
-  scheduler.initialize();
-
-  // 插件严格晚于内置 adapter id 预留，避免插件抢占 feishu/wechat/qq 等内置 id。
-  const plugins = await timedStep("startPlugins", () => deps.startPlugins(services, scheduler, runtime));
-
-  // 注册聊天渲染进程可能调用的全部 IPC 处理器 —— 必须先于 chat.load()
-  await deps.registerCoreIpc({ ipc: shell.ipc, runtime, services, channels, scheduler });
-
-  // 提醒中心装配：IPC 注册先于 toast 窗口预加载（渲染页加载即可能 invoke getAll）
-  deps.wireToastCenter({ ipc: shell.ipc, windowManager: shell.windowManager });
-
-  // 全部处理器就绪后才加载聊天页面；页面加载失败属于致命错误（向上抛出）
-  await timedStep("chat-load", () => shell.chat.load());
-
-  // 桌宠：窗口始终创建，petVisible 只决定是否显示（隐藏时不闪现）。
-  // 始终创建是为了保证托盘"显示/隐藏桌宠"与设置面板开关随时能把窗口救回来，
-  // 且 alwaysOnTop / zoom / live2d 生命周期在隐藏状态下同样完成接线。
-  const generalSettings = deps.loadGeneralSettings();
-  // 启动期一次性完整应用通用设置（登录项同步等）；此时桌宠未创建，show/hide 为 no-op
-  deps.applyGeneralSettings(generalSettings, services);
-  // showOnReady=petVisible：页面就绪才显示，避免空窗口闪现；创建本身在核心 IPC 注册之后
-  const disclaimerAccepted = generalSettings.disclaimerAcceptedVersion === undefined
-    || generalSettings.disclaimerAcceptedVersion === CURRENT_DISCLAIMER_VERSION;
-  const onboardingWindow = disclaimerAccepted
-    ? null
-    : await shell.windowManager.createOnboardingWindow?.() ?? null;
-  shell.windowManager.createPetWindow(generalSettings.petVisible && disclaimerAccepted);
-  shell.windowManager.onPetWindowReady((win) => {
-    shell.live2dWindowLifecycle.attach(win);
-  });
-  shell.windowManager.onPetWindowClosed(() => {
-    shell.live2dWindowLifecycle.clear();
-  });
-  shell.windowManager.setPetWindowAlwaysOnTop(generalSettings.petAlwaysOnTop);
-  shell.windowManager.applyPetWindowZoom(generalSettings.petZoom);
-
-  // 注册核心资源清理（固定阶段）；scheduler/proactive/更新定时器由 background 注册
-  shutdown.register({
-    id: "plugins",
-    phase: "stopActiveWork",
-    dispose: async () => { await plugins.stop(); },
-  });
-  shutdown.register({
-    id: "channels",
-    phase: "stopExternalConsumers",
-    dispose: async () => { await channels.shutdown(); },
-  });
-  shutdown.register({
-    id: "screenshot",
-    phase: "stopLocalResources",
-    dispose: async () => { await services.screenshot.shutdown(); },
-  });
-  shutdown.register({
-    id: "lsp",
-    phase: "stopLocalResources",
-    dispose: async () => { await services.lsp.disposeAll(); },
-  });
-  shutdown.register({
-    id: "git",
-    phase: "stopLocalResources",
-    dispose: async () => { await services.git.dispose(); },
-  });
-  shutdown.register({
-    id: "music",
-    phase: "stopLocalResources",
-    dispose: async () => { await services.music.shutdown(); },
-  });
-  shutdown.register({
-    id: "gmail-auth",
-    phase: "stopLocalResources",
-    dispose: async () => { await services.gmailAuth.shutdown(); },
-  });
-  shutdown.register({
-    id: "mail-attachments",
-    phase: "stopLocalResources",
-    dispose: async () => { services.mailAttachmentStore.clear(); },
-  });
-
-  readiness.transition("core-ready");
-
-  // 等待最短展示时长 → 关闭 Loading → 显示欢迎窗或聊天主窗 → 放行启动期间的激活请求
-  await deps.revealStartupWindows({
-    splashWindow: shell.splashWindow,
-    chatWindow: shell.chat.window,
-    onboardingWindow,
-    showOnboardingWindow: !disclaimerAccepted,
-    loadingShownAt: shell.loadingShownAt,
-    minimumDurationMs: deps.minimumSplashMs,
-  });
-  // 窗口已对用户可见的时刻锚点：在此之后打印结束的后台任务，都是“窗口出来后还在跑”的部分
-  console.log(`[StartupTiming] core/windows-revealed (at ${Math.round(performance.now())}ms)`);
-  deps.markStartupWindowsReady();
-
-  // 主窗口可激活：消费启动期间排队的激活请求
-  await activation.markReady();
-  console.log(`[StartupTiming] core/startCore-total ${Math.round(performance.now())}ms`);
-
-  return { runtime, services, channels, plugins, scheduler };
 }

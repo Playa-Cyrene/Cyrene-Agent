@@ -15,6 +15,8 @@ export interface RevealStartupWindowsOptions {
   /** Loading 实际 show() 的单调时钟时刻；undefined 表示未记录（跳过最短等待）。 */
   loadingShownAt?: number;
   minimumDurationMs: number;
+  /** 退出时不再显示窗口；省略时保持正常启动行为。 */
+  isStopping?: () => boolean;
   now?: () => number;
   sleep?: (milliseconds: number) => Promise<void>;
 }
@@ -25,6 +27,7 @@ export interface RevealStartupWindowsOptions {
  * 桌宠不属于通用 reveal：其创建与显示由启动编排器按 petVisible 单独处理。
  */
 export async function revealStartupWindows(options: RevealStartupWindowsOptions): Promise<void> {
+  if (options.isStopping?.()) return;
   const now = options.now ?? (() => performance.now());
   const sleep = options.sleep ?? ((ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
 
@@ -34,6 +37,8 @@ export async function revealStartupWindows(options: RevealStartupWindowsOptions)
   if (remaining > 0) {
     await sleep(remaining);
   }
+
+  if (options.isStopping?.()) return;
 
   if (options.splashWindow && !options.splashWindow.isDestroyed()) {
     options.splashWindow.close();
