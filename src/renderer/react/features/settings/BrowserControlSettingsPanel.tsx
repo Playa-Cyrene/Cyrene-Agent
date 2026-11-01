@@ -83,13 +83,13 @@ export function BrowserControlSettingsPanel() {
       <p className="cy-settings-intro">{t("settingsPage.browserControl.description")}</p>
       <section className="cy-settings-section">
         <div className="cy-settings-section__heading">
-          <h2><Globe size={18} />{t("settingsPage.browserControl.sectionTitle")}</h2>
+          <h2 data-settings-search-id="settingsPage.browserControl.sectionTitle"><Globe size={18} />{t("settingsPage.browserControl.sectionTitle")}</h2>
           <p>{t("settingsPage.browserControl.sectionDescription")}</p>
         </div>
         <Card>
           <div className="cy-settings-row">
             <div className="cy-settings-row__copy">
-              <strong><Smartphone size={16} />{t("settingsPage.browserControl.viewportMode")}</strong>
+              <strong data-settings-search-id="settingsPage.browserControl.viewportMode"><Smartphone size={16} />{t("settingsPage.browserControl.viewportMode")}</strong>
               <span>{t(viewportMode === "auto" ? "settingsPage.browserControl.viewportModeAutoDescription" : "settingsPage.browserControl.viewportModeCustomDescription")}</span>
             </div>
             <SettingsSegmented
@@ -104,7 +104,7 @@ export function BrowserControlSettingsPanel() {
           </div>
           <div className="cy-settings-row">
             <div className="cy-settings-row__copy">
-              <strong><Cookie size={16} />{t("settingsPage.browserControl.clearCookies")}</strong>
+              <strong data-settings-search-id="settingsPage.browserControl.clearCookies"><Cookie size={16} />{t("settingsPage.browserControl.clearCookies")}</strong>
               <span>{t("settingsPage.browserControl.clearCookiesDescription")}</span>
             </div>
             <Popconfirm

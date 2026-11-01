@@ -8,6 +8,7 @@ export default defineConfig({
       "src/plugins/**/*.test.ts",
       "src/main/**/*.test.ts",
       "src/renderer/**/*.test.ts",
+      "src/renderer/**/*.test.tsx",
       "src/shared/**/*.test.ts",
       "src/cli/**/*.test.ts",
       "skills/**/tests/**/*.test.ts",

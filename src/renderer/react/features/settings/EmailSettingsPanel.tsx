@@ -143,12 +143,12 @@ export function EmailSettingsPanel() {
     : t(`settingsPage.emailSettings.state.${gmail.state}`);
 
   return <>
-    <h1>{t("settingsPage.emailSettings.title")}</h1>
+    <h1 data-settings-search-loading={loading}>{t("settingsPage.emailSettings.title")}</h1>
     <p className="cy-settings-intro">{t("settingsPage.emailSettings.description")}</p>
     {error && <Alert className="cy-settings-alert" type="error" showIcon message={error} />}
     {loading ? <div className="cy-settings-loading"><Spin /></div> : <>
       <section className="cy-settings-section">
-        <div className="cy-settings-section__heading"><h2><Mail size={18} />{t("settingsPage.emailSettings.gmailTitle")}</h2><p>{t("settingsPage.emailSettings.gmailDescription")}</p></div>
+        <div className="cy-settings-section__heading"><h2 data-settings-search-id="settingsPage.emailSettings.gmailTitle"><Mail size={18} />{t("settingsPage.emailSettings.gmailTitle")}</h2><p>{t("settingsPage.emailSettings.gmailDescription")}</p></div>
         <Card>
           <div className="cy-settings-row">
             <div className="cy-settings-row__copy"><strong>{connectionText}</strong><span>{t("settingsPage.emailSettings.privacy")}</span></div>
@@ -162,11 +162,11 @@ export function EmailSettingsPanel() {
           </div>
           {!gmailClientConfig.secureStorageAvailable && <Alert type="warning" showIcon message={t("settingsPage.emailSettings.secureStorageUnavailable")} />}
           <div className="cy-settings-row">
-            <div className="cy-settings-row__copy"><strong>{t("settingsPage.emailSettings.clientId")}</strong></div>
+            <div className="cy-settings-row__copy"><strong data-settings-search-id="settingsPage.emailSettings.clientId">{t("settingsPage.emailSettings.clientId")}</strong></div>
             <SettingsInput className="cy-settings-tools__select" autoComplete="off" value={gmailClientId} disabled={busy} placeholder={t("settingsPage.emailSettings.clientIdPlaceholder")} onChange={(event) => setGmailClientId(event.target.value)} />
           </div>
           <div className="cy-settings-row">
-            <div className="cy-settings-row__copy"><strong>{t("settingsPage.emailSettings.clientSecret")}</strong><span>{gmailClientConfig.clientSecretConfigured ? t("settingsPage.emailSettings.clientSecretSaved") : t("settingsPage.emailSettings.clientSecretHelp")}</span></div>
+            <div className="cy-settings-row__copy"><strong data-settings-search-id="settingsPage.emailSettings.clientSecret">{t("settingsPage.emailSettings.clientSecret")}</strong><span>{gmailClientConfig.clientSecretConfigured ? t("settingsPage.emailSettings.clientSecretSaved") : t("settingsPage.emailSettings.clientSecretHelp")}</span></div>
             <SettingsPasswordInput className="cy-settings-tools__select" autoComplete="new-password" value={gmailClientSecret} disabled={busy} placeholder={gmailClientConfig.clientSecretConfigured ? t("settingsPage.emailSettings.clientSecretSavedPlaceholder") : t("settingsPage.emailSettings.clientSecretPlaceholder")} showLabel={t("settingsPage.asr.showSecret")} hideLabel={t("settingsPage.asr.hideSecret")} onChange={(event) => setGmailClientSecret(event.target.value)} />
           </div>
           <div className="cy-settings-row cy-settings-tools__actions">
@@ -175,17 +175,17 @@ export function EmailSettingsPanel() {
         </Card>
       </section>
       <section className="cy-settings-section">
-        <div className="cy-settings-section__heading"><h2>{t("settingsPage.emailSettings.smtpTitle")}</h2><p>{t("settingsPage.emailSettings.smtpDescription")}</p></div>
+        <div className="cy-settings-section__heading"><h2 data-settings-search-id="settingsPage.emailSettings.smtpTitle">{t("settingsPage.emailSettings.smtpTitle")}</h2><p>{t("settingsPage.emailSettings.smtpDescription")}</p></div>
         <Card>
-          <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.emailEnabled")}</strong></div><SettingsSwitch ariaLabel={t("settingsPage.tools.emailEnabled")} checked={smtp.emailEnabled} disabled={busy} onChange={(checked) => void saveSmtp({ emailEnabled: checked })} /></div>
+          <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong data-settings-search-id="settingsPage.tools.emailEnabled">{t("settingsPage.tools.emailEnabled")}</strong></div><SettingsSwitch ariaLabel={t("settingsPage.tools.emailEnabled")} checked={smtp.emailEnabled} disabled={busy} onChange={(checked) => void saveSmtp({ emailEnabled: checked })} /></div>
           {smtp.emailEnabled && <>
-            <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.emailSettings.smtpIdentity")}</strong><span>{smtp.emailSmtpUser || t("mailDraft.senderUnavailable")}</span></div></div>
-            <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.smtpHost")}</strong></div><SettingsInput className="cy-settings-tools__select" value={smtp.emailSmtpHost} onChange={(event) => setSmtp((value) => ({ ...value, emailSmtpHost: event.target.value }))} /></div>
-            <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.smtpPort")}</strong></div><SettingsInput className="cy-settings-tools__select" type="number" min={1} max={65535} value={smtp.emailSmtpPort} onChange={(event) => setSmtp((value) => ({ ...value, emailSmtpPort: event.target.value === "" ? 465 : Number(event.target.value) }))} /></div>
-            <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.smtpSecure")}</strong><span>{t("settingsPage.tools.smtpSecureDescription")}</span></div><SettingsSwitch ariaLabel={t("settingsPage.tools.smtpSecure")} checked={smtp.emailSmtpSecure} disabled={busy} onChange={(checked) => setSmtp((value) => ({ ...value, emailSmtpSecure: checked }))} /></div>
-            <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.smtpUser")}</strong></div><SettingsInput className="cy-settings-tools__select" value={smtp.emailSmtpUser} onChange={(event) => setSmtp((value) => ({ ...value, emailSmtpUser: event.target.value }))} /></div>
-            <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.smtpPass")}</strong></div><SettingsPasswordInput className="cy-settings-tools__select" showLabel={t("settingsPage.asr.showSecret")} hideLabel={t("settingsPage.asr.hideSecret")} value={smtp.emailSmtpPass} onChange={(event) => setSmtp((value) => ({ ...value, emailSmtpPass: event.target.value }))} /></div>
-            <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong>{t("settingsPage.tools.fromName")}</strong></div><SettingsInput className="cy-settings-tools__select" value={smtp.emailFromName} onChange={(event) => setSmtp((value) => ({ ...value, emailFromName: event.target.value }))} /></div>
+            <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong data-settings-search-id="settingsPage.emailSettings.smtpIdentity">{t("settingsPage.emailSettings.smtpIdentity")}</strong><span>{smtp.emailSmtpUser || t("mailDraft.senderUnavailable")}</span></div></div>
+            <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong data-settings-search-id="settingsPage.tools.smtpHost">{t("settingsPage.tools.smtpHost")}</strong></div><SettingsInput className="cy-settings-tools__select" value={smtp.emailSmtpHost} onChange={(event) => setSmtp((value) => ({ ...value, emailSmtpHost: event.target.value }))} /></div>
+            <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong data-settings-search-id="settingsPage.tools.smtpPort">{t("settingsPage.tools.smtpPort")}</strong></div><SettingsInput className="cy-settings-tools__select" type="number" min={1} max={65535} value={smtp.emailSmtpPort} onChange={(event) => setSmtp((value) => ({ ...value, emailSmtpPort: event.target.value === "" ? 465 : Number(event.target.value) }))} /></div>
+            <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong data-settings-search-id="settingsPage.tools.smtpSecure">{t("settingsPage.tools.smtpSecure")}</strong><span>{t("settingsPage.tools.smtpSecureDescription")}</span></div><SettingsSwitch ariaLabel={t("settingsPage.tools.smtpSecure")} checked={smtp.emailSmtpSecure} disabled={busy} onChange={(checked) => setSmtp((value) => ({ ...value, emailSmtpSecure: checked }))} /></div>
+            <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong data-settings-search-id="settingsPage.tools.smtpUser">{t("settingsPage.tools.smtpUser")}</strong></div><SettingsInput className="cy-settings-tools__select" value={smtp.emailSmtpUser} onChange={(event) => setSmtp((value) => ({ ...value, emailSmtpUser: event.target.value }))} /></div>
+            <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong data-settings-search-id="settingsPage.tools.smtpPass">{t("settingsPage.tools.smtpPass")}</strong></div><SettingsPasswordInput className="cy-settings-tools__select" showLabel={t("settingsPage.asr.showSecret")} hideLabel={t("settingsPage.asr.hideSecret")} value={smtp.emailSmtpPass} onChange={(event) => setSmtp((value) => ({ ...value, emailSmtpPass: event.target.value }))} /></div>
+            <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong data-settings-search-id="settingsPage.tools.fromName">{t("settingsPage.tools.fromName")}</strong></div><SettingsInput className="cy-settings-tools__select" value={smtp.emailFromName} onChange={(event) => setSmtp((value) => ({ ...value, emailFromName: event.target.value }))} /></div>
             <div className="cy-settings-row cy-settings-tools__actions"><Button type="primary" disabled={busy} onClick={() => void saveSmtp({ emailSmtpHost: smtp.emailSmtpHost, emailSmtpPort: smtp.emailSmtpPort, emailSmtpSecure: smtp.emailSmtpSecure, emailSmtpUser: smtp.emailSmtpUser, emailSmtpPass: smtp.emailSmtpPass, emailFromName: smtp.emailFromName })}>{t("settingsPage.tools.saveEmail")}</Button></div>
           </>}
         </Card>

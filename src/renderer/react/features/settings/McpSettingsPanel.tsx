@@ -532,7 +532,7 @@ export function McpSettingsPanel() {
     {loading ? <div className="cy-settings-loading"><Spin /></div> : <>
       <section className="cy-settings-section">
         <div className="cy-settings-section__heading">
-          <h2><MCP size={18} />{t("settingsPage.mcp.serversTitle")}</h2>
+          <h2 data-settings-search-id="settingsPage.mcp.serversTitle"><MCP size={18} />{t("settingsPage.mcp.serversTitle")}</h2>
           <p>{t("settingsPage.mcp.serversDescription")}</p>
         </div>
         <Card>
@@ -576,13 +576,13 @@ export function McpSettingsPanel() {
       </section>
       <section className="cy-settings-section">
         <div className="cy-settings-section__heading">
-          <h2><FolderOpen size={18} />{t("settingsPage.mcp.builtinTitle")}</h2>
+          <h2 data-settings-search-id="settingsPage.mcp.builtinTitle"><FolderOpen size={18} />{t("settingsPage.mcp.builtinTitle")}</h2>
           <p>{t("settingsPage.mcp.builtinDescription")}</p>
         </div>
         <Card>
           <div className="cy-settings-row">
             <div className="cy-settings-row__copy">
-              <strong>{t("settingsPage.mcp.fsLabel")}</strong>
+              <strong data-settings-search-id="settingsPage.mcp.fsLabel">{t("settingsPage.mcp.fsLabel")}</strong>
               <span>{t("settingsPage.mcp.fsDescription")}</span>
             </div>
             <div className="cy-settings-row__control">
@@ -598,13 +598,13 @@ export function McpSettingsPanel() {
       </section>
       <section className="cy-settings-section">
         <div className="cy-settings-section__heading">
-          <h2><UtensilsCrossed size={18} />{t("settingsPage.mcp.recommendedTitle")}</h2>
+          <h2 data-settings-search-id="settingsPage.mcp.recommendedTitle"><UtensilsCrossed size={18} />{t("settingsPage.mcp.recommendedTitle")}</h2>
           <p>{t("settingsPage.mcp.recommendedDescription")}</p>
         </div>
         <Card>
           <div className="cy-settings-row">
             <div className="cy-settings-row__copy">
-              <strong>{t("settingsPage.mcp.mcdName")}</strong>
+              <strong data-settings-search-id="settingsPage.mcp.mcdName">{t("settingsPage.mcp.mcdName")}</strong>
               <span>{t("settingsPage.mcp.mcdDescription")}</span>
               <span className="cy-settings-mcp__detail">{MCD_MCP_URL}</span>
             </div>
