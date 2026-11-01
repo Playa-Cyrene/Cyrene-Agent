@@ -30,6 +30,9 @@ jobs:
       - name: Verify Electron installation
         run: pnpm exec electron --version
 
+      - name: Test installer completion validation
+        run: node scripts/verify/installer-validation.mjs
+
       # 生产依赖审计：高危基线清零或限期登记前仅留存报告，不阻断合入。
       # 处置清单见 docs/refactor/2026-09-14-dependency-audit-baseline.md；
       # 基线清零后把本步骤改为 pnpm audit --prod --audit-level=high 并移除 continue-on-error。

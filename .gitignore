@@ -55,6 +55,7 @@ build/*
 !build/installer/
 build/installer/*
 !build/installer/installer.nsh
+!build/installer/install-validation.nsh
 !build/installer/installer-sidebar.bmp
 !build/installer/cyrene-installer-source.png
 build/installer/ui/
