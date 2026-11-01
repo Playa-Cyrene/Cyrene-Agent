@@ -526,6 +526,51 @@
   margin-top: 4px;
 }
 
+/* 更新说明：发布说明自带 h1/h2，在设置行里压到正文字号，长内容在框内滚动 */
+.cy-settings-release-notes {
+  max-height: 240px;
+  margin-top: 6px;
+  overflow-y: auto;
+  color: var(--rb-text-secondary);
+  font: var(--rb-text-micro);
+  overflow-wrap: anywhere;
+}
+
+.cy-settings-release-notes :is(h1, h2, h3, h4) {
+  margin: 10px 0 4px;
+  color: var(--rb-text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.cy-settings-release-notes > :first-child {
+  margin-top: 0;
+}
+
+.cy-settings-release-notes :is(p, ul, ol, blockquote) {
+  margin: 4px 0;
+}
+
+.cy-settings-release-notes :is(ul, ol) {
+  padding-left: 18px;
+}
+
+.cy-settings-release-notes blockquote {
+  padding-left: 8px;
+  border-left: 2px solid var(--rb-border-subtle, currentColor);
+}
+
+.cy-settings-release-notes hr {
+  margin: 10px 0;
+  border: 0;
+  border-top: 1px solid var(--rb-border-subtle, currentColor);
+}
+
+.cy-settings-release-notes a {
+  color: var(--rb-accent, inherit);
+}
+
 .cy-settings-general__path {
   color: var(--rb-text-secondary);
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;

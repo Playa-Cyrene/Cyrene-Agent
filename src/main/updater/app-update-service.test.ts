@@ -39,9 +39,19 @@ describe("createAppUpdateService", () => {
       phase: "available",
       currentVersion: "1.1.7",
       availableVersion: "1.2.0",
-      releaseNotes: "可靠性更新",
+      releaseNotesHtml: "<p>可靠性更新</p>",
     });
     expect(states).toEqual(["checking", "available"]);
+  });
+
+  it("GitHub 发布源的 HTML 更新说明经净化后保留排版，交给设置页渲染", () => {
+    const updater = new FakeUpdater();
+    const service = createAppUpdateService({ updater, currentVersion: "1.3.4", isPackaged: true });
+    updater.emit("update-available", {
+      version: "1.3.5",
+      releaseNotes: "<h1>Cyrene-Agent 1.3.5</h1><ul><li>新增 GPT-6.1 Terra</li></ul><script>alert(1)</script>",
+    });
+    expect(service.getState().releaseNotesHtml).toBe("<h1>Cyrene-Agent 1.3.5</h1><ul><li>新增 GPT-6.1 Terra</li></ul>");
   });
 
   it("maps download progress and downloaded state, then installs only when ready", async () => {
