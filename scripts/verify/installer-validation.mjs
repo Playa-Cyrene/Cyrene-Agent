@@ -71,7 +71,8 @@ badState:
 done:
 SectionEnd
 `);
-  execFileSync(compiler.path, ["-V2", script], {
+  // writeFile 输出 UTF-8；Windows makensis 默认系统代码页会损坏中文夹具路径。
+  execFileSync(compiler.path, ["-INPUTCHARSET", "UTF8", "-V2", script], {
     env: { ...process.env, ...compiler.env }, timeout: 60_000, stdio: "pipe",
   });
   assert.ok(await exists(exe), "NSIS must emit a fixture executable");
@@ -99,7 +100,7 @@ Section
   !insertmacro customInstall
 SectionEnd
 `);
-  execFileSync(compiler.path, ["-V2", integrationScript], {
+  execFileSync(compiler.path, ["-INPUTCHARSET", "UTF8", "-V2", integrationScript], {
     env: { ...process.env, ...compiler.env }, timeout: 60_000, stdio: "pipe",
   });
   if (compileOnly) {
