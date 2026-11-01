@@ -1,6 +1,7 @@
 !include "nsDialogs.nsh"
 
 !ifndef BUILD_UNINSTALLER
+!include "${__FILEDIR__}\install-validation.nsh"
 Var CyreneDesktopShortcutCheckbox
 Var CyreneLaunchAtLoginCheckbox
 Var CyreneCreateDesktopShortcut
@@ -65,6 +66,9 @@ FunctionEnd
     CreateDirectory "$INSTDIR"
     Rename "$INSTDIR\..\.Cyrene.models-preserve" "$INSTDIR\models"
   ${EndIf}
+
+  ; 先恢复已暂存的 models，再检查新程序，失败时不丢弃用户内容或误报成功。
+  !insertmacro CyreneValidateInstallation
 
   ${If} $CyreneCreateDesktopShortcut == ${BST_CHECKED}
     CreateShortCut "$DESKTOP\${SHORTCUT_NAME}.lnk" "$appExe" "" "$appExe" 0 "" "" "${APP_DESCRIPTION}"
