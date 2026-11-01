@@ -499,17 +499,17 @@ MIT 仅约束本仓库的源代码，不适用于角色、Live2D 模型与美术
                 </a>
             </td>
             <td align="center">
-                <a href="https://github.com/yuxingyuzhong">
-                    <img src="https://avatars.githubusercontent.com/u/240125557?v=4" width="48;" alt="yuxingyuzhong"/>
-                    <br />
-                    <sub><b>雨行雨中</b></sub>
-                </a>
-            </td>
-            <td align="center">
                 <a href="https://github.com/ahwhshen">
                     <img src="https://avatars.githubusercontent.com/u/317654555?v=4" width="48;" alt="ahwhshen"/>
                     <br />
                     <sub><b>ahwhshen</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/yuxingyuzhong">
+                    <img src="https://avatars.githubusercontent.com/u/240125557?v=4" width="48;" alt="yuxingyuzhong"/>
+                    <br />
+                    <sub><b>雨行雨中</b></sub>
                 </a>
             </td>
             <td align="center">
@@ -535,6 +535,13 @@ MIT 仅约束本仓库的源代码，不适用于角色、Live2D 模型与美术
             </td>
 		</tr>
 		<tr>
+            <td align="center">
+                <a href="https://github.com/codex">
+                    <img src="https://avatars.githubusercontent.com/u/267193182?v=4" width="48;" alt="codex"/>
+                    <br />
+                    <sub><b>Codex</b></sub>
+                </a>
+            </td>
             <td align="center">
                 <a href="https://github.com/boring9720">
                     <img src="https://avatars.githubusercontent.com/u/20534568?v=4" width="48;" alt="boring9720"/>
