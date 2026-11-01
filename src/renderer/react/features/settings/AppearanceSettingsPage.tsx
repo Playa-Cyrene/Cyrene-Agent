@@ -38,6 +38,7 @@ import { ChannelsSettingsPanel } from "./ChannelsSettingsPanel";
 import { SubagentSettingsPanel } from "./SubagentSettingsPanel";
 import { BrowserControlSettingsPanel } from "./BrowserControlSettingsPanel";
 import { EmailSettingsPanel } from "./EmailSettingsPanel";
+import { useSettingsSearchSelection } from "./settings-search-selection";
 import { locateSettingsSearchTarget } from "./settings-search-navigation";
 import { SettingsSearchDialog } from "./SettingsSearchDialog";
 import type { SettingsSearchItem } from "./settings-search-index";
@@ -116,8 +117,7 @@ function SettingsNavItem({ section, currentSection, icon, label, onSelect }: Set
 export function AppearanceSettingsPage({ section, onSelectSection, onBackToWorkspace, musicSettingsNavigation = 0 }: AppearanceSettingsPageProps) {
   const { t } = useTranslation();
   const [searchOpen, setSearchOpen] = useState(false);
-  const [searchNotice, setSearchNotice] = useState(false);
-  const [searchTarget, setSearchTarget] = useState<SettingsSearchItem>();
+  const { searchTarget, setSearchTarget, searchNotice, setSearchNotice } = useSettingsSearchSelection(section);
   const contentRef = useRef<HTMLDivElement>(null);
   const [values, setValues] = useState(defaults);
   const [loading, setLoading] = useState(true);
@@ -318,7 +318,7 @@ export function AppearanceSettingsPage({ section, onSelectSection, onBackToWorks
       <main className="cy-workspace is-empty cy-settings-content">
         <div ref={contentRef} className={`cy-settings-content__inner${section === "knowledge" ? " is-knowledge-settings" : ""}`}>
           {searchNotice && <Alert className="cy-settings-alert" type="info" showIcon message={t("settingsSearch.unavailable")} />}
-          {section === "email" ? <EmailSettingsPanel /> : section === "browser" ? <BrowserControlSettingsPanel /> : section === "preferences" ? <PreferencesSettingsPanel /> : section === "models" ? <ModelSettingsPanel searchTarget={searchTarget} /> : section === "usage" ? <UsageStatsPanel /> : section === "general" ? <GeneralSettingsPanel /> : section === "toolToggle" ? <ToolToggleSettingsPanel /> : section === "tools" ? <ToolSettingsPanel musicSettingsNavigation={musicSettingsNavigation} /> : section === "subagents" ? <SubagentSettingsPanel /> : section === "plugins" ? <PluginSettingsPanel /> : section === "memory" ? <MemorySettingsPanel /> : section === "knowledge" ? <KnowledgeBaseSettingsPanel /> : section === "cyrene" ? <CyreneSettingsPanel /> : section === "skill" ? <SkillSettingsPanel /> : section === "asr" ? <AsrSettingsPanel /> : section === "tts" ? <TtsSettingsPanel /> : section === "mcp" ? <McpSettingsPanel /> : section === "channels" ? <ChannelsSettingsPanel /> : section === "disclaimer" ? <DisclaimerSettingsPanel /> : <>
+          {section === "email" ? <EmailSettingsPanel /> : section === "browser" ? <BrowserControlSettingsPanel /> : section === "preferences" ? <PreferencesSettingsPanel /> : section === "models" ? <ModelSettingsPanel searchTarget={searchTarget?.section === section ? searchTarget : undefined} /> : section === "usage" ? <UsageStatsPanel /> : section === "general" ? <GeneralSettingsPanel /> : section === "toolToggle" ? <ToolToggleSettingsPanel /> : section === "tools" ? <ToolSettingsPanel musicSettingsNavigation={musicSettingsNavigation} /> : section === "subagents" ? <SubagentSettingsPanel /> : section === "plugins" ? <PluginSettingsPanel /> : section === "memory" ? <MemorySettingsPanel /> : section === "knowledge" ? <KnowledgeBaseSettingsPanel /> : section === "cyrene" ? <CyreneSettingsPanel /> : section === "skill" ? <SkillSettingsPanel /> : section === "asr" ? <AsrSettingsPanel /> : section === "tts" ? <TtsSettingsPanel /> : section === "mcp" ? <McpSettingsPanel /> : section === "channels" ? <ChannelsSettingsPanel /> : section === "disclaimer" ? <DisclaimerSettingsPanel /> : <>
             <h1>{t("settingsPage.appearance")}</h1>
             <p className="cy-settings-intro">{t("settingsPage.description")}</p>
 

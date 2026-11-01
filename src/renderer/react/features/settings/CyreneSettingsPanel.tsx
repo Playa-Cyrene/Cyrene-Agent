@@ -149,7 +149,7 @@ export function CyreneSettingsPanel() {
   }
 
   return <>
-    <h1>{t("settingsPage.cyrene.title")}</h1>
+    <h1 data-settings-search-loading={loading}>{t("settingsPage.cyrene.title")}</h1>
     <p className="cy-settings-intro">{t("settingsPage.cyrene.description")}</p>
     {notice && <Alert className="cy-settings-alert" showIcon type={notice.type} title={notice.text} closable onClose={() => setNotice(null)} />}
     {loading ? <div className="cy-settings-loading"><Spin /></div> : <>

@@ -11,8 +11,8 @@ export interface SettingsSearchItem {
   keywords?: string[];
 }
 
-// Add an explicit index entry and matching data-settings-search-id when adding a setting.
-// Titles are resolved on each search so changing the UI language also changes results.
+// 新增可搜索设置时，索引条目必须有对应的 data-settings-search-id，保证跳转按身份定位。
+// 标题在查询时翻译，避免语言切换后仍匹配旧语言文案。
 const sections: {
   section: SettingsSection;
   category: SettingsSearchCategory;
@@ -31,6 +31,7 @@ const sections: {
       "settingsPage.general.toastSound",
       "settingsPage.general.launchAtLogin",
       "settingsPage.general.language",
+      "settingsPage.general.dataDir",
       "settingsPage.general.disableGpu",
       "settingsPage.general.about",
       "settingsPage.general.softwareUpdate",
@@ -109,7 +110,6 @@ const sections: {
     titleKey: "settingsPage.usage.title",
     source: "src/renderer/react/features/settings/UsageStatsPanel.tsx",
     items: [
-      "settingsPage.usage.emptyTitle",
       "settingsPage.usage.heatmapTitle",
       "settingsPage.usage.trendsTitle",
       "settingsPage.usage.modelsTitle",
@@ -121,6 +121,7 @@ const sections: {
     source: "src/renderer/react/features/settings/BrowserControlSettingsPanel.tsx",
     items: [
       "settingsPage.browserControl.sectionTitle",
+      "settingsPage.browserControl.viewportMode",
       "settingsPage.browserControl.clearCookies",
     ],
   },

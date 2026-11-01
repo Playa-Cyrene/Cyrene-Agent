@@ -143,7 +143,7 @@ export function EmailSettingsPanel() {
     : t(`settingsPage.emailSettings.state.${gmail.state}`);
 
   return <>
-    <h1>{t("settingsPage.emailSettings.title")}</h1>
+    <h1 data-settings-search-loading={loading}>{t("settingsPage.emailSettings.title")}</h1>
     <p className="cy-settings-intro">{t("settingsPage.emailSettings.description")}</p>
     {error && <Alert className="cy-settings-alert" type="error" showIcon message={error} />}
     {loading ? <div className="cy-settings-loading"><Spin /></div> : <>

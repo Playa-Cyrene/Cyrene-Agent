@@ -163,7 +163,7 @@ export function UsageStatsPanel() {
 
   return (
     <div className="cy-usage">
-      <h1>{t("settingsPage.usage.title")}</h1>
+      <h1 data-settings-search-loading={loading}>{t("settingsPage.usage.title")}</h1>
       <p className="cy-settings-intro">{t("settingsPage.usage.description")}</p>
 
       {loadError && <Alert className="cy-settings-alert" type="error" showIcon message={t("settingsPage.usage.loadFailed")} />}
@@ -174,7 +174,7 @@ export function UsageStatsPanel() {
         <section className="cy-settings-section">
           <div className="cy-usage-empty">
             <BarChart3 size={36} aria-hidden="true" />
-            <strong data-settings-search-id="settingsPage.usage.emptyTitle">{t("settingsPage.usage.emptyTitle")}</strong>
+            <strong>{t("settingsPage.usage.emptyTitle")}</strong>
             <span>{t("settingsPage.usage.emptyDescription")}</span>
           </div>
         </section>

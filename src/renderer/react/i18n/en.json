@@ -1292,7 +1292,7 @@
     "description": "Adjust the app window, interface font, and desktop companion.",
     "interface": "Interface",
     "interfaceDescription": "Customize the window and chat content appearance.",
-    "theme": "Appearance",
+    "theme": "Theme",
     "themeDescription": "Follow your system appearance or choose a light or dark theme.",
     "themeSystem": "Follow system",
     "themePearlWhite": "Pearl White",

@@ -129,7 +129,7 @@ export function AsrSettingsPanel() {
   }
 
   return <div className="cy-asr-page">
-    <h1>{t("settingsPage.asr.title")}</h1>
+    <h1 data-settings-search-loading={loading}>{t("settingsPage.asr.title")}</h1>
     <p className="cy-settings-intro">{t("settingsPage.asr.description")}</p>
     {error && <div className="cy-asr-error" role="alert"><AlertCircle size={16} aria-hidden="true" /><span>{error}</span><button type="button" aria-label={t("settingsPage.asr.dismissError")} onClick={() => setError("")}><X size={15} aria-hidden="true" /></button></div>}
     {loading ? <div className="cy-asr-loading" role="status" aria-label={t("settingsPage.asr.loading")}><LoaderCircle size={18} aria-hidden="true" /></div> : <>

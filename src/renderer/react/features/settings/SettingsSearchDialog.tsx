@@ -5,6 +5,7 @@ import { useTranslation } from "../../i18n";
 import { searchSettings, type SettingsSearchCategory, type SettingsSearchItem } from "./settings-search-index";
 import { readSearchHistory, rememberSearch, writeSearchHistory } from "./settings-search-history";
 import { SettingsSearchResults, type SearchTransitionDirection } from "./SettingsSearchResults";
+import { isSettingsSearchAvailable, useSettingsSearchAvailability } from "./settings-search-availability";
 import "./SettingsSearchDialog.css";
 
 const categories = [
@@ -35,8 +36,9 @@ export function SettingsSearchDialog({ open, onClose, onSelect }: SettingsSearch
   const historyRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<InputRef>(null);
   const resultsRef = useRef<HTMLDivElement>(null);
+  const availability = useSettingsSearchAvailability(open);
   const browsing = !!category && !query.trim();
-  const matches = query.trim() || category ? searchSettings(query, t, category) : [];
+  const matches = query.trim() || category ? searchSettings(query, t, category).filter((item) => isSettingsSearchAvailable(item.id, availability)) : [];
   const scoped = browseSection ? matches.filter((item) => item.section === browseSection.section) : matches;
   const results = browsing
     ? scoped.filter((item) => browseSection ? !item.id.startsWith("section:") : item.id.startsWith("section:"))
@@ -44,6 +46,8 @@ export function SettingsSearchDialog({ open, onClose, onSelect }: SettingsSearch
   const path = [t("settingsSearch.title"), ...(category ? [t(categories.find((item) => item.id === category)!.key)] : []),
     ...(browseSection ? [t(browseSection.titleKey)] : [])].join("\\");
   const viewKey = JSON.stringify([open, locale, category, browseSection?.id, query.trim(), results.map((item) => item.id)]);
+
+  useEffect(() => { setActive(0); }, [viewKey]);
 
   useEffect(() => {
     if (!open) return;
@@ -56,8 +60,7 @@ export function SettingsSearchDialog({ open, onClose, onSelect }: SettingsSearch
     setHistory(readSearchHistory());
   }, [open]);
 
-  // Measure wrapped rows instead of assuming a fixed number of chips per row.
-  // Hidden chips retain their layout so resize/deletion can reveal the next ones.
+  // 历史词条长度不一，按实际换行位置限制三行；隐藏项保留布局，方便缩放或删除后重新测量。
   useLayoutEffect(() => {
     const container = historyRef.current;
     if (!container || !open) return;
@@ -73,6 +76,7 @@ export function SettingsSearchDialog({ open, onClose, onSelect }: SettingsSearch
       setVisibleHistory(count);
     }
     measure();
+    // 关闭弹窗、依赖变化或卸载时，由 effect 的清理函数停止观察。
     const observer = new ResizeObserver(measure);
     observer.observe(container);
     return () => observer.disconnect();

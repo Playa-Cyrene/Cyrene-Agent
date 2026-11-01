@@ -189,7 +189,7 @@ export function GeneralSettingsPanel() {
             {dataDir && (
               <div className="cy-settings-row">
                 <div className="cy-settings-row__copy">
-                  <strong>{t("settingsPage.general.dataDir")}</strong>
+                  <strong data-settings-search-id="settingsPage.general.dataDir">{t("settingsPage.general.dataDir")}</strong>
                   <span>{t("settingsPage.general.dataDirDescription")}</span>
                   <span className="cy-settings-general__path" data-testid="settings-data-dir">{dataDir}</span>
                 </div>

@@ -44,7 +44,7 @@ async function visible(indices: number[]) {
 }
 const content = (index: number) => host.querySelector<HTMLElement>(`[data-search-row="${index}"] .cy-settings-search__row-content`)!;
 
-it("mounts only visible content, orders the entry queue top to bottom and spaces rows by 50ms", async () => {
+it("按视口挂载内容，进场从上到下排列且相邻项目间隔五十毫秒", async () => {
   await render();
   expect(observer.options.root).toBe(container.current);
   expect(host.querySelectorAll("[role=option]")).toHaveLength(1);
@@ -58,7 +58,7 @@ it("mounts only visible content, orders the entry queue top to bottom and spaces
   expect(content(8).style.animationDelay).toBe("50ms");
   expect(content(6)).toBeNull();
 });
-it("retains completed rows on repeat visibility and does not restart their animations", async () => {
+it("已加载项目再次进入视口时保留内容且不重播动画", async () => {
   await render(); await visible([1]);
   await act(async () => {
     for (const name of ["animationend", "webkitAnimationEnd"]) content(1).dispatchEvent(new Event(name, { bubbles: true }));
@@ -70,7 +70,7 @@ it("retains completed rows on repeat visibility and does not restart their anima
   expect(content(1).classList.contains("is-entering")).toBe(false);
   expect(content(2).classList.contains("is-entering")).toBe(true);
 });
-it("loads and scrolls to an offscreen keyboard target, preserving its full-list position", async () => {
+it("键盘选择屏幕外项目时加载并滚动到目标，保持完整列表位置", async () => {
   await render(); await render(19);
   expect(content(19)).not.toBeNull();
   expect(host.querySelector("[data-result-index='19']")?.getAttribute("aria-posinset")).toBe("20");
@@ -78,7 +78,7 @@ it("loads and scrolls to an offscreen keyboard target, preserving its full-list 
   expect(HTMLElement.prototype.scrollIntoView).toHaveBeenCalledWith({ block: "nearest" });
   expect(content(18)).toBeNull();
 });
-it("uses reverse direction on return and disconnects viewport observers on departure", async () => {
+it("返回时反向进场，离开页面后断开视口观察器", async () => {
   await render(0, "back");
   expect(content(0).dataset.direction).toBe("back");
   const previous = observer;

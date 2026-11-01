@@ -89,7 +89,7 @@ export function BrowserControlSettingsPanel() {
         <Card>
           <div className="cy-settings-row">
             <div className="cy-settings-row__copy">
-              <strong><Smartphone size={16} />{t("settingsPage.browserControl.viewportMode")}</strong>
+              <strong data-settings-search-id="settingsPage.browserControl.viewportMode"><Smartphone size={16} />{t("settingsPage.browserControl.viewportMode")}</strong>
               <span>{t(viewportMode === "auto" ? "settingsPage.browserControl.viewportModeAutoDescription" : "settingsPage.browserControl.viewportModeCustomDescription")}</span>
             </div>
             <SettingsSegmented

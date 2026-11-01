@@ -35,7 +35,7 @@ async function fill(value: string) {
     input.dispatchEvent(new Event("input", { bubbles: true }));
   });
 }
-it("shows one level at a time using the original result rows and returns one level", async () => {
+it("每次只显示当前层的列表项目，返回按钮逐层回退", async () => {
   await render();
   const categories = document.querySelectorAll(".cy-settings-search__categories button");
   expect(categories).toHaveLength(5);
@@ -63,7 +63,7 @@ it("shows one level at a time using the original result rows and returns one lev
   expect(document.querySelectorAll(".cy-settings-search__categories button")).toHaveLength(5);
   expect(document.querySelector(".cy-settings-search__categories button")?.getAttribute("data-direction")).toBe("back");
 });
-it("opens the next level with Enter and navigates only when a setting is selected", async () => {
+it("回车进入下一层，仅选择具体设置项时跳转", async () => {
   writeSearchHistory(["existing search"]);
   await render();
   await click(document.querySelectorAll(".cy-settings-search__categories button")[3]);
@@ -78,7 +78,7 @@ it("opens the next level with Enter and navigates only when a setting is selecte
   await click(document.querySelectorAll(".cy-settings-search__categories button")[3]);
   expect([...document.querySelectorAll("[role=option]")].map(node => node.textContent)).toEqual([i18next.t("settingsPage.tts.title"), i18next.t("settingsPage.asr.title")]);
 });
-it("searches the current page and restores the current level when the query is cleared", async () => {
+it("关键词只搜索当前页面，清空后恢复当前层级", async () => {
   await render();
   await click(document.querySelectorAll(".cy-settings-search__categories button")[3]);
   await click(document.querySelector("[role=option]")!);
@@ -92,14 +92,14 @@ it("searches the current page and restores the current level when the query is c
   expect(titles).not.toContain(i18next.t("settingsPage.asr.title"));
   expect(document.querySelector("input")?.getAttribute("aria-activedescendant")).toBe("settings-search-result-0");
 });
-it("opens a page without indexed children directly", async () => {
+it("没有登记子项的页面可直接打开", async () => {
   await render();
   await click(document.querySelectorAll(".cy-settings-search__categories button")[4]);
   await click(document.querySelector("[role=option]")!);
   expect(select).toHaveBeenCalledWith(expect.objectContaining({ id: "section:disclaimer" }));
   expect(readSearchHistory()).toEqual([]);
 });
-it("lets arrows take over the hovered selection until the mouse actually moves", async () => {
+it("方向键接管鼠标悬停项，鼠标实际移动后才恢复鼠标选择", async () => {
   await render();
   await click(document.querySelectorAll(".cy-settings-search__categories button")[3]);
   const input = document.querySelector("input")!;
@@ -113,14 +113,14 @@ it("lets arrows take over the hovered selection until the mouse actually moves",
   await act(async () => input.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true, cancelable: true })));
   expect(rows[0].getAttribute("aria-selected")).toBe("true");
   expect(input.getAttribute("aria-activedescendant")).toBe(rows[0].id);
-  await move(50); // A layout/scroll event beneath a stationary pointer must not steal selection.
+  await move(50); // 静止鼠标下的布局或滚动事件不能抢回键盘选择。
   expect(rows[0].getAttribute("aria-selected")).toBe("true");
   await move(51);
   expect(rows[1].getAttribute("aria-selected")).toBe("true");
   expect(document.querySelectorAll("[role=option].is-active")).toHaveLength(1);
   expect(input.getAttribute("aria-activedescendant")).toBe(rows[1].id);
 });
-it("handles arrows from a focused result and keeps Enter selection in sync", async () => {
+it("结果按钮获得焦点后仍可用方向键切换，回车选择与高亮同步", async () => {
   await render();
   await click(document.querySelectorAll(".cy-settings-search__categories button")[3]);
   const rows = [...document.querySelectorAll<HTMLElement>("[role=option]")];
@@ -133,7 +133,7 @@ it("handles arrows from a focused result and keeps Enter selection in sync", asy
   expect(document.querySelector(".cy-settings-search__back")?.textContent).toBe("搜索设置\\语音能力\\语音识别");
   expect(select).not.toHaveBeenCalled();
 });
-it("records a keyword search inside a category but skips navigation after clearing the query", async () => {
+it("分类内关键词搜索计入历史，清空关键词后浏览项目不写入历史", async () => {
   await render();
   await click(document.querySelectorAll(".cy-settings-search__categories button")[3]);
   await click(document.querySelector("[role=option]")!);
@@ -149,21 +149,21 @@ it("records a keyword search inside a category but skips navigation after cleari
   await click(document.querySelector("[role=option]")!);
   expect(readSearchHistory()).toEqual([keyword]);
 });
-it("selects a result with Enter, stores the query and closes", async () => {
+it("回车选择搜索结果后保存关键词并关闭弹窗", async () => {
   await render(); await fill(i18next.t("settingsPage.messageFontSize"));
   await act(async () => document.querySelector("input")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })));
   expect(select).toHaveBeenCalledWith(expect.objectContaining({ id: "settingsPage.messageFontSize", section: "appearance" }));
   expect(close).toHaveBeenCalledOnce();
   expect(readSearchHistory()).toEqual([i18next.t("settingsPage.messageFontSize")]);
 });
-it("shows the page name once above specific matches and preserves keyboard selection", async () => {
+it("具体匹配项上方仅显示一次所属页，辅助技术选中项与键盘一致", async () => {
   await render(); await fill(i18next.t("settingsPage.messageFontSize"));
   expect(document.querySelector(".cy-settings-search__section")?.textContent).toBe(i18next.t("settingsPage.appearance"));
   expect(document.querySelectorAll("[role=option]")).toHaveLength(1);
   expect(document.querySelector("[role=option]")?.textContent).toBe(i18next.t("settingsPage.messageFontSize"));
   expect(document.querySelector("input")?.getAttribute("aria-activedescendant")).toBe("settings-search-result-0");
 });
-it("does not select during IME composition and renders an empty result state", async () => {
+it("输入法组合期间不选择结果，无匹配时显示空状态", async () => {
   await render(); await fill(i18next.t("settingsPage.messageFontSize"));
   await act(async () => document.querySelector("input")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", isComposing: true, bubbles: true })));
   expect(select).not.toHaveBeenCalled();
@@ -171,7 +171,7 @@ it("does not select during IME composition and renders an empty result state", a
   expect(document.querySelectorAll("[role=option]")).toHaveLength(0);
   expect(document.querySelector("[role=status]")?.textContent).toBe(i18next.t("settingsSearch.empty"));
 });
-it("restores history, supports single deletion and resets the query when reopened", async () => {
+it("恢复历史并支持单条删除，重新打开时清空查询", async () => {
   writeSearchHistory(["one", "two"]); await render();
   await click(document.querySelector(".cy-settings-search__history-heading button")!);
   await click(document.querySelector(".cy-settings-search__delete")!);
@@ -180,7 +180,7 @@ it("restores history, supports single deletion and resets the query when reopene
   expect(document.querySelector<HTMLInputElement>("input")?.value).toBe("");
   expect(document.querySelectorAll(".cy-settings-search__categories button")).toHaveLength(5);
 });
-it("clears history only after confirmation and leaves it intact on cancel", async () => {
+it("清空历史需要确认，取消后保留原记录", async () => {
   writeSearchHistory(["one", "two"]); await render();
   await click(document.querySelector(".cy-settings-search__history-heading button")!);
   const clear = () => document.querySelector(`[aria-label="${i18next.t("settingsSearch.clear")}"]`)!;

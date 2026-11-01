@@ -15,9 +15,10 @@ interface Props {
   onActiveChange: (index: number) => void;
 }
 
-/** Unvisited rows reserve space only; their content mounts when it enters this list's viewport. */
+/** 未访问的结果只占位，进入列表视口后才挂载内容，避免提前播放屏幕外项目的动画。 */
 export function SettingsSearchResults({ items, active, browsing, direction, containerRef, translate, onActivate, onActiveChange }: Props) {
   const rows = useRef<(HTMLDivElement | null)[]>([]);
+  // 记录当前层已加载的项目，防止滚回时重播；换层通过外层 key 重建组件，旧记录随卸载释放。
   const seen = useRef(new Map<number, number>());
   const nextStart = useRef(0);
   const lastMousePosition = useRef<{ x: number; y: number } | undefined>(undefined);
@@ -40,6 +41,7 @@ export function SettingsSearchResults({ items, active, browsing, direction, cont
     if (!container) return;
     let disposed = false;
     if (typeof IntersectionObserver !== "undefined") {
+      // 首次加载后停止观察该行；换层或卸载时断开观察，并忽略已排队的迟到回调。
       const observer = new IntersectionObserver((entries) => {
         if (disposed) return;
         const indices = entries.filter((entry) => entry.isIntersecting && entry.intersectionRatio > 0)
@@ -50,7 +52,7 @@ export function SettingsSearchResults({ items, active, browsing, direction, cont
       rows.current.forEach((row) => row && observer.observe(row));
       return () => { disposed = true; observer.disconnect(); };
     }
-    // Layout-based fallback for environments without IntersectionObserver.
+    // 缺少 IntersectionObserver 时按布局计算可见项目，保持相同的按需加载行为。
     const reveal = () => {
       const height = container.clientHeight || Math.min(window.innerHeight * 0.4, 360);
       let top = 0;
@@ -64,10 +66,11 @@ export function SettingsSearchResults({ items, active, browsing, direction, cont
     };
     reveal();
     container.addEventListener("scroll", reveal, { passive: true });
+    // 此分支的滚动监听器和尺寸观察器共用下面的清理函数，换层或卸载时一并释放。
     const resize = new ResizeObserver(reveal);
     resize.observe(container);
     return () => { container.removeEventListener("scroll", reveal); resize.disconnect(); };
-    // The parent keys this component by the result identities and current page.
+    // 外层 key 包含当前层级和结果身份；结果改变时会重建组件，不沿用旧行索引。
   }, [load, containerRef]);
 
   useLayoutEffect(() => {
@@ -82,7 +85,7 @@ export function SettingsSearchResults({ items, active, browsing, direction, cont
       const previous = lastMousePosition.current;
       if (previous?.x === event.clientX && previous.y === event.clientY) return;
       lastMousePosition.current = { x: event.clientX, y: event.clientY };
-      // Scrolling/animations can move a row beneath a stationary pointer. Only actual movement takes selection back.
+      // 滚动或动画会让项目经过静止鼠标下方；只有鼠标坐标改变时才接回选择，避免抢走键盘焦点。
       const option = (event.target as HTMLElement).closest<HTMLElement>("[data-result-index]");
       if (option && event.currentTarget.contains(option)) onActiveChange(Number(option.dataset.resultIndex));
     }}>

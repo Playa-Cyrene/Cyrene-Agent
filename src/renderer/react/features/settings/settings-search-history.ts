@@ -20,7 +20,7 @@ export function writeSearchHistory(history: string[]): void {
   try {
     localStorage.setItem(SETTINGS_SEARCH_HISTORY_KEY, JSON.stringify(normalizeSearchHistory(history)));
   } catch {
-    // Search remains usable when browser storage is unavailable.
+    // 存储被禁用或空间不足时仅放弃历史写入，不阻断搜索和跳转。
   }
 }
 
