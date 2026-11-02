@@ -1,6 +1,7 @@
-import { Popover } from "antd";
-import { useEffect, useState } from "react";
+import { Alert, Popover } from "antd";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "../../../i18n";
+import { FullAccessConfirmation } from "../../../components/ui/FullAccessConfirmation";
 
 type PermissionLevel = "project-read-only" | "read-only" | "scoped" | "per-action" | "full";
 
@@ -49,33 +50,69 @@ export function PermissionControl() {
   const [level, setLevel] = useState<PermissionLevel>("read-only");
   const [open, setOpen] = useState(false);
 
+  const [fullAccessOpen, setFullAccessOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const pending = useRef(false);
+  const mounted = useRef(true);
+  const readVersion = useRef(0);
+
   async function refresh() {
+    const version = ++readVersion.current;
     try {
       const state = await permissionApi()?.getPermissionLevel?.();
-      if (state) setLevel(state.level);
+      if (mounted.current && version === readVersion.current && state) setLevel(state.level);
     } catch {
-      setLevel("read-only");
+      if (mounted.current && version === readVersion.current) setFailed(true);
     }
   }
 
-  useEffect(() => { void refresh(); }, []);
+  useEffect(() => {
+    mounted.current = true;
+    void refresh();
+    return () => { mounted.current = false; readVersion.current++; };
+  }, []);
 
-  async function select(nextLevel: PermissionLevel) {
+  async function apply(nextLevel: PermissionLevel): Promise<boolean> {
+    if (pending.current) return false;
+    pending.current = true;
+    readVersion.current++;
+    setSaving(true);
+    setFailed(false);
     try {
       const result = await permissionApi()?.setPermissionLevel?.(nextLevel);
-      if (result?.ok) setLevel(result.level ?? nextLevel);
-      setOpen(false);
+      if (!result?.ok) throw new Error("Permission update failed");
+      if (mounted.current) {
+        setLevel(result.level ?? nextLevel);
+        setOpen(false);
+      }
+      return true;
     } catch {
-      await refresh();
+      if (mounted.current) setFailed(true);
+      return false;
+    } finally {
+      pending.current = false;
+      if (mounted.current) setSaving(false);
     }
   }
 
-  return (
+  async function select(nextLevel: PermissionLevel) {
+    if (pending.current || nextLevel === level) return;
+    if (nextLevel === "full") {
+      setOpen(false);
+      setFullAccessOpen(true);
+      return;
+    }
+    await apply(nextLevel);
+  }
+
+  return (<>
     <Popover
       trigger="click"
       placement="topLeft"
       open={open}
       onOpenChange={(nextOpen) => {
+        if (pending.current) return;
         setOpen(nextOpen);
         if (nextOpen) void refresh();
       }}
@@ -83,12 +120,14 @@ export function PermissionControl() {
       content={
         <div className="cy-permission-panel">
           <strong>{t("permission.panelTitle")}</strong>
+          {failed && <Alert role="alert" type="error" message={t("settingsPage.saveFailed")} />}
           <div className="cy-permission-panel__options">
             {PERMISSION_OPTIONS.map((option) => (
               <button
                 type="button"
                 key={option.level}
                 className={`cy-permission-panel__option is-${option.level} ${level === option.level ? "is-active" : ""}`}
+                disabled={saving}
                 onClick={() => void select(option.level)}
               >
                 <PermissionIcon level={option.level} />
@@ -105,5 +144,6 @@ export function PermissionControl() {
         <ChevronIcon />
       </button>
     </Popover>
-  );
+    <FullAccessConfirmation open={fullAccessOpen} onCancel={() => setFullAccessOpen(false)} onConfirm={() => apply("full")} />
+  </>);
 }
