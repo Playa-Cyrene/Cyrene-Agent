@@ -31,6 +31,16 @@ describe("resolveToolChoicePolicy", () => {
     })).toEqual({ kind: "auto" });
   });
 
+  // Fable 5.1 / Opus 5.5 / Sonnet 5.5 对 tool_choice any / tool 返回 400；它们的思考不能关闭，
+  // 即使用户选了「关闭」，must-call 也必须落到 auto。
+  test.each(["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5"])("%s must-call always uses auto, even with thinking set to off", (model) => {
+    for (const reasoning of [{ mode: "off" as const }, { mode: "on" as const, effort: "high" as const }]) {
+      expect(resolveToolChoicePolicy({
+        providerId: "claude", model, transport: "anthropic", reasoning, requestedToolName: "music_search",
+      })).toEqual({ kind: "auto" });
+    }
+  });
+
   test("supports required/any as a transport-neutral policy result", () => {
     expect(resolveToolChoicePolicy({
       providerId: "required-only", model: "m", transport: "openai",
