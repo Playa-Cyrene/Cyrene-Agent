@@ -1644,6 +1644,7 @@
       "gpuInternals": "GPU 状態を確認",
       "about": "キュレネについて",
       "aboutDescription": "軽量な感情コンパニオン型デスクトップ Agent",
+      "releaseNotes": "更新内容",
       "softwareUpdate": "ソフトウェアアップデート",
       "dataDir": "データフォルダー",
       "dataDirDescription": "チャット履歴、モデルプロファイル、プラグインなどのデータはここに保存されます",

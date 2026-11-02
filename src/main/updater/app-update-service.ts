@@ -1,4 +1,5 @@
 import type { AppUpdateState } from "../../shared/app-update";
+import { releaseNotesToSafeHtml } from "./release-notes";
 
 type UpdaterEvent =
   | "checking-for-update"
@@ -50,7 +51,7 @@ export function createAppUpdateService(options: CreateAppUpdateServiceOptions): 
     const next: AppUpdateState = {
       currentVersion,
       availableVersion: state.availableVersion,
-      releaseNotes: state.releaseNotes,
+      releaseNotesHtml: state.releaseNotesHtml,
       ...patch,
     };
     if (JSON.stringify(next) === JSON.stringify(state)) return;
@@ -63,7 +64,7 @@ export function createAppUpdateService(options: CreateAppUpdateServiceOptions): 
   updater.on("update-available", (info) => publish({
     phase: "available",
     availableVersion: typeof info?.version === "string" ? info.version : undefined,
-    releaseNotes: normalizeReleaseNotes(info?.releaseNotes),
+    releaseNotesHtml: normalizeReleaseNotes(info?.releaseNotes),
   }));
   updater.on("update-not-available", () => publish({ phase: "not_available" }));
   updater.on("download-progress", (progress) => publish({
@@ -76,7 +77,7 @@ export function createAppUpdateService(options: CreateAppUpdateServiceOptions): 
   updater.on("update-downloaded", (info) => publish({
     phase: "downloaded",
     availableVersion: typeof info?.version === "string" ? info.version : state.availableVersion,
-    releaseNotes: normalizeReleaseNotes(info?.releaseNotes) ?? state.releaseNotes,
+    releaseNotesHtml: normalizeReleaseNotes(info?.releaseNotes) ?? state.releaseNotesHtml,
     percent: 100,
   }));
   // 错误只带错误码，用户可读文案由渲染层按码翻译；下载中报错按下载失败归档
@@ -139,10 +140,10 @@ function finiteNumber(value: unknown): number | undefined {
 }
 
 function normalizeReleaseNotes(value: unknown): string | null | undefined {
-  if (typeof value === "string") return value;
+  if (typeof value === "string") return releaseNotesToSafeHtml(value);
   if (!Array.isArray(value)) return value === null ? null : undefined;
   const notes = value
-    .map((item) => typeof item?.note === "string" ? item.note : "")
-    .filter(Boolean);
-  return notes.length ? notes.join("\n\n") : null;
+    .map((item) => typeof item?.note === "string" ? releaseNotesToSafeHtml(item.note) : null)
+    .filter((note): note is string => Boolean(note));
+  return notes.length ? notes.join("<hr>") : null;
 }
