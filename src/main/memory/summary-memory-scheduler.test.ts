@@ -14,6 +14,7 @@ vi.mock("./summary-memory-store", () => ({
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
+  // 模型替身故意不响应 AbortSignal，由用例显式完成响应；此 Promise 不创建 I/O 或定时器。
   const promise = new Promise<T>((done) => { resolve = done; });
   return { promise, resolve };
 }
@@ -36,6 +37,7 @@ function setup(workspace = false) {
     markSummaryMemoryProcessed: vi.fn(async () => true),
     listSessions: vi.fn(async () => [{ id: "a" }, { id: "b" }]),
   };
+  // 正常结束或断言失败均由 afterEach dispose，不能指望它完成忽略取消信号的模型替身。
   scheduler = new SummaryMemoryScheduler({ userDataRoot: path.resolve("test-user-data"), sessions });
   scheduler.setEnabled(true);
   return sessions;
