@@ -27,6 +27,7 @@ const writers = [
 let workspace: string;
 let outside: string;
 beforeEach(() => {
+  // 工作区及模拟外部目标都在本用例独占目录内，afterEach 恢复权限和替身后删除整个目录。
   state.root = fs.mkdtempSync(path.join(os.tmpdir(), "tool-path-"));
   workspace = path.join(state.root, "workspace"); outside = path.join(state.root, "outside");
   fs.mkdirSync(workspace); fs.mkdirSync(outside);

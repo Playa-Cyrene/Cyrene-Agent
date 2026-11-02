@@ -5,13 +5,13 @@
 // download_file 把图片等二进制原样落盘给用户用，模型只拿到保存路径。
 //
 // 安全设计（对齐 document-tools 的落盘规则）：
-// - 路径沙箱：filename 禁止绝对路径/.. 穿越，根目录固定为可信工作区（未绑定时回退桌面）
+// - filename 禁止绝对路径/.. 穿越；以工作区（未绑定时桌面）解析，由统一权限守卫检查真实目标
 // - 危险后缀黑名单：拒绝下载 .exe/.bat 等可执行文件
 // - 大小上限 64MiB + 30s 空闲超时（无总超时，大文件慢速下载不误杀）
 // - 先完整缓冲校验再一次性落盘：下载中断不会留下半截文件
 //
-// 注意：本模块不 import electron（顶层），桌面路径在 execute 内懒加载，
-// 保证测试环境 import 本模块不触发 Electron 初始化（与 tool-registry 懒加载同模式）。
+// 桌面回退路径在 execute 内按需读取，但 file-access 会在顶层引入权限宿主及 Electron。
+// 普通 Node 测试须隔离权限或 Electron 宿主，不能只靠传入工作区避免该依赖。
 
 import * as fs from "fs";
 import * as path from "path";
@@ -71,7 +71,7 @@ function resolveOutputPath(filename: string, workspaceRoot?: string): string | n
   if (workspaceRoot) {
     root = path.resolve(workspaceRoot);
   } else {
-    // 懒加载 electron：测试环境传 workspaceRoot 即可完全绕开
+    // 绑定工作区时不调用此分支；仅未绑定时读取桌面回退路径。
     const { app } = require("electron") as typeof import("electron");
     root = app.getPath("desktop");
   }
