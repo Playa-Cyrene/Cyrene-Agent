@@ -1,5 +1,6 @@
 import sanitizeHtml from "sanitize-html";
 import { marked } from "marked";
+import { RELEASE_NOTES_ALLOWED_TAGS } from "../../shared/release-notes-html";
 
 /**
  * 更新说明转成可安全渲染的 HTML。
@@ -9,10 +10,7 @@ import { marked } from "marked";
  * 只保留排版标签与 https 链接，脚本、事件属性、样式与其他协议一律丢弃。
  */
 const RELEASE_NOTES_HTML_OPTIONS: sanitizeHtml.IOptions = {
-  allowedTags: [
-    "a", "b", "blockquote", "br", "code", "em", "h1", "h2", "h3", "h4", "hr", "i",
-    "li", "ol", "p", "pre", "strong", "ul",
-  ],
+  allowedTags: [...RELEASE_NOTES_ALLOWED_TAGS],
   allowedAttributes: { a: ["href"] },
   allowedSchemes: ["https"],
   allowedSchemesByTag: { a: ["https"] },
@@ -33,7 +31,10 @@ const LEADING_BLOCK_HTML = /^<(?:h[1-6]|p|ul|ol|li|blockquote|pre|hr|div|table|d
 export function releaseNotesToSafeHtml(notes: string): string | null {
   const source = notes.slice(0, MAX_RELEASE_NOTES_LENGTH).trim();
   if (!source) return null;
+  const truncated = notes.length > MAX_RELEASE_NOTES_LENGTH;
   const html = LEADING_BLOCK_HTML.test(source) ? source : marked.parse(source, { async: false, gfm: true, breaks: true });
   const safe = sanitizeHtml(html, RELEASE_NOTES_HTML_OPTIONS).trim();
-  return safe || null;
+  if (!safe) return null;
+  // 被截断时留一个省略提示，别让说明看起来是完整的
+  return truncated ? `${safe}<p>…</p>` : safe;
 }

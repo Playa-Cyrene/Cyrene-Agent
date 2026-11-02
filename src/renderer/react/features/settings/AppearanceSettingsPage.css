@@ -536,7 +536,7 @@
   overflow-wrap: anywhere;
 }
 
-.cy-settings-release-notes :is(h1, h2, h3, h4) {
+.cy-settings-release-notes :is(h1, h2, h3, h4, h5, h6) {
   margin: 10px 0 4px;
   color: var(--rb-text-primary);
   font-size: 13px;
@@ -569,6 +569,26 @@
 
 .cy-settings-release-notes a {
   color: var(--rb-accent, inherit);
+}
+
+.cy-settings-release-notes pre {
+  margin: 4px 0;
+  white-space: pre-wrap;
+}
+
+.cy-settings-release-notes table {
+  margin: 4px 0;
+  border-collapse: collapse;
+}
+
+.cy-settings-release-notes :is(th, td) {
+  padding: 2px 8px;
+  border: 1px solid var(--rb-border-subtle, currentColor);
+  text-align: left;
+}
+
+.cy-settings-release-notes summary {
+  cursor: pointer;
 }
 
 .cy-settings-general__path {

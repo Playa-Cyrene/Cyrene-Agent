@@ -1352,6 +1352,7 @@
       "gpuInternals": "View GPU status",
       "about": "About Cyrene",
       "aboutDescription": "A lightweight desktop companion for emotional support.",
+      "releaseNotes": "Release notes",
       "softwareUpdate": "Software update",
       "dataDir": "Data folder",
       "dataDirDescription": "Chats, model profiles, plugins and other data are stored here",

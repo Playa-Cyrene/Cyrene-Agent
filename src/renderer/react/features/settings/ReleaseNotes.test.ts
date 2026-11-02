@@ -14,7 +14,7 @@ async function render(html: string) {
   document.body.append(host);
   const root = createRoot(host);
   roots.push(root);
-  await act(async () => { root.render(createElement(ReleaseNotes, { html })); });
+  await act(async () => { root.render(createElement(ReleaseNotes, { html, label: "更新说明" })); });
   return host.querySelector<HTMLElement>("[data-testid='settings-release-notes']")!;
 }
 
@@ -36,6 +36,37 @@ describe("设置页的更新说明", () => {
   it("渲染前再次净化：即使主进程漏网也不会执行脚本或保留事件属性", async () => {
     const notes = await render("<p onclick=\"steal()\">正文</p><img src=x onerror=\"steal()\"><script>steal()</script><a href=\"javascript:steal()\">x</a>");
     expect(notes.innerHTML).toBe("<p>正文</p><a>x</a>");
+  });
+
+  it("不保留 data-* / aria-* 属性：外部内容不能伪造设置页搜索定位标记", async () => {
+    const notes = await render("<p data-settings-search-id=\"settingsPage.theme\" aria-label=\"伪造\">正文</p>");
+    expect(notes.innerHTML).toBe("<p>正文</p>");
+  });
+
+  it("保留表格与折叠块结构", async () => {
+    const notes = await render("<table><tbody><tr><td>值</td></tr></tbody></table><details><summary>详情</summary>内容</details>");
+    expect(notes.querySelector("td")?.textContent).toBe("值");
+    expect(notes.querySelector("details summary")?.textContent).toBe("详情");
+  });
+
+  it("滚动框可用键盘聚焦并带无障碍标签", async () => {
+    const notes = await render("<p>正文</p>");
+    expect(notes.getAttribute("role")).toBe("region");
+    expect(notes.getAttribute("aria-label")).toBe("更新说明");
+    expect(notes.tabIndex).toBe(0);
+  });
+
+  it("中键点击同样交给系统浏览器；右键不打开链接", async () => {
+    const openExternal = vi.fn(async () => undefined);
+    (window as unknown as { system: unknown }).system = { openExternal };
+    const notes = await render("<p><a href=\"https://example.com/a\">链接</a></p>");
+    const link = notes.querySelector("a")!;
+    const middle = new MouseEvent("auxclick", { bubbles: true, cancelable: true, button: 1 });
+    await act(async () => { link.dispatchEvent(middle); });
+    expect(middle.defaultPrevented).toBe(true);
+    expect(openExternal).toHaveBeenCalledTimes(1);
+    await act(async () => { link.dispatchEvent(new MouseEvent("auxclick", { bubbles: true, cancelable: true, button: 2 })); });
+    expect(openExternal).toHaveBeenCalledTimes(1);
   });
 
   it("点击链接交给系统浏览器打开，设置窗口本身不跳转", async () => {

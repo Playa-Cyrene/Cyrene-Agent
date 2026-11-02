@@ -203,7 +203,7 @@ export function GeneralSettingsPanel() {
               <div className="cy-settings-row__copy">
                 <strong data-settings-search-id="settingsPage.general.softwareUpdate">{t("settingsPage.general.softwareUpdate")}</strong>
                 <span>{t(updateView.label.key, updateView.label.params)}</span>
-                {updateState.releaseNotesHtml && <ReleaseNotes html={updateState.releaseNotesHtml} />}
+                {updateState.releaseNotesHtml && <ReleaseNotes html={updateState.releaseNotesHtml} label={t("settingsPage.general.releaseNotes")} />}
               </div>
               <div className="cy-settings-row__control">
                 {updateView.busy && <Spin size="small" />}

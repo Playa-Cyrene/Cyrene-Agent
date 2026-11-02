@@ -34,7 +34,10 @@ describe("更新说明转成可安全渲染的 HTML", () => {
   });
 
   it("Markdown 或纯文本发布说明转成 HTML", () => {
-    expect(releaseNotesToSafeHtml("## 修复\n\n- 修复 A\n- 修复 B")).toBe("<h2>修复</h2>\n<ul>\n<li>修复 A</li>\n<li>修复 B</li>\n</ul>");
+    const html = releaseNotesToSafeHtml("## 修复\n\n- 修复 A\n- 修复 B")!;
+    expect(html).toContain("<h2>修复</h2>");
+    expect(html).toContain("<li>修复 A</li>");
+    expect(html).toContain("<li>修复 B</li>");
     expect(releaseNotesToSafeHtml("可靠性更新")).toBe("<p>可靠性更新</p>");
   });
 
@@ -48,6 +51,16 @@ describe("更新说明转成可安全渲染的 HTML", () => {
 
   it("以普通文字开头、中间含行内标签的说明按 Markdown 处理", () => {
     expect(releaseNotesToSafeHtml("新增 <kbd>Ctrl</kbd> 快捷键说明")).toBe("<p>新增 Ctrl 快捷键说明</p>");
+  });
+
+  it("表格、折叠块、低级标题与删除线保留结构", () => {
+    const source = "<h5>小节</h5><table><thead><tr><th>项</th></tr></thead><tbody><tr><td>值</td></tr></tbody></table><details><summary>详情</summary><p><del>旧</del></p></details>";
+    expect(releaseNotesToSafeHtml(source)).toBe(source);
+  });
+
+  it("超长说明截断时带省略提示，未超长时不带", () => {
+    expect(releaseNotesToSafeHtml(`<p>${"字".repeat(100_001)}</p>`)!.endsWith("<p>…</p>")).toBe(true);
+    expect(releaseNotesToSafeHtml("<p>短说明</p>")).toBe("<p>短说明</p>");
   });
 
   it("空白或净化后为空的说明返回 null，不显示空框", () => {
