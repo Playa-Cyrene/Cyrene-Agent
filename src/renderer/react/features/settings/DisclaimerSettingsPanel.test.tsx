@@ -42,7 +42,8 @@ describe("完整条款与本地化", () => {
       }),
     ])].join("\n\n") + "\n";
     const source = readFileSync(new URL(`../../../../../docs/disclaimer.${locale}.md`, import.meta.url), "utf8");
-    expect(markdown).toBe(source);
+    // Windows 检出可能使用 CRLF；只归一化行尾，仍严格核对完整正文。
+    expect(markdown).toBe(source.replace(/\r\n/g, "\n"));
   });
 
   it("保留用户确认的响应时限与责任边界，不恢复旧绝对免责", async () => {
