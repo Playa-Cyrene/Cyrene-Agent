@@ -17,6 +17,7 @@ import * as fs from "fs";
 import * as path from "path";
 import type { ToolDefinition } from "../registry/tool-registry";
 import type { ToolContext } from "../registry/tool-context";
+import { resolveFileAccessPath } from "../file-access";
 
 const LOG_PREFIX = "[BuiltinTools]";
 
@@ -120,6 +121,8 @@ async function executeDownloadFile(args: Record<string, unknown>, ctx?: ToolCont
   if (DANGEROUS_EXTS.has(path.extname(outputPath).toLowerCase())) {
     return "[错误] 禁止下载可执行/脚本文件: " + path.extname(outputPath);
   }
+  const access = resolveFileAccessPath(outputPath, "write", ctx);
+  if (!access.ok) return "[拒绝] " + access.message;
 
   console.log(LOG_PREFIX, "download_file:", url, "->", outputPath);
 
@@ -174,6 +177,10 @@ async function executeDownloadFile(args: Record<string, unknown>, ctx?: ToolCont
       chunks.push(Buffer.from(value));
     }
 
+    // 下载期间目录可能被替换；补扩展名后必须按最终实际目标再次检查。
+    const finalAccess = resolveFileAccessPath(finalPath, "write", ctx);
+    if (!finalAccess.ok) return "[拒绝] " + finalAccess.message;
+    finalPath = finalAccess.path;
     const dir = path.dirname(finalPath);
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(finalPath, Buffer.concat(chunks, total));

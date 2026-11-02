@@ -5,6 +5,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+
+// 本文件验证授权写入的功能路径；受限档位由 tool-path-boundaries 回归独立覆盖。
+vi.mock("../../permission", async () => ({
+  ...await import("../../permission-policy"),
+  getCurrentLevel: () => "full",
+  ACCESS_LEVEL_LABEL: { full: "完全访问" },
+}));
 import { downloadFileTool } from "./builtin-tools/download-file-tool";
 import type { ToolContext } from "./registry/tool-context";
 

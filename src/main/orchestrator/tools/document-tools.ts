@@ -15,10 +15,19 @@ import { pipeline } from "stream/promises";
 import { app } from "electron";
 import { toolRegistry } from "./registry/tool-registry";
 import type { ToolContext } from "./registry/tool-context";
+import { resolveFileAccessPath } from "./file-access";
+import { ToolExecutionError } from "./registry/tool-execution-error";
 import { findSkillPath } from "../../external-content-paths";
 import { getRunReviewTracker } from "../review/run-review-tracker";
 
 const LOG_PREFIX = "[DocTools]";
+
+/** 生成前拒绝越界；异步生成结束后再次调用，不能让等待期间的链接替换绕过检查。 */
+function checkedOutputPath(outputPath: string, context?: ToolContext): string {
+  const access = resolveFileAccessPath(outputPath, "write", context);
+  if (!access.ok) throw new ToolExecutionError("E_DOCUMENT_PATH_DENIED", access.message, "permission_denied");
+  return access.path;
+}
 
 /** 校验文件名：必须有合法扩展名，不能有危险字符。ext 支持多个候选（如 [".md", ".txt"]）。 */
 function validateFilename(filename: string, ext: string | string[]): string | null {
@@ -252,8 +261,9 @@ export function registerDocumentTools(): void {
     execute: async (args, context?: ToolContext) => {
       const filename = validateFilename(String(args.filename || ""), ".xlsx");
       if (!filename) return filenameError(".xlsx", args);
-      const outputPath = resolveOutputPath(filename, context?.resolvedWorkspaceRoot);
+      let outputPath = resolveOutputPath(filename, context?.resolvedWorkspaceRoot);
       if (!outputPath) return "[错误] 路径不合法（禁止目录穿越或绝对路径）: " + filename;
+      checkedOutputPath(outputPath, context);
       const sheets = args.sheets as Array<{
         name: string; headers: string[]; rows: unknown[][];
       }>;
@@ -372,6 +382,7 @@ export function registerDocumentTools(): void {
       }
 
       // 自动创建父目录（支持子目录写入）
+      outputPath = checkedOutputPath(outputPath, context);
       const dir = path.dirname(outputPath);
       if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
@@ -419,8 +430,9 @@ export function registerDocumentTools(): void {
     execute: async (args, context?: ToolContext) => {
       const filename = validateFilename(String(args.filename || ""), ".docx");
       if (!filename) return filenameError(".docx", args);
-      const outputPath = resolveOutputPath(filename, context?.resolvedWorkspaceRoot);
+      let outputPath = resolveOutputPath(filename, context?.resolvedWorkspaceRoot);
       if (!outputPath) return "[错误] 路径不合法（禁止目录穿越或绝对路径）: " + filename;
+      checkedOutputPath(outputPath, context);
 
       // 加载风格
       const styles = loadStylesDir("docx");
@@ -470,6 +482,7 @@ export function registerDocumentTools(): void {
       });
 
       const buffer = await Packer.toBuffer(doc);
+      outputPath = checkedOutputPath(outputPath, context);
       const dir = path.dirname(outputPath);
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
       captureBaseline(context, outputPath);
@@ -510,10 +523,12 @@ export function registerDocumentTools(): void {
     execute: async (args, context?: ToolContext) => {
       const filename = validateFilename(String(args.filename || ""), ".pdf");
       if (!filename) return filenameError(".pdf", args);
-      const outputPath = resolveOutputPath(filename, context?.resolvedWorkspaceRoot);
+      let outputPath = resolveOutputPath(filename, context?.resolvedWorkspaceRoot);
       if (!outputPath) return "[错误] 路径不合法（禁止目录穿越或绝对路径）: " + filename;
+      checkedOutputPath(outputPath, context);
 
       const PDFKit = await import("pdfkit");
+      outputPath = checkedOutputPath(outputPath, context);
       const dir = path.dirname(outputPath);
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
       captureBaseline(context, outputPath);
@@ -561,6 +576,7 @@ export function registerDocumentTools(): void {
         await writing;
         // 沿用原 createWriteStream 的目标权限、inode 和符号链接语义。
         // 最终写盘不是原子事务；磁盘故障仍可能部分写入，但清理绝不能删除目标。
+        outputPath = checkedOutputPath(outputPath, context);
         await pipeline(fs.createReadStream(temporaryPath), fs.createWriteStream(outputPath));
       } finally {
         doc.destroy();

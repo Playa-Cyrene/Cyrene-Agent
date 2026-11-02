@@ -15,6 +15,7 @@ import * as path from "path";
 import { parse, type Edit, type SgNode } from "@ast-grep/napi";
 import { toolRegistry } from "./registry/tool-registry";
 import type { ToolContext } from "./registry/tool-context";
+import { resolveFileAccessPath, type FileAccessOperation } from "./file-access";
 import type { ToolDiffLine, ToolFileChange } from "../../../shared/chat-types";
 import { finalizeFileChanges } from "./registry/tool-evidence";
 import { app } from "electron";
@@ -100,7 +101,9 @@ interface CollectedFile {
 function collectFiles(
   workspaceRoot: string,
   inputPaths: string[],
-  language?: string,
+  language: string | undefined,
+  context: ToolContext | undefined,
+  operation: FileAccessOperation = "read",
 ): { files: CollectedFile[]; skipped: string[] } {
   const langExts = language ? LANG_TO_EXTENSIONS[language] : undefined;
   const files: CollectedFile[] = [];
@@ -108,6 +111,7 @@ function collectFiles(
 
   const walk = (absDir: string, relDir: string): void => {
     if (files.length >= MAX_FILES) return;
+    if (!resolveFileAccessPath(absDir, operation, context).ok) { skipped.push(relDir); return; }
     let entries: fs.Dirent[];
     try {
       entries = fs.readdirSync(absDir, { withFileTypes: true });
@@ -120,6 +124,7 @@ function collectFiles(
       if (entry.name.startsWith(".") || SKIP_DIRS.has(entry.name)) continue;
       const rel = relDir ? `${relDir}/${entry.name}` : entry.name;
       const abs = path.join(absDir, entry.name);
+      if (!resolveFileAccessPath(abs, operation, context).ok) { skipped.push(rel); continue; }
       if (entry.isDirectory()) {
         walk(abs, rel);
       } else if (entry.isFile()) {
@@ -138,6 +143,7 @@ function collectFiles(
       skipped.push(inputPath);
       continue;
     }
+    if (!resolveFileAccessPath(abs, operation, context).ok) { skipped.push(inputPath); continue; }
     let stat: fs.Stats;
     try {
       stat = fs.statSync(abs);
@@ -322,7 +328,7 @@ async function executeAstGrepSearch(
     ? (args.maxMatches as number)
     : MAX_MATCHES_DEFAULT;
 
-  const { files, skipped } = collectFiles(workspaceRoot, common.paths ?? ["."], common.language);
+  const { files, skipped } = collectFiles(workspaceRoot, common.paths ?? ["."], common.language, ctx);
 
   const matches: (SingleMatch & { file: string })[] = [];
   const errors: string[] = [];
@@ -334,7 +340,9 @@ async function executeAstGrepSearch(
       if (matches.length >= maxMatches) { truncated = true; break; }
       let source: string;
       try {
-        source = fs.readFileSync(file.absPath, "utf8");
+        const access = resolveFileAccessPath(file.absPath, "read", ctx);
+        if (!access.ok) { skipped.push(file.relPath); continue; }
+        source = fs.readFileSync(access.path, "utf8");
       } catch {
         skipped.push(file.relPath);
         continue;
@@ -392,7 +400,7 @@ async function executeAstGrepReplace(
   const rewrite = String(args.rewrite ?? "");
   const dryRun = args.dryRun !== false; // 默认 true 只预览
 
-  const { files, skipped } = collectFiles(workspaceRoot, common.paths ?? ["."], common.language);
+  const { files, skipped } = collectFiles(workspaceRoot, common.paths ?? ["."], common.language, ctx, dryRun ? "read" : "write");
 
   interface PlannedChange {
     file: string;
@@ -409,7 +417,9 @@ async function executeAstGrepReplace(
   for (const file of files) {
     let source: string;
     try {
-      source = fs.readFileSync(file.absPath, "utf8");
+      const access = resolveFileAccessPath(file.absPath, dryRun ? "read" : "write", ctx);
+      if (!access.ok) { skipped.push(file.relPath); continue; }
+      source = fs.readFileSync(access.path, "utf8");
     } catch {
       skipped.push(file.relPath);
       continue;
@@ -472,7 +482,9 @@ async function executeAstGrepReplace(
   const changed: string[] = [];
   for (const [absPath, content] of pendingWrites) {
     try {
-      fs.writeFileSync(absPath, content, "utf8");
+      const access = resolveFileAccessPath(absPath, "write", ctx);
+      if (!access.ok) { errors.push(`${absPath}: ${access.message}`); continue; }
+      fs.writeFileSync(access.path, content, "utf8");
       changed.push(absPath.slice(workspaceRoot.length + 1).replaceAll("\\", "/"));
     } catch (err) {
       errors.push(`${absPath}: ${err instanceof Error ? err.message : String(err)}`);

@@ -10,6 +10,13 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 
+// 本文件验证授权写入的功能路径；受限档位由 tool-path-boundaries 回归独立覆盖。
+vi.mock("../../permission", async () => ({
+  ...await import("../../permission-policy"),
+  getCurrentLevel: () => "full",
+  ACCESS_LEVEL_LABEL: { full: "完全访问" },
+}));
+
 let tmpDir: string;
 
 // 内存版注册表：真实执行 register → execute 链路，不污染全局
