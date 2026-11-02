@@ -213,14 +213,19 @@ export async function connectMcpServer(config: McpServerConfig): Promise<string[
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           console.error(LOG_PREFIX, "工具调用失败 [" + toolId + "]:", msg);
+          // 只读调用保留原错误路径，继续由 Harness 分类和重试，不能覆盖已有超时语义。
+          if (resolvedEffectKind === "read") {
+            if (msg.startsWith("E_MCP_TOOL_FAILED")) throw err;
+            throw new Error(`E_MCP_TOOL_FAILED: ${msg}`);
+          }
           // 请求已进入第三方执行边界：响应错误不能证明副作用未发生。
           // 只读以外保留 unknown，让 Harness 登记并阻止未核实的重复调用。
           throw new ToolExecutionError(
             "E_MCP_TOOL_FAILED",
             msg.startsWith("E_MCP_TOOL_FAILED") ? msg : `E_MCP_TOOL_FAILED: ${msg}`,
-            resolvedEffectKind === "read" ? "semantic_failure" : "partial_failure",
+            "partial_failure",
             false,
-            resolvedEffectKind === "read" ? "not_applied" : "unknown",
+            "unknown",
           );
         }
       },
