@@ -97,7 +97,8 @@ export function PermissionControl() {
   }
 
   async function select(nextLevel: PermissionLevel) {
-    if (pending.current || nextLevel === level) return;
+    // 显示档位可能来自旧读取；显式选择必须交由主进程保存，不能据此吞掉降权。
+    if (pending.current) return;
     if (nextLevel === "full") {
       setOpen(false);
       setFullAccessOpen(true);

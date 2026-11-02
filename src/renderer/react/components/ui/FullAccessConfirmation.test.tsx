@@ -148,3 +148,28 @@ it("条款层 Escape 仅关闭阅读窗口，原确认保留且未授权", async
   await waitSeconds(); await click(ok());
   expect(confirm).toHaveBeenCalledOnce();
 });
+
+it.each(["initial", "refresh"])("权限读取在途时仍执行显式降权，不按旧 read-only 显示去重（%s）", async phase => {
+  const oldRead = deferred<{ level: string }>();
+  let persistedLevel = "full";
+  const read = vi.fn().mockReturnValue(oldRead.promise);
+  if (phase === "refresh") read.mockResolvedValueOnce({ level: "read-only" });
+  const api = {
+    getPermissionLevel: read,
+    setPermissionLevel: vi.fn(async (level: string) => {
+      persistedLevel = level;
+      return { ok: true, level };
+    }),
+  };
+  (window as any).settings = api;
+  await renderQuick();
+  await click(document.querySelector(".cy-permission-control")!);
+  expect(read).toHaveBeenCalledTimes(2);
+  expect(document.querySelector(".cy-permission-control")?.className).toContain("is-read-only");
+  await click(document.querySelector(".cy-permission-panel__option.is-read-only")!);
+  expect(api.setPermissionLevel).toHaveBeenCalledExactlyOnceWith("read-only");
+  expect(persistedLevel).toBe("read-only");
+  expect(ok()).toBeNull();
+  await act(async () => oldRead.resolve({ level: "full" }));
+  expect(document.querySelector(".cy-permission-control")?.className).toContain("is-read-only");
+});
