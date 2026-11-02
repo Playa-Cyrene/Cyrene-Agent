@@ -1,9 +1,11 @@
 import path from "node:path";
+import fs from "node:fs";
+import os from "node:os";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const remote = vi.hoisted(() => ({ tools: [] as unknown[], call: vi.fn() }));
+const remote = vi.hoisted(() => ({ root: "", tools: [] as unknown[], call: vi.fn() }));
 vi.mock("electron", () => ({
-  app: { getPath: () => path.join(process.env.TEMP!, "mcp-permission") },
+  app: { getPath: () => remote.root },
   BrowserWindow: { getAllWindows: () => [] },
   ipcMain: { handle: vi.fn() },
 }));
@@ -25,8 +27,24 @@ import { toolRegistry } from "./tools/registry/tool-registry";
 import { prepareToolRuntime } from "./harness/adapter/tool-runtime";
 import { policyFor, setCurrentLevel } from "../permission";
 
-beforeEach(() => { remote.call.mockReset().mockResolvedValue({ content: [{ type: "text", text: "ok" }] }); });
-afterEach(async () => { await disconnectMcpServer("permission-test"); setCurrentLevel("read-only"); });
+let controller: AbortController | undefined;
+beforeEach(() => {
+  // 权限宿主会真实写配置；每例独占目录，由 afterEach 恢复档位后删除，避免互相污染。
+  remote.root = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-mcp-permission-"));
+  // 信号只属于当前权限检查；afterEach 先取消，再断开服务并回收目录。
+  controller = new AbortController();
+  remote.call.mockReset().mockResolvedValue({ content: [{ type: "text", text: "ok" }] });
+});
+afterEach(async () => {
+  try {
+    controller?.abort();
+    await disconnectMcpServer("permission-test");
+  } finally {
+    setCurrentLevel("read-only");
+    if (remote.root) fs.rmSync(remote.root, { recursive: true, force: true });
+    remote.root = "";
+  }
+});
 
 describe("MCP 注册到真实 Harness 权限链", () => {
   it.each([
@@ -41,7 +59,7 @@ describe("MCP 注册到真实 Harness 权限链", () => {
     expect(policyFor("per-action", tool.risk!)).toBe("ask");
     const runtime = await prepareToolRuntime({
       options: { conversationId: "thread", conversationMode: "chat", messages: [], allowPermissionPrompt: false } as never,
-      signal: new AbortController().signal,
+      signal: controller!.signal,
       prepared: { threadId: "thread", runId: "permission-run", tools: [] } as never,
       sendBaseEvent: vi.fn(),
     });
