@@ -104,14 +104,23 @@ function collectFiles(
   language: string | undefined,
   context: ToolContext | undefined,
   operation: FileAccessOperation = "read",
-): { files: CollectedFile[]; skipped: string[] } {
+): { files: CollectedFile[]; skipped: string[]; permissionErrors: string[] } {
   const langExts = language ? LANG_TO_EXTENSIONS[language] : undefined;
   const files: CollectedFile[] = [];
   const skipped: string[] = [];
+  // 权限拒绝不是零匹配；单独保留原因，不能只作为普通跳过项报告成功。
+  const permissionErrors: string[] = [];
+  const canCollect = (target: string, displayPath: string): boolean => {
+    const access = resolveFileAccessPath(target, operation, context);
+    if (access.ok) return true;
+    skipped.push(displayPath);
+    permissionErrors.push(`${displayPath}: ${access.message}`);
+    return false;
+  };
 
   const walk = (absDir: string, relDir: string): void => {
     if (files.length >= MAX_FILES) return;
-    if (!resolveFileAccessPath(absDir, operation, context).ok) { skipped.push(relDir); return; }
+    if (!canCollect(absDir, relDir)) return;
     let entries: fs.Dirent[];
     try {
       entries = fs.readdirSync(absDir, { withFileTypes: true });
@@ -124,7 +133,7 @@ function collectFiles(
       if (entry.name.startsWith(".") || SKIP_DIRS.has(entry.name)) continue;
       const rel = relDir ? `${relDir}/${entry.name}` : entry.name;
       const abs = path.join(absDir, entry.name);
-      if (!resolveFileAccessPath(abs, operation, context).ok) { skipped.push(rel); continue; }
+      if (!canCollect(abs, rel)) continue;
       if (entry.isDirectory()) {
         walk(abs, rel);
       } else if (entry.isFile()) {
@@ -143,7 +152,7 @@ function collectFiles(
       skipped.push(inputPath);
       continue;
     }
-    if (!resolveFileAccessPath(abs, operation, context).ok) { skipped.push(inputPath); continue; }
+    if (!canCollect(abs, inputPath)) continue;
     let stat: fs.Stats;
     try {
       stat = fs.statSync(abs);
@@ -168,7 +177,18 @@ function collectFiles(
     }
   }
 
-  return { files, skipped };
+  return { files, skipped, permissionErrors };
+}
+
+/** 没有处理任何文件且存在权限拒绝时，向执行器返回可识别的失败，而非正常零匹配。 */
+function permissionFailure(permissionErrors: string[], processedFiles: number) {
+  if (processedFiles > 0 || permissionErrors.length === 0) return {};
+  return {
+    success: false,
+    errorCode: "E_AST_PERMISSION_DENIED",
+    category: "permission_denied",
+    error: permissionErrors.slice(0, 10).join("\n"),
+  };
 }
 
 // ── 单文件搜索/重写 ──────────────────────────────────────
@@ -328,11 +348,12 @@ async function executeAstGrepSearch(
     ? (args.maxMatches as number)
     : MAX_MATCHES_DEFAULT;
 
-  const { files, skipped } = collectFiles(workspaceRoot, common.paths ?? ["."], common.language, ctx);
+  const { files, skipped, permissionErrors } = collectFiles(workspaceRoot, common.paths ?? ["."], common.language, ctx);
 
   const matches: (SingleMatch & { file: string })[] = [];
   const errors: string[] = [];
   let filesWithMatches = 0;
+  let readableFiles = 0;
   let truncated = false;
 
   try {
@@ -341,8 +362,9 @@ async function executeAstGrepSearch(
       let source: string;
       try {
         const access = resolveFileAccessPath(file.absPath, "read", ctx);
-        if (!access.ok) { skipped.push(file.relPath); continue; }
+        if (!access.ok) { skipped.push(file.relPath); permissionErrors.push(`${file.relPath}: ${access.message}`); continue; }
         source = fs.readFileSync(access.path, "utf8");
+        readableFiles++;
       } catch {
         skipped.push(file.relPath);
         continue;
@@ -376,6 +398,8 @@ async function executeAstGrepSearch(
     matches,
     ...(skipped.length > 0 ? { skipped: skipped.slice(0, 20) } : {}),
     ...(errors.length > 0 ? { parseErrors: errors.slice(0, 10) } : {}),
+    ...(permissionErrors.length > 0 ? { permissionErrors: permissionErrors.slice(0, 10) } : {}),
+    ...permissionFailure(permissionErrors, readableFiles),
   });
 }
 
@@ -400,7 +424,7 @@ async function executeAstGrepReplace(
   const rewrite = String(args.rewrite ?? "");
   const dryRun = args.dryRun !== false; // 默认 true 只预览
 
-  const { files, skipped } = collectFiles(workspaceRoot, common.paths ?? ["."], common.language, ctx, dryRun ? "read" : "write");
+  const { files, skipped, permissionErrors } = collectFiles(workspaceRoot, common.paths ?? ["."], common.language, ctx, dryRun ? "read" : "write");
 
   interface PlannedChange {
     file: string;
@@ -412,14 +436,16 @@ async function executeAstGrepReplace(
   const changes: ToolFileChange[] = [];
   /** 本轮调用的待写入内容：absPath → 新文本（局部变量，并发调用互不干扰） */
   const pendingWrites = new Map<string, string>();
+  let readableFiles = 0;
 
   // 阶段 1：对所有文件计算编辑（dryRun 与正式执行共用）
   for (const file of files) {
     let source: string;
     try {
       const access = resolveFileAccessPath(file.absPath, dryRun ? "read" : "write", ctx);
-      if (!access.ok) { skipped.push(file.relPath); continue; }
+      if (!access.ok) { skipped.push(file.relPath); permissionErrors.push(`${file.relPath}: ${access.message}`); continue; }
       source = fs.readFileSync(access.path, "utf8");
+      readableFiles++;
     } catch {
       skipped.push(file.relPath);
       continue;
@@ -465,6 +491,8 @@ async function executeAstGrepReplace(
       changes: evidence,
       ...(skipped.length > 0 ? { skipped: skipped.slice(0, 20) } : {}),
       ...(errors.length > 0 ? { parseErrors: errors.slice(0, 10) } : {}),
+      ...(permissionErrors.length > 0 ? { permissionErrors: permissionErrors.slice(0, 10) } : {}),
+      ...permissionFailure(permissionErrors, readableFiles),
       note: "这是预览。确认无误后用 dryRun: false 重新调用以实际写入。",
     });
   }
@@ -480,16 +508,22 @@ async function executeAstGrepReplace(
 
   // 阶段 2：统一写入（任一写入异常继续写其余，错误汇总返回）
   const changed: string[] = [];
+  let deniedWrites = 0;
   for (const [absPath, content] of pendingWrites) {
     try {
       const access = resolveFileAccessPath(absPath, "write", ctx);
-      if (!access.ok) { errors.push(`${absPath}: ${access.message}`); continue; }
+      if (!access.ok) {
+        const message = `${absPath}: ${access.message}`;
+        errors.push(message); permissionErrors.push(message); deniedWrites++;
+        continue;
+      }
       fs.writeFileSync(access.path, content, "utf8");
       changed.push(absPath.slice(workspaceRoot.length + 1).replaceAll("\\", "/"));
     } catch (err) {
       errors.push(`${absPath}: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
+  const allWritesDenied = pendingWrites.size > 0 && deniedWrites === pendingWrites.size;
   pendingWrites.clear();
 
   console.log(LOG_PREFIX, `replace "${common.pattern.slice(0, 40)}" → 写入 ${changed.length} 个文件`);
@@ -505,6 +539,8 @@ async function executeAstGrepReplace(
     changes: evidence,
     ...(skipped.length > 0 ? { skipped: skipped.slice(0, 20) } : {}),
     ...(errors.length > 0 ? { errors: errors.slice(0, 10) } : {}),
+    ...(permissionErrors.length > 0 ? { permissionErrors: permissionErrors.slice(0, 10) } : {}),
+    ...permissionFailure(permissionErrors, allWritesDenied ? 0 : readableFiles),
   });
 }
 

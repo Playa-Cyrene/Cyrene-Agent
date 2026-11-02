@@ -14,6 +14,7 @@ import { downloadFileTool } from "./builtin-tools/download-file-tool";
 import { registerAstGrepTools } from "./ast-grep-tools";
 import { toolRegistry } from "./registry/tool-registry";
 import { executeToolDefinition } from "./registry/tool-executor";
+import { dispatchToolCall } from "../harness/tool-dispatcher";
 import type { ToolContext } from "./registry/tool-context";
 
 registerDocumentTools();
@@ -50,6 +51,49 @@ function write(writer: typeof writers[number], filename: string, extra: Partial<
 }
 
 describe("工具真实路径与权限边界", () => {
+  it.each(["ast_grep_search", "ast_grep_replace"])("%s 的唯一输入被拒绝时，真实执行链返回权限失败", async (id) => {
+    const target = path.join(outside, "source.ts"); fs.writeFileSync(target, "console.log(1);\n");
+    setCurrentLevel(id === "ast_grep_search" ? "project-read-only" : "scoped");
+    const args = { paths: ["linked"], pattern: "console.log($$$A)", rewrite: "console.warn($$$A)", dryRun: false };
+    const tool = toolRegistry.getById(id)!;
+    const outcome = await dispatchToolCall({ id: "denied", name: id, arguments: JSON.stringify(args) }, {
+      state: { todoItems: [], uncertainEffects: [] }, tools: [tool], toolContext: context(),
+    });
+    expect(outcome).toMatchObject({ outcome: "failure", category: "permission_denied", rawResult: { status: "failed", errorCode: "E_AST_PERMISSION_DENIED", effectState: "not_applied" } });
+    expect(outcome.message).toContain("工作区外");
+    expect(fs.readFileSync(target, "utf8")).toBe("console.log(1);\n");
+  });
+
+  it.each(["ast_grep_search", "ast_grep_replace"])("%s 对可访问文件正常零匹配时仍返回成功", async (id) => {
+    fs.writeFileSync(path.join(workspace, "source.ts"), "const value = 1;\n");
+    const result = await executeToolDefinition(toolRegistry.getById(id)!, {
+      paths: ["source.ts"], pattern: "console.log($$$A)", rewrite: "console.warn($$$A)", dryRun: false,
+    }, context());
+    expect(result.status).toBe("succeeded");
+    const output = JSON.parse(result.output);
+    expect(output.matchCount ?? output.changedFiles).toBe(0);
+  });
+
+  it.each(["ast_grep_search", "ast_grep_replace"])("%s 保留可访问输入的结果，并说明其余输入被拒绝", async (id) => {
+    fs.writeFileSync(path.join(workspace, "source.ts"), "console.log(1);\n");
+    fs.writeFileSync(path.join(outside, "source.ts"), "console.log(2);\n");
+    setCurrentLevel(id === "ast_grep_search" ? "project-read-only" : "scoped");
+    const output = JSON.parse(await toolRegistry.getById(id)!.execute({
+      paths: ["linked", "source.ts"], pattern: "console.log($$$A)", rewrite: "console.warn($$$A)", dryRun: false,
+    }, context()));
+    expect(output.success).toBe(true);
+    expect(output.matchCount ?? output.changedFiles).toBe(1);
+    expect(output.permissionErrors).toEqual([expect.stringContaining("工作区外")]);
+    expect(fs.readFileSync(path.join(outside, "source.ts"), "utf8")).toBe("console.log(2);\n");
+  });
+
+  it("只读子任务禁止 AST 改写时不能记成成功", async () => {
+    fs.writeFileSync(path.join(workspace, "source.ts"), "console.log(1);\n");
+    expect(await executeToolDefinition(toolRegistry.getById("ast_grep_replace")!, {
+      paths: ["source.ts"], pattern: "console.log($$$A)", rewrite: "console.warn($$$A)", dryRun: false,
+    }, context({ readOnly: true, permissionMode: "allow_all" }))).toMatchObject({ status: "failed", category: "permission_denied" });
+  });
+
   it.each(writers)("$id 拒绝通过目录联接在工作区外新建文件", async (writer) => {
     expect(await write(writer, `linked/new/sub/file${writer.ext}`)).toMatchObject({ status: "failed", category: "permission_denied" });
     expect(fs.readdirSync(outside)).toEqual([]);
