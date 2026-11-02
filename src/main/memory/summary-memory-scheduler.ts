@@ -195,7 +195,7 @@ export class SummaryMemoryScheduler {
       if (queues.get(key) === settled) queues.delete(key);
     });
     queues.set(key, settled);
-    return next;
+    return settled;
   }
 
   private reportError(conversationId: string, error: unknown): void {

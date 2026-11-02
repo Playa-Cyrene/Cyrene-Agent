@@ -200,7 +200,7 @@ export class WikiMemoryScheduler {
       if (this.queues.get(conversationId) === settled) this.queues.delete(conversationId);
     });
     this.queues.set(conversationId, settled);
-    return next;
+    return settled;
   }
 
   private reportError(conversationId: string, error: unknown): void {
