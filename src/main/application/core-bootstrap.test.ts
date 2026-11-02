@@ -1,3 +1,4 @@
+import { CURRENT_DISCLAIMER_VERSION } from "../../shared/disclaimer";
 import { describe, expect, it, vi } from "vitest";
 import { createApplication } from "./application";
 import { createShutdownCoordinator } from "./shutdown";
@@ -83,7 +84,7 @@ function makeCoreDeps(calls: string[], overrides: Partial<CoreDependencies> = {}
     createScheduler: () => ({ initialize: () => { calls.push("scheduler-initialize"); }, start: vi.fn(() => { calls.push("scheduler-start"); }), stop: vi.fn() } as never),
     registerCoreIpc: () => { calls.push("register-core-ipc"); },
     wireToastCenter: () => { calls.push("wire-toast-center"); },
-    loadGeneralSettings: () => ({ petVisible: true }) as never,
+    loadGeneralSettings: () => ({ petVisible: true, disclaimerAcceptedVersion: CURRENT_DISCLAIMER_VERSION }) as never,
     applyGeneralSettings: () => { calls.push("apply-settings"); },
     revealStartupWindows: async () => { calls.push("reveal"); },
     minimumSplashMs: 2500,
@@ -190,7 +191,7 @@ describe("startCore", () => {
     expect(deps.shell.windowManager.createPetWindow).toHaveBeenCalledWith(true);
 
     const hidden = makeCoreDeps([], {
-      loadGeneralSettings: () => ({ petVisible: false }) as never,
+      loadGeneralSettings: () => ({ petVisible: false, disclaimerAcceptedVersion: CURRENT_DISCLAIMER_VERSION }) as never,
     });
     await startCore(hidden);
     // 隐藏时窗口仍创建（不显示），托盘"显示桌宠"与设置开关随时能救回；
@@ -441,4 +442,25 @@ describe("startup interrupted by shutdown", () => {
     expect(deps.readiness.getPhase()).toBe("stopped");
   });
 
+});
+
+describe("startup disclaimer version gate", () => {
+  it.each([undefined, "", "2026-09-27", CURRENT_DISCLAIMER_VERSION])("selects the correct startup window for %s", async version => {
+    const revealStartupWindows = vi.fn(async () => undefined);
+    const deps = makeCoreDeps([], {
+      loadGeneralSettings: () => ({ petVisible: true, disclaimerAcceptedVersion: version }) as never,
+      revealStartupWindows,
+    });
+    const onboarding = { isDestroyed: () => false };
+    const createOnboardingWindow = vi.fn().mockResolvedValue(onboarding);
+    Object.assign(deps.shell.windowManager, { createOnboardingWindow });
+    await startCore(deps);
+    const accepted = version === CURRENT_DISCLAIMER_VERSION;
+    expect(createOnboardingWindow).toHaveBeenCalledTimes(accepted ? 0 : 1);
+    expect(deps.shell.windowManager.createPetWindow).toHaveBeenCalledWith(accepted);
+    expect(revealStartupWindows).toHaveBeenCalledWith(expect.objectContaining({
+      showOnboardingWindow: !accepted,
+      onboardingWindow: accepted ? null : onboarding,
+    }));
+  });
 });

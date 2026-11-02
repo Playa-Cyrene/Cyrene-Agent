@@ -1,4 +1,7 @@
 // @vitest-environment jsdom
+import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { DisclaimerSettingsPanel } from "./DisclaimerSettingsPanel";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -36,7 +39,11 @@ describe("设置搜索", () => {
         expect(translate(resource)(item.sectionKey), item.sectionKey).not.toBe(item.sectionKey);
       }
       if (!item.id.startsWith("section:")) {
-        expect(readFileSync(resolve(item.source), "utf8")).toContain(`data-settings-search-id="${item.id}"`);
+        // 条款是结构化译文驱动的重复卡片；验证实际渲染标记而非要求写死 JSX。
+        const markup = item.section === "disclaimer"
+          ? renderToStaticMarkup(React.createElement(DisclaimerSettingsPanel))
+          : readFileSync(resolve(item.source), "utf8");
+        expect(markup).toContain(`data-settings-search-id="${item.id}"`);
       }
     }
   });
@@ -204,5 +211,17 @@ it("固定设置行的标题不能在新增时漏出索引，动态重复行显�
     const content = readFileSync(resolve(source), "utf8");
     const rows = content.matchAll(/className="cy-settings-row__copy"><strong[^>]*>(?:<[^>]+\/>)?\{t\("([^"]+)"/g);
     for (const match of rows) expect(indexed.has(match[1]) || dynamicRows.has(match[1]), match[1]).toBe(true);
+  }
+});
+
+
+it("完整声明的阅读提示及十三节均可按三语标题检索并定位", () => {
+  for (const resource of [zh, en, ja]) {
+    const t = translate(resource);
+    resource.settingsPage.disclaimer.sections.forEach((section, index) => {
+      const id = `settingsPage.disclaimer.sections.${index}.title`;
+      expect(searchSettings(section.title, t, "about").some(item => item.id === id)).toBe(true);
+    });
+    expect(searchSettings(resource.settingsPage.disclaimer.navLabel, t).some(item => item.id === "section:disclaimer")).toBe(true);
   }
 });

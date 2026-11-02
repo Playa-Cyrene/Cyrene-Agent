@@ -92,12 +92,23 @@ it("关键词只搜索当前页面，清空后恢复当前层级", async () => {
   expect(titles).not.toContain(i18next.t("settingsPage.asr.title"));
   expect(document.querySelector("input")?.getAttribute("aria-activedescendant")).toBe("settings-search-result-0");
 });
-it("没有登记子项的页面可直接打开", async () => {
+it("免责声明进入章节列表后可直接定位具体条款", async () => {
   await render();
   await click(document.querySelectorAll(".cy-settings-search__categories button")[4]);
   await click(document.querySelector("[role=option]")!);
-  expect(select).toHaveBeenCalledWith(expect.objectContaining({ id: "section:disclaimer" }));
-  expect(readSearchHistory()).toEqual([]);
+  // 声明现已登记阅读提示和十三节，进入页面应先展示章节，不应直接跳走。
+  expect(select).not.toHaveBeenCalled();
+  expect(close).not.toHaveBeenCalled();
+  expect(document.querySelector(".cy-settings-search__back")?.textContent).toContain(i18next.t("settingsPage.disclaimer.navLabel"));
+  const titleKey = "settingsPage.disclaimer.sections.8.title";
+  // 列表采用虚拟化；搜索可命中当前视口之外的第八节。
+  await fill(i18next.t(titleKey));
+  expect(document.querySelectorAll("[role=option]")).toHaveLength(1);
+  const minors = [...document.querySelectorAll("[role=option]")].find(node => node.textContent === i18next.t(titleKey))!;
+  await click(minors);
+  expect(select).toHaveBeenCalledWith(expect.objectContaining({ id: titleKey, section: "disclaimer" }));
+  expect(close).toHaveBeenCalledOnce();
+  expect(readSearchHistory()).toEqual([i18next.t(titleKey)]);
 });
 it("方向键接管鼠标悬停项，鼠标实际移动后才恢复鼠标选择", async () => {
   await render();

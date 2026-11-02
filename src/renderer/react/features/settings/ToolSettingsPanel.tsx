@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from "react";
-import { Alert, Button, Modal, Spin } from "antd";
-import { CloudSun, Files, Music2, Puzzle, Search, ShieldAlert } from "lucide-react";
+import { Alert, Button, Spin } from "antd";
+import { CloudSun, Files, Music2, Puzzle, Search } from "lucide-react";
 import { siNeteasecloudmusic } from "simple-icons";
 import { BrandIcon } from "../../components/ui/BrandIcon";
 import { SettingsInput, SettingsPasswordInput, SettingsSelect, SettingsSwitch } from "../../components/ui/SettingsControls";
 import { useTranslation } from "../../i18n";
 import { MusicSettingsModal } from "./MusicSettingsModal";
 import { Card } from "../../components/ui/Card";
+import { FullAccessConfirmation } from "../../components/ui/FullAccessConfirmation";
 
 type SearchEngine = "off" | "bocha" | "tavily" | "minimax" | "anySearch";
 type PermissionLevel = "project-read-only" | "read-only" | "scoped" | "per-action" | "full";
@@ -98,7 +99,9 @@ export function ToolSettingsPanel({ musicSettingsNavigation = 0 }: { musicSettin
   const [status, setStatus] = useState("");
   const [fullAccessOpen, setFullAccessOpen] = useState(false);
   const [musicSettingsOpen, setMusicSettingsOpen] = useState(false);
-  const [confirmSeconds, setConfirmSeconds] = useState(5);
+  const permissionPending = useRef(false);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const [musicCount, setMusicCount] = useState<number | null>(null);
   const [musicStatus, setMusicStatus] = useState("");
 
@@ -125,12 +128,6 @@ export function ToolSettingsPanel({ musicSettingsNavigation = 0 }: { musicSettin
     }).catch(() => {});
     return () => { disposed = true; };
   }, []);
-
-  useEffect(() => {
-    if (!fullAccessOpen || confirmSeconds <= 0) return;
-    const timer = window.setTimeout(() => setConfirmSeconds((seconds) => seconds - 1), 1000);
-    return () => window.clearTimeout(timer);
-  }, [fullAccessOpen, confirmSeconds]);
 
   async function savePatch(patch: Partial<ToolValues>): Promise<boolean> {
     if (!window.settings || saving) return false;
@@ -163,29 +160,33 @@ export function ToolSettingsPanel({ musicSettingsNavigation = 0 }: { musicSettin
   }
 
   async function setPermissionLevel(level: PermissionLevel) {
-    if (saving || !window.settings || level === permission) return;
+    if (saving || permissionPending.current || !window.settings || level === permission) return;
     if (level === "full") {
-      setConfirmSeconds(5);
       setFullAccessOpen(true);
       return;
     }
     await applyPermission(level);
   }
 
-  async function applyPermission(level: PermissionLevel) {
-    if (!window.settings) return;
+  async function applyPermission(level: PermissionLevel): Promise<boolean> {
+    if (!window.settings || permissionPending.current) return false;
+    permissionPending.current = true;
     setSaving(true);
     setStatus(t("settingsPage.tools.saving"));
     try {
       const result = await window.settings.setPermissionLevel(level);
-      if (!result.ok) throw new Error(result.error);
-      setPermission((result.level || level) as PermissionLevel);
-      setStatus(t("settingsPage.saved"));
+      if (!result?.ok) throw new Error("Permission update failed");
+      if (mounted.current) {
+        setPermission((result.level || level) as PermissionLevel);
+        setStatus(t("settingsPage.saved"));
+      }
+      return true;
     } catch {
-      setStatus(t("settingsPage.saveFailed"));
+      if (mounted.current) setStatus(t("settingsPage.saveFailed"));
+      return false;
     } finally {
-      setSaving(false);
-      setFullAccessOpen(false);
+      permissionPending.current = false;
+      if (mounted.current) setSaving(false);
     }
   }
 
@@ -248,9 +249,7 @@ export function ToolSettingsPanel({ musicSettingsNavigation = 0 }: { musicSettin
       <div className="cy-settings-status" role="status" aria-live="polite">{status}</div>
     </>}
 
-    <Modal title={<><ShieldAlert size={18} /> {t("settingsPage.tools.fullAccessTitle")}</>} open={fullAccessOpen} onCancel={() => setFullAccessOpen(false)} onOk={() => void applyPermission("full")} okButtonProps={{ disabled: confirmSeconds > 0 || saving, danger: true }} okText={confirmSeconds > 0 ? t("settingsPage.tools.fullAccessWait", { count: confirmSeconds }) : t("settingsPage.tools.fullAccessConfirm")} cancelText={t("settingsPage.tools.fullAccessCancel")} destroyOnHidden>
-      <p>{t("settingsPage.tools.fullAccessWarning")}</p>
-    </Modal>
+    <FullAccessConfirmation open={fullAccessOpen} onCancel={() => setFullAccessOpen(false)} onConfirm={() => applyPermission("full")} />
     <MusicSettingsModal open={musicSettingsOpen} onClose={() => setMusicSettingsOpen(false)} />
   </>;
 }

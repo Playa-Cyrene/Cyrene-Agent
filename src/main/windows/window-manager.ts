@@ -15,7 +15,7 @@ import { CHAT_READY_TIMEOUT_MS, loadWindowForStartup } from "./startup-window-lo
 import { createMusicPlayerWindow } from "./create-music-player-window";
 import { broadcastToAllWindows } from "./broadcast";
 import { PetWindowMoveController } from "../pet-window-movement";
-import { CURRENT_DISCLAIMER_VERSION } from "../../shared/disclaimer";
+import { hasCurrentDisclaimerConsent as isCurrentDisclaimerConsent } from "../../shared/disclaimer";
 
 const PET_WINDOW_RESOURCE_RELEASE_DELAY_MS = 30_000;
 
@@ -106,7 +106,7 @@ export function createWindowManager(options: WindowManagerOptions): WindowManage
 
   function hasCurrentDisclaimerConsent(): boolean {
     const version = options.loadPetWindowSettingsSlice().disclaimerAcceptedVersion;
-    return version === undefined || version === CURRENT_DISCLAIMER_VERSION;
+    return isCurrentDisclaimerConsent(version);
   }
 
   async function createOnboardingWindow(): Promise<BrowserWindow> {

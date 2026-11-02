@@ -35,7 +35,7 @@ import type { GeneralSettings } from "../settings/general-settings";
 import type { WindowManager } from "../windows/window-manager";
 import type { PluginManager } from "../../plugins/manager";
 import { checkStartupActive, isCancelledPageLoad, StartupCancelledError } from "./startup-cancellation";
-import { CURRENT_DISCLAIMER_VERSION } from "../../shared/disclaimer";
+import { hasCurrentDisclaimerConsent } from "../../shared/disclaimer";
 
 export interface CoreServices {
   runtimeState: RuntimeStateService;
@@ -252,8 +252,7 @@ export async function startCore(deps: CoreDependencies): Promise<CoreResult> {
     // 启动期一次性完整应用通用设置（登录项同步等）；此时桌宠未创建，show/hide 为 no-op
     deps.applyGeneralSettings(generalSettings, services);
     // showOnReady=petVisible：页面就绪才显示，避免空窗口闪现；创建本身在核心 IPC 注册之后
-    const disclaimerAccepted = generalSettings.disclaimerAcceptedVersion === undefined
-      || generalSettings.disclaimerAcceptedVersion === CURRENT_DISCLAIMER_VERSION;
+    const disclaimerAccepted = hasCurrentDisclaimerConsent(generalSettings.disclaimerAcceptedVersion);
     let onboardingWindow = null;
     try {
       onboardingWindow = disclaimerAccepted ? null : await shell.windowManager.createOnboardingWindow?.() ?? null;

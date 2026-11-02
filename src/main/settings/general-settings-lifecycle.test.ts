@@ -1,3 +1,4 @@
+import { CURRENT_DISCLAIMER_VERSION } from "../../shared/disclaimer";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { GeneralSettings } from "./general-settings";
 import type { WindowManager } from "../windows/window-manager";
@@ -24,7 +25,7 @@ vi.mock("./launch-at-login", () => ({ syncLaunchAtLogin: vi.fn() }));
 function createHarness(petVisible = true) {
   const settings = {
     petVisible, petAlwaysOnTop: true, petZoom: 1, launchAtLogin: false,
-    asrEngine: "off", searchEngine: "off",
+    asrEngine: "off", searchEngine: "off", disclaimerAcceptedVersion: CURRENT_DISCLAIMER_VERSION,
   } as GeneralSettings;
   let visible = petVisible;
   const windowManager = {
@@ -33,6 +34,8 @@ function createHarness(petVisible = true) {
     setPetWindowAlwaysOnTop: vi.fn(),
     applyPetWindowZoom: vi.fn(),
     broadcast: vi.fn(),
+    closeOnboardingWindow: vi.fn(),
+    openReactChatWindow: vi.fn().mockResolvedValue(undefined),
   };
   const deps = {
     windowManager: windowManager as unknown as WindowManager,
@@ -103,5 +106,33 @@ describe("general settings window lifecycle", () => {
     expect(h.windowManager.setPetWindowAlwaysOnTop).toHaveBeenCalledWith(true);
     expect(h.windowManager.applyPetWindowZoom).toHaveBeenCalledWith(1);
     expect(syncLaunchAtLogin).toHaveBeenCalledWith(false, {});
+  });
+});
+
+describe("current disclaimer lifecycle", () => {
+  it.each([undefined, "", "2026-09-27"])("keeps the pet hidden before consent (%s)", version => {
+    const h = createHarness();
+    applyGeneralSettings({ ...h.settings, disclaimerAcceptedVersion: version } as GeneralSettings, h.deps);
+    expect(h.isVisible()).toBe(false);
+    expect(h.windowManager.openReactChatWindow).not.toHaveBeenCalled();
+  });
+
+  it.each([undefined, "", "2026-09-27"])("opens the workspace only after explicit acceptance (%s)", async version => {
+    vi.useFakeTimers();
+    try {
+      const h = createHarness();
+      const before = { ...h.settings, disclaimerAcceptedVersion: version } as GeneralSettings;
+      applyGeneralSettings(before, h.deps);
+      applyGeneralSettings(h.settings, h.deps, before);
+      expect(h.windowManager.closeOnboardingWindow).not.toHaveBeenCalled();
+      await vi.runAllTimersAsync();
+      expect(h.windowManager.closeOnboardingWindow).toHaveBeenCalledOnce();
+      expect(h.windowManager.openReactChatWindow).toHaveBeenCalledOnce();
+      applyGeneralSettings(h.settings, h.deps, h.settings);
+      await vi.runAllTimersAsync();
+      expect(h.windowManager.openReactChatWindow).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

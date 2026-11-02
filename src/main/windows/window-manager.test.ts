@@ -1,7 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { CURRENT_DISCLAIMER_VERSION } from "../../shared/disclaimer";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  app: { once: vi.fn() },
+  app: { once: vi.fn(), quit: vi.fn() },
   createdWindows: [] as Array<ReturnType<typeof createFakeWindow>>,
   createPetWindow: vi.fn(),
 }));
@@ -25,7 +26,7 @@ vi.mock("./startup-window-load", () => ({ CHAT_READY_TIMEOUT_MS: 1, loadWindowFo
 vi.mock("./create-music-player-window", () => ({ createMusicPlayerWindow: vi.fn() }));
 vi.mock("./broadcast", () => ({ broadcastToAllWindows: vi.fn() }));
 vi.mock("../pet-window-movement", () => ({ PetWindowMoveController: class { dispose() {} finishDragging() {} moveRelative() {} queueAbsolute() {} } }));
-vi.mock("../../shared/disclaimer", () => ({ CURRENT_DISCLAIMER_VERSION: "current" }));
+
 
 function createFakeWindow() {
   const listeners = new Map<string, Array<(...args: any[]) => void>>();
@@ -42,7 +43,7 @@ function createFakeWindow() {
       };
       listeners.set(event, [...(listeners.get(event) ?? []), wrapped]);
     }),
-    emit(event: string) { for (const listener of [...(listeners.get(event) ?? [])]) listener(); },
+    emit(event: string, ...args: unknown[]) { for (const listener of [...(listeners.get(event) ?? [])]) listener(...args); },
     hide: vi.fn(() => { visible = false; for (const listener of [...(listeners.get("hide") ?? [])]) listener(); }),
     show: vi.fn(() => { visible = true; for (const listener of [...(listeners.get("show") ?? [])]) listener(); }),
     destroy: vi.fn(() => { destroyed = true; for (const listener of [...(listeners.get("closed") ?? [])]) listener(); }),
@@ -54,6 +55,9 @@ function createFakeWindow() {
 }
 
 import { createWindowManager } from "./window-manager";
+import { createOnboardingBrowserWindow } from "./create-aux-windows";
+
+afterEach(() => vi.useRealTimers());
 
 describe("pet window resource release", () => {
   beforeEach(() => {
@@ -71,7 +75,7 @@ describe("pet window resource release", () => {
     const manager = createWindowManager({
       getCurrentAppIconPath: () => "icon",
       isDev: false,
-      loadPetWindowSettingsSlice: () => ({ disclaimerAcceptedVersion: "current", petAlwaysOnTop: true }),
+      loadPetWindowSettingsSlice: () => ({ disclaimerAcceptedVersion: CURRENT_DISCLAIMER_VERSION, petAlwaysOnTop: true }),
       persistPetWindowPosition: vi.fn(),
     });
     const firstWindow = manager.createPetWindow();
@@ -92,7 +96,7 @@ describe("pet window resource release", () => {
     const manager = createWindowManager({
       getCurrentAppIconPath: () => "icon",
       isDev: false,
-      loadPetWindowSettingsSlice: () => ({ disclaimerAcceptedVersion: "current" }),
+      loadPetWindowSettingsSlice: () => ({ disclaimerAcceptedVersion: CURRENT_DISCLAIMER_VERSION }),
       persistPetWindowPosition: vi.fn(),
     });
     const window = manager.createPetWindow();
@@ -105,5 +109,28 @@ describe("pet window resource release", () => {
     expect(window.destroy).not.toHaveBeenCalled();
     expect(mocks.createdWindows).toHaveLength(1);
     expect(window.show).toHaveBeenCalledOnce();
+  });
+});
+
+
+describe("window manager consent gate", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it.each([undefined, "", "2026-09-27", CURRENT_DISCLAIMER_VERSION])("checks current consent for %s and does not bypass the gate on close", async version => {
+    const window = createFakeWindow();
+    vi.mocked(createOnboardingBrowserWindow).mockReturnValue(window as never);
+    const manager = createWindowManager({
+      getCurrentAppIconPath: () => "icon",
+      isDev: false,
+      loadPetWindowSettingsSlice: () => ({ disclaimerAcceptedVersion: version }),
+      persistPetWindowPosition: vi.fn(),
+    });
+    const accepted = version === CURRENT_DISCLAIMER_VERSION;
+    expect(manager.hasCurrentDisclaimerConsent()).toBe(accepted);
+    await manager.createOnboardingWindow();
+    const preventDefault = vi.fn();
+    window.emit("close", { preventDefault });
+    expect(preventDefault).toHaveBeenCalledTimes(accepted ? 0 : 1);
+    expect(mocks.app.quit).toHaveBeenCalledTimes(accepted ? 0 : 1);
   });
 });

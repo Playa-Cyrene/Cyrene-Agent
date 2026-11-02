@@ -59,3 +59,17 @@
   vertical-align: -2px;
   color: var(--rb-text-secondary);
 }
+
+.cy-disclaimer-section h3 {
+  margin: 16px 0 8px;
+  color: var(--rb-text-strong, var(--rb-text-primary));
+  font: var(--rb-text-small-em);
+}
+
+.cy-disclaimer-section strong {
+  color: var(--rb-text-strong, var(--rb-text-primary));
+}
+
+.cy-disclaimer-notice {
+  border: 1px solid color-mix(in srgb, var(--rb-accent) 55%, transparent);
+}

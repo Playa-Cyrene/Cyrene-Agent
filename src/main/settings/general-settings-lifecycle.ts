@@ -11,7 +11,7 @@ import { loadModelSettings, getPublicModelConfig } from "./model-settings";
 import type { GeneralSettings } from "./general-settings";
 import type { UiIcon } from "../../shared/ui-icon";
 import { syncLaunchAtLogin } from "./launch-at-login";
-import { CURRENT_DISCLAIMER_VERSION } from "../../shared/disclaimer";
+import { hasCurrentDisclaimerConsent } from "../../shared/disclaimer";
 import { getEffectiveUiTheme } from "../system-ui-theme";
 
 export interface GeneralSettingsLifecycleDependencies {
@@ -34,8 +34,7 @@ export function applyGeneralSettings(
   if (!before || before.petAlwaysOnTop !== settings.petAlwaysOnTop) {
     deps.windowManager?.setPetWindowAlwaysOnTop(settings.petAlwaysOnTop);
   }
-  const disclaimerAccepted = settings.disclaimerAcceptedVersion === undefined
-    || settings.disclaimerAcceptedVersion === CURRENT_DISCLAIMER_VERSION;
+  const disclaimerAccepted = hasCurrentDisclaimerConsent(settings.disclaimerAcceptedVersion);
   const disclaimerAcceptanceChanged = before?.disclaimerAcceptedVersion !== settings.disclaimerAcceptedVersion;
   if (!disclaimerAccepted) {
     deps.windowManager?.hidePetWindow();
@@ -43,9 +42,7 @@ export function applyGeneralSettings(
     if (settings.petVisible) deps.windowManager?.showPetWindow();
     else deps.windowManager?.hidePetWindow();
   }
-  const wasDisclaimerAccepted = !before
-    || before.disclaimerAcceptedVersion === undefined
-    || before.disclaimerAcceptedVersion === CURRENT_DISCLAIMER_VERSION;
+  const wasDisclaimerAccepted = !before || hasCurrentDisclaimerConsent(before.disclaimerAcceptedVersion);
   if (!wasDisclaimerAccepted && disclaimerAccepted) {
     setTimeout(() => {
       deps.windowManager?.closeOnboardingWindow?.();
