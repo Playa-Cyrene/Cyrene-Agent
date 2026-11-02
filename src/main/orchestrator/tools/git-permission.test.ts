@@ -1,7 +1,10 @@
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+const fixture = vi.hoisted(() => ({ root: "" }));
 vi.mock("electron", () => ({
-  app: { getPath: () => path.join(process.env.TEMP!, "git-permission") },
+  app: { getPath: () => fixture.root },
   BrowserWindow: { getAllWindows: () => [] },
   ipcMain: { handle: vi.fn() },
 }));
@@ -17,7 +20,23 @@ import { createCodeGitTools } from "./git-tools";
 import { toolRegistry } from "./registry/tool-registry";
 import { prepareToolRuntime } from "../harness/adapter/tool-runtime";
 
-afterEach(() => { toolRegistry.unregister("git_push"); setCurrentLevel("read-only"); });
+let controller: AbortController | undefined;
+beforeEach(() => {
+  // 权限宿主会真实写配置；每例独占目录，afterEach 恢复档位后删除，避免跨用例残留。
+  fixture.root = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-git-permission-"));
+  // 当前运行的信号由 afterEach 取消，再注销工具并回收权限配置。
+  controller = new AbortController();
+});
+afterEach(() => {
+  try {
+    controller?.abort();
+    toolRegistry.unregister("git_push");
+    setCurrentLevel("read-only");
+  } finally {
+    if (fixture.root) fs.rmSync(fixture.root, { recursive: true, force: true });
+    fixture.root = "";
+  }
+});
 
 describe("Git push 独立于沙箱 Shell 的权限边界", () => {
   it.each([
@@ -29,7 +48,7 @@ describe("Git push 独立于沙箱 Shell 的权限边界", () => {
     setCurrentLevel(level);
     const runtime = await prepareToolRuntime({
       options: { conversationId: "code-session", conversationMode: "code", messages: [], resolvedWorkspaceRoot: path.resolve("workspace"), allowPermissionPrompt: false } as never,
-      signal: new AbortController().signal,
+      signal: controller!.signal,
       prepared: { threadId: "code-session", runId: "git-run", tools: [tool] } as never,
       sendBaseEvent: vi.fn(),
     });
