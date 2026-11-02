@@ -1083,7 +1083,16 @@
       "title": "表情包管理",
       "empty": "还没有表情包。",
       "builtin": "内置",
-      "toggleLabel": "切换 {{id}}"
+      "toggleLabel": "切换 {{id}}",
+      "delete": "删除",
+      "cancel": "取消",
+      "deleteLabel": "删除 {{id}}",
+      "deleteTitle": "删除表情包",
+      "deleteConfirm": "确定删除“{{id}}”吗？此操作不可撤销，历史聊天和动态中使用该表情包的图片可能无法再显示。若要保留图片，请取消并改用禁用。",
+      "loadFailed": "无法加载表情包，请关闭后重试。",
+      "deleteFailed": "删除失败：{{error}}。请重新打开确认当前状态后重试。",
+      "updateFailed": "更新失败：{{error}}",
+      "unavailable": "表情包服务不可用"
     },
     "disclaimer": {
       "navLabel": "免责声明",
