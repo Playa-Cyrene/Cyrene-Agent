@@ -196,6 +196,7 @@ export class WikiMemoryScheduler {
   private enqueue(conversationId: string, work: () => Promise<void>): Promise<void> {
     const previous = this.queues.get(conversationId) ?? Promise.resolve();
     const next = previous.catch(() => undefined).then(work);
+    // 队列与调用方共用清理后的 Promise，避免 finally 派生的拒绝无人观察。
     const settled = next.finally(() => {
       if (this.queues.get(conversationId) === settled) this.queues.delete(conversationId);
     });

@@ -13,12 +13,13 @@ afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe("后台记忆队列拒绝清理", () => {
   it.each(["summary", "wiki"] as const)("%s 任务失败只向调用者传播，队列空闲时没有额外未处理拒绝且可继续工作", async (kind) => {
-    // 仅替换 backfill 定时器；保留真实事件循环以观察 unhandledRejection。
+    // 仅替换 backfill 定时器并在 afterEach 恢复；保留真实事件循环以观察 unhandledRejection。
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const failure = new Error("source unavailable");
     const read = vi.fn().mockRejectedValueOnce(failure).mockResolvedValue(null);
     const unhandled: unknown[] = [];
     const record = (error: unknown) => { unhandled.push(error); };
+    // finally 在正常结束或断言失败时撤销监听，并停用下面两个调度器。
     process.on("unhandledRejection", record);
     const summary = new SummaryMemoryScheduler({
       userDataRoot: "unused-test-root",
