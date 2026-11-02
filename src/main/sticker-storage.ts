@@ -5,11 +5,12 @@
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
+import { randomUUID } from "crypto";
 import { app } from "electron";
 import { BUILT_IN_STICKER_FILES, BUILT_IN_STICKER_DESCRIPTIONS } from "./sticker-descriptions";
 import { BUILT_IN_STICKER_IDS } from "../shared/sticker-types";
 import type { UserStickerMeta, StickerConfigItem } from "../shared/sticker-types";
-import { buildLocalStickerUrl } from "./sticker-protocol";
+import { buildLocalStickerUrl, resolveLocalStickerPath } from "./sticker-protocol";
 
 // ── 路径 ──
 
@@ -44,7 +45,15 @@ function saveUserStickerManifest(stickers: Record<string, UserStickerMeta>): voi
   const filePath = getManifestPath();
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   const data: ManifestFile = { schemaVersion: 1, stickers };
-  fs.writeFileSync(filePath, JSON.stringify(data, null, 2), "utf8");
+  // 写入失败时保留原清单，避免删除一项时破坏其余表情包记录。
+  const tempPath = `${filePath}.${randomUUID()}.tmp`;
+  try {
+    fs.writeFileSync(tempPath, JSON.stringify(data, null, 2), { encoding: "utf8", flag: "wx" });
+    fs.renameSync(tempPath, filePath);
+  } catch (err) {
+    fs.rmSync(tempPath, { force: true });
+    throw err;
+  }
 }
 
 // ── 增删查 ──
@@ -101,20 +110,42 @@ export async function deleteUserSticker(id: string): Promise<void> {
   }
 
   const manifest = loadUserStickerManifest();
-  const meta = manifest[id];
+  const meta = Object.hasOwn(manifest, id) ? manifest[id] : undefined;
   if (!meta) throw new Error(`表情包 "${id}" 不存在`);
 
   // 删除文件
-  const filePath = path.join(getStickersDir(), meta.file);
+  const filePath = typeof meta.file === "string"
+    ? resolveLocalStickerPath(getStickersDir(), meta.file)
+    : null;
+  if (!filePath) throw new Error("表情包文件路径无效");
+  let originalImage: Buffer | undefined;
   try {
+    // 不沿链接读写其他位置的文件，回滚也不能覆盖链接指向的目标。
+    if (fs.lstatSync(getStickersDir()).isSymbolicLink() || fs.lstatSync(filePath).isSymbolicLink()) {
+      throw new Error("表情包路径不能是符号链接");
+    }
+    originalImage = fs.readFileSync(filePath);
     fs.unlinkSync(filePath);
-  } catch {
-    // 文件可能已被手动删除，忽略
+  } catch (err) {
+    // 仅容忍已被手动删除的文件；权限、占用等错误必须反馈给用户。
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
   }
 
   // 从 manifest 移除
   delete manifest[id];
-  saveUserStickerManifest(manifest);
+  try {
+    saveUserStickerManifest(manifest);
+  } catch (err) {
+    // 清单未提交时恢复图片；只创建缺失文件，不能覆写外部并发写入的内容。
+    if (originalImage) {
+      try {
+        fs.writeFileSync(filePath, originalImage, { flag: "wx" });
+      } catch (restoreError) {
+        throw new Error(`清单保存失败且图片恢复失败，请检查表情包目录：${String(err)}；${String(restoreError)}`);
+      }
+    }
+    throw err;
+  }
 }
 
 /** 获取所有 sticker 的配置（内置 + 用户），供表情包管理窗口/设置面板使用 */
