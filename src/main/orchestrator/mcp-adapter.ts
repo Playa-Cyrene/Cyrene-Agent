@@ -179,6 +179,9 @@ export async function connectMcpServer(config: McpServerConfig): Promise<string[
       name: "[" + config.name + "] " + mt.name,
       description: mt.description || mt.name,
       enabled: true,
+      // MCP 不经过 Shell 沙箱，第三方 annotations/效果 override 不能证明权限边界。
+      // 复用仅完全访问或逐次审批可用的高风险等级，避免缺省 safe 放行。
+      risk: "input-control",
       effectKind: resolvedEffectKind,
       inputSchema: {
         type: "object",
