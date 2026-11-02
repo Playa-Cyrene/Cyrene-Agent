@@ -1083,7 +1083,16 @@
       "title": "Sticker management",
       "empty": "No stickers yet.",
       "builtin": "Built-in",
-      "toggleLabel": "Toggle {{id}}"
+      "toggleLabel": "Toggle {{id}}",
+      "delete": "Delete",
+      "cancel": "Cancel",
+      "deleteLabel": "Delete {{id}}",
+      "deleteTitle": "Delete sticker",
+      "deleteConfirm": "Delete “{{id}}”? This cannot be undone. Images using this sticker in past chats and moments may no longer display. To keep those images, cancel and disable the sticker instead.",
+      "loadFailed": "Could not load stickers. Close and try again.",
+      "deleteFailed": "Deletion failed: {{error}}. Reopen to check the current state before retrying.",
+      "updateFailed": "Update failed: {{error}}",
+      "unavailable": "Sticker service unavailable"
     },
     "disclaimer": {
       "navLabel": "Disclaimer",
