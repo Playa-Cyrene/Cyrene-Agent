@@ -124,7 +124,7 @@ export class SummaryMemoryScheduler {
         .catch(() => path.resolve(paths.workspacePath!))
       : `session:${conversationId}`;
     await this.enqueue(this.workspaceQueues, workspaceKey, async () => {
-      if (!this.isCurrent(conversationId, generation)) return;
+      if (!(await this.isCurrent(conversationId, generation))) return;
       const sessionFile = await readSummaryFile(paths.sessionPath, 800, workspaceRoot);
       const workspaceFile = paths.workspacePath
         ? await readSummaryFile(paths.workspacePath, 1200, workspaceRoot)
@@ -172,7 +172,7 @@ export class SummaryMemoryScheduler {
     expectedSessionPath: string,
     expectedWorkspacePath?: string,
   ): Promise<boolean> {
-    if (!this.isCurrent(conversationId, generation)) return false;
+    if (!(await this.isCurrent(conversationId, generation))) return false;
     const session = (await this.options.sessions.getSessionRecord(conversationId));
     if (!session) return false;
     try {
