@@ -86,7 +86,8 @@ export function createCodeGitTools(gitService: GitService): ToolDefinition[] {
       description: "把当前分支推送到用户指定的远端；不会强制推送。",
       enabled: true,
       modes: ["code"],
-      risk: "shell",
+      // Git 及其钩子不经过 executeRunShell 沙箱，不能复用 Shell 的只读放行规则。
+      risk: "input-control",
       effectKind: "external_side_effect",
       verificationPolicy: "none",
       needsContext: true,
@@ -94,7 +95,10 @@ export function createCodeGitTools(gitService: GitService): ToolDefinition[] {
         type: "object",
         properties: { remote: { type: "string", description: "远端名称，默认 origin", default: "origin" } },
       },
-      execute: async (args, ctx) => gitService.push(requireCodeContext(ctx), optionalStringArg(args, "remote")),
+      execute: async (args, ctx) => {
+        if (ctx?.readOnly) throw new Error("本子任务处于只读模式，不允许推送 Git 提交。");
+        return gitService.push(requireCodeContext(ctx), optionalStringArg(args, "remote"));
+      },
     },
     {
       id: "git_revert",
