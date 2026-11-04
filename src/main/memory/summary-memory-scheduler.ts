@@ -191,11 +191,12 @@ export class SummaryMemoryScheduler {
   private enqueue<T>(queues: QueueMap, key: string, operation: () => Promise<T>): Promise<T> {
     const previous = queues.get(key) ?? Promise.resolve();
     const next = previous.catch(() => undefined).then(operation);
+    // 队列与调用方共用清理后的 Promise，避免 finally 派生的拒绝无人观察。
     const settled = next.finally(() => {
       if (queues.get(key) === settled) queues.delete(key);
     });
     queues.set(key, settled);
-    return next;
+    return settled;
   }
 
   private reportError(conversationId: string, error: unknown): void {
