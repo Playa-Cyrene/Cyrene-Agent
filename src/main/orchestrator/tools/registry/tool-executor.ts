@@ -1,3 +1,4 @@
+import { isTermsExecutionAllowed } from "../../../terms/terms-runtime";
 import { isAbortError } from "../../../abort-utils";
 import type { ToolContext } from "./tool-context";
 import type { ToolDefinition } from "./tool-registry";
@@ -83,6 +84,7 @@ export async function executeToolDefinition(
   context?: ToolContext,
 ): Promise<ReturnType<typeof normalizeToolExecutionOutcome>> {
   try {
+    if (!isTermsExecutionAllowed()) return normalizeToolExecutionOutcome({ status: "failed", output: "请阅读并同意最新条款后继续。", errorCode: "E_TERMS_CONSENT_REQUIRED", category: "runtime_safety", effectState: "not_applied", retryable: false });
     const output = await tool.execute(args, context);
     const legacy = legacyFailure(output);
     return normalizeToolExecutionOutcome(legacy ?? {

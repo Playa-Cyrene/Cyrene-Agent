@@ -1,3 +1,4 @@
+import { isTermsExecutionAllowed } from "../terms/terms-runtime";
 import { isTaskEnabled } from "./execution-spec";
 import { computeNextFireAtAfter, normalizeOverdueNextFireAt } from "./schedule-calculator";
 import type { ScheduledRunResult, ScheduledTask, ScheduledTaskHistoryEntry } from "./types";
@@ -59,6 +60,7 @@ export class SchedulerEngine {
   }
 
   async fireNow(taskId: string): Promise<{ ok: boolean; reason?: string }> {
+    if (!isTermsExecutionAllowed()) return { ok: false, reason: "E_TERMS_CONSENT_REQUIRED" };
     const task = this.deps.store.getTasks().find(t => t.id === taskId);
     if (!task) return { ok: false, reason: "task not found" };
     if (!isTaskEnabled(task)) return { ok: false, reason: "task is disabled" };
@@ -80,6 +82,7 @@ export class SchedulerEngine {
   }
 
   private normalizeOverdueTasks(): void {
+    if (!isTermsExecutionAllowed()) return;
     const now = this.now();
     for (const task of this.deps.store.getTasks()) {
       if (!isTaskEnabled(task) || !task.nextFireAt) continue;
@@ -128,11 +131,15 @@ export class SchedulerEngine {
       })
       .sort((a, b) => String(a.nextFireAt).localeCompare(String(b.nextFireAt)))[0];
     if (!nextTask?.nextFireAt) return;
-    const delay = Math.max(0, new Date(nextTask.nextFireAt).getTime() - now.getTime());
+    // 待同意不推进计划、不消耗一次性任务；低频重查避免逾期零延迟循环。
+    const delay = isTermsExecutionAllowed()
+      ? Math.max(0, new Date(nextTask.nextFireAt).getTime() - now.getTime())
+      : 1000;
     this.timer = setTimeout(() => void this.fireDueTasks(), Math.min(delay, MAX_TIMER_DELAY_MS));
   }
 
   private async fireDueTasks(): Promise<void> {
+    if (!isTermsExecutionAllowed()) { this.scheduleNextTimer(); return; }
     const now = this.now();
     const due = this.deps.store.getTasks().filter(task => {
       if (!isTaskEnabled(task) || !task.nextFireAt) return false;

@@ -1,3 +1,4 @@
+import { assertTermsExecutionAllowed } from "../terms/terms-runtime";
 import { randomUUID } from "node:crypto";
 import { app, type BrowserWindow } from "electron";
 import type { IpcScope } from "../application/ipc-scope";
@@ -132,10 +133,12 @@ export function createChannelsSubsystem(
     // 图片路由统一收口在 image-router（基于解析后的默认档案——顶层镜像可能是空壳）
     const channelModelSettings = resolveModelSettingsProfile(loadModelSettings());
     const channelImageRoute = resolveImageRoute("channel", channelModelSettings);
+    assertTermsExecutionAllowed();
     const attachmentInputs = await buildChannelAttachmentInputs(msg, {
       // reject 时走 caption 分支：每张图会拿到路由的人话错误并诚实告知用户
       imageMode: channelImageRoute.mode === "direct" ? "direct" : "caption",
       captionImage: async (filePath: string) => {
+        assertTermsExecutionAllowed();
         const settings = resolveModelSettingsProfile(loadModelSettings());
         const vision = resolveCaptionVisionConfig(settings);
         if (!vision.ok) return { ok: false, error: vision.error };
@@ -143,6 +146,7 @@ export function createChannelsSubsystem(
       },
     });
     const agentUserText = formatChannelUserText(msg);
+    assertTermsExecutionAllowed();
     const { options } = await deps.agentRuntime.buildOptions({
       modelContext: channelInput.modelContext,
       currentUser: {

@@ -1,3 +1,4 @@
+import { TermsConsentRequiredError } from "../../terms/terms-runtime";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { ModelRetryStatus } from "../../../shared/model-retry";
 import { isModelFailureInfo, type ModelFailureInfo } from "../../../shared/model-error";
@@ -109,6 +110,7 @@ export async function runModelRequestWithRetry<T>(
       try {
         return await attempt({ signal: controller.signal, onStreamActivity, onVisibleDelta, retryNumber });
       } catch (originalError) {
+        if (originalError instanceof TermsConsentRequiredError) throw originalError;
         if (options.signal?.aborted) throw originalError;
         const error = idleTimedOut
           ? makeIdleTimeoutError(options.provider, options.model, originalError)
