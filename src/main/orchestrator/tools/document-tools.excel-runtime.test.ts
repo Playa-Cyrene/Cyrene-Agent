@@ -14,6 +14,12 @@ it("write_excel 在原生 Node 动态导入下生成可读的多工作表 XLSX",
     fs.writeFileSync(path.join(dir, "document-tools.cjs"), transformSync(source, {
       loader: "ts", platform: "node", target: "es2022", format: "cjs",
     }).code);
+    for (const file of ["file-access", "registry/tool-execution-error"]) {
+      fs.writeFileSync(path.join(dir, `${path.basename(file)}.cjs`), transformSync(
+        fs.readFileSync(path.resolve(`src/main/orchestrator/tools/${file}.ts`), "utf8"),
+        { loader: "ts", platform: "node", target: "es2022", format: "cjs" },
+      ).code);
+    }
     // 只替换 Electron/注册表等宿主边界；ExcelJS 的 import、写盘及读回均使用真实依赖。
     const result = execFileSync(process.execPath, ["-e", `
       const Module = require('node:module');
@@ -23,6 +29,9 @@ it("write_excel 在原生 Node 动态导入下生成可读的多工作表 XLSX",
       const load = Module._load;
       Module._load = function(id, ...args) {
         if (id === 'electron') return {app: {getPath: () => dir}};
+        if (id === './file-access') return require(path.join(dir, 'file-access.cjs'));
+        if (id === './registry/tool-execution-error') return require(path.join(dir, 'tool-execution-error.cjs'));
+        if (id === '../../permission') return {getCurrentLevel: () => 'full', policyFor: () => 'allow', ACCESS_LEVEL_LABEL: {full: '完全访问'}};
         if (id === './registry/tool-registry') return {toolRegistry: {register: t => registry.set(t.id, t)}};
         if (id === '../../external-content-paths') return {findSkillPath: () => null};
         if (id === '../review/run-review-tracker') return {getRunReviewTracker: () => { throw new Error('unexpected review call'); }};

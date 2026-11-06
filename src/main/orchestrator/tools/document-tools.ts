@@ -2,8 +2,8 @@
 // Markdown/纯文本笔记统一走 write_file（见 fs-tools.ts）。
 //
 // 设计要点：
-// - 绑定项目时文档存到该项目根目录；未绑定时才回退到桌面
-// - 支持桌面子目录（如 "test/report.xlsx"），自动创建父目录
+// - 指定目录权限必须绑定工作区，完全访问且未绑定时可保存到桌面
+// - 支持相对路径中的子目录（如 "test/report.xlsx"），自动创建父目录
 // - 文件名由模型给，强制校验扩展名（防 .exe 等危险后缀）
 // - 返回完整路径给模型，模型可以转述给用户
 // - PDF 中文字体走系统微软雅黑（Windows），找不到就降级
@@ -15,10 +15,20 @@ import { pipeline } from "stream/promises";
 import { app } from "electron";
 import { toolRegistry } from "./registry/tool-registry";
 import type { ToolContext } from "./registry/tool-context";
+import { resolveFileAccessPath } from "./file-access";
+import { ToolExecutionError } from "./registry/tool-execution-error";
 import { findSkillPath } from "../../external-content-paths";
 import { getRunReviewTracker } from "../review/run-review-tracker";
 
 const LOG_PREFIX = "[DocTools]";
+const OUTPUT_LOCATION = "保存到已绑定的工作区。指定目录权限必须绑定工作区，完全访问时可回退到桌面。";
+
+/** 生成前拒绝越界；异步生成结束后再次调用，不能让等待期间的链接替换绕过检查。 */
+function checkedOutputPath(outputPath: string, context?: ToolContext): string {
+  const access = resolveFileAccessPath(outputPath, "write", context);
+  if (!access.ok) throw new ToolExecutionError("E_DOCUMENT_PATH_DENIED", access.message, "permission_denied");
+  return access.path;
+}
 
 /** 校验文件名：必须有合法扩展名，不能有危险字符。ext 支持多个候选（如 [".md", ".txt"]）。 */
 function validateFilename(filename: string, ext: string | string[]): string | null {
@@ -57,7 +67,7 @@ function captureBaseline(context: ToolContext | undefined, outputPath: string): 
 
 /**
  * 解析输出路径：filename 可含子目录（如 "test/report.xlsx"）。
- * 有可信工作区绑定时根目录固定为工作区；否则兼容旧行为写入桌面。
+ * 有可信工作区绑定时使用工作区根目录，否则由权限守卫决定是否允许写入桌面。
  * 安全校验：禁止 .. 穿越、禁止绝对路径（不能写到桌面之外）。
  * 返回绝对路径，或 null 表示校验失败。
  */
@@ -202,6 +212,7 @@ export function registerDocumentTools(): void {
       "生成一个美观的 Excel 文件（.xlsx）。支持多种预设风格 + 自定义颜色。已内置：表头加粗+背景、" +
       "全表细边框、隔行斑马纹、列宽自适应、数字右对齐+千位分隔、冻结首行、自动筛选。\n" +
       "【优先使用】简单表格生成、数据整理、换算结果导出等场景应直接用此工具，不要走 invoke_skill(xlsx)。\n\n" +
+      OUTPUT_LOCATION + "\n\n" +
       "何时用：\n" +
       "- 用户要把数据整理成表格\n" +
       "- 用户要「做一张表」「导出 Excel」「整理成 Excel」\n" +
@@ -221,7 +232,7 @@ export function registerDocumentTools(): void {
     inputSchema: {
       type: "object",
       properties: {
-        filename: { type: "string", description: "文件名，可含子目录如 'test/report.xlsx'（相对桌面，.xlsx 结尾）" },
+        filename: { type: "string", description: "相对于输出目录的文件名，可含子目录如 'test/report.xlsx'" },
         sheets: {
           type: "array",
           description: "工作表数组",
@@ -254,6 +265,7 @@ export function registerDocumentTools(): void {
       if (!filename) return filenameError(".xlsx", args);
       const outputPath = resolveOutputPath(filename, context?.resolvedWorkspaceRoot);
       if (!outputPath) return "[错误] 路径不合法（禁止目录穿越或绝对路径）: " + filename;
+      checkedOutputPath(outputPath, context);
       const sheets = args.sheets as Array<{
         name: string; headers: string[]; rows: unknown[][];
       }>;
@@ -372,13 +384,14 @@ export function registerDocumentTools(): void {
       }
 
       // 自动创建父目录（支持子目录写入）
-      const dir = path.dirname(outputPath);
+      const writePath = checkedOutputPath(outputPath, context);
+      const dir = path.dirname(writePath);
       if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
       }
-      captureBaseline(context, outputPath);
-      await workbook.xlsx.writeFile(outputPath);
-      console.log(LOG_PREFIX, "Excel 已生成（默认美观样式）:", outputPath);
+      captureBaseline(context, writePath);
+      await workbook.xlsx.writeFile(writePath);
+      console.log(LOG_PREFIX, "Excel 已生成（默认美观样式）:", writePath);
       return `[write_excel] 已生成：${outputPath}`;
     },
   });
@@ -399,7 +412,8 @@ export function registerDocumentTools(): void {
       "- 轻量笔记（用 Write）\n" +
       "- 需要复杂排版（页眉页脚/目录/图片/表格）→ 才考虑 invoke_skill(docx)\n\n" +
       "style 可选值（见 skills/docx/styles/catalog.md）：default(商务) / academic(学术) / clean(极简) / elegant(优雅) / formal(公文)。\n" +
-      "参数：filename（只传文件名，如 AI新闻汇总.docx，不要传绝对路径；输出目录由系统固定为桌面），title（标题），paragraphs（段落数组），style（可选预设风格）。",
+      OUTPUT_LOCATION + "\n\n" +
+      "参数：filename（相对路径，如 AI新闻汇总.docx），title（标题），paragraphs（段落数组），style（可选预设风格）。",
     enabled: true,
     risk: "fs-write",
     modes: ["work"],
@@ -409,7 +423,7 @@ export function registerDocumentTools(): void {
     inputSchema: {
       type: "object",
       properties: {
-        filename:   { type: "string", description: "文件名，必须以 .docx 结尾，例如 'AI新闻汇总.docx'。只传文件名，不要传绝对路径或目录。文件默认写入系统指定的桌面目录。" },
+        filename:   { type: "string", description: "相对于输出目录的文件名，必须以 .docx 结尾，如 'AI新闻汇总.docx'" },
         title:      { type: "string", description: "文档标题" },
         paragraphs: { type: "array", description: "段落字符串数组", items: { type: "string" } },
         style:      { type: "string", description: "预设风格：default(商务) / academic(学术) / clean(极简) / elegant(优雅) / formal(公文)" },
@@ -421,6 +435,7 @@ export function registerDocumentTools(): void {
       if (!filename) return filenameError(".docx", args);
       const outputPath = resolveOutputPath(filename, context?.resolvedWorkspaceRoot);
       if (!outputPath) return "[错误] 路径不合法（禁止目录穿越或绝对路径）: " + filename;
+      checkedOutputPath(outputPath, context);
 
       // 加载风格
       const styles = loadStylesDir("docx");
@@ -470,11 +485,12 @@ export function registerDocumentTools(): void {
       });
 
       const buffer = await Packer.toBuffer(doc);
-      const dir = path.dirname(outputPath);
+      const writePath = checkedOutputPath(outputPath, context);
+      const dir = path.dirname(writePath);
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      captureBaseline(context, outputPath);
-      fs.writeFileSync(outputPath, buffer);
-      console.log(LOG_PREFIX, "Word 已生成:", outputPath);
+      captureBaseline(context, writePath);
+      fs.writeFileSync(writePath, buffer);
+      console.log(LOG_PREFIX, "Word 已生成:", writePath);
       return `[write_word] 已生成：${outputPath}`;
     },
   });
@@ -484,7 +500,7 @@ export function registerDocumentTools(): void {
     id: "write_pdf",
     name: "写 PDF",
     description:
-      "生成一个 PDF 文件保存到桌面。\n\n" +
+      "生成一个 PDF 文件。" + OUTPUT_LOCATION + "\n\n" +
       "何时用：\n" +
       "- 用户要写正式文档（合同/简历/申请书）\n" +
       "- 需要「导出成 PDF」\n\n" +
@@ -512,11 +528,12 @@ export function registerDocumentTools(): void {
       if (!filename) return filenameError(".pdf", args);
       const outputPath = resolveOutputPath(filename, context?.resolvedWorkspaceRoot);
       if (!outputPath) return "[错误] 路径不合法（禁止目录穿越或绝对路径）: " + filename;
+      checkedOutputPath(outputPath, context);
 
       const PDFKit = await import("pdfkit");
-      const dir = path.dirname(outputPath);
+      let writePath = checkedOutputPath(outputPath, context);
+      const dir = path.dirname(writePath);
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      captureBaseline(context, outputPath);
       const doc = new PDFKit.default();
       // TTC 是字体集合，必须选择具体 PostScript face；独立 TTF 不需要 face。
       const fontCandidates = [
@@ -561,13 +578,18 @@ export function registerDocumentTools(): void {
         await writing;
         // 沿用原 createWriteStream 的目标权限、inode 和符号链接语义。
         // 最终写盘不是原子事务；磁盘故障仍可能部分写入，但清理绝不能删除目标。
-        await pipeline(fs.createReadStream(temporaryPath), fs.createWriteStream(outputPath));
+        // 重新解析请求路径，防止生成期间的联接替换改变成功消息所指的目标。
+        writePath = checkedOutputPath(outputPath, context);
+        const finalDir = path.dirname(writePath);
+        if (!fs.existsSync(finalDir)) fs.mkdirSync(finalDir, { recursive: true });
+        captureBaseline(context, writePath);
+        await pipeline(fs.createReadStream(temporaryPath), fs.createWriteStream(writePath));
       } finally {
         doc.destroy();
         await writing?.catch(() => {});
         await fs.promises.rm(temporaryDir, { recursive: true, force: true });
       }
-      console.log(LOG_PREFIX, "PDF 已生成:", outputPath);
+      console.log(LOG_PREFIX, "PDF 已生成:", writePath);
       return `[write_pdf] 已生成：${outputPath}`;
     },
   });

@@ -5,18 +5,19 @@
 // download_file 把图片等二进制原样落盘给用户用，模型只拿到保存路径。
 //
 // 安全设计（对齐 document-tools 的落盘规则）：
-// - 路径沙箱：filename 禁止绝对路径/.. 穿越，根目录固定为可信工作区（未绑定时回退桌面）
+// - filename 禁止绝对路径/.. 穿越。指定目录档位必须绑定工作区，完全访问时可回退桌面。
 // - 危险后缀黑名单：拒绝下载 .exe/.bat 等可执行文件
 // - 大小上限 64MiB + 30s 空闲超时（无总超时，大文件慢速下载不误杀）
 // - 先完整缓冲校验再一次性落盘：下载中断不会留下半截文件
 //
-// 注意：本模块不 import electron（顶层），桌面路径在 execute 内懒加载，
-// 保证测试环境 import 本模块不触发 Electron 初始化（与 tool-registry 懒加载同模式）。
+// 普通 Node 测试须隔离 Electron 宿主。
 
 import * as fs from "fs";
 import * as path from "path";
+import { app } from "electron";
 import type { ToolDefinition } from "../registry/tool-registry";
 import type { ToolContext } from "../registry/tool-context";
+import { resolveFileAccessPath } from "../file-access";
 
 const LOG_PREFIX = "[BuiltinTools]";
 
@@ -59,21 +60,14 @@ function hasDangerousChars(filename: string): boolean {
 
 /**
  * 解析输出路径：filename 可含子目录（如 "images/cat.png"）。
- * 有可信工作区绑定时根目录固定为工作区；否则懒加载 electron 回退桌面。
+ * 有可信工作区绑定时使用工作区根目录，否则由权限守卫决定是否允许写入桌面。
  * 安全校验：禁止 .. 穿越、禁止绝对路径。
  * 返回绝对路径，或 null 表示校验失败。
  */
 function resolveOutputPath(filename: string, workspaceRoot?: string): string | null {
   const normalized = path.normalize(filename).replace(/\\/g, "/");
   if (normalized.includes("..") || path.isAbsolute(normalized)) return null;
-  let root: string;
-  if (workspaceRoot) {
-    root = path.resolve(workspaceRoot);
-  } else {
-    // 懒加载 electron：测试环境传 workspaceRoot 即可完全绕开
-    const { app } = require("electron") as typeof import("electron");
-    root = app.getPath("desktop");
-  }
+  const root = path.resolve(workspaceRoot || app.getPath("desktop"));
   const fullPath = path.resolve(root, normalized);
   const relative = path.relative(root, fullPath);
   if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) return null;
@@ -117,9 +111,13 @@ async function executeDownloadFile(args: Record<string, unknown>, ctx?: ToolCont
   if (!outputPath) {
     return "[错误] 路径不合法（禁止目录穿越或绝对路径）: " + filename;
   }
-  if (DANGEROUS_EXTS.has(path.extname(outputPath).toLowerCase())) {
-    return "[错误] 禁止下载可执行/脚本文件: " + path.extname(outputPath);
+  const extension = path.extname(outputPath);
+  if (DANGEROUS_EXTS.has(extension.toLowerCase())) {
+    return "[错误] 禁止下载可执行/脚本文件: " + extension;
   }
+  // 扩展名由响应决定时，预检父目录。未补全的占位名本身不会被写入。
+  const access = resolveFileAccessPath(extension ? outputPath : path.dirname(outputPath), "write", ctx);
+  if (!access.ok) return "[拒绝] " + access.message;
 
   console.log(LOG_PREFIX, "download_file:", url, "->", outputPath);
 
@@ -150,7 +148,7 @@ async function executeDownloadFile(args: Record<string, unknown>, ctx?: ToolCont
 
     // 缺扩展名时按 Content-Type 补全（"download" 占位名或 URL 无扩展名场景）
     let finalPath = outputPath;
-    if (path.extname(outputPath) === "") {
+    if (!extension) {
       const ctype = (resp.headers.get("content-type") || "").split(";")[0].trim().toLowerCase();
       const ext = CONTENT_TYPE_EXT[ctype];
       if (!ext) {
@@ -174,13 +172,21 @@ async function executeDownloadFile(args: Record<string, unknown>, ctx?: ToolCont
       chunks.push(Buffer.from(value));
     }
 
-    const dir = path.dirname(finalPath);
+    // 下载期间目录可能被替换；补扩展名后必须按最终实际目标再次检查。
+    const finalAccess = resolveFileAccessPath(finalPath, "write", ctx);
+    if (!finalAccess.ok) return "[拒绝] " + finalAccess.message;
+    const writePath = finalAccess.path;
+    const targetExtension = path.extname(writePath);
+    if (DANGEROUS_EXTS.has(targetExtension.toLowerCase())) {
+      return "[错误] 禁止下载到可执行/脚本文件: " + targetExtension;
+    }
+    const dir = path.dirname(writePath);
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(finalPath, Buffer.concat(chunks, total));
+    fs.writeFileSync(writePath, Buffer.concat(chunks, total));
     const sizeText = total >= 1024 * 1024
       ? (total / 1024 / 1024).toFixed(1) + " MiB"
       : Math.round(total / 1024) + " KiB";
-    console.log(LOG_PREFIX, "已下载:", finalPath, `(${total} bytes)`);
+    console.log(LOG_PREFIX, "已下载:", writePath, `(${total} bytes)`);
     return `[download_file] 已保存：${finalPath}（${sizeText}）`;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -206,7 +212,7 @@ export const downloadFileTool: ToolDefinition = {
     "- 下载可执行文件（.exe/.bat 等，会被拒绝）\n\n" +
     "参数：url (必填，完整 http(s) 地址)，filename (可选，保存的相对路径+文件名如 images/cat.png；" +
     "缺省从 URL 推断，推断不出时按 Content-Type 补扩展名)。\n" +
-    "保存位置：绑定项目时存到项目目录，否则存到桌面。上限 64MiB。",
+    "保存到已绑定的工作区。指定目录权限必须绑定工作区，完全访问时可回退到桌面。上限 64MiB。",
   enabled: true,
   risk: "fs-write",
   modes: ["learn", "code", "work"],

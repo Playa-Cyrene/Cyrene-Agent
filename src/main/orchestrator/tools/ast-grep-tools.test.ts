@@ -7,13 +7,20 @@
  * - 安全：路径逃逸拒绝、无效 pattern / language 报错
  */
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
 import { registerAstGrepTools } from "./ast-grep-tools";
 import { toolRegistry } from "./registry/tool-registry";
 import type { ToolContext } from "./registry/tool-context";
+
+// 本文件验证授权改写；真实受限档位和链接边界另有行为回归。
+vi.mock("../../permission", async () => ({
+  ...await import("../../permission-policy"),
+  getCurrentLevel: () => "full",
+  ACCESS_LEVEL_LABEL: { full: "完全访问" },
+}));
 
 let tmpDir: string;
 let ctx: ToolContext;
@@ -121,7 +128,8 @@ describe("ast_grep_search", () => {
   it("rejects path traversal outside workspace", async () => {
     const result = await runSearch({ pattern: "console.log($$$A)", paths: ["../../outside"] });
 
-    expect(result.success).toBe(true);
+    expect(result.success).toBe(false);
+    expect(result.category).toBe("permission_denied");
     expect(result.matchCount).toBe(0);
     expect(result.skipped).toContain("../../outside");
   });
