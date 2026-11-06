@@ -1,3 +1,4 @@
+import { isTermsExecutionAllowed } from "../terms/terms-runtime";
 import type { ChannelManager } from "./manager";
 import type { OutgoingMessage } from "./types";
 
@@ -14,6 +15,7 @@ export function createChannelDeliveryService(
 ): ChannelDeliveryService {
   return {
     async send(message): Promise<DeliveryResult> {
+      if (!isTermsExecutionAllowed()) return { ok: false, error: "E_TERMS_CONSENT_REQUIRED" };
       const adapter = manager.getAdapter(message.channel);
       if (!adapter) {
         return { ok: false, error: "adapter_not_found" };

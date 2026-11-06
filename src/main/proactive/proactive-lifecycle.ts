@@ -1,3 +1,4 @@
+import { isTermsExecutionAllowed } from "../terms/terms-runtime";
 import { powerMonitor } from "electron";
 import * as chatsStore from "../chats/chats-store";
 import { broadcastChatsChanged } from "../chats/chats-ipc";
@@ -163,6 +164,7 @@ export function createProactiveLifecycle(options: ProactiveLifecycleOptions): Pr
   };
 
   function getProactiveCommitDecision(candidate: ProactiveCandidate, generationEpoch: number) {
+    if (!isTermsExecutionAllowed()) return { allowed: false, reason: "E_TERMS_CONSENT_REQUIRED" };
     return canCommitProactiveMessage(
       getProactiveRuntimeSnapshot(),
       loadProactiveState(),
@@ -192,6 +194,7 @@ export function createProactiveLifecycle(options: ProactiveLifecycleOptions): Pr
     const runId = commitKey;
     const intentAt = input.intentAt ?? 0;
     const sink = conversationJournal.createRunSink({ conversationId: session.id, runId });
+    if (!isTermsExecutionAllowed()) return { kind: "cancelled", reason: "E_TERMS_CONSENT_REQUIRED" };
     const assistantEntryId = await sink.appendAssistant({
       message: { role: "assistant", content: input.text },
       roundId: "proactive",
@@ -222,6 +225,7 @@ export function createProactiveLifecycle(options: ProactiveLifecycleOptions): Pr
           mobileMessageSegmentation: settings.mobileMessageSegmentation,
           manager: channelManager,
           canContinue: () => {
+            if (!isTermsExecutionAllowed()) return false;
             if (options.loadGeneralSettings().proactiveDeliveryTarget !== channel) return false;
             return getProactiveCommitDecision(input.candidate, input.generationEpoch).allowed;
           },
@@ -260,6 +264,7 @@ export function createProactiveLifecycle(options: ProactiveLifecycleOptions): Pr
         // profile chain without creating a session just to generate a candidate.
         const settings = resolveSessionModelSettings(loadModelSettings(), session ?? {});
         if (!settings.apiKey) return { kind: "error", reason: "missing_api_key" };
+        if (!isTermsExecutionAllowed()) return { kind: "error", reason: "E_TERMS_CONSENT_REQUIRED" };
         return runProactiveModel({
           settings: {
             provider: settings.provider,

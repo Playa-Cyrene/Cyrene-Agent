@@ -1,3 +1,4 @@
+import { assertTermsExecutionAllowed } from "../terms/terms-runtime";
 import { modelMessageOrigin } from "./vendors/model-history";
 import { stripLeakedChatTimeContext } from "../chat-time-context";
 import { ChatTimeStreamPrefixFilter } from "../chat-time-stream-filter";
@@ -112,6 +113,7 @@ function stripToolProtocol(text: string): string {
 }
 
 export async function runChatLoop(options: ChatLoopOptions): Promise<AgentLoopResult> {
+  assertTermsExecutionAllowed();
   const startedAt = Date.now();
   const usageRecorder = options.recordUsage ?? ((input, output, calls, cachedInput, cacheCreation) => recordUsage(input, output, calls, cachedInput, options.settings.model, cacheCreation));
   let usedImageCaptionFallback = false;
@@ -175,6 +177,7 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<AgentLoopRe
   });
 
   const invokeNonStreaming = async (messages: ChatMessage[], signal: AbortSignal): Promise<ChatResponse> => {
+    assertTermsExecutionAllowed();
     const request: ChatRequest = {
       ...buildRequest(messages, false),
     };
@@ -219,6 +222,7 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<AgentLoopRe
     response: ChatResponse;
     needsReveal: boolean;
   }> => {
+    assertTermsExecutionAllowed();
     const request = buildRequest(messages, true);
     const effectiveRequest = options.adapter.applyCacheHints?.(request, vendorConfig) ?? request;
     const timePrefixFilter = new ChatTimeStreamPrefixFilter();
@@ -328,6 +332,7 @@ export async function runChatLoop(options: ChatLoopOptions): Promise<AgentLoopRe
       if (emittedStreamContent || options.signal?.aborted || !canCaptionFallback || !options.imageCaptionFallback || usedImageCaptionFallback) {
         throw error;
       }
+      assertTermsExecutionAllowed();
       usedImageCaptionFallback = true;
       result = await invokeWithRetry(await options.imageCaptionFallback());
     }

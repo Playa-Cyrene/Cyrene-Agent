@@ -1,3 +1,4 @@
+import { isTermsExecutionAllowed } from "../terms/terms-runtime";
 import type { ChatMessage } from "../orchestrator/vendors/types";
 import {
   canCommitProactiveMessage,
@@ -149,6 +150,7 @@ export function createProactiveChatService(deps: ProactiveChatServiceDeps): Proa
   };
 
   const deliverIntent = async (intent: ProactiveCommitIntent, deliveryTarget: ProactiveDeliveryTarget = "local"): Promise<ProactiveCommitResult> => {
+    if (!isTermsExecutionAllowed()) return { kind: "cancelled", reason: "E_TERMS_CONSENT_REQUIRED" };
     const result = await deps.commitMessage({
       intentId: intent.intentId,
       candidate: intent.candidate,
@@ -164,6 +166,7 @@ export function createProactiveChatService(deps: ProactiveChatServiceDeps): Proa
 
   return {
     async evaluateCandidate(candidate): Promise<void> {
+      if (!isTermsExecutionAllowed()) return;
       const initialState = deps.loadState();
       const rawInitialSnapshot = deps.getSnapshot();
       const initialSnapshot = { ...rawInitialSnapshot, generationBusy: rawInitialSnapshot.generationBusy || generating };
@@ -211,6 +214,7 @@ export function createProactiveChatService(deps: ProactiveChatServiceDeps): Proa
       const generationEpoch = initialState.proactiveEpoch;
       try {
         const messages = await deps.buildMessages(candidate, initialState);
+        if (!isTermsExecutionAllowed()) return;
         const result = await deps.runModel(messages, frozenDeliveryTarget);
         const stateAfterModel = deps.loadState();
         if (stateAfterModel.proactiveEpoch !== generationEpoch) {
@@ -246,6 +250,7 @@ export function createProactiveChatService(deps: ProactiveChatServiceDeps): Proa
           source = "fallback";
         }
 
+        if (!isTermsExecutionAllowed()) return;
         const commitState = deps.loadState();
         const commitSnapshot = deps.getSnapshot();
         const commitDecision = canCommitProactiveMessage(

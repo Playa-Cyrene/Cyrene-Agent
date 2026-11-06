@@ -295,3 +295,46 @@ describe("dispatchToolCall truthful execution", () => {
     expect(result.fullOutputRef).toBe(`tool-result://v1/${"d".repeat(64)}`);
   });
 });
+
+it.each(["permission", "journal"])("rechecks terms after awaiting %s before executing a tool", async boundary => {
+  const { configureTermsExecutionGate } = await import("../../terms/terms-runtime");
+  let accepted = true;
+  const restore = configureTermsExecutionGate(() => accepted);
+  const execute = vi.fn(async () => "must not run");
+  try {
+    const result = await dispatchToolCall(call("blocked"), {
+      state: state(), tools: [tool(execute)],
+      checkPermission: async () => { if (boundary === "permission") accepted = false; return true; },
+      onToolStarted: async () => { if (boundary === "journal") accepted = false; },
+    });
+    expect(execute).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ outcome: "not_executed", category: "runtime_safety" });
+  } finally { restore(); }
+});
+
+it("blocks Harness builtins before dispatch when new terms require acceptance", async () => {
+  const { configureTermsExecutionGate } = await import("../../terms/terms-runtime");
+  const restore = configureTermsExecutionGate(() => false);
+  const started = vi.fn();
+  try {
+    const result = await dispatchToolCall({ id: "blocked", name: "task", arguments: "{}" }, {
+      state: state(), tools: [], onToolStarted: started,
+    });
+    expect(result).toMatchObject({ outcome: "not_executed", category: "runtime_safety" });
+    expect(started).not.toHaveBeenCalled();
+  } finally { restore(); }
+});
+
+it("rechecks consent after persisting the start of a Harness builtin", async () => {
+  const { configureTermsExecutionGate } = await import("../../terms/terms-runtime");
+  let accepted = true;
+  const restore = configureTermsExecutionGate(() => accepted);
+  const started = vi.fn(async () => { accepted = false; });
+  try {
+    const result = await dispatchToolCall({ id: "blocked", name: "task", arguments: "{}" }, {
+      state: state(), tools: [], onToolStarted: started,
+    });
+    expect(started).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ outcome: "not_executed", message: "E_TERMS_CONSENT_REQUIRED" });
+  } finally { restore(); }
+});

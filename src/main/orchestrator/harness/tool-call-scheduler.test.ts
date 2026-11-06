@@ -457,3 +457,29 @@ describe("scheduleToolCalls", () => {
     expect(skipped).toEqual(["a:execution_error", "b:not_executed_after_error"]);
   });
 });
+
+it.each(["exclusive", "parallel"] as const)("drains dispatched %s work without aborting when consent changes", async mode => {
+  const { configureTermsExecutionGate } = await import("../../terms/terms-runtime");
+  let accepted = true;
+  const restore = configureTermsExecutionGate(() => accepted);
+  const gate = deferred<string>();
+  const started: number[] = [];
+  const committed: string[] = [];
+  try {
+    const pending = scheduleToolCalls({
+      calls: [call("a"), call("b"), call("c")], maxParallel: 1,
+      classify: () => mode,
+      execute: async ({ toolCallIndex }) => { started.push(toolCallIndex); return gate.promise; },
+      commit: async (_execution, result) => { committed.push(result); return "continue"; },
+      notExecuted: async (_execution, reason) => reason,
+    });
+    await Promise.resolve();
+    expect(started).toEqual([0]);
+    accepted = false;
+    gate.resolve("completed safely");
+    expect(await pending).toEqual({ cancelled: false, halted: true });
+    expect(started).toEqual([0]);
+    expect(committed[0]).toBe("completed safely");
+    expect(committed).toHaveLength(3);
+  } finally { restore(); }
+});

@@ -93,6 +93,7 @@ export interface CoreDependencies {
   /** 组合根装配提醒中心：注册 toast IPC、订阅事件总线、预创建隐藏窗口。 */
   wireToastCenter(input: { ipc: IpcScope; windowManager: WindowManager }): void;
   loadGeneralSettings(): GeneralSettings;
+  hasCurrentDisclaimerConsent?(): boolean;
   /** 启动期一次性应用通用设置（登录项同步、桌宠偏好等）。 */
   applyGeneralSettings(settings: GeneralSettings, services: CoreServices): void;
   revealStartupWindows(input: RevealStartupWindowsOptions): Promise<void>;
@@ -252,7 +253,8 @@ export async function startCore(deps: CoreDependencies): Promise<CoreResult> {
     // 启动期一次性完整应用通用设置（登录项同步等）；此时桌宠未创建，show/hide 为 no-op
     deps.applyGeneralSettings(generalSettings, services);
     // showOnReady=petVisible：页面就绪才显示，避免空窗口闪现；创建本身在核心 IPC 注册之后
-    const disclaimerAccepted = hasCurrentDisclaimerConsent(generalSettings.disclaimerAcceptedVersion);
+    const disclaimerAccepted = deps.hasCurrentDisclaimerConsent?.()
+      ?? hasCurrentDisclaimerConsent(generalSettings.disclaimerAcceptedVersion);
     let onboardingWindow = null;
     try {
       onboardingWindow = disclaimerAccepted ? null : await shell.windowManager.createOnboardingWindow?.() ?? null;

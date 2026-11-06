@@ -529,3 +529,20 @@ describe("createSchedulerRunner lifecycle events", () => {
     expect(result.ok).toBe(true);
   });
 });
+
+it("records a consent rejection after asynchronous preparation as a failed admitted run", async () => {
+  const { configureTermsExecutionGate } = await import("../terms/terms-runtime");
+  let accepted = true;
+  const restore = configureTermsExecutionGate(() => accepted);
+  const deps = makeRunnerDeps();
+  const baseBuild = deps.buildOptions;
+  deps.buildOptions = vi.fn(async () => { const options = await baseBuild(); accepted = false; return options; });
+  try {
+    const result = await createSchedulerRunner(deps).runScheduledTask(makeTask(), new Date(), false);
+    expect(result.ok).toBe(false);
+    expect(deps.recordHistory).toHaveBeenLastCalledWith(expect.objectContaining({
+      status: "failed", reason: "E_TERMS_CONSENT_REQUIRED",
+    }));
+    expect(runnerMocks.agentOptions).toBeUndefined();
+  } finally { restore(); }
+});

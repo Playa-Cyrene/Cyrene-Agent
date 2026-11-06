@@ -1,3 +1,4 @@
+import { isTermsExecutionAllowed } from "../../terms/terms-runtime";
 import { requiresUserInteraction } from "./interactive-tools";
 /**
  * 工具分发器：统一 dispatch Harness 内置工具和普通工具。
@@ -191,6 +192,7 @@ export async function dispatchToolCall(
   call: ToolCall,
   ctx: ToolDispatchContext,
 ): Promise<ToolDispatchResult> {
+  if (!isTermsExecutionAllowed()) return { outcome: "not_executed", category: "runtime_safety", tool: call.name, message: "E_TERMS_CONSENT_REQUIRED" };
   const args = parseToolCallArgs(call);
   const fingerprint = toolCallFingerprint(call.name, args);
   const failSafeFingerprint = `${call.name}(*)`;
@@ -230,12 +232,12 @@ export async function dispatchToolCall(
       fingerprint,
       ...(repeatAuthorization ? { repeatAuthorizationId: repeatAuthorization.id } : {}),
     });
-    if (ctx.signal?.aborted) {
+    if (ctx.signal?.aborted || !isTermsExecutionAllowed()) {
       return {
         outcome: "not_executed",
         category: "runtime_safety",
         tool: call.name,
-        message: "工具已记录开始，但在实际派发前被取消",
+        message: !isTermsExecutionAllowed() ? "E_TERMS_CONSENT_REQUIRED" : "工具已记录开始，但在实际派发前被取消",
       };
     }
     ctx.onEvent?.({ type: "tool_start", toolCallId: call.id, toolName: call.name, args });
@@ -296,12 +298,12 @@ export async function dispatchToolCall(
     fingerprint,
     ...(repeatAuthorization ? { repeatAuthorizationId: repeatAuthorization.id } : {}),
   });
-  if (ctx.signal?.aborted) {
+  if (ctx.signal?.aborted || !isTermsExecutionAllowed()) {
     return {
       outcome: "not_executed",
       category: "runtime_safety",
       tool: call.name,
-      message: "工具已记录开始，但在实际派发前被取消",
+      message: !isTermsExecutionAllowed() ? "E_TERMS_CONSENT_REQUIRED" : "工具已记录开始，但在实际派发前被取消",
     };
   }
 

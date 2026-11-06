@@ -249,3 +249,87 @@ describe("invokeMemoryLlm — error distinction", () => {
     }
   });
 });
+
+// 条款门禁不取消在飞请求，只在出队和每次新请求（含结构修复/限流重试）前拒绝。
+import { configureTermsExecutionGate, TermsConsentRequiredError } from "../terms/terms-runtime";
+import { enqueueLLMTask } from "../llm-queue";
+
+function pendingResult<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>(done => { resolve = done; });
+  return { promise, resolve };
+}
+const memoryRequest = { operation: "summary" as const, messages: [{ role: "user" as const, content: "summary" }], maxOutputTokens: 500 };
+const structuredRequest = {
+  operation: "judge" as const, systemPrompt: "system", userPrompt: "conversation", maxOutputTokens: 800,
+  parseSchema: parseMemoryJudgeResult, validateBusiness: validateMemoryJudgeBusiness,
+};
+
+describe("条款变化后的记忆请求边界", () => {
+  it("队列等待期间失效后拒绝尚未开始的记忆请求", async () => {
+    let accepted = true;
+    const restore = configureTermsExecutionGate(() => accepted);
+    const blocker = pendingResult<void>();
+    const first = enqueueLLMTask("terms-test-blocker", () => blocker.promise, { log: false });
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const next = enqueueLLMTask("terms-test-memory", () => invokeMemoryLlm(memoryRequest), { log: false });
+    const rejected = expect(next).rejects.toBeInstanceOf(TermsConsentRequiredError);
+    try {
+      accepted = false;
+      blocker.resolve();
+      await first;
+      await rejected;
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally { restore(); }
+  });
+
+  it("结构修复前失效后保留专用门禁错误且不再请求", async () => {
+    let accepted = true;
+    const restore = configureTermsExecutionGate(() => accepted);
+    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => {
+      accepted = false;
+      return { text: "invalid json", finishReason: "stop" };
+    } }));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      await expect(invokeMemoryStructuredOutput(structuredRequest)).rejects.toBeInstanceOf(TermsConsentRequiredError);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally { restore(); }
+  });
+
+  it("限流退避期间失效后不发第二次请求", async () => {
+    vi.useFakeTimers();
+    let accepted = true;
+    const restore = configureTermsExecutionGate(() => accepted);
+    const fetchMock = vi.fn(async () => ({ ok: false, status: 429, json: async () => ({ error: { message: "rate limit" } }) }));
+    vi.stubGlobal("fetch", fetchMock);
+    const request = enqueueLLMTask("terms-test-retry", () => invokeMemoryLlm(memoryRequest), { log: false });
+    const rejected = expect(request).rejects.toBeInstanceOf(TermsConsentRequiredError);
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      accepted = false;
+      await vi.advanceTimersByTimeAsync(5000);
+      await rejected;
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally { restore(); vi.useRealTimers(); }
+  });
+
+  it.each([false, true])("已派发的有效结果仍可交给持久化收尾（structured=%s）", async structured => {
+    let accepted = true;
+    const restore = configureTermsExecutionGate(() => accepted);
+    const response = pendingResult<{ text: string; finishReason: string }>();
+    const fetchMock = vi.fn(async () => ({ ok: true, json: () => response.promise }));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const result = structured ? invokeMemoryStructuredOutput(structuredRequest) : invokeMemoryLlm(memoryRequest);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      accepted = false;
+      response.resolve({ text: '{"candidates":[]}', finishReason: "stop" });
+      if (structured) await expect(result).resolves.toEqual({ candidates: [], entities: [] });
+      else await expect(result).resolves.toMatchObject({ text: '{"candidates":[]}' });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally { restore(); }
+  });
+});

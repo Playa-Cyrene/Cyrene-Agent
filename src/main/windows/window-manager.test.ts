@@ -134,3 +134,17 @@ describe("window manager consent gate", () => {
     expect(mocks.app.quit).toHaveBeenCalledTimes(accepted ? 0 : 1);
   });
 });
+
+it("uses the live remote consent check rather than the legacy version", () => {
+  let accepted = false;
+  const manager = createWindowManager({
+    getCurrentAppIconPath: () => "icon", isDev: false,
+    loadPetWindowSettingsSlice: () => ({ disclaimerAcceptedVersion: CURRENT_DISCLAIMER_VERSION }),
+    persistPetWindowPosition: vi.fn(), hasCurrentDisclaimerConsent: () => accepted,
+  });
+  expect(manager.hasCurrentDisclaimerConsent?.()).toBe(false);
+  accepted = true;
+  expect(manager.hasCurrentDisclaimerConsent?.()).toBe(true);
+  accepted = false;
+  expect(manager.hasCurrentDisclaimerConsent?.()).toBe(false);
+});

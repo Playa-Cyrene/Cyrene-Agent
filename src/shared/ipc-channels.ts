@@ -580,6 +580,11 @@ export const IPC = {
   PLUGINS_MARKET_DETAILS: "plugins:market:details",
   PLUGINS_MARKET_INSTALL: "plugins:market:install",
 
+  // 条款快照与明确同意；主进程负责版本和持久化校验。
+  TERMS_GET: "terms:get",
+  TERMS_ACCEPT: "terms:accept",
+  TERMS_UPDATED: "terms:updated",
+
   // 项目公告（远端 Markdown 文本）
   NEWS_GET: "news:get",
   /** 主进程拉到新版本时反向推送给窗口，渲染端据此更新未读提示 */

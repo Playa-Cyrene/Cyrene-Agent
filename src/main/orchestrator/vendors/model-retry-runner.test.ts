@@ -101,3 +101,15 @@ describe("runModelRequestWithRetry", () => {
     expect(statuses.at(-1)).toBe("cleared");
   });
 });
+
+it("does not retry a terms consent gate as a transient model failure", async () => {
+  const { runModelRequestWithRetry } = await loadRunner();
+  const { TermsConsentRequiredError } = await import("../../terms/terms-runtime");
+  let calls = 0;
+  await expect(runModelRequestWithRetry(async () => {
+    calls++;
+    throw new TermsConsentRequiredError();
+  }, { provider: "test", model: "m", maxRetries: 5, idleTimeoutMs: 1000 }))
+    .rejects.toMatchObject({ code: "E_TERMS_CONSENT_REQUIRED" });
+  expect(calls).toBe(1);
+});
