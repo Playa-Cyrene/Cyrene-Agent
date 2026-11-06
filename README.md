@@ -485,6 +485,13 @@ MIT 仅约束本仓库的源代码，不适用于角色、Live2D 模型与美术
                 </a>
             </td>
             <td align="center">
+                <a href="https://github.com/ahwhshen">
+                    <img src="https://avatars.githubusercontent.com/u/317654555?v=4" width="48;" alt="ahwhshen"/>
+                    <br />
+                    <sub><b>ahwhshen</b></sub>
+                </a>
+            </td>
+            <td align="center">
                 <a href="https://github.com/lll69">
                     <img src="https://avatars.githubusercontent.com/u/60803753?v=4" width="48;" alt="lll69"/>
                     <br />
@@ -496,13 +503,6 @@ MIT 仅约束本仓库的源代码，不适用于角色、Live2D 模型与美术
                     <img src="https://avatars.githubusercontent.com/u/155789159?v=4" width="48;" alt="ActorF"/>
                     <br />
                     <sub><b>Ying Fang</b></sub>
-                </a>
-            </td>
-            <td align="center">
-                <a href="https://github.com/ahwhshen">
-                    <img src="https://avatars.githubusercontent.com/u/317654555?v=4" width="48;" alt="ahwhshen"/>
-                    <br />
-                    <sub><b>ahwhshen</b></sub>
                 </a>
             </td>
             <td align="center">
