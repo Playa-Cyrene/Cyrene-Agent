@@ -123,6 +123,22 @@ describe("工具真实路径与权限边界", () => {
     expect(fs.statSync(path.join(workspace, `normal/sub/file${writer.ext}`)).size).toBeGreaterThan(0);
   });
 
+  it.each(writers)("$id 写入工作区内的真实目标并返回请求使用的路径", async (writer) => {
+    const targetDir = path.join(workspace, "actual");
+    const alias = path.join(workspace, "alias");
+    fs.mkdirSync(targetDir);
+    fs.symlinkSync(targetDir, alias, process.platform === "win32" ? "junction" : "dir");
+    const download = writer.id === "download_file";
+    const finalName = `report${writer.ext}`;
+    const result = await write(writer, `alias/${download ? "report" : finalName}`);
+    const returnedPath = path.join(alias, finalName);
+    expect(result).toMatchObject({ status: "succeeded" });
+    expect(result.output).toBe(download
+      ? `[download_file] 已保存：${returnedPath}（0 KiB）`
+      : `[${writer.id}] 已生成：${returnedPath}`);
+    expect(fs.statSync(path.join(targetDir, finalName)).size).toBeGreaterThan(0);
+  });
+
   it.each(writers)("$id 不越过子任务的只读限制", async (writer) => {
     expect(await write(writer, `file${writer.ext}`, { readOnly: true, permissionMode: "allow_all" })).toMatchObject({ status: "failed", category: "permission_denied" });
     expect(fs.existsSync(path.join(workspace, `file${writer.ext}`))).toBe(false);
@@ -151,6 +167,25 @@ describe("工具真实路径与权限边界", () => {
     });
     expect(await write(writers[2], "inbox/report.docx")).toMatchObject({ status: "failed", category: "permission_denied" });
     expect(fs.readdirSync(outside)).toEqual([]);
+  });
+
+  it("PDF 生成期间替换原路径上的联接后，最终落盘重新拒绝越界", async () => {
+    const inbox = path.join(workspace, "inbox");
+    const target = path.join(workspace, "actual");
+    fs.mkdirSync(target);
+    const linkType = process.platform === "win32" ? "junction" : "dir";
+    fs.symlinkSync(target, inbox, linkType);
+    const { default: PDFDocument } = await import("pdfkit");
+    const end = PDFDocument.prototype.end;
+    vi.spyOn(PDFDocument.prototype, "end").mockImplementationOnce(function (this: InstanceType<typeof PDFDocument>) {
+      end.call(this);
+      fs.renameSync(inbox, path.join(workspace, "old-inbox"));
+      fs.symlinkSync(outside, inbox, linkType);
+    });
+
+    expect(await write(writers[3], "inbox/report.pdf")).toMatchObject({ status: "failed", category: "permission_denied" });
+    expect(fs.readdirSync(outside)).toEqual([]);
+    expect(fs.readdirSync(target)).toEqual([]);
   });
 
   it.each(["ast_grep_search", "ast_grep_replace"])("%s 不经显式联接路径读取或改写受限范围外的源码", async (id) => {

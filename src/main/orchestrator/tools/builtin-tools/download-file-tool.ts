@@ -180,14 +180,14 @@ async function executeDownloadFile(args: Record<string, unknown>, ctx?: ToolCont
     // 下载期间目录可能被替换；补扩展名后必须按最终实际目标再次检查。
     const finalAccess = resolveFileAccessPath(finalPath, "write", ctx);
     if (!finalAccess.ok) return "[拒绝] " + finalAccess.message;
-    finalPath = finalAccess.path;
-    const dir = path.dirname(finalPath);
+    const writePath = finalAccess.path;
+    const dir = path.dirname(writePath);
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(finalPath, Buffer.concat(chunks, total));
+    fs.writeFileSync(writePath, Buffer.concat(chunks, total));
     const sizeText = total >= 1024 * 1024
       ? (total / 1024 / 1024).toFixed(1) + " MiB"
       : Math.round(total / 1024) + " KiB";
-    console.log(LOG_PREFIX, "已下载:", finalPath, `(${total} bytes)`);
+    console.log(LOG_PREFIX, "已下载:", writePath, `(${total} bytes)`);
     return `[download_file] 已保存：${finalPath}（${sizeText}）`;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

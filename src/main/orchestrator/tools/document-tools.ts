@@ -261,7 +261,7 @@ export function registerDocumentTools(): void {
     execute: async (args, context?: ToolContext) => {
       const filename = validateFilename(String(args.filename || ""), ".xlsx");
       if (!filename) return filenameError(".xlsx", args);
-      let outputPath = resolveOutputPath(filename, context?.resolvedWorkspaceRoot);
+      const outputPath = resolveOutputPath(filename, context?.resolvedWorkspaceRoot);
       if (!outputPath) return "[错误] 路径不合法（禁止目录穿越或绝对路径）: " + filename;
       checkedOutputPath(outputPath, context);
       const sheets = args.sheets as Array<{
@@ -382,14 +382,14 @@ export function registerDocumentTools(): void {
       }
 
       // 自动创建父目录（支持子目录写入）
-      outputPath = checkedOutputPath(outputPath, context);
-      const dir = path.dirname(outputPath);
+      const writePath = checkedOutputPath(outputPath, context);
+      const dir = path.dirname(writePath);
       if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
       }
-      captureBaseline(context, outputPath);
-      await workbook.xlsx.writeFile(outputPath);
-      console.log(LOG_PREFIX, "Excel 已生成（默认美观样式）:", outputPath);
+      captureBaseline(context, writePath);
+      await workbook.xlsx.writeFile(writePath);
+      console.log(LOG_PREFIX, "Excel 已生成（默认美观样式）:", writePath);
       return `[write_excel] 已生成：${outputPath}`;
     },
   });
@@ -430,7 +430,7 @@ export function registerDocumentTools(): void {
     execute: async (args, context?: ToolContext) => {
       const filename = validateFilename(String(args.filename || ""), ".docx");
       if (!filename) return filenameError(".docx", args);
-      let outputPath = resolveOutputPath(filename, context?.resolvedWorkspaceRoot);
+      const outputPath = resolveOutputPath(filename, context?.resolvedWorkspaceRoot);
       if (!outputPath) return "[错误] 路径不合法（禁止目录穿越或绝对路径）: " + filename;
       checkedOutputPath(outputPath, context);
 
@@ -482,12 +482,12 @@ export function registerDocumentTools(): void {
       });
 
       const buffer = await Packer.toBuffer(doc);
-      outputPath = checkedOutputPath(outputPath, context);
-      const dir = path.dirname(outputPath);
+      const writePath = checkedOutputPath(outputPath, context);
+      const dir = path.dirname(writePath);
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      captureBaseline(context, outputPath);
-      fs.writeFileSync(outputPath, buffer);
-      console.log(LOG_PREFIX, "Word 已生成:", outputPath);
+      captureBaseline(context, writePath);
+      fs.writeFileSync(writePath, buffer);
+      console.log(LOG_PREFIX, "Word 已生成:", writePath);
       return `[write_word] 已生成：${outputPath}`;
     },
   });
@@ -523,15 +523,14 @@ export function registerDocumentTools(): void {
     execute: async (args, context?: ToolContext) => {
       const filename = validateFilename(String(args.filename || ""), ".pdf");
       if (!filename) return filenameError(".pdf", args);
-      let outputPath = resolveOutputPath(filename, context?.resolvedWorkspaceRoot);
+      const outputPath = resolveOutputPath(filename, context?.resolvedWorkspaceRoot);
       if (!outputPath) return "[错误] 路径不合法（禁止目录穿越或绝对路径）: " + filename;
       checkedOutputPath(outputPath, context);
 
       const PDFKit = await import("pdfkit");
-      outputPath = checkedOutputPath(outputPath, context);
-      const dir = path.dirname(outputPath);
+      let writePath = checkedOutputPath(outputPath, context);
+      const dir = path.dirname(writePath);
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      captureBaseline(context, outputPath);
       const doc = new PDFKit.default();
       // TTC 是字体集合，必须选择具体 PostScript face；独立 TTF 不需要 face。
       const fontCandidates = [
@@ -576,14 +575,18 @@ export function registerDocumentTools(): void {
         await writing;
         // 沿用原 createWriteStream 的目标权限、inode 和符号链接语义。
         // 最终写盘不是原子事务；磁盘故障仍可能部分写入，但清理绝不能删除目标。
-        outputPath = checkedOutputPath(outputPath, context);
-        await pipeline(fs.createReadStream(temporaryPath), fs.createWriteStream(outputPath));
+        // 重新解析请求路径，防止生成期间的联接替换改变成功消息所指的目标。
+        writePath = checkedOutputPath(outputPath, context);
+        const finalDir = path.dirname(writePath);
+        if (!fs.existsSync(finalDir)) fs.mkdirSync(finalDir, { recursive: true });
+        captureBaseline(context, writePath);
+        await pipeline(fs.createReadStream(temporaryPath), fs.createWriteStream(writePath));
       } finally {
         doc.destroy();
         await writing?.catch(() => {});
         await fs.promises.rm(temporaryDir, { recursive: true, force: true });
       }
-      console.log(LOG_PREFIX, "PDF 已生成:", outputPath);
+      console.log(LOG_PREFIX, "PDF 已生成:", writePath);
       return `[write_pdf] 已生成：${outputPath}`;
     },
   });
