@@ -25,6 +25,21 @@ const writers = [
   { id: "write_word", ext: ".docx", args: { title: "Report", paragraphs: ["Content"] } },
   { id: "write_pdf", ext: ".pdf", args: { title: "Report", paragraphs: ["Content"] } },
 ];
+
+function canCreateFileSymlink(): boolean {
+  // 探测当前运行器的能力，包括 Windows 上可能不可用的文件符号链接。
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "tool-link-probe-"));
+  try {
+    fs.symlinkSync(path.join(root, "missing.txt"), path.join(root, "link.txt"), "file");
+    return true;
+  } catch (error) {
+    if (["EPERM", "EACCES", "ENOSYS", "ENOTSUP"].includes((error as NodeJS.ErrnoException).code ?? "")) return false;
+    throw error;
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+const fileSymlinkSupported = canCreateFileSymlink();
 let workspace: string;
 let outside: string;
 beforeEach(() => {
@@ -74,6 +89,59 @@ describe("工具真实路径与权限边界", () => {
     expect(output.matchCount ?? output.changedFiles).toBe(0);
   });
 
+  it.each(["ast_grep_search", "ast_grep_replace"])("%s 遍历时忽略联接及不符合语言的文件", async (id) => {
+    setCurrentLevel("project-read-only");
+    fs.writeFileSync(path.join(outside, "source.ts"), "console.log(1);\n");
+    fs.writeFileSync(path.join(workspace, "source.js"), "console.log(2);\n");
+    const result = await executeToolDefinition(toolRegistry.getById(id)!, {
+      pattern: "console.log($$$A)", rewrite: "console.warn($$$A)", language: "TypeScript", paths: ["."],
+    }, context());
+    expect(result.status).toBe("succeeded");
+    const output = JSON.parse(result.output);
+    expect(output.matchCount ?? output.filesToChange).toBe(0);
+    expect(output).not.toHaveProperty("permissionErrors");
+  });
+
+  it.each(["ast_grep_search", "ast_grep_replace"])("%s 对显式 ../ 越界输入返回权限失败", async (id) => {
+    fs.writeFileSync(path.join(outside, "source.ts"), "console.log(1);\n");
+    const result = await executeToolDefinition(toolRegistry.getById(id)!, {
+      pattern: "console.log($$$A)", rewrite: "console.warn($$$A)", paths: ["../outside"], dryRun: false,
+    }, context());
+    expect(result).toMatchObject({ status: "failed", category: "permission_denied", effectState: "not_applied" });
+    expect(result.output).toContain("../outside");
+    expect(fs.readFileSync(path.join(outside, "source.ts"), "utf8")).toBe("console.log(1);\n");
+  });
+
+  it("AST 已写入文件后拒绝后续越界写入时报告部分失败", async () => {
+    const first = path.join(workspace, "first.ts");
+    const inbox = path.join(workspace, "inbox");
+    const second = path.join(inbox, "second.ts");
+    fs.mkdirSync(inbox);
+    fs.writeFileSync(first, "console.log(1);\n");
+    fs.writeFileSync(second, "console.log(2);\n");
+    const outsideFile = path.join(outside, "second.ts");
+    fs.writeFileSync(outsideFile, "console.log(3);\n");
+    const realpath = fs.realpathSync.native;
+    let replaced = false;
+    vi.spyOn(fs.realpathSync, "native").mockImplementation((file, options) => {
+      if (!replaced && file === second && fs.readFileSync(first, "utf8").includes("console.warn")) {
+        replaced = true;
+        fs.renameSync(inbox, path.join(workspace, "old-inbox"));
+        fs.symlinkSync(outside, inbox, process.platform === "win32" ? "junction" : "dir");
+      }
+      return realpath(file, options);
+    });
+
+    const result = await executeToolDefinition(toolRegistry.getById("ast_grep_replace")!, {
+      pattern: "console.log($$$A)", rewrite: "console.warn($$$A)", paths: ["first.ts", "inbox/second.ts"], dryRun: false,
+    }, context());
+    expect(result).toMatchObject({ status: "failed", category: "partial_failure", effectState: "unknown", retryable: false });
+    expect(result.output).toContain("已改写 1 个文件（first.ts）");
+    expect(result.output).toContain("工作区外");
+    expect(fs.readFileSync(first, "utf8")).toBe("console.warn(1);\n");
+    expect(fs.readFileSync(outsideFile, "utf8")).toBe("console.log(3);\n");
+  });
+
   it.each(["ast_grep_search", "ast_grep_replace"])("%s 保留可访问输入的结果，并说明其余输入被拒绝", async (id) => {
     fs.writeFileSync(path.join(workspace, "source.ts"), "console.log(1);\n");
     fs.writeFileSync(path.join(outside, "source.ts"), "console.log(2);\n");
@@ -107,7 +175,7 @@ describe("工具真实路径与权限边界", () => {
     expect(fs.readFileSync(target, "utf8")).toBe("sentinel");
   });
 
-  it.skipIf(process.platform === "win32").each(writers.flatMap((writer) => [false, true].map((missing) => ({ ...writer, missing }))))(
+  it.skipIf(!fileSymlinkSupported).each(writers.flatMap((writer) => [false, true].map((missing) => ({ ...writer, missing }))))(
     "$id 拒绝指向外部文件的符号链接（目标不存在=$missing）", async (writer) => {
       const target = path.join(outside, `target${writer.ext}`);
       if (!writer.missing) fs.writeFileSync(target, "sentinel");
@@ -117,6 +185,18 @@ describe("工具真实路径与权限边界", () => {
       else expect(fs.readFileSync(target, "utf8")).toBe("sentinel");
     },
   );
+
+  it.each(writers)("$id 未绑定工作区时仅在完全访问档位回退到桌面", async (writer) => {
+    const filename = `desktop${writer.ext}`;
+    const unbound = { resolvedWorkspaceRoot: undefined };
+    expect(await write(writer, filename, unbound)).toMatchObject({ status: "failed", category: "permission_denied" });
+    expect(fetch).not.toHaveBeenCalled();
+    expect(fs.existsSync(path.join(state.root, filename))).toBe(false);
+
+    setCurrentLevel("full");
+    expect(await write(writer, filename, unbound)).toMatchObject({ status: "succeeded" });
+    expect(fs.statSync(path.join(state.root, filename)).size).toBeGreaterThan(0);
+  });
 
   it.each(writers)("$id 保留授权工作区内的正常写入", async (writer) => {
     expect(await write(writer, `normal/sub/file${writer.ext}`)).toMatchObject({ status: "succeeded" });
@@ -153,6 +233,24 @@ describe("工具真实路径与权限边界", () => {
     });
     expect(await write(writers[0], "inbox/file")).toMatchObject({ status: "failed", category: "permission_denied" });
     expect(fs.readdirSync(outside)).toEqual([]);
+  });
+
+  it.each(["report", ""])("缺扩展名时不预检不会写入的占位名（filename=%j）", async (filename) => {
+    const name = filename || "download";
+    fs.symlinkSync(outside, path.join(workspace, name), process.platform === "win32" ? "junction" : "dir");
+    expect(await write(writers[0], filename)).toMatchObject({ status: "succeeded" });
+    expect(fs.readFileSync(path.join(workspace, `${name}.txt`), "utf8")).toBe("download");
+    expect(fs.readdirSync(outside)).toEqual([]);
+  });
+
+  it.skipIf(!fileSymlinkSupported)("下载拒绝覆盖工作区内通过链接指向的脚本", async () => {
+    const script = path.join(workspace, "run.bat");
+    fs.writeFileSync(script, "sentinel");
+    fs.symlinkSync(script, path.join(workspace, "notes.txt"), "file");
+    const result = await write(writers[0], "notes.txt");
+    expect(result.status).toBe("failed");
+    expect(result.output).toContain("禁止下载到可执行/脚本文件");
+    expect(fs.readFileSync(script, "utf8")).toBe("sentinel");
   });
 
   it("Word 异步生成期间替换目录后，最终落盘重新拒绝越界", async () => {
@@ -208,7 +306,7 @@ describe("工具真实路径与权限边界", () => {
     expect(fs.readFileSync(target, "utf8")).toBe("console.log(1);\n");
   });
 
-  it.skipIf(process.platform === "win32").each(["ast_grep_search", "ast_grep_replace"])("%s 检查显式文件符号链接", async (id) => {
+  it.skipIf(!fileSymlinkSupported).each(["ast_grep_search", "ast_grep_replace"])("%s 检查显式文件符号链接", async (id) => {
     const target = path.join(outside, "source.ts"); fs.writeFileSync(target, "console.log(1);\n");
     fs.symlinkSync(target, path.join(workspace, "link.ts"), "file");
     setCurrentLevel(id === "ast_grep_search" ? "project-read-only" : "scoped");

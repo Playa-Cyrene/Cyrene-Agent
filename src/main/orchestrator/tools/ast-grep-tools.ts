@@ -73,9 +73,8 @@ const MAX_MATCHES_DEFAULT = 50;
 // ── 路径安全 ──────────────────────────────────────────────
 
 function isWithinWorkspace(filePath: string, workspaceRoot: string): boolean {
-  const resolved = path.resolve(workspaceRoot, filePath);
-  const normalizedRoot = path.normalize(workspaceRoot);
-  return resolved === normalizedRoot || resolved.startsWith(normalizedRoot + path.sep);
+  const relative = path.relative(workspaceRoot, filePath);
+  return relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
 }
 
 /** 归一化展示路径：反斜杠 → 正斜杠，去掉开头 "./"，根目录归为空串 */
@@ -110,20 +109,18 @@ function collectFiles(
   const skipped: string[] = [];
   // 权限拒绝不是零匹配；单独保留原因，不能只作为普通跳过项报告成功。
   const permissionErrors: string[] = [];
-  const canCollect = (target: string, displayPath: string): boolean => {
+  const collectPath = (target: string, displayPath: string): string | undefined => {
     const access = resolveFileAccessPath(target, operation, context);
-    if (access.ok) return true;
+    if (access.ok) return access.path;
     skipped.push(displayPath);
     permissionErrors.push(`${displayPath}: ${access.message}`);
-    return false;
   };
 
-  const walk = (absDir: string, relDir: string): void => {
+  const walk = (absDir: string, relDir: string, checkedDir: string): void => {
     if (files.length >= MAX_FILES) return;
-    if (!canCollect(absDir, relDir)) return;
     let entries: fs.Dirent[];
     try {
-      entries = fs.readdirSync(absDir, { withFileTypes: true });
+      entries = fs.readdirSync(checkedDir, { withFileTypes: true });
     } catch {
       skipped.push(relDir);
       return;
@@ -133,14 +130,15 @@ function collectFiles(
       if (entry.name.startsWith(".") || SKIP_DIRS.has(entry.name)) continue;
       const rel = relDir ? `${relDir}/${entry.name}` : entry.name;
       const abs = path.join(absDir, entry.name);
-      if (!canCollect(abs, rel)) continue;
       if (entry.isDirectory()) {
-        walk(abs, rel);
+        const checked = collectPath(abs, rel);
+        if (checked) walk(abs, rel, checked);
       } else if (entry.isFile()) {
         const ext = path.extname(entry.name).toLowerCase();
         const lang = EXTENSION_TO_LANG[ext];
         if (!lang) continue;
         if (langExts && !langExts.has(ext)) continue;
+        if (!collectPath(abs, rel)) continue;
         files.push({ relPath: rel, absPath: abs, lang });
       }
     }
@@ -150,18 +148,20 @@ function collectFiles(
     const abs = path.resolve(workspaceRoot, inputPath);
     if (!isWithinWorkspace(abs, workspaceRoot)) {
       skipped.push(inputPath);
+      permissionErrors.push(`${inputPath}: 目标路径在当前工作区外`);
       continue;
     }
-    if (!canCollect(abs, inputPath)) continue;
+    const checked = collectPath(abs, inputPath);
+    if (!checked) continue;
     let stat: fs.Stats;
     try {
-      stat = fs.statSync(abs);
+      stat = fs.statSync(checked);
     } catch {
       skipped.push(inputPath);
       continue;
     }
     if (stat.isDirectory()) {
-      walk(abs, toDisplayPath(inputPath));
+      walk(abs, toDisplayPath(inputPath), checked);
     } else {
       const ext = path.extname(abs).toLowerCase();
       const lang = EXTENSION_TO_LANG[ext];
@@ -497,15 +497,6 @@ async function executeAstGrepReplace(
     });
   }
 
-  // Review 基线捕获：在批量写入之前保存 pre-mutation baseline
-  if (ctx?.runId) {
-    const tracker = getRunReviewTracker(app.getPath("userData"));
-    for (const absPath of pendingWrites.keys()) {
-      const relPath = absPath.slice(workspaceRoot.length + 1).replaceAll("\\", "/");
-      tracker.captureBefore(ctx.runId, absPath, relPath);
-    }
-  }
-
   // 阶段 2：统一写入（任一写入异常继续写其余，错误汇总返回）
   const changed: string[] = [];
   let deniedWrites = 0;
@@ -517,8 +508,12 @@ async function executeAstGrepReplace(
         errors.push(message); permissionErrors.push(message); deniedWrites++;
         continue;
       }
+      const relPath = toDisplayPath(path.relative(workspaceRoot, absPath));
+      if (ctx?.runId) {
+        getRunReviewTracker(app.getPath("userData")).captureBefore(ctx.runId, access.path, relPath);
+      }
       fs.writeFileSync(access.path, content, "utf8");
-      changed.push(absPath.slice(workspaceRoot.length + 1).replaceAll("\\", "/"));
+      changed.push(relPath);
     } catch (err) {
       errors.push(`${absPath}: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -541,6 +536,12 @@ async function executeAstGrepReplace(
     ...(errors.length > 0 ? { errors: errors.slice(0, 10) } : {}),
     ...(permissionErrors.length > 0 ? { permissionErrors: permissionErrors.slice(0, 10) } : {}),
     ...permissionFailure(permissionErrors, allWritesDenied ? 0 : readableFiles),
+    ...(changed.length > 0 && errors.length > 0 ? {
+      errorCode: "E_AST_PARTIAL_WRITE",
+      category: "partial_failure",
+      effectState: "unknown",
+      error: `已改写 ${changed.length} 个文件（${changed.slice(0, 20).join("、")}），其余改写未全部完成。\n${errors.slice(0, 10).join("\n")}`,
+    } : {}),
   });
 }
 

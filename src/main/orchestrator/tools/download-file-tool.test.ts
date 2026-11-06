@@ -2,6 +2,7 @@
 // 安全边界是本工具的核心：路径沙箱、危险后缀黑名单必须先于任何网络请求生效。
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+vi.mock("electron", () => ({ app: { getPath: () => os.tmpdir() } }));
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";

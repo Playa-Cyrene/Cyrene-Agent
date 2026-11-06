@@ -128,7 +128,8 @@ describe("ast_grep_search", () => {
   it("rejects path traversal outside workspace", async () => {
     const result = await runSearch({ pattern: "console.log($$$A)", paths: ["../../outside"] });
 
-    expect(result.success).toBe(true);
+    expect(result.success).toBe(false);
+    expect(result.category).toBe("permission_denied");
     expect(result.matchCount).toBe(0);
     expect(result.skipped).toContain("../../outside");
   });
