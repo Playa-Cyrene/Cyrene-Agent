@@ -6,6 +6,7 @@ Var CyreneDesktopShortcutCheckbox
 Var CyreneLaunchAtLoginCheckbox
 Var CyreneCreateDesktopShortcut
 Var CyreneLaunchAtLogin
+Var CyreneOptionsSubmitted
 
 !macro customPageAfterChangeDir
   Page custom CyreneOptionsPageCreate CyreneOptionsPageLeave
@@ -35,7 +36,24 @@ FunctionEnd
 Function CyreneOptionsPageLeave
   ${NSD_GetState} $CyreneDesktopShortcutCheckbox $CyreneCreateDesktopShortcut
   ${NSD_GetState} $CyreneLaunchAtLoginCheckbox $CyreneLaunchAtLogin
+  StrCpy $CyreneOptionsSubmitted "1"
 FunctionEnd
+
+; 静默升级没有用户选择，不得用未初始化的复选框覆盖已有登录启动设置。
+; 参数化输出目录，供独立 NSIS 夹具验证，生产仍写入应用的 APPDATA 目录。
+!macro CyreneSaveLaunchAtLoginSelection OPTIONS_DIR
+  ${IfNot} ${Silent}
+  ${AndIf} $CyreneOptionsSubmitted == "1"
+    CreateDirectory "${OPTIONS_DIR}"
+    FileOpen $0 "${OPTIONS_DIR}\installer-options.json" w
+    ${If} $CyreneLaunchAtLogin == ${BST_CHECKED}
+      FileWrite $0 "{$\"launchAtLogin$\":true}"
+    ${Else}
+      FileWrite $0 "{$\"launchAtLogin$\":false}"
+    ${EndIf}
+    FileClose $0
+  ${EndIf}
+!macroend
 
 ; 升级保护：升级会先跑旧版卸载器，其 RMDir /r 会清空整个安装目录（models/skills/prompts
 ; 连同用户放进去的文件）。这里在 .onInit（multiUser 已从注册表恢复 $INSTDIR 为旧安装目录）
@@ -78,17 +96,7 @@ FunctionEnd
 
   CreateShortCut "$SMPROGRAMS\${MENU_FILENAME}\卸载 ${PRODUCT_FILENAME}.lnk" "$INSTDIR\${UNINSTALL_FILENAME}" "" "$INSTDIR\${UNINSTALL_FILENAME}" 0
 
-  ${If} $CyreneLaunchAtLogin == ${BST_CHECKED}
-    CreateDirectory "$APPDATA\${APP_PACKAGE_NAME}"
-    FileOpen $0 "$APPDATA\${APP_PACKAGE_NAME}\installer-options.json" w
-    FileWrite $0 "{$\"launchAtLogin$\":true}"
-    FileClose $0
-  ${Else}
-    CreateDirectory "$APPDATA\${APP_PACKAGE_NAME}"
-    FileOpen $0 "$APPDATA\${APP_PACKAGE_NAME}\installer-options.json" w
-    FileWrite $0 "{$\"launchAtLogin$\":false}"
-    FileClose $0
-  ${EndIf}
+  !insertmacro CyreneSaveLaunchAtLoginSelection "$APPDATA\${APP_PACKAGE_NAME}"
 !macroend
 !endif
 
