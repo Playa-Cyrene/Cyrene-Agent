@@ -21,6 +21,7 @@ Cyrene-Agent 的版本变更记录。格式参考 [Keep a Changelog](https://kee
 * **MCP执行:** 保留响应失败后的不确定副作用 ([b9a5e2f](https://github.com/Playa-Cyrene/Cyrene-Agent/commit/b9a5e2f52e9d4d73840ad4d17ca402a0601710a7))
 * **MCP权限:** 阻止未隔离工具按默认安全等级放行 ([6eebe82](https://github.com/Playa-Cyrene/Cyrene-Agent/commit/6eebe8291aed3d9bf664ffc35b411c0a5e329b93))
 * **反馈:** 分离问题反馈与版权联系方式 ([a9f10b1](https://github.com/Playa-Cyrene/Cyrene-Agent/commit/a9f10b18993592eaa855701ef982eb6401d34fbf))
+* **反馈:** 补上维护者 B 站私信入口 ([2ef57e2](https://github.com/Playa-Cyrene/Cyrene-Agent/commit/2ef57e274f111b23969659604c61ebdeff1dfe1b))
 * **声明:** 修复缓存降权与邮件链接入口 ([6452e2c](https://github.com/Playa-Cyrene/Cyrene-Agent/commit/6452e2c530605d9dbb49345b6dccc40d72d6474c))
 * **安全:** 补齐渠道历史隔离和浏览器快照脱敏 ([e5b5550](https://github.com/Playa-Cyrene/Cyrene-Agent/commit/e5b5550f945b0e1e860565016b615da386a5dd46))
 * **插件市场:** 校验下载来源和跳转目标 ([a56ed79](https://github.com/Playa-Cyrene/Cyrene-Agent/commit/a56ed79d8711ab7c8a50a2aca8403b23ee5c392e))
