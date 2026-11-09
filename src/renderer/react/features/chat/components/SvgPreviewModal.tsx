@@ -5,11 +5,12 @@ import { WorkspacePreviewContext } from "./WorkspacePreview";
  *
  * 点击聊天气泡里的图卡片打开：全宽 Modal 内按 SVG 原始尺寸展示（解除气泡内的
  * max-width 压缩），容器可滚动，Esc / 点遮罩 / 点右上角关闭。
- * 注入的内容与卡片本体是同一份已消毒字符串，不重复消毒也不引入新输入。
+ * 预览复用卡片本体的已消毒 SVG 图片。
  */
 
 import { Modal } from "antd";
 import { useTranslation } from "../../../i18n";
+import { svgImageSrc } from "./svg-sanitize";
 
 export function SvgPreviewModal({
   svg,
@@ -45,11 +46,9 @@ export function SvgPreviewModal({
       className="cy-svg-preview-modal"
       destroyOnHidden
     >
-      <div
-        className="cy-svg-preview"
-        // 与卡片本体同一份已消毒 SVG 字符串
-        dangerouslySetInnerHTML={{ __html: svg }}
-      />
+      <div className="cy-svg-preview">
+        <img src={svgImageSrc(svg)} alt={t("messageList.diagramPreview")} />
+      </div>
     </Modal>
   );
 }

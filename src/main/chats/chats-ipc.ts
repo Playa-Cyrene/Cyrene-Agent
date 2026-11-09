@@ -17,6 +17,7 @@ import { modelMessageOrigin } from "../orchestrator/vendors/model-history";
 
 import { app, BrowserWindow, type WebContents, dialog, shell } from "electron";
 import { IPC } from "../../shared/ipc-channels";
+import { isWindowsNetworkOrDevicePath } from "../../shared/chat-file-path";
 import { createIpcScope, type IpcScope } from "../application/ipc-scope";
 import type { ChatMessage, ChatSession, ChatsSetSessionModelResult, ConversationMode, ConversationWorkspaceBinding } from "../../shared/chat-types";
 import * as chatsStore from "./chats-store";
@@ -652,6 +653,8 @@ export async function registerChatsIpc(
       if (!sessionId || !relPath || !action) {
         return { ok: false as const, error: "invalid-payload" as const };
       }
+      const isBlockedPath = process.platform === "win32" && isWindowsNetworkOrDevicePath(relPath);
+      if (isBlockedPath) return { ok: false as const, error: "invalid-payload" as const };
       // 绝对路径（正文文件链接可能指向工作区外，如桌面的 cmd 脚本）：
       // 只做 realpath 存在性归一，不做工作区边界限制；相对路径走会话工作区校验
       let absPath: string;
@@ -660,6 +663,9 @@ export async function registerChatsIpc(
           absPath = await fs.promises.realpath(relPath);
         } catch {
           return { ok: false as const, error: "NOT_FOUND" as const };
+        }
+        if (process.platform === "win32" && isWindowsNetworkOrDevicePath(absPath)) {
+          return { ok: false as const, error: "invalid-payload" as const };
         }
       } else {
         const resolved = await resolveSessionWorkspaceFile(sessionId, relPath);

@@ -31,7 +31,8 @@ describe("图卡片点击放大", () => {
     );
     expect(html).toContain("cy-mermaid--zoomable");
     expect(html).toContain("messageList.diagramZoomHint");
-    expect(html).toContain("<svg");
+    expect(html).toContain('src="data:image/svg+xml,');
+    expect(html).not.toContain("<svg");
   });
 
   it("SVG 学习卡片同样带 zoomable 标记", () => {
@@ -41,7 +42,8 @@ describe("图卡片点击放大", () => {
     );
     expect(html).toContain("cy-svg-card--zoomable");
     expect(html).toContain("messageList.diagramZoomHint");
-    expect(html).toContain("<svg");
+    expect(html).toContain('src="data:image/svg+xml,');
+    expect(html).not.toContain("<svg");
   });
 
   it("流式期间不渲染图与放大交互（占位态）", () => {

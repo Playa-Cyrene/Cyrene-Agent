@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from "vitest";
 import { renderSvgCardSafe } from "./SvgCardBlock";
-import { HANDWRITTEN_SVG_SOURCE_LIMIT } from "./svg-sanitize";
+import { HANDWRITTEN_SVG_SOURCE_LIMIT, svgImageSrc } from "./svg-sanitize";
 
 /** 与 svg-sanitize.test.ts 同源的恶意样本：script 注入 / 事件属性 / javascript: 协议 / foreignObject 逃逸 */
 const MALICIOUS_SAMPLES = [
@@ -29,6 +29,27 @@ const BENIGN_CARD = [
 ].join("\n");
 
 describe("renderSvgCardSafe", () => {
+  it("renders image sources with malformed UTF-16 without breaking valid Unicode", () => {
+    const src = svgImageSrc("<svg><text>🌸\uD800</text></svg>");
+    expect(decodeURIComponent(src)).toContain("🌸\uFFFD");
+  });
+
+  it("rejects markup alongside a valid SVG, including host styles and forms", () => {
+    const svg = '<svg><text>x</text></svg>';
+    expect(renderSvgCardSafe(`${svg}<style>body { display:none }</style>`).kind).toBe("error");
+    expect(renderSvgCardSafe(`${svg}<form action="https://example.test"><input name="secret"></form>`).kind).toBe("error");
+  });
+
+  it("adds the SVG namespace and intrinsic size to a viewBox-only card", () => {
+    const out = renderSvgCardSafe('<svg viewBox="0 0 720 120"><text>卡片</text></svg>');
+    expect(out.kind).toBe("svg");
+    if (out.kind !== "svg") return;
+    const root = new DOMParser().parseFromString(out.svg, "image/svg+xml").documentElement;
+    expect(root.namespaceURI).toBe("http://www.w3.org/2000/svg");
+    expect(root.getAttribute("width")).toBe("720");
+    expect(root.getAttribute("height")).toBe("120");
+  });
+
   it("同一组恶意样本全部拦截（剥掉逃逸向量后仍可出图或降级，绝不带毒注入）", () => {
     for (const sample of MALICIOUS_SAMPLES) {
       const out = renderSvgCardSafe(sample);

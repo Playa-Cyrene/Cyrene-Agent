@@ -6,6 +6,8 @@
 // 2. 判断是否在当前工作区内：界内 → 可点 chip，越界 → 降级纯文本
 //    （渲染时就灰掉，而不是点了没反应）。
 
+import { isWindowsNetworkOrDevicePath } from "../../../../../shared/chat-file-path";
+
 /** 从 file:/// 链接里解析出的定位信息 */
 export interface FileLinkTarget {
   /** 绝对路径（已解码、统一成正斜杠） */
@@ -38,7 +40,7 @@ export function parseFileLinkHref(href: string): FileLinkTarget | null {
   // file:///E:/x → 去掉协议前缀后是 "/E:/x"，去掉盘符前的斜杠
   let absPath = decoded.slice("file://".length).replace(/\\/g, "/");
   absPath = absPath.replace(/^\/([A-Za-z]:)/, "$1");
-  if (!absPath) return null;
+  if (!absPath || isWindowsNetworkOrDevicePath(absPath)) return null;
 
   const target: FileLinkTarget = { absPath };
   const lineMatch = /^L(\d+)(?:-L?(\d+))?$/.exec(fragment);

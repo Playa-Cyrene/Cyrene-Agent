@@ -4,6 +4,15 @@
 import { describe, expect, it } from "vitest";
 import { parseFileLinkHref, relativePathInsideWorkspace } from "./file-link";
 
+it.each([
+  "file:////host/share/file.txt",
+  "file:///%5Chost/share/file.txt",
+  "file:////%3F/UNC/host/share/file.txt",
+  "file:////./pipe/example",
+])("does not interpret a network or device path as a local file link (%s)", (href) => {
+  expect(parseFileLinkHref(href)).toBeNull();
+});
+
 describe("parseFileLinkHref", () => {
   it("解析基本路径与行号区间", () => {
     const target = parseFileLinkHref("file:///E:/Cyrene-Agent/src/main/app.ts#L12-L30");
