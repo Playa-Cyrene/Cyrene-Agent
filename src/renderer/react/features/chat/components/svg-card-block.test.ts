@@ -50,6 +50,32 @@ describe("renderSvgCardSafe", () => {
     expect(root.getAttribute("height")).toBe("120");
   });
 
+  it.each([
+    'width="100%"',
+    'height="50%"',
+    'width="100%" height="100%"',
+    'width="calc(100% - 1px)" height="100%"',
+    'style="width:100%;height:100%;--ink:black"',
+    'style="width:400px;height:200px"',
+  ])("gives an SVG card with no intrinsic dimensions its viewBox size (%s)", (size) => {
+    const out = renderSvgCardSafe(`<svg viewBox="0 0 800 400" ${size}><text>卡片</text></svg>`);
+    if (out.kind !== "svg") throw new Error("Expected a rendered SVG card");
+    const root = new DOMParser().parseFromString(out.svg, "image/svg+xml").documentElement;
+    expect(root.getAttribute("width")).toBe("800");
+    expect(root.getAttribute("height")).toBe("400");
+    if (size.startsWith("style")) expect(root.getAttribute("style")).toBe(size.slice(7, -1));
+  });
+
+  it.each(['height="100%"', 'height="100%" style="width:auto;height:100%"'])(
+    "preserves an authored intrinsic width alongside a relative height (%s)", (size) => {
+      const out = renderSvgCardSafe(`<svg viewBox="0 0 800 400" width="400" ${size}><text>卡片</text></svg>`);
+      if (out.kind !== "svg") throw new Error("Expected a rendered SVG card");
+      const root = new DOMParser().parseFromString(out.svg, "image/svg+xml").documentElement;
+      expect(root.getAttribute("width")).toBe("400");
+      expect(root.getAttribute("height")).toBe("100%");
+    },
+  );
+
   it("同一组恶意样本全部拦截（剥掉逃逸向量后仍可出图或降级，绝不带毒注入）", () => {
     for (const sample of MALICIOUS_SAMPLES) {
       const out = renderSvgCardSafe(sample);

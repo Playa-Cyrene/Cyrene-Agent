@@ -52,10 +52,16 @@ export function sanitizeSvg(svg: string): string {
     || Array.from(fragment.childNodes).some((node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim())) {
     return "";
   }
-  // viewBox-only SVGs need intrinsic dimensions to zoom past the default image size.
-  if (!root.hasAttribute("width") && !root.hasAttribute("height")) {
-    const [, , width, height] = (root.getAttribute("viewBox") ?? "").trim().split(/[\s,]+/).map(Number);
-    if (Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0) {
+  const hasIntrinsicDimension = ["width", "height"].some((axis) => {
+    const size = root.getAttribute(axis)?.trim();
+    return size && size.toLowerCase() !== "auto" && !size.includes("%");
+  });
+  // A definite size attribute on either axis is enough for the browser to apply the viewBox ratio.
+  // Without one, provide an intrinsic size for the image and its zoom preview.
+  if (!hasIntrinsicDimension) {
+    const viewBox = (root.getAttribute("viewBox") ?? "").trim().split(/[\s,]+/).map(Number);
+    const [, , width, height] = viewBox;
+    if (viewBox.length === 4 && viewBox.every(Number.isFinite) && width > 0 && height > 0) {
       root.setAttribute("width", String(width));
       root.setAttribute("height", String(height));
     }
