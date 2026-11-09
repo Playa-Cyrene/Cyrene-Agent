@@ -826,9 +826,14 @@ export class BrowserPanelController {
       }
     }
     const tag = String(node.localName ?? target.tag);
+    const isSelectControl = tag === "select" || tag === "option";
     if ((tag === "input" && !["button", "submit", "reset"].includes(identity.type))
-      || tag === "textarea" || ["slider", "spinbutton", "scrollbar", "progressbar"].includes(identity.role)) {
+      || tag === "textarea" || isSelectControl || ["slider", "spinbutton", "scrollbar", "progressbar"].includes(identity.role)) {
       delete identity.value;
+    }
+    if (isSelectControl) {
+      delete identity.selected;
+      delete identity["aria-selected"];
     }
     delete identity["aria-valuetext"];
     delete identity["aria-valuenow"];

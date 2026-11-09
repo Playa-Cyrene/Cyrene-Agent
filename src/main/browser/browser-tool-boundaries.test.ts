@@ -51,6 +51,22 @@ describe("browser tool boundaries", () => {
     expect(JSON.stringify(result)).not.toContain("private-");
   });
 
+  it.each(["select", "option"])("omits raw selection attributes from CSS inspection of %s", (tag) => {
+    const { controller } = createPanel();
+    const target = {
+      ref: "e2", description: "Payment method", tag, bounds: [0, 0, 10, 10] as [number, number, number, number],
+      inViewport: true, disabled: false, classes: ["field"], attributes: {},
+    };
+    const result = controller["formatElementCssResult"](target, {
+      localName: tag,
+      attributes: ["id", "payment", "class", "field", "value", "private-token", "selected", "", "aria-selected", "true"],
+    }, {}, { computedStyle: [{ name: "color", value: "black" }] }, {});
+    expect(result.element).toEqual({
+      ref: "e2", tag, description: "Payment method", attributes: { id: "payment", class: "field" },
+    });
+    expect(result.computedStyle).toEqual([{ name: "color", value: "black" }]);
+  });
+
   it("denies a bound channel at execution while keeping both desktop reads without a lease", async () => {
     const { controller } = createPanel();
     Object.assign(controller, { controlLease: null });
