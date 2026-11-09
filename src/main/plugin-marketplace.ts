@@ -67,7 +67,7 @@ function isOfficialZipUrl(url: URL, prefixes: readonly URL[]): boolean {
 
 function isAllowedZipRedirect(from: URL, to: URL, prefixes: readonly URL[]): boolean {
   if (from.origin === to.origin && isOfficialZipUrl(to, prefixes)) return true;
-  // GitHub release assets belong to the official repository's immutable ID.
+  // 1356124154 is the GitHub repository ID of Playa-Cyrene/Cyrene-Plugins (formerly Playa-0v0/Cyrene-Plugins).
   if (from.origin === "https://github.com" && to.origin === "https://release-assets.githubusercontent.com") {
     return /^\/github-production-release-asset\/1356124154\/[a-f0-9-]+$/i.test(to.pathname);
   }
