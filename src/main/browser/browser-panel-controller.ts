@@ -126,6 +126,7 @@ export class BrowserPanelController {
   private elementPickerTimer: ReturnType<typeof setTimeout> | null = null;
   private elementPickerBusy = false;
   private readonly observations = new Map<string, BrowserObservationRecord>();
+  private readonly observationGenerations = new Map<string, number>();
   private readonly sessionPersistence = new BrowserSessionPersistence();
   private controlLease: { conversationId: string; tabId: string } | null = null;
   private controlNeedsObservation = false;
@@ -676,9 +677,30 @@ export class BrowserPanelController {
       return { ok: false, reason: reasons.join("；") };
     }
     try {
+      const observationGeneration = this.observationGenerations.get(tab.id) ?? 0;
+      const initialUrl = tab.state.url;
+      const initialControlLease = this.controlLease ? { ...this.controlLease } : null;
+      const isSnapshotCurrent = () => {
+        const currentLease = this.controlLease;
+        return (this.observationGenerations.get(tab.id) ?? 0) === observationGeneration
+          && this.hasVisibleBounds()
+          && this.activeTabId === tab.id
+          && this.getActiveTab() === tab
+          && tab.state.url === initialUrl
+          && !contents.isDestroyed()
+          && !contents.isLoading()
+          && currentLease?.conversationId === initialControlLease?.conversationId
+          && currentLease?.tabId === initialControlLease?.tabId;
+      };
       const snapshot = await capturePlaywrightPageSnapshot(contents);
+      if (!isSnapshotCurrent()) {
+        return { ok: false, reason: "浏览器在读取页面期间隐藏、切换或页面已变化；请重新读取当前页面。" };
+      }
+      await appendBrowserObservationLog({ tabId: tab.id, url: initialUrl, snapshot });
+      if (!isSnapshotCurrent()) {
+        return { ok: false, reason: "浏览器在读取页面期间隐藏、切换或页面已变化；请重新读取当前页面。" };
+      }
       this.rememberObservation(tab, snapshot);
-      await appendBrowserObservationLog({ tabId: tab.id, url: tab.state.url, snapshot });
       if (this.matchesControlOwner(owner?.conversationId, owner?.runId) && this.controlLease?.tabId === tab.id) {
         this.controlNeedsObservation = false;
         if (this.controlAction === "waiting") this.setControlAction("active");
@@ -807,6 +829,7 @@ export class BrowserPanelController {
   }
 
   private forgetTabObservations(tabId: string): void {
+    this.observationGenerations.set(tabId, (this.observationGenerations.get(tabId) ?? 0) + 1);
     for (const [id, observation] of this.observations) {
       if (observation.tabId === tabId) this.observations.delete(id);
     }
