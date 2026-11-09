@@ -1,24 +1,18 @@
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { ExternalContentPaths } from "./external-content-paths";
 
 /**
- * 升级迁移：NSIS 安装脚本（installer.nsh）在升级时会把安装目录里的 prompts/skills
- * 挪到同级暂存目录 `.Cyrene.content-preserve`（因为旧版卸载器会 RMDir /r 整个安装目录）。
- * 应用启动时在这里把暂存内容合并进 userData 的用户区：
- * - 与上次启动记录的官方内置内容一致的文件 → 视为未修改的内置文件，丢弃（新版内置随安装已刷新）
- * - 其余文件（用户修改/新增）→ 复制到 userData，此后升级不再丢
- *
- * 判定依据是 content-manifest.json（每次启动记录安装目录内文件的 sha1）。
- * 没有manifest 时（首次升级到本版本），仅恢复新版内置中不存在的文件，避免把
- * 官方更新过的内置文件冻结在旧版本。
+ * 升级暂存内容只与构建时的原厂基准比较。安装目录允许用户修改，不能在启动时
+ * 重新把这些修改登记成原厂内容。旧版无来源标记的缓存不用于丢弃用户文件。
  */
 
 const STAGING_DIR_NAME = ".Cyrene.content-preserve";
 const MANIFEST_FILE = "content-manifest.json";
 
 interface ContentManifest {
+  formatVersion: 2;
+  source: "build";
   prompts: Record<string, string>;
   skills: Record<string, string>;
 }
@@ -28,71 +22,61 @@ export interface StagedContentMigrationInput {
   installRoot: string;
   promptDirectories: string[];
   userSkillDirectories: string[];
+  /** 测试可替换；生产文件由 build:main 写入 app.asar 内的本模块同目录。 */
+  shippedManifestPath?: string;
 }
 
-/** 启动入口：合并暂存内容并刷新 manifest。任何失败都不阻断启动。 */
+/** 迁移失败保留暂存目录与旧基准，供下次启动重试。 */
 export function migrateStagedExternalContent(input: StagedContentMigrationInput): void {
-  if (!input.isPackaged) return;
+  if (!input.isPackaged || !input.promptDirectories[0] || !input.userSkillDirectories[0]) return;
   try {
     const stagingDir = path.join(input.installRoot, "..", STAGING_DIR_NAME);
+    const shipped = readManifestFile(input.shippedManifestPath ?? path.join(__dirname, "shipped-external-content-manifest.json"));
     if (fs.existsSync(stagingDir)) {
-      mergeStaging(stagingDir, input);
+      mergeStaging(stagingDir, input, shipped);
     }
-    writeManifest(input);
+    writeManifest(input, shipped);
+    if (fs.existsSync(stagingDir)) fs.rmSync(stagingDir, { recursive: true, force: true });
   } catch {
-    // 迁移失败下次启动重试，不影响主流程
+    // 不把迁移失败误报为完成；源文件保留，重试时不会覆盖已存在的用户内容。
   }
 }
 
-function mergeStaging(stagingDir: string, input: StagedContentMigrationInput): void {
-  const manifest = readManifest(input);
-  const shippedPrompts = shippedPromptDirectory(input);
-  const shippedSkills = path.join(input.installRoot, "skills");
-
-  mergeTree(
-    path.join(stagingDir, "prompts"),
-    input.promptDirectories[0],
-    manifest?.prompts,
-    shippedPrompts,
-  );
-  mergeTree(
-    path.join(stagingDir, "skills"),
-    input.userSkillDirectories[0],
-    manifest?.skills,
-    shippedSkills,
-  );
-  fs.rmSync(stagingDir, { recursive: true, force: true });
+function mergeStaging(stagingDir: string, input: StagedContentMigrationInput, shipped: ContentManifest | null): void {
+  const previous = readManifestFile(manifestPath(input));
+  const backupRoot = path.join(path.dirname(input.promptDirectories[0]), "content-upgrade-backups");
+  mergeTree(path.join(stagingDir, "prompts"), input.promptDirectories[0], previous?.prompts, shipped?.prompts, path.join(backupRoot, "prompts"));
+  mergeTree(path.join(stagingDir, "skills"), input.userSkillDirectories[0], previous?.skills, shipped?.skills, path.join(backupRoot, "skills"));
 }
 
-/**
- * 把 stagedRoot 下的文件合并到 userRoot：
- * 1. userRoot 已有同名文件 → 跳过（用户现有内容优先，不覆盖）
- * 2. 有 manifest 且暂存文件与记录的内置 sha1 一致 → 丢弃（未修改的内置文件）
- * 3. 无 manifest 且与新版内置同名文件内容一致 → 丢弃
- * 4. 其余 → 复制到 userRoot（用户修改/新增的内容）
- */
 function mergeTree(
   stagedRoot: string,
   userRoot: string,
-  manifestHashes: Record<string, string> | undefined,
-  shippedRoot: string,
+  previousHashes: Record<string, string> | undefined,
+  shippedHashes: Record<string, string> | undefined,
+  backupRoot: string,
 ): void {
-  if (!userRoot || !fs.existsSync(stagedRoot)) return;
+  if (!fs.existsSync(stagedRoot)) return;
   for (const relativePath of walkFiles(stagedRoot)) {
     const stagedFile = path.join(stagedRoot, relativePath);
-    const targetFile = path.join(userRoot, relativePath);
-    if (fs.existsSync(targetFile)) continue;
-
     const stagedHash = sha1File(stagedFile);
-    if (manifestHashes) {
-      if (manifestHashes[relativePath] === stagedHash) continue;
-    } else {
-      const shippedFile = path.join(shippedRoot, relativePath);
-      if (fs.existsSync(shippedFile) && sha1File(shippedFile) === stagedHash) continue;
-    }
+    if (previousHashes?.[relativePath] === stagedHash || shippedHashes?.[relativePath] === stagedHash) continue;
 
+    const targetFile = path.join(userRoot, relativePath);
+    if (fs.existsSync(targetFile)) {
+      if (fs.statSync(targetFile).isFile() && sha1File(targetFile) === stagedHash) continue;
+      // 用户区已有不同内容时不覆写，也不丢弃暂存版本；按内容寻址使重试幂等。
+      const backupFile = path.join(backupRoot, `${relativePath}.${stagedHash}.bak`);
+      if (fs.existsSync(backupFile)) {
+        if (sha1File(backupFile) !== stagedHash) throw new Error("Content migration backup conflicts with staged content");
+      } else {
+        fs.mkdirSync(path.dirname(backupFile), { recursive: true });
+        fs.copyFileSync(stagedFile, backupFile, fs.constants.COPYFILE_EXCL);
+      }
+      continue;
+    }
     fs.mkdirSync(path.dirname(targetFile), { recursive: true });
-    fs.copyFileSync(stagedFile, targetFile);
+    fs.copyFileSync(stagedFile, targetFile, fs.constants.COPYFILE_EXCL);
   }
 }
 
@@ -101,36 +85,35 @@ function manifestPath(input: StagedContentMigrationInput): string {
   return path.join(path.dirname(input.promptDirectories[0]), MANIFEST_FILE);
 }
 
-function readManifest(input: StagedContentMigrationInput): ContentManifest | null {
+function readManifestFile(file: string): ContentManifest | null {
   try {
-    const file = manifestPath(input);
-    if (!fs.existsSync(file)) return null;
     const parsed = JSON.parse(fs.readFileSync(file, "utf8")) as Partial<ContentManifest>;
-    if (!parsed || typeof parsed !== "object") return null;
-    return {
-      prompts: typeof parsed.prompts === "object" && parsed.prompts ? parsed.prompts : {},
-      skills: typeof parsed.skills === "object" && parsed.skills ? parsed.skills : {},
-    };
+    const isHashMap = (value: unknown): value is Record<string, string> =>
+      Boolean(value) && typeof value === "object" && !Array.isArray(value) &&
+      Object.values(value as Record<string, unknown>).every((hash) => typeof hash === "string" && /^[0-9a-f]{40}$/.test(hash));
+    // formatVersion=2 只由构建清单产生；旧缓存可能已记录用户改动，不能当原厂基准。
+    if (parsed?.formatVersion !== 2 || parsed.source !== "build" || !isHashMap(parsed.prompts) || !isHashMap(parsed.skills)) return null;
+    return { formatVersion: 2, source: "build", prompts: parsed.prompts, skills: parsed.skills };
   } catch {
     return null;
   }
 }
 
-/** 记录安装目录内 prompts/skills 每个文件的 sha1，供下次升级时区分内置与用户修改。 */
-function writeManifest(input: StagedContentMigrationInput): void {
-  const manifest: ContentManifest = {
-    prompts: hashTree(shippedPromptDirectory(input)),
-    skills: hashTree(path.join(input.installRoot, "skills")),
-  };
+function writeManifest(input: StagedContentMigrationInput, shipped: ContentManifest | null): void {
   const file = manifestPath(input);
+  if (!shipped) {
+    // 缺失/损坏的构建清单不能退回扫描可修改的安装目录，也不能继续沿用过期缓存。
+    fs.rmSync(file, { force: true });
+    return;
+  }
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify(manifest), "utf8");
-}
-
-/** 内置 prompts 目录 = promptDirectories 中位于安装目录下的那一项。 */
-function shippedPromptDirectory(input: StagedContentMigrationInput): string {
-  const fallback = path.join(input.installRoot, "prompts");
-  return input.promptDirectories.find((dir) => dir === fallback) ?? fallback;
+  const temporary = `${file}.tmp`;
+  try {
+    fs.writeFileSync(temporary, JSON.stringify(shipped), "utf8");
+    fs.renameSync(temporary, file);
+  } finally {
+    fs.rmSync(temporary, { force: true });
+  }
 }
 
 function walkFiles(root: string): string[] {
@@ -145,15 +128,6 @@ function walkFiles(root: string): string[] {
     }
   }
   return files;
-}
-
-function hashTree(root: string): Record<string, string> {
-  const hashes: Record<string, string> = {};
-  if (!fs.existsSync(root)) return hashes;
-  for (const relativePath of walkFiles(root)) {
-    hashes[relativePath] = sha1File(path.join(root, relativePath));
-  }
-  return hashes;
 }
 
 function sha1File(file: string): string {

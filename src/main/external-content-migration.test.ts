@@ -27,6 +27,7 @@ interface Fixture {
   userPrompts: string;
   userSkills: string;
   manifestFile: string;
+  shippedManifestFile: string;
 }
 
 /** install 目录 + userData + 暂存目录 三层结构的测试夹具。 */
@@ -37,7 +38,10 @@ function createFixture(): Fixture {
   const staging = path.join(root, ".Cyrene.content-preserve");
   fs.mkdirSync(installRoot, { recursive: true });
   fs.mkdirSync(userData, { recursive: true });
+  const shippedManifestFile = path.join(root, "immutable-app", "shipped-external-content-manifest.json");
+  write(shippedManifestFile, JSON.stringify(buildManifest({}, {})));
   return {
+    shippedManifestFile,
     installRoot,
     userData,
     staging,
@@ -46,6 +50,7 @@ function createFixture(): Fixture {
     manifestFile: path.join(userData, "content-manifest.json"),
     input: {
       isPackaged: true,
+      shippedManifestPath: shippedManifestFile,
       installRoot,
       promptDirectories: [path.join(userData, "prompts"), path.join(installRoot, "prompts")],
       userSkillDirectories: [path.join(userData, "skills")],
@@ -67,6 +72,7 @@ describe("migrateStagedExternalContent", () => {
 
     // 上次启动时记录的官方内置：soul 是旧内置内容，tone 已被用户改过
     write(f.manifestFile, JSON.stringify({
+      formatVersion: 2, source: "build",
       prompts: { "soul.md": sha1Of("old shipped soul"), "tone.md": sha1Of("old shipped tone") },
       skills: {},
     }));
@@ -84,9 +90,10 @@ describe("migrateStagedExternalContent", () => {
     expect(fs.existsSync(f.staging)).toBe(false); // 暂存目录已清理
   });
 
-  it("without a manifest only recovers files missing from the new shipped content", () => {
+  it("without a previous manifest only discards files matching the immutable current build", () => {
     const f = createFixture();
     write(path.join(f.installRoot, "prompts", "soul.md"), "new shipped soul");
+    write(f.shippedManifestFile, JSON.stringify(buildManifest({ "soul.md": "new shipped soul" }, {})));
     // 无 manifest：soul 与新版内置相同 → 丢弃；skill-notes.md 新版没有 → 恢复
     write(path.join(f.staging, "prompts", "soul.md"), "new shipped soul");
     write(path.join(f.staging, "prompts", "skill-notes.md"), "old removed shipped");
@@ -113,12 +120,98 @@ describe("migrateStagedExternalContent", () => {
     const f = createFixture();
     write(path.join(f.installRoot, "prompts", "soul.md"), "shipped v1");
     write(path.join(f.installRoot, "skills", "demo", "SKILL.md"), "shipped skill");
+    write(f.shippedManifestFile, JSON.stringify(buildManifest({ "soul.md": "shipped v1" }, { "demo/SKILL.md": "shipped skill" })));
 
     migrateStagedExternalContent(f.input);
 
     const manifest = JSON.parse(fs.readFileSync(f.manifestFile, "utf8"));
     expect(manifest.prompts["soul.md"]).toBe(sha1Of("shipped v1"));
     expect(manifest.skills["demo/SKILL.md"]).toBe(sha1Of("shipped skill"));
+  });
+
+  it.each(["prompts", "skills"] as const)("preserves modified and newly added %s after repeated restarts and an upgrade", (kind) => {
+    const f = createFixture();
+    const original = buildManifest({}, {});
+    original[kind] = { "custom.md": sha1Of("original") };
+    write(f.shippedManifestFile, JSON.stringify(original));
+    const installed = path.join(f.installRoot, kind);
+    write(path.join(installed, "custom.md"), "original");
+    migrateStagedExternalContent(f.input);
+    write(path.join(installed, "custom.md"), "user edited");
+    write(path.join(installed, "added.md"), "user added");
+    migrateStagedExternalContent(f.input);
+    migrateStagedExternalContent(f.input);
+    expect(JSON.parse(fs.readFileSync(f.manifestFile, "utf8"))).toEqual(original);
+
+    fs.mkdirSync(f.staging, { recursive: true });
+    fs.renameSync(installed, path.join(f.staging, kind));
+    write(path.join(installed, "custom.md"), "new original");
+    const next = buildManifest({}, {});
+    next[kind] = { "custom.md": sha1Of("new original") };
+    write(f.shippedManifestFile, JSON.stringify(next));
+    migrateStagedExternalContent(f.input);
+
+    const userRoot = kind === "prompts" ? f.userPrompts : f.userSkills;
+    expect(fs.readFileSync(path.join(userRoot, "custom.md"), "utf8")).toBe("user edited");
+    expect(fs.readFileSync(path.join(userRoot, "added.md"), "utf8")).toBe("user added");
+    expect(JSON.parse(fs.readFileSync(f.manifestFile, "utf8"))).toEqual(next);
+    expect(fs.existsSync(f.staging)).toBe(false);
+  });
+
+  it("does not trust legacy manifests that may have recorded user modifications", () => {
+    const f = createFixture();
+    write(f.manifestFile, JSON.stringify({ prompts: { "custom.md": sha1Of("user edited") }, skills: {} }));
+    write(path.join(f.staging, "prompts", "custom.md"), "user edited");
+    migrateStagedExternalContent(f.input);
+    expect(fs.readFileSync(path.join(f.userPrompts, "custom.md"), "utf8")).toBe("user edited");
+  });
+
+  it.each(["missing", "corrupt"])("preserves uncertain content with a %s build manifest", (state) => {
+    const f = createFixture();
+    if (state === "missing") fs.unlinkSync(f.shippedManifestFile);
+    else write(f.shippedManifestFile, "invalid json");
+    write(f.manifestFile, "invalid old cache");
+    write(path.join(f.installRoot, "prompts", "custom.md"), "user edited");
+    write(path.join(f.staging, "prompts", "custom.md"), "user edited");
+    migrateStagedExternalContent(f.input);
+    expect(fs.readFileSync(path.join(f.userPrompts, "custom.md"), "utf8")).toBe("user edited");
+    expect(fs.existsSync(f.manifestFile)).toBe(false);
+  });
+
+  it("backs up a conflicting staged version without overwriting the user's current file", () => {
+    const f = createFixture();
+    write(path.join(f.userPrompts, "custom.md"), "current user file");
+    const staged = path.join(f.staging, "prompts", "custom.md");
+    const backup = path.join(f.userData, "content-upgrade-backups", "prompts", `custom.md.${sha1Of("staged edit")}.bak`);
+    for (let retry = 0; retry < 2; retry++) {
+      write(staged, "staged edit");
+      migrateStagedExternalContent(f.input);
+      expect(fs.readFileSync(path.join(f.userPrompts, "custom.md"), "utf8")).toBe("current user file");
+      expect(fs.readFileSync(backup, "utf8")).toBe("staged edit");
+      expect(fs.existsSync(f.staging)).toBe(false);
+    }
+  });
+
+  it("keeps staging and the previous baseline after a failed copy, then retries", () => {
+    const f = createFixture();
+    const previous = JSON.stringify(buildManifest({ "old.md": "old default" }, {}));
+    write(f.manifestFile, previous);
+    write(path.join(f.staging, "prompts", "blocked", "custom.md"), "user edit");
+    write(path.join(f.userPrompts, "blocked"), "a file blocks directory creation");
+    migrateStagedExternalContent(f.input);
+    expect(fs.existsSync(f.staging)).toBe(true);
+    expect(fs.readFileSync(f.manifestFile, "utf8")).toBe(previous);
+    fs.unlinkSync(path.join(f.userPrompts, "blocked"));
+    migrateStagedExternalContent(f.input);
+    expect(fs.readFileSync(path.join(f.userPrompts, "blocked", "custom.md"), "utf8")).toBe("user edit");
+    expect(fs.existsSync(f.staging)).toBe(false);
+  });
+
+  it("keeps staging when the destination directories are unavailable", () => {
+    const f = createFixture();
+    write(path.join(f.staging, "prompts", "custom.md"), "user edit");
+    migrateStagedExternalContent({ ...f.input, userSkillDirectories: [] });
+    expect(fs.readFileSync(path.join(f.staging, "prompts", "custom.md"), "utf8")).toBe("user edit");
   });
 
   it("does nothing in development builds", () => {
@@ -134,4 +227,9 @@ describe("migrateStagedExternalContent", () => {
 
 function sha1Of(content: string): string {
   return crypto.createHash("sha1").update(content, "utf8").digest("hex");
+}
+
+function buildManifest(prompts: Record<string, string>, skills: Record<string, string>) {
+  const hashes = (entries: Record<string, string>) => Object.fromEntries(Object.entries(entries).map(([name, value]) => [name, sha1Of(value)]));
+  return { formatVersion: 2, source: "build", prompts: hashes(prompts), skills: hashes(skills) };
 }

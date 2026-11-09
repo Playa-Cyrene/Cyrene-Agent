@@ -50,6 +50,9 @@ jobs:
       - name: Build
         run: pnpm run build
 
+      - name: Test immutable external content manifest
+        run: node --test scripts/build/external-content-manifest.test.mjs
+
       - name: Check model declarations and adapted models catalog
         run: pnpm run check:adapted-models
 
