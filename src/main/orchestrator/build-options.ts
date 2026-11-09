@@ -61,14 +61,15 @@ import type { ConversationMode } from "../../shared/chat-types";
 import type { SkillRouteInfo } from "./cyrene-agent";
 import { filterToolsBySearchBackend, type SearchBackend } from "./search-backend-filter";
 import type { RunCapabilities } from "./run-capabilities";
+import { isDesktopBrowserTool, withoutDesktopBrowserHistory } from "../browser/browser-tool-policy";
 import { buildStickerMatchQuery } from "../sticker-query";
 import type { StickerTextEntry } from "../sticker-text-matcher";
 import { isPlanReadOnly, getPlanState } from "./plan-mode";
 import { policyFor, type ToolRiskLevel } from "../permission-policy";
-import { resolveTranscriptRetainTokens, type MaterializedTranscript } from "./conversation-transcript-context";
+import { channelScopedTranscript, resolveTranscriptRetainTokens, type MaterializedTranscript } from "./conversation-transcript-context";
 import type { UncertainEffect } from "./harness/types";
 import { DEFAULT_HARNESS_CONFIG } from "./harness/types";
-import { resolveCompactionTriggerTokens } from "./harness/compaction";
+import { isCompactionCheckpointMessage, resolveCompactionTriggerTokens } from "./harness/compaction";
 import { estimateMessageTokens } from "./context-manager";
 import {
   createTranscriptCompactionRequiredError,
@@ -134,10 +135,12 @@ export interface BuildOptionsDeps {
     getEnabledToolsForMode(mode: ConversationMode, overrides?: ToolModeOverrides): ReadonlyArray<unknown>;
   };
   normalizeChatMessages: (raw: ReadonlyArray<unknown>) => ChatMessage[];
-  /** 权威轨迹上下文构建：桌面 currentUser dispatch 时物化模型消息。 */
+  /** 按运行来源物化权威轨迹上下文。 */
   buildModelContext?: (
     conversationId: string,
     retainTokens: number,
+    channelRun?: boolean,
+    channelReplayRunId?: string,
   ) => Promise<MaterializedTranscript>;
   /** 会话级权威压缩；成功后 buildModelContext 必须重新物化 checkpoint + suffix。 */
   compactTranscript?: (input: {
@@ -146,6 +149,7 @@ export interface BuildOptionsDeps {
     retainTokens: number;
     modelSettings: TranscriptCompactionModelSettings;
     transientMessages?: ChatMessage[];
+    channelRun?: true;
     signal?: AbortSignal;
   }) => Promise<unknown>;
   chatRequestTimeoutMs: number;
@@ -602,6 +606,7 @@ export async function buildAgentRunOptions(
   input: BuildOptionsInput,
   deps: BuildOptionsDeps,
 ): Promise<{ options: CyreneRunOptions; latestUserText: string }> {
+  const channelRun = Boolean(input.channel && input.channel !== "desktop");
   // 会话级模型配置（consumer #4 的 request assembly boundary）：
   // 桌面 bridge 已按会话解析好（含 effective model），直接消费；
   // 只有非桌面入口（渠道等）才按 modelProfileId 解析——同一输入二选一，
@@ -617,8 +622,12 @@ export async function buildAgentRunOptions(
   const retainTokens = resolveTranscriptRetainTokens(contextWindowTokens);
   let transcriptContext = input.modelContext
     ?? (input.currentUser && input.sessionId
-      ? await requireBuildModelContext(deps)(input.sessionId, retainTokens)
+      ? await requireBuildModelContext(deps)(input.sessionId, retainTokens, channelRun)
       : undefined);
+  if (channelRun && transcriptContext && !transcriptContext[channelScopedTranscript]) {
+    const messages = transcriptContext.messages.filter((message) => !isCompactionCheckpointMessage(message));
+    transcriptContext = { ...transcriptContext, messages: withoutDesktopBrowserHistory(messages) };
+  }
   // 预算检查对传入与自建上下文一视同仁：长会话无论从桌面还是渠道入口进入，
   // 都必须先提交自动压缩检查点，再重读 journal 作为最终上下文。
   if (input.sessionId && transcriptContext) {
@@ -633,13 +642,14 @@ export async function buildAgentRunOptions(
           trigger: "automatic",
           retainTokens: Math.max(1, Math.floor(contextWindowTokens * DEFAULT_HARNESS_CONFIG.compactionRetainRatio)),
           modelSettings: settings,
+          ...(channelRun ? { channelRun: true as const } : {}),
           signal: input.signal,
         });
       } catch (error) {
         console.error("[BuildOptions] transcript compaction failed", error);
         throw createTranscriptCompactionRequiredError(error);
       }
-      transcriptContext = await requireBuildModelContext(deps)(input.sessionId, retainTokens);
+      transcriptContext = await requireBuildModelContext(deps)(input.sessionId, retainTokens, channelRun);
       if (estimateMessageTokens(transcriptContext.messages, messageOrigin) >= compactionTriggerTokens) {
         throw createTranscriptCompactionRequiredError();
       }
@@ -943,7 +953,7 @@ export async function buildAgentRunOptions(
     skills: enabledSkills as never[],
     skillIds: new Set((enabledSkills as Array<{ id?: unknown }>).map((skill) => String(skill.id ?? "")).filter(Boolean)),
   };
-  const capabilities = deps.resolveRunCapabilities?.({
+  const resolvedCapabilities = deps.resolveRunCapabilities?.({
     mode: resolvedMode,
     activeSearchBackend,
     toolModeOverrides: styleSettings.toolModeOverrides,
@@ -951,6 +961,12 @@ export async function buildAgentRunOptions(
     chatToolsEnabled: styleSettings.chatToolsEnabled === true,
     hasFileAttachments,
   }) ?? fallbackCapabilities;
+  const runTools = channelRun
+    ? resolvedCapabilities.tools.filter((tool) => !isDesktopBrowserTool(tool.id))
+    : resolvedCapabilities.tools;
+  const capabilities = channelRun
+    ? { ...resolvedCapabilities, tools: runTools, toolIds: new Set(runTools.map((tool) => tool.id)) }
+    : resolvedCapabilities;
   // ⚠️ resolveRunCapabilities 存在时的权威路径：覆盖上面 fallback 组的计算。
   enabledSkills = capabilities.skills;
   skillCatalog = deps.buildSkillCatalog(enabledSkills);
@@ -963,7 +979,6 @@ export async function buildAgentRunOptions(
       ? { defaultExecutionMode: (s.manifest as Record<string, unknown>).defaultExecutionMode as "direct" | "plan" }
       : {}),
   })).filter((s) => s.id);
-  const runTools = capabilities.tools;
   const searchToolIds = filteredBySearch
     .filter((t) => t.id === "web_search" || t.id.startsWith("minimax-web-search-"))
     .map((t) => t.id);
@@ -1097,18 +1112,23 @@ export async function buildAgentRunOptions(
       messages: fcMessages,
       cleanMessages: cleanFcMessages,
       conversationId,
+      ...(channelRun ? { channelRun: true as const } : {}),
       assistantTurnId: input.assistantTurnId,
       ...(input.sessionId && deps.compactTranscript && deps.buildModelContext ? {
-        compactTranscript: async ({ retainTokens: tailTokens, transientMessages, signal }) => {
+        compactTranscript: async ({ retainTokens: tailTokens, transientMessages, signal, channelReplayRunId }) => {
           await deps.compactTranscript!({
             conversationId: input.sessionId!,
             trigger: "automatic",
             retainTokens: tailTokens,
             modelSettings: settings,
             transientMessages,
+            ...(channelRun ? { channelRun: true as const } : {}),
             signal,
           });
-          return (await requireBuildModelContext(deps)(input.sessionId!, tailTokens)).messages;
+          const { messages } = await requireBuildModelContext(deps)(
+            input.sessionId!, tailTokens, channelRun, channelRun ? channelReplayRunId : undefined,
+          );
+          return messages;
         },
       } : {}),
       executionMode,

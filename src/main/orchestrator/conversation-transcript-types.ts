@@ -224,6 +224,8 @@ export type TranscriptCompactionCheckpointPayload = {
   sourceDigest: string;
   replacement: CanonicalChatMessage;
   trigger: "automatic" | "manual";
+  /** Only checkpoints created from filtered channel history may be used on channels. */
+  channelRun?: true;
 };
 
 export type TranscriptToolStartedPayload = {

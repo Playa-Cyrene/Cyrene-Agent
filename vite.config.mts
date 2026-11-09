@@ -47,6 +47,7 @@ function reactRendererCsp(isDev: boolean): string {
     : "'self' https: wss:";
   return [
     "default-src 'self'",
+    "form-action 'none'",
     "script-src 'self'",
     "style-src 'self' 'unsafe-inline'",
     // local-sticker / moment-media 是贴图与动态配图的本地自定义协议，

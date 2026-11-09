@@ -21,6 +21,7 @@ export type { MaterializedTranscript, TranscriptRunReader } from "./conversation
 export {
   buildFullModelContext,
   buildModelContextFromCompactedView,
+  channelScopedTranscript,
   reduceTranscriptProjection,
 } from "./conversation-transcript-projection";
 
@@ -38,20 +39,21 @@ export async function buildModelContext(input: {
   conversationId: string;
   retainTokens: number;
   runReader: TranscriptRunReader;
+  channelRun?: boolean;
+  channelReplayRunId?: string;
 }): Promise<MaterializedTranscript> {
   await input.runReader.refresh?.();
   // fail-closed 读取前置：先等该会话写队列清空，禁止读到半更新状态
   await input.store.waitForIdle(input.conversationId);
-  const snapshot = await input.store.read(input.conversationId);
+  const snapshot = await input.store.read(input.conversationId, input.channelRun);
   // `retainTokens` remains in the compatibility signature; the budget decision
   // now belongs to the transcript compactor and never drops history implicitly.
   void input.retainTokens;
-  const materialized = buildModelContextFromCompactedView(snapshot.entries, input.runReader);
+  const materialized = buildModelContextFromCompactedView(
+    snapshot.entries, input.runReader, input.channelRun, input.channelReplayRunId,
+  );
   return {
-    messages: materialized.messages,
-    uncertainEffects: materialized.uncertainEffects,
-    ...(materialized.todoItems ? { todoItems: materialized.todoItems } : {}),
-    ...(materialized.todoItemsSource ? { todoItemsSource: materialized.todoItemsSource } : {}),
+    ...materialized,
     throughSeq: snapshot.throughSeq,
   };
 }

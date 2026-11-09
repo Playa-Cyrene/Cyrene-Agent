@@ -21,6 +21,20 @@ describe("mobile channel agent policy", () => {
     });
   });
 
+  it("keeps ordinary tools in a bound channel without granting desktop browser tools", () => {
+    const tools = ["browser_get_page_elements", "browser_get_element_css", "browser_control_start", "web_search"]
+      .map((id) => ({ id }));
+    const options = {
+      conversationId: "bound-desktop-conversation",
+      tools,
+      capabilities: { tools, toolIds: new Set(tools.map((tool) => tool.id)) },
+    } as CyreneRunOptions;
+    enforceChannelAgentPolicy(options, resolveChannelAgentPolicy("all", { channel: "qq", chatType: "private" }));
+    expect(options.channelRun).toBe(true);
+    expect(options.tools?.map((tool) => tool.id)).toEqual(["web_search"]);
+    expect(options.capabilities?.toolIds).toEqual(new Set(["web_search"]));
+  });
+
   it("always disables tools for QQ group chats", () => {
     const policy = resolveChannelAgentPolicy("all", { channel: "qq", chatType: "group" });
     expect(policy).toEqual({

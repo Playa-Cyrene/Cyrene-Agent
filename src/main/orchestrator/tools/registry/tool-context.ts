@@ -44,6 +44,8 @@ export interface ToolContext {
   permissionMode?: "normal" | "allow_all";
   /** 当前运行是否具备用户交互界面；与工具权限档位相互独立。 */
   allowUserInteraction?: boolean;
+  /** Trusted run origin, independent of the conversation ID or interaction settings. */
+  channelRun?: true;
   /** 子任务的只读契约；独立于主代理当前权限档位。 */
   readOnly?: boolean;
   /** 仅供前台 run_shell 观察输出；异常不得影响命令执行。 */

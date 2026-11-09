@@ -1,5 +1,5 @@
 /**
- * SVG 消毒与熔断 —— 模型输出的 SVG（Mermaid 引擎产物 / 手写 svg 围栏）注入前的统一安全层。
+ * SVG 消毒与熔断 —— Mermaid 引擎产物和手写 SVG 围栏共用。
  *
  * 四层防护：
  * 1. 长度熔断：源码超过上限直接降级，不进同步渲染（防 UI 线程卡死）
@@ -9,6 +9,8 @@
  */
 
 import DOMPurify from "dompurify";
+
+const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
 
 /** 源码长度熔断阈值（字符数）：千节点级流程图源码约 23KB / 渲染 265ms，再大就该降级 */
 export const SVG_SOURCE_LIMIT = 20000;
@@ -39,10 +41,36 @@ export function stripFontImports(svg: string): string {
  * 返回空字符串说明内容被清空，调用方按渲染失败处理。
  */
 export function sanitizeSvg(svg: string): string {
-  const cleaned = DOMPurify.sanitize(svg, {
+  const fragment = DOMPurify.sanitize(svg, {
     // 模型产出的图可能用到 foreignObject 内容，但那正是逃逸向量，直接整体禁掉
     FORBID_TAGS: ["script", "foreignObject", "iframe", "embed", "object", "link"],
     FORBID_ATTR: ["src", "href", "xlink:href"],
+    RETURN_DOM_FRAGMENT: true,
   });
-  return typeof cleaned === "string" ? cleaned : "";
+  const root = fragment.firstElementChild;
+  if (root?.localName !== "svg" || root.namespaceURI !== SVG_NAMESPACE || fragment.childElementCount !== 1
+    || Array.from(fragment.childNodes).some((node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim())) {
+    return "";
+  }
+  const hasIntrinsicDimension = ["width", "height"].some((axis) => {
+    const size = root.getAttribute(axis)?.trim();
+    return size && size.toLowerCase() !== "auto" && !size.includes("%");
+  });
+  // A definite size attribute on either axis is enough for the browser to apply the viewBox ratio.
+  // Without one, provide an intrinsic size for the image and its zoom preview.
+  if (!hasIntrinsicDimension) {
+    const viewBox = (root.getAttribute("viewBox") ?? "").trim().split(/[\s,]+/).map(Number);
+    const [, , width, height] = viewBox;
+    if (viewBox.length === 4 && viewBox.every(Number.isFinite) && width > 0 && height > 0) {
+      root.setAttribute("width", String(width));
+      root.setAttribute("height", String(height));
+    }
+  }
+  return new XMLSerializer().serializeToString(root);
+}
+
+/** The SVG is only ever displayed as a non-interactive image. */
+export function svgImageSrc(svg: string): string {
+  // JSON can contain unpaired surrogates. Preserve valid Unicode pairs and keep render from throwing.
+  return `data:image/svg+xml,${encodeURIComponent(svg.replace(/[\uD800-\uDFFF]/gu, "\uFFFD"))}`;
 }

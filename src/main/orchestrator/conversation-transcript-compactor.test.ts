@@ -7,6 +7,7 @@ import { ConversationTranscriptCompactor } from "./conversation-transcript-compa
 import { ConversationTranscriptArchive } from "./conversation-transcript-archive";
 import { ConversationJournalService } from "./conversation-journal-service";
 import { ConversationTranscriptStore } from "./conversation-transcript-store";
+import { buildModelContext } from "./conversation-transcript-context";
 import type { ChatMessage } from "./vendors/types";
 
 function assertNoOrphanToolPairs(messages: ChatMessage[]): boolean {
@@ -41,6 +42,7 @@ describe("ConversationTranscriptCompactor", () => {
     };
     const compactor = new ConversationTranscriptCompactor({ store, summarize });
     return {
+      root,
       store,
       journal,
       compactor,
@@ -86,6 +88,109 @@ describe("ConversationTranscriptCompactor", () => {
 
     expect(assertNoOrphanToolPairs(result.compactedMessages)).toBe(true);
     expect(result.checkpointEntryId).toBeTruthy();
+  });
+
+  it.each([true, undefined] as const)("isolates desktop browser observations in the channel summarizer (%s)", async (channelRun) => {
+    const fixture = createFixture();
+    await seed(fixture);
+    const sink = fixture.journal.createRunSink({ conversationId: "c1", runId: "browser-run" });
+    const assistantEntryId = await sink.appendAssistant({
+      message: {
+        role: "assistant", content: "Shared browser reply",
+        toolCalls: [{ id: "browser-call", name: "browser_get_page_elements", arguments: "{}" }],
+      },
+    });
+    await sink.appendToolResult({
+      assistantEntryId,
+      message: { role: "tool", toolCallId: "browser-call", name: "browser_get_page_elements", content: "private browser content" },
+      outcome: "success",
+    });
+    await fixture.journal.appendUser("c1", { turnId: "latest", text: "继续" });
+    const summarize = vi.fn(async (_messages: ChatMessage[]) => "Summary");
+    const compactor = new ConversationTranscriptCompactor({ store: fixture.store, summarize });
+    await compactor.compact({ conversationId: "c1", trigger: "automatic", retainTokens: 1, channelRun });
+    const history = JSON.stringify(summarize.mock.calls[0][0]);
+    expect(history).toContain("Shared browser reply");
+    expect(history).toContain("文件内容");
+    expect(history.includes("private browser content")).toBe(!channelRun);
+  });
+
+  it("rebuilds channel history from an archived desktop prefix and keeps checkpoints separate", async () => {
+    const fixture = createFixture();
+    await seed(fixture);
+    const sink = fixture.journal.createRunSink({ conversationId: "c1", runId: "desktop-run" });
+    const assistantEntryId = await sink.appendAssistant({
+      message: { role: "assistant", toolCalls: [{ id: "page", name: "browser_get_page_elements", arguments: "{}" }] },
+    });
+    await sink.appendToolResult({
+      assistantEntryId,
+      message: { role: "tool", toolCallId: "page", name: "browser_get_page_elements", content: "private page" },
+      outcome: "success",
+    });
+    await fixture.journal.appendUser("c1", { turnId: "latest", text: "继续" });
+    const summarize = vi.fn(async (_messages: ChatMessage[]) => "private desktop summary");
+    const compactor = new ConversationTranscriptCompactor({ store: fixture.store, summarize });
+    const desktop = await compactor.compact({ conversationId: "c1", trigger: "manual" });
+    expect(JSON.stringify(desktop.compactedMessages)).toContain("private desktop summary");
+    expect((await fixture.store.read("c1")).entries.some((entry) => entry.id === "u1")).toBe(false);
+
+    await closeConversationDatabases();
+    const restartedJournal = new ConversationJournalService(new ConversationTranscriptStore(fixture.root));
+    const channel = await restartedJournal.buildModelContext("c1", true);
+    expect(JSON.stringify(channel.messages)).not.toContain("private");
+    expect(JSON.stringify(channel.messages)).toContain("旧任务");
+
+    summarize.mockResolvedValueOnce("channel summary");
+    const firstChannel = await compactor.compact({ conversationId: "c1", trigger: "automatic", channelRun: true });
+    expect(JSON.stringify(summarize.mock.calls[1][0])).not.toContain("private");
+    expect(JSON.stringify(firstChannel.compactedMessages)).toContain("channel summary");
+    expect(JSON.stringify((await restartedJournal.buildModelContext("c1")).messages)).toContain("private desktop summary");
+
+    await fixture.journal.appendUser("c1", { turnId: "next", text: "追加消息".repeat(30) });
+    summarize.mockResolvedValueOnce("updated channel summary");
+    const secondChannel = await compactor.compact({ conversationId: "c1", trigger: "automatic", channelRun: true });
+    expect(JSON.stringify(summarize.mock.calls[2][0])).toContain("channel summary");
+    expect(JSON.stringify(summarize.mock.calls[2][0])).not.toContain("private");
+    expect(JSON.stringify(secondChannel.compactedMessages)).toContain("updated channel summary");
+  });
+
+  it("keeps legacy reads of shared results across a checkpoint and only replays the active channel run", async () => {
+    const { store, journal, compactor } = createFixture();
+    const ref = "tool-result://shared-file";
+    await journal.appendUser("c1", { turnId: "old", text: "旧任务".repeat(40) });
+    const desktop = journal.createRunSink({ conversationId: "c1", runId: "desktop" });
+    const readId = await desktop.appendAssistant({ message: {
+      role: "assistant", toolCalls: [{ id: "file", name: "Read", arguments: "{}" }], thinking: "desktop reasoning",
+    } });
+    await desktop.appendToolResult({
+      assistantEntryId: readId,
+      message: { role: "tool", toolCallId: "file", name: "Read", content: JSON.stringify({ fullOutputRef: ref }) },
+      outcome: "success",
+    });
+    await journal.appendUser("c1", { turnId: "recent", text: "继续" });
+    await compactor.compact({ conversationId: "c1", trigger: "automatic", channelRun: true });
+
+    const channel = journal.createRunSink({ conversationId: "c1", runId: "channel" });
+    const pageId = await channel.appendAssistant({ message: {
+      role: "assistant", toolCalls: [{ id: "page", name: "read_tool_result", arguments: "{}" }], thinking: "channel reasoning",
+    } });
+    await channel.appendToolResult({
+      assistantEntryId: pageId,
+      message: { role: "tool", toolCallId: "page", name: "read_tool_result", content: JSON.stringify({
+        outcome: "success", output: JSON.stringify({ resultRef: ref, content: "shared file page" }),
+      }) },
+      outcome: "success",
+    });
+    const shared = JSON.stringify((await journal.buildModelContext("c1", true)).messages);
+    expect(shared).toContain("保留的摘要");
+    expect(shared).toContain("shared file page");
+    expect(shared).not.toContain("reasoning");
+    const active = await buildModelContext({
+      store, conversationId: "c1", retainTokens: 1, runReader: { get: () => null },
+      channelRun: true, channelReplayRunId: "channel",
+    });
+    expect(JSON.stringify(active.messages)).toContain("channel reasoning");
+    expect(JSON.stringify(active.messages)).not.toContain("desktop reasoning");
   });
 
   it.each(["during-summary", "before-checkpoint", "before-archive", "after-archive"])("retires a completion %s without retaining its summary or losing unrelated history", async phase => {

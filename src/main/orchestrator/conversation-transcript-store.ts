@@ -34,7 +34,7 @@ export class ConversationTranscriptStore {
     assertValidPresentationPatch(patch);
     return this.database.call('transcript.presentation', id, messageId, mutationKey, patch, this.now());
   }
-  read(id: string): Promise<TranscriptSnapshotV2> { return this.database.call('transcript.read', id); }
+  read(id: string, includeArchived = false): Promise<TranscriptSnapshotV2> { return this.database.call('transcript.read', id, includeArchived); }
   readAuditEntries(id: string): Promise<TranscriptEntry[]> { return this.database.call('transcript.audit', id); }
   readShellCompletionEntries(id: string, includeSourceBranch = false): Promise<TranscriptEntry[]> {
     return this.database.call('transcript.shellEvents', id, includeSourceBranch);

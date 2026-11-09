@@ -24,8 +24,9 @@
   width: 100%;
   overflow: auto;
 }
-.cy-workspace-preview__svg svg {
+.cy-workspace-preview__body .cy-workspace-preview__svg img {
   max-width: none;
+  max-height: none;
   height: auto;
   display: block;
 }

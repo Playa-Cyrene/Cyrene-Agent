@@ -320,11 +320,11 @@ export class ConversationJournalService {
     };
   }
 
-  async buildModelContext(conversationId: string): Promise<MaterializedTranscript> {
+  async buildModelContext(conversationId: string, channelRun = false): Promise<MaterializedTranscript> {
     await this.runReader.refresh?.();
     await this.store.waitForIdle(conversationId);
-    const snapshot = await this.store.read(conversationId);
-    return buildModelContextFromCompactedView(snapshot.entries, this.runReader);
+    const snapshot = await this.store.read(conversationId, channelRun);
+    return buildModelContextFromCompactedView(snapshot.entries, this.runReader, channelRun);
   }
 
   /**

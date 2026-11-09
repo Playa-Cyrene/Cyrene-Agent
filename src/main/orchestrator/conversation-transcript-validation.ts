@@ -99,6 +99,7 @@ function isValidTranscriptPayload(entry: Partial<TranscriptEntry>): boolean {
         Number.isInteger(entry.payload.sourceThroughSeq) && entry.payload.sourceThroughSeq >= 0 &&
         typeof entry.payload.sourceDigest === "string" &&
         isValidCanonicalChatMessage(entry.payload.replacement) &&
+        (entry.payload.channelRun === undefined || entry.payload.channelRun === true) &&
         ["automatic", "manual"].includes(entry.payload.trigger as string);
     case "presentation_patch":
       return typeof entry.payload.messageId === "string" &&

@@ -75,6 +75,17 @@ describe("Harness context compaction v2", () => {
     expect(isToolPairSafeBoundary(messages, 0)).toBe(true);
   });
 
+  it("checks the owner of each result when successive tool rounds reuse an ID", () => {
+    const round: ChatMessage[] = [
+      { role: "assistant", toolCalls: [{ id: "call_1", name: "read_file", arguments: "{}" }] },
+      { role: "tool", toolCallId: "call_1", name: "read_file", content: "file content" },
+    ];
+    const messages = [...round, message("user", "继续"), ...round];
+    expect(isToolPairSafeBoundary(messages, 1)).toBe(false);
+    expect(isToolPairSafeBoundary(messages, 2)).toBe(true);
+    expect(isToolPairSafeBoundary(messages, 4)).toBe(false);
+  });
+
   it("keeps the original transcript when summary generation fails", async () => {
     const messages: ChatMessage[] = [
       message("user", "旧任务".repeat(30)),

@@ -259,11 +259,13 @@ export function createAgentRuntime(rawDeps: AgentRuntimeDeps): AgentRuntime {
       buildSummaryMemoryContext: rawDeps.buildSummaryMemoryContext,
       buildPluginPromptContext: (input) => rawDeps.buildPluginPromptContext(input),
       // 权威轨迹上下文（CTA Phase 1）：桌面端与 bridge 共用同一 userData 根下的单例 store
-      buildModelContext: (conversationId, retainTokens) => buildModelContext({
+      buildModelContext: (conversationId, retainTokens, channelRun, channelReplayRunId) => buildModelContext({
         store: transcriptStore,
         conversationId,
         retainTokens,
         runReader: transcriptRunStore,
+        channelRun,
+        channelReplayRunId,
       }),
       compactTranscript: (input) => transcriptCompactor.compact(input),
     };

@@ -7,13 +7,13 @@ import { FileToolOutputStore } from "./file-tool-output-store";
 
 const roots: string[] = [];
 
-async function setup(output = "AAA😀BBB昔涟CCC") {
+async function setup(output = "AAA😀BBB昔涟CCC", toolName = "search_code") {
   const root = await mkdtemp(path.join(tmpdir(), "cyrene-read-output-"));
   roots.push(root);
   const store = new FileToolOutputStore(root);
   const ref = await store.put({
     conversationId: "conversation-a", runId: "run-a", toolCallId: "call-a",
-    toolName: "search_code", outcome: "success", output, truncatedForModel: false,
+    toolName, outcome: "success", output, truncatedForModel: false,
   });
   return { store, ref };
 }
@@ -23,6 +23,20 @@ afterEach(async () => {
 });
 
 describe("read_tool_result", () => {
+  it.each([{}, { query: "private" }])("isolates saved desktop browser results from a bound channel (%j)", async (args) => {
+    const { store, ref } = await setup("private page", "browser_get_page_elements");
+    const context = { userQuery: "", conversationId: "conversation-a", runId: "run-b" };
+    const call = { id: "read-1", name: "read_tool_result", arguments: JSON.stringify({ result_ref: ref.resultRef, ...args }) };
+    const desktop = await executeReadToolResult(call, store, context);
+    expect(desktop).toMatchObject({ outcome: "success", output: expect.stringContaining("private page") });
+    const channel = await executeReadToolResult(call, store, { ...context, channelRun: true });
+    expect(channel).toMatchObject({ outcome: "failure", category: "not_found" });
+
+    const { store: otherStore, ref: otherRef } = await setup("private notes");
+    const ordinaryCall = { ...call, arguments: JSON.stringify({ result_ref: otherRef.resultRef, ...args }) };
+    const ordinary = await executeReadToolResult(ordinaryCall, otherStore, { ...context, channelRun: true });
+    expect(ordinary).toMatchObject({ outcome: "success", output: expect.stringContaining("private notes") });
+  });
   it("reads a bounded slice through an opaque result reference", async () => {
     const { store, ref } = await setup("0123456789");
     const result = await executeReadToolResult({ id: "read-1", name: "read_tool_result", arguments: JSON.stringify({

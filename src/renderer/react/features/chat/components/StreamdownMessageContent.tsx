@@ -342,6 +342,7 @@ function StreamdownAnchor({ href, children }: { href?: string; children?: ReactN
       </>
     );
   }
+  if (fileHref) return <span>{children}</span>;
   // 网站链接渲染成行内卡片；其他协议（mailto:、obsidian:// 等）保持普通链接
   if (href && /^https?:\/\//i.test(href)) {
     return <WebLinkAnchor href={href}>{children}</WebLinkAnchor>;

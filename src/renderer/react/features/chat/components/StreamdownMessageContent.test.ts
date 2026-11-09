@@ -116,6 +116,13 @@ describe("StreamdownMessageContent", () => {
     expect(markup).not.toContain("is-plain");
   });
 
+  it("renders a network file link as plain text without opening its placeholder URL", () => {
+    const markup = render("[共享文件](file:///%5Chost/share/file.txt)", false, "E:/ws");
+    expect(markup).toContain("共享文件");
+    expect(markup).not.toContain("cyrene.invalid");
+    expect(markup).not.toContain("cy-file-link");
+  });
+
   it("strips dangerous links and raw script markup", () => {
     const markup = render("[危险](javascript:alert(1))\n\n<script>alert(1)</script>", false);
 

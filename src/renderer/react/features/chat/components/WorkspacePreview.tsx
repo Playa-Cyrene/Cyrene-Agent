@@ -2,6 +2,7 @@ import { createContext, useEffect, useRef, useState } from "react";
 import { Dialog } from "radix-ui";
 import { GeneratedImagePreviewPortal } from "./GeneratedImageAttachments";
 import { SvgPreviewModal } from "./SvgPreviewModal";
+import { svgImageSrc } from "./svg-sanitize";
 import type { GeneratedImageAttachment } from "../../../../../shared/generated-image";
 import { AttachmentImage } from "./AttachmentImage";
 import { t } from "../../../i18n";
@@ -108,7 +109,9 @@ export function WorkspacePreviewContent({
               }}
             />
           ) : (
-            <div className="cy-workspace-preview__svg" dangerouslySetInnerHTML={{ __html: preview.svg }} />
+            <div className="cy-workspace-preview__svg">
+              <img src={svgImageSrc(preview.svg)} alt={t("messageList.diagramPreview")} />
+            </div>
           )}
         </div>
       </div>

@@ -19,6 +19,7 @@ import type {
   TranscriptPresentationPatch,
 } from "./conversation-transcript-types";
 import type { ChatMessage, ChatMessageContent, ToolCall } from "./vendors/types";
+import { projectChannelBrowserHistory } from "../browser/browser-tool-policy";
 
 export interface TranscriptRunReader {
   refresh?(): Promise<void>;
@@ -26,12 +27,16 @@ export interface TranscriptRunReader {
   listInterruptedRuns?(conversationId?: string): HarnessRunSession[];
 }
 
+/** Main-process provenance; renderer input cannot mark its context as channel-safe. */
+export const channelScopedTranscript = Symbol("channelScopedTranscript");
+
 export interface MaterializedTranscript {
   messages: ChatMessage[];
   uncertainEffects: UncertainEffect[];
   todoItems?: TodoItem[];
   todoItemsSource?: "transcript" | "legacy_run_store" | "legacy_presentation";
   throughSeq: number;
+  [channelScopedTranscript]?: true;
 }
 
 /** Canonical messages plus the active transcript row that produced each one. */
@@ -182,7 +187,7 @@ function reduceActiveTranscript(entries: TranscriptEntry[]): ActiveTranscript {
         // UI 投影专用节点：在「已被压缩覆盖的前缀」之后落一个分隔标记。
         // 模型上下文路径（materializeNodes）会跳过它；rewind / 墓碑截断
         // 分支时该节点随覆盖前缀一起消失，天然等价于检查点失效判定。
-        nodes.push({ kind: "compaction", entry });
+        if (!entry.payload.channelRun) nodes.push({ kind: "compaction", entry });
         break;
       }
       default:
@@ -590,9 +595,11 @@ function checkpointCoversActiveBranch(
 function latestValidCompaction(
   entries: TranscriptEntry[],
   active: ActiveTranscript,
+  channelRun = false,
 ): Extract<TranscriptEntry, { kind: "compaction_checkpoint" }> | undefined {
   return entries
-    .filter((entry): entry is Extract<TranscriptEntry, { kind: "compaction_checkpoint" }> => entry.kind === "compaction_checkpoint")
+    .filter((entry): entry is CompactionEntry => entry.kind === "compaction_checkpoint"
+      && (entry.payload.channelRun === true) === channelRun)
     .sort((left, right) => right.seq - left.seq)
     .find((checkpoint) => checkpointCoversActiveBranch(entries, active, checkpoint));
 }
@@ -941,6 +948,7 @@ function projectSeedDelta(
         break;
       }
       case "compaction_checkpoint": {
+        if (entry.payload.channelRun) break;
         // 与全量路径同构：标记节点跟随增量条目进入 state.nodes，
         // 后续 rewind 截断时随覆盖前缀一起保留或消失。
         state.nodes.push({ kind: "compaction", entryId: entry.id, messageId: entry.id });
@@ -1099,21 +1107,7 @@ export function buildFullModelContextWithSources(
   entries: TranscriptEntry[],
   runReader: TranscriptRunReader,
 ): MaterializedTranscriptWithSources {
-  runReader = memoizeRunReader(runReader);
-  const active = reduceActiveTranscript(entries);
-  const materialized = materializeNodes(active.nodes, runReader);
-  const recovery = materializeRecoveryState(entries, active.nodes, runReader, materialized.uncertainEffects);
-  const delivery = failedDeliveryNotesWithSources(entries, active.nodes);
-  const interruption = interruptionNotesWithSources(entries, active.nodes);
-  const withInternalNotes = insertInternalNotes(materialized, [...delivery.notes, ...interruption.notes]);
-  return {
-    messages: withInternalNotes.messages,
-    uncertainEffects: recovery.uncertainEffects,
-    ...(recovery.todoItems ? { todoItems: recovery.todoItems } : {}),
-    ...(recovery.todoItemsSource ? { todoItemsSource: recovery.todoItemsSource } : {}),
-    throughSeq: active.throughSeq,
-    sourceSeqs: withInternalNotes.sourceSeqs,
-  };
+  return materializeModelSourceView(entries, runReader, reduceActiveTranscript(entries));
 }
 
 /**
@@ -1124,32 +1118,54 @@ export function buildFullModelContextWithSources(
 export function buildCompactionSourceView(
   entries: TranscriptEntry[],
   runReader: TranscriptRunReader,
+  channelRun = false,
+  channelReplayRunId?: string,
 ): MaterializedTranscriptWithSources & { previousReplacement?: ChatMessage } {
   const active = reduceActiveTranscript(entries);
-  const checkpoint = latestValidCompaction(entries, active);
-  if (!checkpoint) return buildFullModelContextWithSources(entries, runReader);
+  const checkpoint = latestValidCompaction(entries, active, channelRun);
+  return materializeModelSourceView(entries, runReader, active, checkpoint, channelRun, channelReplayRunId);
+}
 
+function materializeModelSourceView(
+  entries: TranscriptEntry[],
+  runReader: TranscriptRunReader,
+  active: ActiveTranscript,
+  checkpoint?: CompactionEntry,
+  channelRun = false,
+  channelReplayRunId?: string,
+): MaterializedTranscriptWithSources & { previousReplacement?: ChatMessage } {
   runReader = memoizeRunReader(runReader);
-  const suffix = active.nodes.filter((node) => node.entry.seq > checkpoint.payload.sourceThroughSeq);
-  const materialized = materializeNodes(suffix, runReader);
-  const allActiveMaterialized = materializeNodes(active.nodes, runReader);
-  const recovery = materializeRecoveryState(entries, active.nodes, runReader, allActiveMaterialized.uncertainEffects);
-  const delivery = failedDeliveryNotesWithSources(entries, active.nodes, checkpoint.payload.sourceThroughSeq);
-  const interruption = interruptionNotesWithSources(entries, active.nodes, checkpoint.payload.sourceThroughSeq);
-  const suffixWithInternalNotes = insertInternalNotes(materialized, [...delivery.notes, ...interruption.notes]);
+  const full = materializeNodes(active.nodes, runReader);
+  const recovery = materializeRecoveryState(entries, active.nodes, runReader, full.uncertainEffects);
+  const boundary = checkpoint?.payload.sourceThroughSeq;
+  const firstSuffixNode = active.nodes.find(node => node.kind !== "compaction" && node.entry.seq > (boundary ?? 0));
+  const suffixIndex = firstSuffixNode ? full.sourceSeqs.indexOf(firstSuffixNode.entry.seq) : full.messages.length;
+  // Filter against the full active branch so a checkpoint cannot hide the source of a paginated result.
+  // A channel's own in-flight tool reasoning is still needed after mid-run compaction.
+  const activeRunAssistants = channelRun && channelReplayRunId
+    ? new Set(entries.flatMap(entry => entry.kind === "assistant" && entry.runId === channelReplayRunId ? [entry.payload] : []))
+    : undefined;
+  const projected = channelRun ? projectChannelBrowserHistory(full.messages, activeRunAssistants) : full.messages;
+  const suffix: { messages: ChatMessage[]; sourceSeqs: number[] } = { messages: [], sourceSeqs: [] };
+  for (let index = suffixIndex; index < projected.length; index += 1) {
+    const message = projected[index];
+    if (!message) continue;
+    suffix.messages.push(message);
+    suffix.sourceSeqs.push(full.sourceSeqs[index]!);
+  }
+  const delivery = failedDeliveryNotesWithSources(entries, active.nodes, boundary);
+  const interruption = interruptionNotesWithSources(entries, active.nodes, boundary);
+  const suffixWithInternalNotes = insertInternalNotes(suffix, [...delivery.notes, ...interruption.notes]);
   return {
-    messages: [
-      checkpoint.payload.replacement,
-      ...suffixWithInternalNotes.messages,
-    ],
+    messages: checkpoint ? [checkpoint.payload.replacement, ...suffixWithInternalNotes.messages] : suffixWithInternalNotes.messages,
     uncertainEffects: recovery.uncertainEffects,
     ...(recovery.todoItems ? { todoItems: recovery.todoItems } : {}),
     ...(recovery.todoItemsSource ? { todoItemsSource: recovery.todoItemsSource } : {}),
     throughSeq: active.throughSeq,
     // 旧摘要对应的源边界是上一个检查点的 sourceThroughSeq：切点覆盖它时，
     // 新检查点即完整接管旧检查点所代表的历史。
-    sourceSeqs: [checkpoint.payload.sourceThroughSeq, ...suffixWithInternalNotes.sourceSeqs],
-    previousReplacement: checkpoint.payload.replacement,
+    sourceSeqs: checkpoint ? [checkpoint.payload.sourceThroughSeq, ...suffixWithInternalNotes.sourceSeqs] : suffixWithInternalNotes.sourceSeqs,
+    ...(checkpoint ? { previousReplacement: checkpoint.payload.replacement } : {}),
   };
 }
 
@@ -1178,30 +1194,16 @@ export function isUserTurnRewindableInModelView(
 export function buildModelContextFromCompactedView(
   entries: TranscriptEntry[],
   runReader: TranscriptRunReader,
+  channelRun = false,
+  channelReplayRunId?: string,
 ): MaterializedTranscript {
-  const active = reduceActiveTranscript(entries);
-  const checkpoint = latestValidCompaction(entries, active);
-  if (!checkpoint) return buildFullModelContext(entries, runReader);
-
-  runReader = memoizeRunReader(runReader);
-  const suffix = active.nodes.filter((node) => node.entry.seq > checkpoint.payload.sourceThroughSeq);
-  const materialized = materializeNodes(suffix, runReader);
-  // Uncertain side effects are execution state, not prompt history. Keep the
-  // Phase 1 guard semantics even when their originating tool round is inside
-  // the compacted prefix.
-  const allActiveMaterialized = materializeNodes(active.nodes, runReader);
-  const recovery = materializeRecoveryState(entries, active.nodes, runReader, allActiveMaterialized.uncertainEffects);
-  const delivery = failedDeliveryNotesWithSources(entries, active.nodes, checkpoint.payload.sourceThroughSeq);
-  const interruption = interruptionNotesWithSources(entries, active.nodes, checkpoint.payload.sourceThroughSeq);
-  const suffixWithInternalNotes = insertInternalNotes(materialized, [...delivery.notes, ...interruption.notes]);
+  const view = buildCompactionSourceView(entries, runReader, channelRun, channelReplayRunId);
   return {
-    messages: [
-      checkpoint.payload.replacement,
-      ...suffixWithInternalNotes.messages,
-    ],
-    uncertainEffects: recovery.uncertainEffects,
-    ...(recovery.todoItems ? { todoItems: recovery.todoItems } : {}),
-    ...(recovery.todoItemsSource ? { todoItemsSource: recovery.todoItemsSource } : {}),
-    throughSeq: active.throughSeq,
+    messages: view.messages,
+    uncertainEffects: view.uncertainEffects,
+    ...(view.todoItems ? { todoItems: view.todoItems } : {}),
+    ...(view.todoItemsSource ? { todoItemsSource: view.todoItemsSource } : {}),
+    throughSeq: view.throughSeq,
+    ...(channelRun ? { [channelScopedTranscript]: true as const } : {}),
   };
 }

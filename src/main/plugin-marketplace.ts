@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import { once } from "node:events";
+import { Readable } from "node:stream";
 import path from "node:path";
 import { isValidPluginVersion } from "../shared/version";
 import type {
@@ -24,6 +25,7 @@ export const MARKET_REGISTRY_URLS = [
 export const MARKET_ZIP_URL_PREFIXES: readonly string[] = [
   "https://github.com/Playa-0v0/Cyrene-Plugins/releases/download/",
   "https://gitee.com/playa0/cyrene-plugins/raw/main/zips/",
+  "https://github.com/Playa-Cyrene/Cyrene-Plugins/releases/download/",
 ];
 
 export const MARKET_REGISTRY_TIMEOUT_MS = 10_000;
@@ -41,8 +43,71 @@ interface MarketSnapshotEntry {
 
 export type MarketplaceFetch = (
   input: string,
-  init?: { signal?: AbortSignal },
+  init?: { signal?: AbortSignal; redirect?: "manual" },
 ) => Promise<Response>;
+
+const ZIP_REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+const MAX_ZIP_REDIRECTS = 5;
+
+function parseZipUrl(value: string, base?: URL): URL | null {
+  try {
+    const url = new URL(value, base);
+    if (url.protocol !== "https:" || url.username || url.password || url.hash
+      || /%(?:2f|5c|25|0[0-9a-f]|1[0-9a-f]|7f)/i.test(url.pathname)) return null;
+    return url;
+  } catch {
+    return null;
+  }
+}
+
+function isOfficialZipUrl(url: URL, prefixes: readonly URL[]): boolean {
+  return prefixes.some((prefix) => url.origin === prefix.origin
+    && url.pathname.startsWith(prefix.pathname) && url.pathname.length > prefix.pathname.length);
+}
+
+function isAllowedZipRedirect(from: URL, to: URL, prefixes: readonly URL[]): boolean {
+  if (from.origin === to.origin && isOfficialZipUrl(to, prefixes)) return true;
+  // 1356124154 is the GitHub repository ID of Playa-Cyrene/Cyrene-Plugins (formerly Playa-0v0/Cyrene-Plugins).
+  if (from.origin === "https://github.com" && to.origin === "https://release-assets.githubusercontent.com") {
+    return /^\/github-production-release-asset\/1356124154\/[a-f0-9-]+$/i.test(to.pathname);
+  }
+  return from.origin === "https://gitee.com" && to.origin === "https://raw.giteeusercontent.com"
+    && to.pathname === from.pathname;
+}
+
+/** Electron net.fetch cancels manual redirects without exposing their target. */
+function fetchZipHop(url: string, signal: AbortSignal): Promise<Response> {
+  const { net } = require("electron") as typeof import("electron");
+  signal.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const request = net.request({ url, redirect: "manual" });
+    const abort = () => {
+      request.abort();
+      reject(signal.reason);
+    };
+    signal.addEventListener("abort", abort, { once: true });
+    request.on("close", () => signal.removeEventListener("abort", abort));
+    request.on("error", reject);
+    request.on("redirect", (status, _method, target) => {
+      // Returning without followRedirect cancels this hop before the next request.
+      resolve(new Response(null, { status, headers: { location: target } }));
+    });
+    request.on("response", (response) => {
+      try {
+        const stream = response as unknown as Readable;
+        const body = response.statusCode >= 200 && response.statusCode < 300
+          && response.statusCode !== 204 && response.statusCode !== 205
+          ? Readable.toWeb(stream) as ReadableStream<Uint8Array> : null;
+        if (!body) stream.resume();
+        resolve(new Response(body, { status: response.statusCode }));
+      } catch (error) {
+        request.abort();
+        reject(error);
+      }
+    });
+    request.end();
+  });
+}
 
 export interface PluginMarketplaceDeps {
   registryUrls: readonly string[];
@@ -114,14 +179,15 @@ function validateDetails(raw: unknown): MarketPluginDetails | null {
 }
 
 /** 单条目校验：不合法返回 null（调用方丢弃该条并记日志，不阻断整个列表） */
-function validateEntry(raw: unknown, deps: PluginMarketplaceDeps): (MarketPluginEntry & { zip: string; sha256: string }) | null {
+function validateEntry(raw: unknown, zipPrefixes: readonly URL[]): (MarketPluginEntry & { zip: string; sha256: string }) | null {
   if (typeof raw !== "object" || raw === null) return null;
   const entry = raw as Record<string, unknown>;
   const { id, name, version, description, author, zip, sha256, downloads, homepage } = entry;
   if (typeof id !== "string" || !ID_PATTERN.test(id)) return null;
   if (!isNonEmptyString(name) || !isNonEmptyString(description) || !isNonEmptyString(author)) return null;
   if (typeof version !== "string" || !isValidPluginVersion(version)) return null;
-  if (typeof zip !== "string" || !deps.zipUrlPrefixes.some((prefix) => zip.startsWith(prefix))) return null;
+  const zipUrl = typeof zip === "string" ? parseZipUrl(zip) : null;
+  if (!zipUrl || !isOfficialZipUrl(zipUrl, zipPrefixes)) return null;
   if (typeof sha256 !== "string" || !SHA256_PATTERN.test(sha256)) return null;
   const normalizedDownloads = downloads === undefined ? 0 : downloads;
   if (typeof normalizedDownloads !== "number" || !Number.isInteger(normalizedDownloads) || normalizedDownloads < 0) return null;
@@ -134,12 +200,12 @@ function validateEntry(raw: unknown, deps: PluginMarketplaceDeps): (MarketPlugin
     author,
     downloads: normalizedDownloads,
     homepage: typeof homepage === "string" ? homepage : undefined,
-    zip,
+    zip: zipUrl.href,
     sha256,
   };
 }
 
-function validateRegistry(data: unknown, deps: PluginMarketplaceDeps): {
+function validateRegistry(data: unknown, zipPrefixes: readonly URL[]): {
   plugins: MarketPluginEntry[];
   snapshot: Map<string, MarketSnapshotEntry>;
 } {
@@ -157,7 +223,7 @@ function validateRegistry(data: unknown, deps: PluginMarketplaceDeps): {
   const snapshot = new Map<string, MarketSnapshotEntry>();
   const seen = new Set<string>();
   for (const raw of record.plugins) {
-    const entry = validateEntry(raw, deps);
+    const entry = validateEntry(raw, zipPrefixes);
     if (!entry) {
       console.warn("[plugins] 插件市场条目校验失败，已跳过:", JSON.stringify(raw));
       continue;
@@ -190,6 +256,7 @@ export function createPluginMarketplaceService(deps: PluginMarketplaceDeps) {
       const { net } = require("electron") as typeof import("electron");
       return net.fetch(input, init);
     });
+  const zipPrefixes = deps.zipUrlPrefixes.map((prefix) => new URL(prefix));
   const registryTimeoutMs = deps.registryTimeoutMs ?? MARKET_REGISTRY_TIMEOUT_MS;
   const zipTimeoutMs = deps.zipTimeoutMs ?? MARKET_ZIP_DOWNLOAD_TIMEOUT_MS;
   const zipMaxBytes = deps.zipMaxBytes ?? MARKET_ZIP_MAX_BYTES;
@@ -239,7 +306,7 @@ export function createPluginMarketplaceService(deps: PluginMarketplaceDeps) {
         continue;
       }
       try {
-        const parsed = validateRegistry(probe.data, deps);
+        const parsed = validateRegistry(probe.data, zipPrefixes);
         // 第一个通过校验的源作为数据源，其余可用源仅作展示（standby）
         const used = chosen === null;
         sources.push({ url: probe.url, ok: true, used });
@@ -305,6 +372,26 @@ export function createPluginMarketplaceService(deps: PluginMarketplaceDeps) {
     return hash.digest("hex");
   }
 
+  async function fetchOfficialZip(input: string, signal: AbortSignal): Promise<Response> {
+    const initialUrl = parseZipUrl(input);
+    if (!initialUrl || !isOfficialZipUrl(initialUrl, zipPrefixes)) throw new Error("插件包来源无效");
+    let url = initialUrl;
+    for (let hops = 0; ; hops += 1) {
+      signal.throwIfAborted();
+      const response: Response = deps.fetchImpl
+        ? await deps.fetchImpl(url.href, { signal, redirect: "manual" })
+        : await fetchZipHop(url.href, signal);
+      if (!ZIP_REDIRECT_STATUSES.has(response.status)) return response;
+      void response.body?.cancel().catch(() => {});
+      const location = response.headers.get("location");
+      const next = location ? parseZipUrl(location, url) : null;
+      if (hops >= MAX_ZIP_REDIRECTS || !next || !isAllowedZipRedirect(url, next, zipPrefixes)) {
+        throw new Error("插件包下载重定向目标不受信任或次数超限");
+      }
+      url = next;
+    }
+  }
+
   /** 流式下载到临时文件：逐块累计字节数，超上限立即中止，不依赖 Content-Length 也不整包进内存 */
   async function downloadZip(url: string, tempPath: string): Promise<void> {
     const controller = new AbortController();
@@ -316,7 +403,7 @@ export function createPluginMarketplaceService(deps: PluginMarketplaceDeps) {
       });
     });
     try {
-      const response = await Promise.race([fetchImpl(url, { signal: controller.signal }), timeoutPromise]);
+      const response = await Promise.race([fetchOfficialZip(url, controller.signal), timeoutPromise]);
       if (!response.ok) throw new Error(`下载插件包失败（HTTP ${response.status}）`);
       if (!response.body) throw new Error("下载插件包失败（响应无内容）");
       const reader = response.body.getReader();

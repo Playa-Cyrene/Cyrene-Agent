@@ -334,7 +334,7 @@ async function execute(method: string, args: any[]): Promise<unknown> {
     const name = method.slice(11), id = args[0];
     await importTranscript(id);
     if (name === 'read')
-      return database.snapshot(id);
+      return database.snapshot(id, args[1]);
     if (name === 'shellEvents')
       return database.entries(id, true, args[1]
         ? ['background_event_pending', 'background_event', 'background_event_retired', 'user', 'assistant', 'turn_rewind', 'turn_tombstone']
@@ -350,8 +350,8 @@ async function execute(method: string, args: any[]): Promise<unknown> {
         const input = args[1] as Extract<TranscriptAppendInput, {
           kind: 'compaction_checkpoint';
         }>;
-        const entries = database.entries(id);
         const p = input.payload;
+        const entries = database.entries(id, p.channelRun === true);
         const prefix = entries.filter(e => e.seq <= p.sourceThroughSeq);
         if (createHash('sha256').update(JSON.stringify(prefix)).digest('hex') !== p.sourceDigest || entries.some(e => e.seq > p.baseThroughSeq && ['compaction_checkpoint', 'turn_rewind', 'turn_tombstone', 'background_event_retired'].includes(e.kind)))
           throw new ConversationStoreError('TRANSCRIPT_COMPACTION_REQUIRED');
@@ -366,7 +366,8 @@ async function execute(method: string, args: any[]): Promise<unknown> {
         if (boundary <= Number(row.archived_through))
           return;
         const entries = database.entries(id);
-        const checkpoint = entries.filter(e => e.kind === 'compaction_checkpoint' && e.seq > boundary && e.payload.sourceThroughSeq >= boundary).at(-1);
+        const checkpoint = entries.filter(e => e.kind === 'compaction_checkpoint' && !e.payload.channelRun
+          && e.seq > boundary && e.payload.sourceThroughSeq >= boundary).at(-1);
         if (!checkpoint || checkpoint.kind !== 'compaction_checkpoint')
           throw new Error('TRANSCRIPT_ARCHIVE_BOUNDARY_NOT_COMMITTED');
         if (entries.some(e => e.kind === 'background_event_retired' && e.seq > checkpoint.payload.baseThroughSeq))

@@ -917,6 +917,26 @@ describe("chats IPC mode filtering", () => {
       .resolves.toEqual({ ok: false, error: "NOT_FOUND" });
   });
 
+  it.runIf(process.platform === "win32")("rejects network and device paths before touching the filesystem", async () => {
+    const { registerChatsIpc } = await import("./chats-ipc");
+    await registerChatsIpc();
+    const handler = mocks.handlers.get(IPC.CHATS_SHELL_FILE)!;
+    const realpath = vi.spyOn(fs.promises, "realpath").mockResolvedValue("C:\\local.txt");
+    try {
+      for (const relPath of ["//host/share/file.txt", "/\\host/share/file.txt", "//?/UNC/host/share/file.txt", "//./pipe/example", "/??/C:/test"]) {
+        for (const action of ["open", "reveal"]) {
+          expect(await handler({}, { sessionId: "chat", relPath, action }))
+            .toEqual({ ok: false, error: "invalid-payload" });
+        }
+      }
+      expect(realpath).not.toHaveBeenCalled();
+      expect(mocks.openPath).not.toHaveBeenCalled();
+      expect(mocks.showItemInFolder).not.toHaveBeenCalled();
+    } finally {
+      realpath.mockRestore();
+    }
+  });
+
   // ── 会话级模型状态（Invariant B/D 的 IPC 层）──────────────────
   // 预置带 A/B 两个档案的 model-settings.json，让真实 loadModelSettings 读到。
   function writeModelSettings(profiles: unknown[], defaultId: string) {

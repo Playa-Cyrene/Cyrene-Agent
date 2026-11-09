@@ -125,17 +125,13 @@ export function findSafeCutPoint(
  */
 export function isToolPairSafeBoundary(messages: ChatMessage[], cutIndex: number): boolean {
   const toolCallIndexes = new Map<string, number>();
-  for (let index = 0; index < messages.length; index++) {
-    const entry = messages[index];
-    if (entry?.role !== "assistant") continue;
-    for (const call of entry.toolCalls ?? []) toolCallIndexes.set(call.id, index);
-  }
-
-  for (let resultIndex = 0; resultIndex < messages.length; resultIndex++) {
-    const entry = messages[resultIndex];
-    if (entry?.role !== "tool" || !entry.toolCallId) continue;
-    const callIndex = toolCallIndexes.get(entry.toolCallId);
-    if (callIndex !== undefined && callIndex < cutIndex && resultIndex >= cutIndex) return false;
+  for (const [index, entry] of messages.entries()) {
+    if (entry.role === "assistant") {
+      for (const call of entry.toolCalls ?? []) toolCallIndexes.set(call.id, index);
+    } else if (entry.role === "tool" && entry.toolCallId && index >= cutIndex) {
+      const callIndex = toolCallIndexes.get(entry.toolCallId);
+      if (callIndex !== undefined && callIndex < cutIndex) return false;
+    }
   }
   return true;
 }

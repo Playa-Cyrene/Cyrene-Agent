@@ -76,6 +76,51 @@ async function buildAgentRunOptions(
 }
 
 describe("build-options", () => {
+  it("keeps browser history and tools on desktop while a bound channel gets shared text and ordinary tools", async () => {
+    const deps = createBuildDeps()
+    deps.toolRegistry.getEnabled = () => [{ id: "browser_get_page_elements" }, { id: "read_file" }]
+    deps.buildToolSystemPrompt = (_mode, tools) => tools.map((tool) => tool.id).join(",")
+    const input = {
+      sessionId: "same-desktop-conversation",
+      mode: "work",
+      messages: [
+        { role: "user", content: "检查页面" },
+        { role: "assistant", content: "共享答复", toolCalls: [
+          { id: "browser", name: "browser_get_page_elements", arguments: "{}" },
+          { id: "file", name: "read_file", arguments: "{}" },
+          { id: "browser-copy", name: "read_tool_result", arguments: "{}" },
+          { id: "file-copy", name: "read_tool_result", arguments: "{}" },
+        ] },
+        { role: "tool", toolCallId: "browser", name: "browser_get_page_elements", content: "桌面网页原始结果" },
+        { role: "tool", toolCallId: "file", name: "read_file", content: JSON.stringify({ output: "普通工具结果", fullOutputRef: "tool-result://file" }) },
+        { role: "tool", toolCallId: "browser-copy", name: "read_tool_result", content: JSON.stringify({
+          outcome: "success", output: JSON.stringify({ toolName: "browser_get_page_elements", content: "桌面分页结果" }),
+        }) },
+        { role: "tool", toolCallId: "file-copy", name: "read_tool_result", content: JSON.stringify({
+          outcome: "success", output: JSON.stringify({ resultRef: "tool-result://file", content: "旧普通分页结果" }),
+        }) },
+        { role: "user", content: "继续" },
+      ],
+    }
+    const { options: desktop } = await buildAgentRunOptions(input, deps)
+    expect(desktop.toolSystemContent).toContain("browser_get_page_elements")
+    expect(JSON.stringify(desktop.messages)).toContain("桌面网页原始结果")
+
+    const { options: channel } = await buildAgentRunOptions({ ...input, channel: "qq" }, deps)
+    expect(channel.channelRun).toBe(true)
+    expect(channel.toolSystemContent).toContain("read_file")
+    expect(channel.toolSystemContent).not.toContain("browser_get_page_elements")
+    expect(channel.capabilities?.toolIds).toEqual(new Set(["read_file"]))
+    const history = JSON.stringify(channel.messages)
+    expect(history).not.toContain("browser_get_page_elements")
+    expect(history).not.toContain("桌面网页原始结果")
+    expect(history).not.toContain("桌面分页结果")
+    expect(history).not.toContain("browser-copy")
+    expect(history).toContain("共享答复")
+    expect(history).toContain("普通工具结果")
+    expect(history).toContain("旧普通分页结果")
+  })
+
   it("keeps background facts in model context without treating them as the user's query", async () => {
     const result = await buildAgentRunOptions({ sessionId: "background", mode: "chat", executionMode: "chat",
       messages: [{ role: "user", content: "build the project" },
@@ -1324,7 +1369,7 @@ describe("权威轨迹上下文源（CTA Phase 1）", () => {
       messages: [{ role: "user" as const, content: "stale renderer" }],
     } as never, deps)
 
-    expect(deps.buildModelContext).toHaveBeenCalledWith("c1", expect.any(Number))
+    expect(deps.buildModelContext).toHaveBeenCalledWith("c1", expect.any(Number), false)
     expect(built.options.cleanMessages).toContainEqual(expect.objectContaining({ content: "authoritative" }))
     expect(JSON.stringify(built.options.messages)).not.toContain("stale renderer")
     expect(built.latestUserText).toBe("authoritative")
@@ -1383,7 +1428,7 @@ describe("权威轨迹上下文源（CTA Phase 1）", () => {
     expect(built.options.cleanMessages).toContainEqual(expect.objectContaining({ content: expect.stringContaining("<cyrene_compaction_checkpoint>") }))
   })
 
-  it("传入 modelContext 超预算时同样执行自动压缩并重读 journal", async () => {
+  it.each(["desktop", "qq"] as const)("传入 modelContext 超预算时按运行来源压缩并重读 journal (%s)", async (channel) => {
     const deps = createBuildDeps()
     deps.loadModelSettings = () => ({
       provider: "test", baseUrl: "https://example.test", model: "m", apiKey: "k",
@@ -1397,6 +1442,7 @@ describe("权威轨迹上下文源（CTA Phase 1）", () => {
 
     const built = await buildAgentRunOptions({
       sessionId: "prebuilt-compact",
+      channel,
       currentUser: { turnId: "turn-1", text: "继续", visibleContent: "继续" },
       // 模拟桌面/渠道入口预传入的超长上下文
       modelContext: {
@@ -1407,10 +1453,17 @@ describe("权威轨迹上下文源（CTA Phase 1）", () => {
 
     expect(deps.compactTranscript).toHaveBeenCalledWith(expect.objectContaining({
       conversationId: "prebuilt-compact", trigger: "automatic", retainTokens: expect.any(Number),
+      ...(channel === "qq" ? { channelRun: true } : {}),
     }))
     // 压缩后只发生一次重读（初始上下文来自传入值）
     expect(deps.buildModelContext).toHaveBeenCalledTimes(1)
+    expect(deps.buildModelContext).toHaveBeenLastCalledWith("prebuilt-compact", expect.any(Number), channel === "qq")
     expect(built.options.cleanMessages).toContainEqual(expect.objectContaining({ content: expect.stringContaining("<cyrene_compaction_checkpoint>") }))
+    await built.options.compactTranscript!({
+      retainTokens: 100, transientMessages: [], channelReplayRunId: "active-channel-run",
+    })
+    expect(deps.buildModelContext).toHaveBeenLastCalledWith("prebuilt-compact", 100, channel === "qq",
+      channel === "qq" ? "active-channel-run" : undefined)
   })
 
   it("background preflight compaction receives the run cancellation signal", async () => {

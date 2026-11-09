@@ -137,6 +137,8 @@ export interface CyreneRunOptions {
   capabilities?: RunCapabilities;
   /** Harness 是否公布需要桌面交互卡片的内置工具；默认开启。 */
   harnessInteractiveTools?: boolean;
+  /** Run initiated by an external channel, even when bound to a desktop conversation. */
+  channelRun?: true;
   /** 工具权限结算方式；手机端全部开启使用 allow_all 跳过逐项审批。 */
   permissionMode?: "normal" | "allow_all";
   /** 无前端运行控制器的续轮不能创建人工审批卡片。 */

@@ -120,10 +120,11 @@ describe("workspace preview focus after dialog cleanup", () => {
     expect(closing.afterClose).toBeTypeOf("function");
     const oldClose = vi.fn(closing.afterClose!);
     const replacement: WorkspacePreview = { kind: "svg", svg: '<svg xmlns="http://www.w3.org/2000/svg"><text>replacement</text></svg>' };
+    const currentImage = () => decodeURIComponent(host.querySelector<HTMLImageElement>(".cy-workspace-preview__svg img")?.src ?? "");
     await render(replacement);
     await advanceCloseCycle();
     expect(document.querySelector('[role="dialog"]')).toBeNull();
-    expect(host.querySelector(".cy-workspace-preview__svg")?.textContent).toBe("replacement");
+    expect(currentImage()).toContain("<text>replacement</text>");
     const trigger = host.querySelector<HTMLElement>(".cy-workspace-preview__zoom")!;
     const focus = vi.spyOn(trigger, "focus");
     const canary = document.createElement("button"); document.body.append(canary);
@@ -133,7 +134,7 @@ describe("workspace preview focus after dialog cleanup", () => {
       await advanceCloseCycle();
       expect(oldClose).toHaveBeenCalledTimes(1);
       expect(document.querySelector('[role="dialog"]')).toBeNull();
-      expect(host.querySelector(".cy-workspace-preview__svg")?.textContent).toBe("replacement");
+      expect(currentImage()).toContain("<text>replacement</text>");
       expect(document.activeElement).toBe(canary);
       expect(focus).not.toHaveBeenCalled();
     } finally { canary.remove(); }

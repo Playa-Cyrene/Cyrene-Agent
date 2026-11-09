@@ -170,7 +170,7 @@ export class FileToolOutputStore implements ToolOutputStore {
   async read(input: ReadToolOutputInput): Promise<ReadToolOutputResult | null> {
     validateRange(input.offset, input.length);
     const recordId = parseResultRef(input.resultRef);
-    const record = await this.readAndValidate(this.recordDir(input.conversationId, recordId), input.conversationId, recordId);
+    const record = await this.readAndValidate(this.recordDir(input.conversationId, recordId), input.conversationId, recordId, input.canReadTool);
     if (!record) return null;
     const points = Array.from(record.output);
     return {
@@ -178,6 +178,7 @@ export class FileToolOutputStore implements ToolOutputStore {
       offset: input.offset,
       totalCodePoints: points.length,
       resultRef: input.resultRef,
+      toolName: record.meta.toolName,
     };
   }
 
@@ -186,7 +187,7 @@ export class FileToolOutputStore implements ToolOutputStore {
       throw new ToolOutputInvalidInputError("query 必须是 1-8192 个 Unicode 码点");
     }
     const recordId = parseResultRef(input.resultRef);
-    const record = await this.readAndValidate(this.recordDir(input.conversationId, recordId), input.conversationId, recordId);
+    const record = await this.readAndValidate(this.recordDir(input.conversationId, recordId), input.conversationId, recordId, input.canReadTool);
     if (!record) return null;
 
     const output = Array.from(record.output);
@@ -198,7 +199,7 @@ export class FileToolOutputStore implements ToolOutputStore {
       const end = Math.min(output.length, index + query.length + FIND_CONTEXT_CODE_POINTS);
       matches.push({ offset: index, preview: output.slice(start, end).join("") });
     }
-    return { resultRef: input.resultRef, totalCodePoints: output.length, matches };
+    return { resultRef: input.resultRef, toolName: record.meta.toolName, totalCodePoints: output.length, matches };
   }
 
   async deleteConversation(conversationId: string): Promise<void> {
@@ -250,10 +251,12 @@ export class FileToolOutputStore implements ToolOutputStore {
     recordDir: string,
     conversationId: string,
     recordId: string,
+    canReadTool?: (toolName: string) => boolean,
   ): Promise<{ meta: ToolOutputRecordMeta; output: string } | null> {
     const meta = await this.readMetaIfPresent(recordDir);
     if (!meta) return null;
     if (meta.recordId !== recordId || meta.conversationId !== conversationId) return null;
+    if (canReadTool && !canReadTool(meta.toolName)) return null;
     let output: string;
     try {
       output = await readFile(path.join(recordDir, "output.txt"), "utf8");

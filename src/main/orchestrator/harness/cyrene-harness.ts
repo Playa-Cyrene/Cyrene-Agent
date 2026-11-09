@@ -565,7 +565,10 @@ async function runCompaction(run: HarnessRun, roundSystemPrompt: string, budget:
     && message.role === "user"
     && message.internal?.runId === (input.runId ?? "harness-run"));
   const compactedMessages = input.compactTranscript && input.transcriptSink
-    ? [...await input.compactTranscript({ retainTokens, transientMessages, signal: input.signal }), ...transientMessages]
+    ? [...await input.compactTranscript({
+      retainTokens, transientMessages, signal: input.signal,
+      ...(input.toolContext?.channelRun && input.runId ? { channelReplayRunId: input.runId } : {}),
+    }), ...transientMessages]
     : await compressForAgentLoop({
       messages: run.messages,
       messageOrigin: modelMessageOrigin(getAdapterForConfig(input.vendorConfig), input.vendorConfig),

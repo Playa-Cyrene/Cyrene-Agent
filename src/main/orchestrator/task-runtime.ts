@@ -77,6 +77,7 @@ export interface TaskRuntimeParentContext {
   systemPrompt: string;
   vendorConfig: VendorConfig;
   tools: ToolDefinition[];
+  channelRun?: true;
   capabilities?: RunCapabilities;
   resolvedWorkspaceRoot?: string;
   signal?: AbortSignal;
@@ -266,6 +267,7 @@ export function createTaskExecutor(input: {
       allowedSkillIds: new Set(taskSkills.map((skill) => skill.id)),
       permissionMode: input.parent.permissionMode,
       allowUserInteraction: false,
+      channelRun: input.parent.channelRun,
       readOnly: accessMode === "read_only",
     };
 
