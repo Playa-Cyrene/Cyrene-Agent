@@ -88,6 +88,31 @@ describe("ConversationTranscriptCompactor", () => {
     expect(result.checkpointEntryId).toBeTruthy();
   });
 
+  it.each([true, undefined] as const)("isolates desktop browser observations in the channel summarizer (%s)", async (channelRun) => {
+    const fixture = createFixture();
+    await seed(fixture);
+    const sink = fixture.journal.createRunSink({ conversationId: "c1", runId: "browser-run" });
+    const assistantEntryId = await sink.appendAssistant({
+      message: {
+        role: "assistant", content: "Shared browser reply",
+        toolCalls: [{ id: "browser-call", name: "browser_get_page_elements", arguments: "{}" }],
+      },
+    });
+    await sink.appendToolResult({
+      assistantEntryId,
+      message: { role: "tool", toolCallId: "browser-call", name: "browser_get_page_elements", content: "private browser content" },
+      outcome: "success",
+    });
+    await fixture.journal.appendUser("c1", { turnId: "latest", text: "继续" });
+    const summarize = vi.fn(async (_messages: ChatMessage[]) => "Summary");
+    const compactor = new ConversationTranscriptCompactor({ store: fixture.store, summarize });
+    await compactor.compact({ conversationId: "c1", trigger: "automatic", retainTokens: 1, channelRun });
+    const history = JSON.stringify(summarize.mock.calls[0][0]);
+    expect(history).toContain("Shared browser reply");
+    expect(history).toContain("文件内容");
+    expect(history.includes("private browser content")).toBe(!channelRun);
+  });
+
   it.each(["during-summary", "before-checkpoint", "before-archive", "after-archive"])("retires a completion %s without retaining its summary or losing unrelated history", async phase => {
     const fixture = createFixture();
     await seed(fixture);

@@ -76,6 +76,51 @@ async function buildAgentRunOptions(
 }
 
 describe("build-options", () => {
+  it("keeps browser history and tools on desktop while a bound channel gets shared text and ordinary tools", async () => {
+    const deps = createBuildDeps()
+    deps.toolRegistry.getEnabled = () => [{ id: "browser_get_page_elements" }, { id: "read_file" }]
+    deps.buildToolSystemPrompt = (_mode, tools) => tools.map((tool) => tool.id).join(",")
+    const input = {
+      sessionId: "same-desktop-conversation",
+      mode: "work",
+      messages: [
+        { role: "user", content: "检查页面" },
+        { role: "assistant", content: "共享答复", toolCalls: [
+          { id: "browser", name: "browser_get_page_elements", arguments: "{}" },
+          { id: "file", name: "read_file", arguments: "{}" },
+          { id: "browser-copy", name: "read_tool_result", arguments: "{}" },
+          { id: "file-copy", name: "read_tool_result", arguments: "{}" },
+        ] },
+        { role: "tool", toolCallId: "browser", name: "browser_get_page_elements", content: "桌面网页原始结果" },
+        { role: "tool", toolCallId: "file", name: "read_file", content: JSON.stringify({ output: "普通工具结果", fullOutputRef: "tool-result://file" }) },
+        { role: "tool", toolCallId: "browser-copy", name: "read_tool_result", content: JSON.stringify({
+          outcome: "success", output: JSON.stringify({ toolName: "browser_get_page_elements", content: "桌面分页结果" }),
+        }) },
+        { role: "tool", toolCallId: "file-copy", name: "read_tool_result", content: JSON.stringify({
+          outcome: "success", output: JSON.stringify({ resultRef: "tool-result://file", content: "旧普通分页结果" }),
+        }) },
+        { role: "user", content: "继续" },
+      ],
+    }
+    const { options: desktop } = await buildAgentRunOptions(input, deps)
+    expect(desktop.toolSystemContent).toContain("browser_get_page_elements")
+    expect(JSON.stringify(desktop.messages)).toContain("桌面网页原始结果")
+
+    const { options: channel } = await buildAgentRunOptions({ ...input, channel: "qq" }, deps)
+    expect(channel.channelRun).toBe(true)
+    expect(channel.toolSystemContent).toContain("read_file")
+    expect(channel.toolSystemContent).not.toContain("browser_get_page_elements")
+    expect(channel.capabilities?.toolIds).toEqual(new Set(["read_file"]))
+    const history = JSON.stringify(channel.messages)
+    expect(history).not.toContain("browser_get_page_elements")
+    expect(history).not.toContain("桌面网页原始结果")
+    expect(history).not.toContain("桌面分页结果")
+    expect(history).not.toContain("browser-copy")
+    expect(history).toContain("共享答复")
+    expect(history).toContain("普通工具结果")
+    expect(history).toContain("旧普通分页结果")
+  })
+
   it("keeps background facts in model context without treating them as the user's query", async () => {
     const result = await buildAgentRunOptions({ sessionId: "background", mode: "chat", executionMode: "chat",
       messages: [{ role: "user", content: "build the project" },

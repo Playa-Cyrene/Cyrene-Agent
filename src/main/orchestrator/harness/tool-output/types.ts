@@ -25,6 +25,7 @@ export interface PutToolOutputInput {
 export interface ReadToolOutputInput {
   conversationId: string;
   resultRef: string;
+  canReadTool?: (toolName: string) => boolean;
   offset: number;
   length: number;
 }
@@ -34,11 +35,13 @@ export interface ReadToolOutputResult {
   offset: number;
   totalCodePoints: number;
   resultRef: string;
+  toolName: string;
 }
 
 export interface FindToolOutputInput {
   conversationId: string;
   resultRef: string;
+  canReadTool?: (toolName: string) => boolean;
   query: string;
 }
 
@@ -49,6 +52,7 @@ export interface FindToolOutputMatch {
 
 export interface FindToolOutputResult {
   resultRef: string;
+  toolName: string;
   totalCodePoints: number;
   matches: FindToolOutputMatch[];
 }

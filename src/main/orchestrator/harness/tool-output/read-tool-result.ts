@@ -9,6 +9,7 @@ import {
   toolOutputResultRef,
 } from "./file-tool-output-store";
 import type { ToolOutputStore } from "./tool-output-store";
+import { isDesktopBrowserTool } from "../../../browser/browser-tool-policy";
 
 export const READ_TOOL_RESULT_TOOL_ID = "read_tool_result";
 
@@ -46,11 +47,15 @@ export async function executeReadToolResult(
   if ("error" in resultRef) return resultRef.error;
 
   const query = typeof args.query === "string" ? args.query : undefined;
+  const lookup = {
+    conversationId: toolContext!.conversationId!,
+    resultRef: resultRef.value,
+    ...(toolContext?.channelRun ? { canReadTool: (name: string) => !isDesktopBrowserTool(name) } : {}),
+  };
   try {
     if (query !== undefined) {
       const found = await store.find({
-        conversationId: toolContext!.conversationId!,
-        resultRef: resultRef.value,
+        ...lookup,
         query,
       });
       if (!found) return notFound();
@@ -70,8 +75,7 @@ export async function executeReadToolResult(
       return invalidArguments("offset 和 length 必须是数字");
     }
     const read = await store.read({
-      conversationId: toolContext!.conversationId!,
-      resultRef: resultRef.value,
+      ...lookup,
       offset,
       length,
     });

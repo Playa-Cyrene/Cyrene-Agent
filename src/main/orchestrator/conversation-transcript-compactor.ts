@@ -13,6 +13,7 @@ import { callSummarizeModel } from "./context-manager";
 import { getAdapterForConfig } from "./vendors";
 import { buildCompactionContextUsageSnapshot } from "./context-usage";
 import type { ContextUsageSnapshot } from "../../shared/context-usage";
+import { withoutDesktopBrowserHistory } from "../browser/browser-tool-policy";
 import {
   compressForAgentLoop,
   findSafeCutPointForRetainedTokens,
@@ -25,6 +26,7 @@ export interface ConversationCompactionRequest {
   /** 调用方已解析的会话当前模型；只在本次摘要请求中使用，不写入会话记录。 */
   modelSettings?: TranscriptCompactionModelSettings;
   transientMessages?: CanonicalChatMessage[];
+  channelRun?: true;
   signal?: AbortSignal;
 }
 
@@ -159,7 +161,11 @@ export class ConversationTranscriptCompactor {
         retainTokens,
         summarize: async (history) => {
           try {
-            return await this.summarize(history, request.modelSettings, request.signal);
+            return await this.summarize(
+              request.channelRun ? withoutDesktopBrowserHistory(history) : history,
+              request.modelSettings,
+              request.signal,
+            );
           } catch (error) {
             summaryError = error;
             throw error;

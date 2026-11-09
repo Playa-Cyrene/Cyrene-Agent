@@ -61,7 +61,9 @@ function readStringLiteralEnd(source: string, start: number): number {
 function getPlaywrightInjectedSource(): string {
   if (injectedSourceCache) return injectedSourceCache;
 
-  const packageJsonPath = require.resolve("playwright-core/package.json");
+  // A different transitive Playwright can be hoisted at the app root.
+  const playwrightDirectory = dirname(require.resolve("playwright/package.json"));
+  const packageJsonPath = require.resolve("playwright-core/package.json", { paths: [playwrightDirectory] });
   const bundlePath = join(dirname(packageJsonPath), "lib", "coreBundle.js");
   const bundle = readFileSync(bundlePath, "utf8");
   GENERATED_SOURCE_ASSIGNMENT.lastIndex = 0;
@@ -119,7 +121,57 @@ function buildInitializationScript(): string {
       if (typeof InjectedScript !== "function") {
         throw new Error("Playwright InjectedScript factory returned no constructor");
       }
-      globalThis.${PLAYWRIGHT_GLOBAL} = new InjectedScript(globalThis, ${options});
+      const injected = new InjectedScript(globalThis, ${options});
+      const editableSelector = "textarea,[role='textbox'],[role='searchbox'],[contenteditable]:not([contenteditable='false'])";
+      const isEditableText = (node) => {
+        let element = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement ?? node.getRootNode().host;
+        while (element) {
+          if (element.isContentEditable || element.closest(editableSelector)) return true;
+          element = element.getRootNode().host;
+        }
+        return false;
+      };
+      const masksInputValue = (input) => !["button", "submit", "reset"].includes(input.type);
+      globalThis.__cyreneBrowserPublicText = (element) => {
+        if (isEditableText(element) || element.querySelector(editableSelector)) return "";
+        return element.innerText || element.textContent || "";
+      };
+
+      // Playwright reads live values both as node text and when computing accessible
+      // names. Mask the getters for the synchronous capture in this isolated world.
+      // The real controls, their values in the page world, and selector refs stay intact.
+      const ariaSnapshot = injected.ariaSnapshot.bind(injected);
+      injected.ariaSnapshot = (node, snapshotOptions) => {
+        const restore = [];
+        const mask = (prototype, key, shouldMask) => {
+          const descriptor = Object.getOwnPropertyDescriptor(prototype, key);
+          if (!descriptor?.get) throw new Error("Unable to mask browser field values");
+          Object.defineProperty(prototype, key, {
+            ...descriptor,
+            get() { return shouldMask(this) ? "" : descriptor.get.call(this); },
+          });
+          restore.push(() => Object.defineProperty(prototype, key, descriptor));
+        };
+        try {
+          mask(HTMLInputElement.prototype, "value", masksInputValue);
+          mask(HTMLTextAreaElement.prototype, "value", () => true);
+          mask(Node.prototype, "nodeValue", (node) => node.nodeType === Node.TEXT_NODE && isEditableText(node));
+          mask(Node.prototype, "textContent", isEditableText);
+          const getAttribute = Element.prototype.getAttribute;
+          Element.prototype.getAttribute = function (name) {
+            // Embedded range controls use ARIA value attributes or the HTML value fallback for their name.
+            if (name === "aria-valuetext" || name === "aria-valuenow"
+              || (name === "value" && ((this instanceof HTMLInputElement && masksInputValue(this))
+                || this.matches("[role='slider'],[role='spinbutton'],[role='scrollbar'],[role='progressbar']")))) return null;
+            return getAttribute.call(this, name);
+          };
+          restore.push(() => { Element.prototype.getAttribute = getAttribute; });
+          return ariaSnapshot(node, snapshotOptions);
+        } finally {
+          for (const reset of restore.reverse()) reset();
+        }
+      };
+      globalThis.${PLAYWRIGHT_GLOBAL} = injected;
       return true;
     } catch (error) {
       return {
@@ -167,7 +219,7 @@ const SNAPSHOT_SCRIPT = `(() => {
     const href = element instanceof HTMLAnchorElement ? element.href : "";
     const contextContainer = element.closest("tr,[role='row'],li,[role='listitem'],article,[role='article'],[role='dialog']");
     const contextText = contextContainer && contextContainer !== element
-      ? String(contextContainer.innerText || "").replace(/\\s+/g, " ").trim()
+      ? String(globalThis.__cyreneBrowserPublicText(contextContainer)).replace(/\\s+/g, " ").trim()
       : "";
     const attributes = {};
     for (const name of ["aria-label", "aria-labelledby", "title", "alt", "placeholder", "type", "name", "href", "data-testid"]) {
@@ -199,7 +251,7 @@ const SNAPSHOT_SCRIPT = `(() => {
     ariaSnapshot: String(snapshot || ""),
     elements,
     totalReferences: elements.length,
-    note: "ariaSnapshot 是 Playwright 原始语义树；ref 与树中的编号对应。elements 保存位置、属性和 CSS class 等补充信息。",
+    note: "ariaSnapshot 是已隐藏表单输入值的 Playwright 语义树；ref 与树中的编号对应。",
   };
   } catch (error) {
     return {
@@ -298,7 +350,7 @@ const START_ELEMENT_PICKER_SCRIPT = `(() => {
     for (const name of ["display", "position", "color", "backgroundColor", "fontFamily", "fontSize", "fontWeight", "lineHeight", "margin", "padding", "width", "height", "borderRadius"]) {
       computedStyle[name] = String(style[name] || "");
     }
-    const text = String(element.innerText || element.textContent || "").replace(/\\s+/g, " ").trim();
+    const text = String(globalThis.__cyreneBrowserPublicText(element)).replace(/\\s+/g, " ").trim();
     const name = String(element.getAttribute("aria-label") || element.getAttribute("title") || element.getAttribute("alt") || text || element.localName).slice(0, 240);
     selected = {
       observationId: globalThis.__cyreneBrowserObservationId,

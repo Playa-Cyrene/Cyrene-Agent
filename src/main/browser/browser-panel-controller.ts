@@ -266,6 +266,7 @@ export class BrowserPanelController {
       return { ok: false, reason: "右侧浏览器已切换到其他标签。请调用 browser_select_tab 明确选择控制目标。" };
     }
     const tab = this.tabs.find((candidate) => candidate.id === this.controlLease?.tabId);
+    if (tab?.kind === "exam") return { ok: false, reason: "考试答题页不能作为外部网页控制目标。" };
     const contents = tab?.view?.webContents;
     if (!tab || !contents || contents.isDestroyed()) return { ok: false, reason: "绑定的浏览器标签已关闭。请重新选择标签。" };
     if (tab.state.loading || contents.isLoading()) return { ok: false, reason: "网页仍在加载，请等页面完成后重试。" };
@@ -276,27 +277,40 @@ export class BrowserPanelController {
     const checked = this.assertControl(input.conversationId, input.runId);
     if (!checked.ok) return checked.reason;
     this.setControlAction("opening");
+    const lease = this.controlLease;
     const result = input.newTab
-      ? await this.openInNewTab(input.url)
-      : await this.navigateTab(checked.tab, input.url);
+      ? await this.openWebTab(input.url)
+      : await this.navigateTab(checked.tab, input.url).then((result) =>
+        result.ok ? { ok: true as const, tab: checked.tab } : result);
     if (!result.ok) return `打开网页失败：${result.error}。只支持完整的 HTTP 或 HTTPS 地址。`;
-    if (input.newTab && this.controlLease) this.controlLease.tabId = this.activeTabId;
-    const active = this.getActiveTab();
-    return JSON.stringify({ web: active?.state.url ?? input.url, tabId: active?.id, title: active?.state.title ?? "", status: active?.state.loading ? "loading" : "loaded" });
+    const { tab } = result;
+    if (lease && this.controlLease === lease && lease.tabId === checked.tab.id
+      && lease.tabId !== tab.id && this.tabs.includes(tab)) {
+      lease.tabId = tab.id;
+      this.publish();
+    }
+    return JSON.stringify({ web: tab.state.url, tabId: tab.id, title: tab.state.title, status: tab.state.loading ? "loading" : "loaded" });
   }
 
   controlListTabs(conversationId?: string, runId?: string): string {
     if (!this.matchesControlOwner(conversationId, runId)) return "当前任务没有浏览器控制权。";
     if (!this.bounds || this.bounds.width <= 0 || this.bounds.height <= 0) return "右侧浏览器当前已隐藏，请重新打开后再列出标签。";
-    return JSON.stringify(this.tabs.map(({ id, state }) => ({ tabId: id, url: state.url, title: state.title, loading: state.loading, active: id === this.activeTabId })));
+    return JSON.stringify(this.tabs.filter((tab) => tab.kind === "web")
+      .map(({ id, state }) => ({ tabId: id, url: state.url, title: state.title, loading: state.loading, active: id === this.activeTabId })));
   }
 
   controlSelectTab(input: { conversationId?: string; runId?: string; tabId: string }): string {
     if (!this.matchesControlOwner(input.conversationId, input.runId) || !this.controlLease) return "当前任务没有浏览器控制权。";
-    if (!this.tabs.some((tab) => tab.id === input.tabId)) return "找不到该标签页。请先调用 browser_list_tabs。";
+    const tab = this.tabs.find((candidate) => candidate.id === input.tabId);
+    if (!tab) return "找不到该标签页。请先调用 browser_list_tabs。";
+    if (tab.kind === "exam") return "考试答题页不能作为外部网页控制目标。";
     this.setControlAction("switching");
-    this.controlLease.tabId = input.tabId;
-    if (!this.activateTab(input.tabId)) return "切换标签失败。";
+    const previousTabId = this.controlLease.tabId;
+    this.controlLease.tabId = tab.id;
+    if (!this.activateTab(tab.id)) {
+      this.controlLease.tabId = previousTabId;
+      return "切换标签失败。";
+    }
     return `已绑定标签 ${input.tabId}。请重新读取页面元素后再操作。`;
   }
 
@@ -623,7 +637,7 @@ export class BrowserPanelController {
     }
     const tab = this.tabs.find((candidate) => candidate.id === observation.tabId);
     const contents = tab?.view?.webContents;
-    if (!tab || !contents || contents.isDestroyed() || contents.isLoading() || tab.state.url !== observation.url) {
+    if (tab?.kind !== "web" || !contents || contents.isDestroyed() || contents.isLoading() || tab.state.url !== observation.url) {
       return "这个元素快照已经过期（页面已切换、正在加载或标签页已关闭）。请重新读取页面元素后再查询。";
     }
     const target = observation.snapshot.elements.find((element) => element.ref === input.ref);
@@ -811,8 +825,15 @@ export class BrowserPanelController {
         identity[attributes[index] as string] = attributes[index + 1] as string;
       }
     }
+    const tag = String(node.localName ?? target.tag);
+    if ((tag === "input" && !["button", "submit", "reset"].includes(identity.type))
+      || tag === "textarea" || ["slider", "spinbutton", "scrollbar", "progressbar"].includes(identity.role)) {
+      delete identity.value;
+    }
+    delete identity["aria-valuetext"];
+    delete identity["aria-valuenow"];
     return {
-      element: { ref: target.ref, tag: String(node.localName ?? target.tag), description: target.description, attributes: identity },
+      element: { ref: target.ref, tag, description: target.description, attributes: identity },
       matchedRules,
       inlineStyles: properties(inline.inlineStyle),
       computedStyle,
@@ -893,6 +914,13 @@ export class BrowserPanelController {
   }
 
   async openInNewTab(input: string): Promise<BrowserPanelResult> {
+    const result = await this.openWebTab(input);
+    return result.ok ? { ok: true } : result;
+  }
+
+  private async openWebTab(input: string): Promise<
+    { ok: true; tab: BrowserTab } | Extract<BrowserPanelResult, { ok: false }>
+  > {
     await this.readyPromise;
     if (this.disposed) return { ok: false, error: "unavailable" };
     const url = parseHttpUrl(input);
@@ -900,7 +928,8 @@ export class BrowserPanelController {
     const tab = this.createTab(true);
     this.applyBounds();
     this.publish();
-    return this.navigateTab(tab, url.href);
+    const result = await this.navigateTab(tab, url.href);
+    return result.ok ? { ok: true, tab } : result;
   }
 
   activateTab(tabId: string): boolean {

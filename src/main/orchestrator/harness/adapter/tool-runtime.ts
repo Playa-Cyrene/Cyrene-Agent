@@ -82,6 +82,7 @@ export async function prepareToolRuntime(input: {
     allowedSkillIds: options.capabilities?.skillIds,
     permissionMode: options.permissionMode,
     allowUserInteraction: options.harnessInteractiveTools,
+    channelRun: options.channelRun,
     onShellJobComplete: options.onShellJobComplete,
   };
   const toolOutputStore = new FileToolOutputStore(app.getPath("userData"));
@@ -105,6 +106,7 @@ export async function prepareToolRuntime(input: {
         signal,
         checkPermission: permissionCheck,
         includeInteractiveTools: options.harnessInteractiveTools,
+        channelRun: options.channelRun,
         permissionMode: options.permissionMode,
         toolOutputStore,
         transcriptRoot: app.getPath("userData"),

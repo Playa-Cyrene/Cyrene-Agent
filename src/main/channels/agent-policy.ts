@@ -1,4 +1,5 @@
 import type { AgentExecutionMode, CyreneRunOptions } from "../orchestrator/cyrene-agent";
+import { isDesktopBrowserTool } from "../browser/browser-tool-policy";
 import type { ChannelToolSandbox } from "./settings-store";
 import type { ChannelChatType, ChannelId } from "./types";
 
@@ -46,17 +47,21 @@ export function enforceChannelAgentPolicy(
   options: CyreneRunOptions,
   policy: ChannelAgentPolicy,
 ): void {
+  options.channelRun = true;
   options.harnessInteractiveTools = policy.includeInteractiveTools;
   options.permissionMode = policy.permissionMode;
-  if (policy.exposeTools) return;
-  options.tools = [];
-  options.toolSystemContent = "";
-  options.skillLayerContent = "";
+  const allowed = (tool: { id: string }) => policy.exposeTools && !isDesktopBrowserTool(tool.id);
+  options.tools = (options.tools ?? options.capabilities?.tools ?? []).filter(allowed);
+  if (!policy.exposeTools) {
+    options.toolSystemContent = "";
+    options.skillLayerContent = "";
+  }
   if (options.capabilities) {
+    const tools = options.capabilities.tools.filter(allowed);
     options.capabilities = {
       ...options.capabilities,
-      tools: [],
-      toolIds: new Set<string>(),
+      tools,
+      toolIds: new Set(tools.map((tool) => tool.id)),
     };
   }
 }
