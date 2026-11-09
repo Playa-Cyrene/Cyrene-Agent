@@ -57,7 +57,7 @@ export interface ChannelConversationJournal {
   }): Promise<{ id: string }>;
   appendPresentation(conversationId: string, messageId: string, patchRevision: number, patch: Record<string, unknown>): Promise<unknown>;
   appendPresentationNext?(conversationId: string, messageId: string, mutationKey: string, patch: Record<string, unknown>): Promise<unknown>;
-  buildModelContext(conversationId: string): Promise<MaterializedTranscript>;
+  buildModelContext(conversationId: string, channelRun: true): Promise<MaterializedTranscript>;
   getChannelTurnState?(conversationId: string, input: {
     userTurnId: string;
     assistantTurnId: string;
@@ -246,7 +246,7 @@ export class ChannelDispatcher {
       if (journal.appendPresentationNext) await journal.appendPresentationNext(target.conversationId, userEntry.id, "channel:user:delivery", userPresentation);
       else await journal.appendPresentation(target.conversationId, userEntry.id, 1, userPresentation);
     } catch (error) { console.warn(LOG, "渠道用户展示更新失败:", error); }
-    const modelContext = await journal.buildModelContext(target.conversationId);
+    const modelContext = await journal.buildModelContext(target.conversationId, true);
     const transcriptSink = journal.createRunSink({
       conversationId: target.conversationId,
       runId,

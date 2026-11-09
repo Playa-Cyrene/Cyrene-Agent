@@ -258,7 +258,7 @@ export class ConversationDatabase {
    VALUES(?,?,?,?,?,?,?,?,?,?)`).run(id, entry.id, entry.seq, entry.kind, entry.turnId ?? null, entry.revision ?? null, p?.messageId ?? null, p?.mutationKey ?? null, p?.patchRevision ?? null, JSON.stringify(entry));
     this.db.prepare("UPDATE conversations SET max_seq=MAX(max_seq,?) WHERE id=?").run(entry.seq, id);
   }
-  snapshot(id: string): TranscriptSnapshotV2 {
+  snapshot(id: string, includeArchived = false): TranscriptSnapshotV2 {
     const row = this.db.prepare("SELECT * FROM conversations WHERE id=?").get(id);
     const audit = this.entries(id, true);
     if (audit.length !== Number(row?.max_seq ?? 0) || audit.some((entry, index) => entry.seq !== index + 1))
@@ -269,7 +269,7 @@ export class ConversationDatabase {
         projection = JSON.parse(row.projection_json as string);
     }
     catch { /* Rebuildable state never hides canonical rows. */ }
-    return { schemaVersion: 2, throughSeq: Number(row?.max_seq ?? 0), entries: this.entries(id), archives: [],
+    return { schemaVersion: 2, throughSeq: Number(row?.max_seq ?? 0), entries: includeArchived ? audit : this.entries(id), archives: [],
       projection,
       seenEntryIds: audit.map(e => e.id), seenUserRevisions: audit.filter(e => e.kind === 'user').map(e => userRevisionKey(e.turnId!, e.revision!)) };
   }

@@ -13,7 +13,6 @@ import { callSummarizeModel } from "./context-manager";
 import { getAdapterForConfig } from "./vendors";
 import { buildCompactionContextUsageSnapshot } from "./context-usage";
 import type { ContextUsageSnapshot } from "../../shared/context-usage";
-import { withoutDesktopBrowserHistory } from "../browser/browser-tool-policy";
 import {
   compressForAgentLoop,
   findSafeCutPointForRetainedTokens,
@@ -122,10 +121,10 @@ export class ConversationTranscriptCompactor {
     request.signal?.throwIfAborted();
     await this.runReader.refresh?.();
     const retainTokens = request.retainTokens ?? 1;
-    const before = await this.store.read(request.conversationId);
+    const before = await this.store.read(request.conversationId, request.channelRun);
     // 已有有效检查点时输入为"旧摘要 + 后缀"，二次压缩不会丢弃第一次摘要；
     // previousReplacement 用于识别压缩器未产出新摘要的失败路径。
-    const full = buildCompactionSourceView(before.entries, this.runReader);
+    const full = buildCompactionSourceView(before.entries, this.runReader, request.channelRun);
     const messageOrigin = request.modelSettings
       ? modelMessageOrigin(getAdapterForConfig(request.modelSettings), request.modelSettings)
       : undefined;
@@ -161,11 +160,7 @@ export class ConversationTranscriptCompactor {
         retainTokens,
         summarize: async (history) => {
           try {
-            return await this.summarize(
-              request.channelRun ? withoutDesktopBrowserHistory(history) : history,
-              request.modelSettings,
-              request.signal,
-            );
+            return await this.summarize(history, request.modelSettings, request.signal);
           } catch (error) {
             summaryError = error;
             throw error;
@@ -185,7 +180,7 @@ export class ConversationTranscriptCompactor {
       }
 
       // 撤回或其它检查点会使摘要来源失效；新追加的消息则留作后缀。
-      const afterSummary = await this.store.read(request.conversationId);
+      const afterSummary = await this.store.read(request.conversationId, request.channelRun);
       const currentPrefix = afterSummary.entries.filter((entry) => entry.seq <= sourceThroughSeq);
       if (digest(currentPrefix) !== sourceDigest || afterSummary.entries.some((entry) => (
         entry.seq > before.throughSeq
@@ -196,7 +191,7 @@ export class ConversationTranscriptCompactor {
 
       const retirementSeq = before.entries.filter(entry => entry.kind === "background_event_retired").at(-1)?.seq;
       const checkpointInput: TranscriptAppendInput = {
-        id: `compaction:${sourceThroughSeq}:${sourceDigest}${retirementSeq ? `:retired:${retirementSeq}` : ""}`,
+        id: `compaction:${sourceThroughSeq}:${sourceDigest}${retirementSeq ? `:retired:${retirementSeq}` : ""}${request.channelRun ? ":channel" : ""}`,
         at: this.now(),
         kind: "compaction_checkpoint",
         payload: {
@@ -205,18 +200,21 @@ export class ConversationTranscriptCompactor {
           sourceDigest,
           replacement,
           trigger: request.trigger,
+          ...(request.channelRun ? { channelRun: true as const } : {}),
         },
       };
       request.signal?.throwIfAborted();
       const checkpoint = await this.store.appendCompactionCheckpoint(request.conversationId, checkpointInput);
-      // 先提交检查点再归档；归档失败不会撤销已持久化的摘要。
-      try {
-        await this.archive.archiveThrough(request.conversationId, sourceThroughSeq);
-      } catch (error) {
-        console.error("[ConversationTranscriptCompactor] archive failed", error);
+      // 渠道检查点只替换渠道视图，不能归档桌面仍需读取的原始前缀。
+      if (!request.channelRun) {
+        try {
+          await this.archive.archiveThrough(request.conversationId, sourceThroughSeq);
+        } catch (error) {
+          console.error("[ConversationTranscriptCompactor] archive failed", error);
+        }
       }
-      const finalSnapshot = await this.store.read(request.conversationId);
-      const finalContext = buildModelContextFromCompactedView(finalSnapshot.entries, this.runReader);
+      const finalSnapshot = await this.store.read(request.conversationId, request.channelRun);
+      const finalContext = buildModelContextFromCompactedView(finalSnapshot.entries, this.runReader, request.channelRun);
       phaseUsage = buildUsage(finalContext.messages, "preRequest");
       return {
         checkpointEntryId: checkpoint.id,

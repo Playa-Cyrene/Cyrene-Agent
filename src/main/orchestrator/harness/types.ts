@@ -295,6 +295,7 @@ export interface HarnessInput {
     retainTokens: number;
     transientMessages: ChatMessage[];
     signal?: AbortSignal;
+    channelReplayRunId?: string;
   }) => Promise<ChatMessage[]>;
   /** 每次模型请求前的非敏感缓存结构诊断。 */
   onCacheDiagnostic?: (diagnostic: HarnessCacheDiagnostic) => void;

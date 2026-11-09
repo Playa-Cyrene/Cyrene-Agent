@@ -122,7 +122,13 @@ function buildInitializationScript(): string {
         throw new Error("Playwright InjectedScript factory returned no constructor");
       }
       const injected = new InjectedScript(globalThis, ${options});
-      const editableSelector = "textarea,[role='textbox'],[role='searchbox'],[contenteditable]:not([contenteditable='false'])";
+      const editableSelector = "textarea,[role='textbox'],[role='searchbox'],[contenteditable]:not([contenteditable='false']),selectedcontent";
+      const isSelectedContent = (node) => {
+        for (let ancestor = node; ancestor; ancestor = ancestor.parentNode ?? ancestor.host) {
+          if (ancestor.localName === "selectedcontent") return true;
+        }
+        return false;
+      };
       const isEditableText = (node) => {
         let element = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement ?? node.getRootNode().host;
         while (element) {
@@ -143,18 +149,39 @@ function buildInitializationScript(): string {
       const ariaSnapshot = injected.ariaSnapshot.bind(injected);
       injected.ariaSnapshot = (node, snapshotOptions) => {
         const restore = [];
-        const mask = (prototype, key, shouldMask) => {
+        const mask = (prototype, key, shouldMask, maskedValue = "") => {
           const descriptor = Object.getOwnPropertyDescriptor(prototype, key);
           if (!descriptor?.get) throw new Error("Unable to mask browser field values");
           Object.defineProperty(prototype, key, {
             ...descriptor,
-            get() { return shouldMask(this) ? "" : descriptor.get.call(this); },
+            get() { return shouldMask(this) ? maskedValue : descriptor.get.call(this); },
           });
           restore.push(() => Object.defineProperty(prototype, key, descriptor));
         };
         try {
           mask(HTMLInputElement.prototype, "value", masksInputValue);
           mask(HTMLTextAreaElement.prototype, "value", () => true);
+          mask(HTMLOptionElement.prototype, "selected", () => true, false);
+          mask(HTMLSelectElement.prototype, "selectedOptions", () => true, []);
+          // Embedded accessible names fall back to the first option if none is selected.
+          mask(HTMLSelectElement.prototype, "options", () => true, []);
+          // The browser clones rich options into <selectedcontent>. Skip that subtree in
+          // the snapshot and treat its elements as ignored even when referenced by ID.
+          mask(Node.prototype, "nodeType", isSelectedContent, Node.COMMENT_NODE);
+          mask(Element.prototype, "tagName", isSelectedContent, "TEMPLATE");
+          // Clones can duplicate IDs. Resolve ARIA references to the original element.
+          for (const prototype of [Document.prototype, DocumentFragment.prototype]) {
+            for (const method of ["querySelector", "getElementById"]) {
+              const original = prototype[method];
+              prototype[method] = function (query) {
+                const first = original.call(this, query);
+                if (!isSelectedContent(first)) return first;
+                const selector = method === "getElementById" ? "#" + CSS.escape(query) : query;
+                return Array.from(this.querySelectorAll(selector)).find((element) => !isSelectedContent(element)) ?? null;
+              };
+              restore.push(() => { prototype[method] = original; });
+            }
+          }
           mask(Node.prototype, "nodeValue", (node) => node.nodeType === Node.TEXT_NODE && isEditableText(node));
           mask(Node.prototype, "textContent", isEditableText);
           const getAttribute = Element.prototype.getAttribute;
@@ -303,6 +330,8 @@ const START_ELEMENT_PICKER_SCRIPT = `(() => {
     const path = typeof event.composedPath === "function" ? event.composedPath() : [];
     let element = path.find((item) => item instanceof Element) || (event.target instanceof Element ? event.target : null);
     if (!element || element === document.documentElement || element === document.body) return;
+    const selectedContent = element.closest("select selectedcontent");
+    if (selectedContent) element = selectedContent.closest("select");
     event.preventDefault();
     event.stopImmediatePropagation();
     const refs = globalThis.__cyreneBrowserRefs;

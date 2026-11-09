@@ -66,10 +66,10 @@ import { buildStickerMatchQuery } from "../sticker-query";
 import type { StickerTextEntry } from "../sticker-text-matcher";
 import { isPlanReadOnly, getPlanState } from "./plan-mode";
 import { policyFor, type ToolRiskLevel } from "../permission-policy";
-import { resolveTranscriptRetainTokens, type MaterializedTranscript } from "./conversation-transcript-context";
+import { channelScopedTranscript, resolveTranscriptRetainTokens, type MaterializedTranscript } from "./conversation-transcript-context";
 import type { UncertainEffect } from "./harness/types";
 import { DEFAULT_HARNESS_CONFIG } from "./harness/types";
-import { resolveCompactionTriggerTokens } from "./harness/compaction";
+import { isCompactionCheckpointMessage, resolveCompactionTriggerTokens } from "./harness/compaction";
 import { estimateMessageTokens } from "./context-manager";
 import {
   createTranscriptCompactionRequiredError,
@@ -135,10 +135,12 @@ export interface BuildOptionsDeps {
     getEnabledToolsForMode(mode: ConversationMode, overrides?: ToolModeOverrides): ReadonlyArray<unknown>;
   };
   normalizeChatMessages: (raw: ReadonlyArray<unknown>) => ChatMessage[];
-  /** 权威轨迹上下文构建：桌面 currentUser dispatch 时物化模型消息。 */
+  /** 按运行来源物化权威轨迹上下文。 */
   buildModelContext?: (
     conversationId: string,
     retainTokens: number,
+    channelRun?: boolean,
+    channelReplayRunId?: string,
   ) => Promise<MaterializedTranscript>;
   /** 会话级权威压缩；成功后 buildModelContext 必须重新物化 checkpoint + suffix。 */
   compactTranscript?: (input: {
@@ -620,10 +622,11 @@ export async function buildAgentRunOptions(
   const retainTokens = resolveTranscriptRetainTokens(contextWindowTokens);
   let transcriptContext = input.modelContext
     ?? (input.currentUser && input.sessionId
-      ? await requireBuildModelContext(deps)(input.sessionId, retainTokens)
+      ? await requireBuildModelContext(deps)(input.sessionId, retainTokens, channelRun)
       : undefined);
-  if (channelRun && transcriptContext) {
-    transcriptContext = { ...transcriptContext, messages: withoutDesktopBrowserHistory(transcriptContext.messages) };
+  if (channelRun && transcriptContext && !transcriptContext[channelScopedTranscript]) {
+    const messages = transcriptContext.messages.filter((message) => !isCompactionCheckpointMessage(message));
+    transcriptContext = { ...transcriptContext, messages: withoutDesktopBrowserHistory(messages) };
   }
   // 预算检查对传入与自建上下文一视同仁：长会话无论从桌面还是渠道入口进入，
   // 都必须先提交自动压缩检查点，再重读 journal 作为最终上下文。
@@ -646,10 +649,7 @@ export async function buildAgentRunOptions(
         console.error("[BuildOptions] transcript compaction failed", error);
         throw createTranscriptCompactionRequiredError(error);
       }
-      transcriptContext = await requireBuildModelContext(deps)(input.sessionId, retainTokens);
-      if (channelRun) {
-        transcriptContext = { ...transcriptContext, messages: withoutDesktopBrowserHistory(transcriptContext.messages) };
-      }
+      transcriptContext = await requireBuildModelContext(deps)(input.sessionId, retainTokens, channelRun);
       if (estimateMessageTokens(transcriptContext.messages, messageOrigin) >= compactionTriggerTokens) {
         throw createTranscriptCompactionRequiredError();
       }
@@ -1115,7 +1115,7 @@ export async function buildAgentRunOptions(
       ...(channelRun ? { channelRun: true as const } : {}),
       assistantTurnId: input.assistantTurnId,
       ...(input.sessionId && deps.compactTranscript && deps.buildModelContext ? {
-        compactTranscript: async ({ retainTokens: tailTokens, transientMessages, signal }) => {
+        compactTranscript: async ({ retainTokens: tailTokens, transientMessages, signal, channelReplayRunId }) => {
           await deps.compactTranscript!({
             conversationId: input.sessionId!,
             trigger: "automatic",
@@ -1125,8 +1125,10 @@ export async function buildAgentRunOptions(
             ...(channelRun ? { channelRun: true as const } : {}),
             signal,
           });
-          const { messages } = await requireBuildModelContext(deps)(input.sessionId!, tailTokens);
-          return channelRun ? withoutDesktopBrowserHistory(messages) : messages;
+          const { messages } = await requireBuildModelContext(deps)(
+            input.sessionId!, tailTokens, channelRun, channelRun ? channelReplayRunId : undefined,
+          );
+          return messages;
         },
       } : {}),
       executionMode,

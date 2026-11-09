@@ -594,6 +594,7 @@ describe("channels/dispatcher", () => {
     expect(journal.appendUser).toHaveBeenCalledTimes(2);
     expect(buildAndRunAgent.mock.calls[0]?.[1]).not.toHaveProperty("messages");
     expect(journal.buildModelContext).toHaveBeenCalledTimes(2);
+    expect(journal.buildModelContext).toHaveBeenLastCalledWith(expect.any(String), true);
   });
 
   it("发送失败写入 failed receipt 且保留已落盘 assistant", async () => {

@@ -2,7 +2,7 @@ import { JSDOM } from "jsdom";
 import type { WebContents } from "electron";
 import { expect, it } from "vitest";
 import {
-  readPlaywrightElementPicker, startPlaywrightElementPicker, validatePlaywrightSnapshotTarget,
+  capturePlaywrightPageSnapshot, readPlaywrightElementPicker, startPlaywrightElementPicker, validatePlaywrightSnapshotTarget,
 } from "./playwright-page-snapshot";
 
 it("preserves live fields and refs while excluding values from the tree, element metadata and picker", async () => {
@@ -18,6 +18,9 @@ it("preserves live fields and refs while excluding values from the tree, element
       <div id="slider" role="slider" aria-valuetext="secret-range"></div>
       <button aria-labelledby="slider">Lookup range</button>
       <button aria-labelledby="otp">Lookup</button>
+      <label for="payment">Payment method</label>
+      <select id="payment"><option>First choice</option><option>Second choice</option></select>
+      <button id="lookup-payment" aria-labelledby="payment">Lookup payment</button>
       <input type="submit" value="Submit order">
       <p>Public page content</p>
     </article>
@@ -29,6 +32,14 @@ it("preserves live fields and refs while excluding values from the tree, element
   dom.window.Element.prototype.getBoundingClientRect = () => rect;
   const otp = document.querySelector<HTMLInputElement>("#otp")!;
   const notes = document.querySelector<HTMLTextAreaElement>("#notes")!;
+  const payment = document.querySelector<HTMLSelectElement>("#payment")!;
+  payment.selectedIndex = 1;
+  // JSDOM does not generate Chromium's selected option clone.
+  const clone = document.createElement("selectedcontent");
+  clone.textContent = "secret-option-clone";
+  const paymentButton = document.createElement("button");
+  paymentButton.append(clone);
+  payment.prepend(paymentButton);
   document.querySelector("#shadow-editable")!.attachShadow({ mode: "open" }).textContent = "secret-shadow";
   notes.value = "secret-live-note\nsecond line";
   document.elementFromPoint = () => otp;
@@ -47,6 +58,13 @@ it("preserves live fields and refs while excluding values from the tree, element
     expect(snapshot.ariaSnapshot).toContain("Public page content");
     expect(snapshot.ariaSnapshot).toContain("Numeric code");
     expect(JSON.stringify(snapshot)).not.toMatch(/secret-|second line|867530987654/);
+    expect(snapshot.elements.find((element) => element.id === "payment")).toMatchObject({
+      ref: expect.any(String), description: expect.stringContaining("Payment method"),
+    });
+    expect(snapshot.ariaSnapshot).toContain('option "First choice"');
+    expect(snapshot.ariaSnapshot).toContain('option "Second choice"');
+    expect(snapshot.ariaSnapshot).not.toContain("[selected]");
+    expect(snapshot.elements.find((element) => element.id === "lookup-payment")?.description).not.toMatch(/First choice|Second choice/);
 
     const { observationId } = snapshot;
     expect(await validatePlaywrightSnapshotTarget(contents, {
@@ -58,6 +76,11 @@ it("preserves live fields and refs while excluding values from the tree, element
     expect(JSON.stringify(picker)).not.toMatch(/secret-|second line/);
     expect(otp.value).toBe("secret-otp");
     expect(notes.value).toBe("secret-live-note\nsecond line");
+    expect(payment.selectedIndex).toBe(1);
+    expect(clone.textContent).toBe("secret-option-clone");
+    payment.selectedIndex = 0;
+    expect((await capturePlaywrightPageSnapshot(contents)).ariaSnapshot).toBe(snapshot.ariaSnapshot);
+    expect(payment.selectedIndex).toBe(0);
   } finally {
     dom.window.close();
   }

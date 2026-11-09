@@ -1369,7 +1369,7 @@ describe("权威轨迹上下文源（CTA Phase 1）", () => {
       messages: [{ role: "user" as const, content: "stale renderer" }],
     } as never, deps)
 
-    expect(deps.buildModelContext).toHaveBeenCalledWith("c1", expect.any(Number))
+    expect(deps.buildModelContext).toHaveBeenCalledWith("c1", expect.any(Number), false)
     expect(built.options.cleanMessages).toContainEqual(expect.objectContaining({ content: "authoritative" }))
     expect(JSON.stringify(built.options.messages)).not.toContain("stale renderer")
     expect(built.latestUserText).toBe("authoritative")
@@ -1428,7 +1428,7 @@ describe("权威轨迹上下文源（CTA Phase 1）", () => {
     expect(built.options.cleanMessages).toContainEqual(expect.objectContaining({ content: expect.stringContaining("<cyrene_compaction_checkpoint>") }))
   })
 
-  it("传入 modelContext 超预算时同样执行自动压缩并重读 journal", async () => {
+  it.each(["desktop", "qq"] as const)("传入 modelContext 超预算时按运行来源压缩并重读 journal (%s)", async (channel) => {
     const deps = createBuildDeps()
     deps.loadModelSettings = () => ({
       provider: "test", baseUrl: "https://example.test", model: "m", apiKey: "k",
@@ -1442,6 +1442,7 @@ describe("权威轨迹上下文源（CTA Phase 1）", () => {
 
     const built = await buildAgentRunOptions({
       sessionId: "prebuilt-compact",
+      channel,
       currentUser: { turnId: "turn-1", text: "继续", visibleContent: "继续" },
       // 模拟桌面/渠道入口预传入的超长上下文
       modelContext: {
@@ -1452,10 +1453,17 @@ describe("权威轨迹上下文源（CTA Phase 1）", () => {
 
     expect(deps.compactTranscript).toHaveBeenCalledWith(expect.objectContaining({
       conversationId: "prebuilt-compact", trigger: "automatic", retainTokens: expect.any(Number),
+      ...(channel === "qq" ? { channelRun: true } : {}),
     }))
     // 压缩后只发生一次重读（初始上下文来自传入值）
     expect(deps.buildModelContext).toHaveBeenCalledTimes(1)
+    expect(deps.buildModelContext).toHaveBeenLastCalledWith("prebuilt-compact", expect.any(Number), channel === "qq")
     expect(built.options.cleanMessages).toContainEqual(expect.objectContaining({ content: expect.stringContaining("<cyrene_compaction_checkpoint>") }))
+    await built.options.compactTranscript!({
+      retainTokens: 100, transientMessages: [], channelReplayRunId: "active-channel-run",
+    })
+    expect(deps.buildModelContext).toHaveBeenLastCalledWith("prebuilt-compact", 100, channel === "qq",
+      channel === "qq" ? "active-channel-run" : undefined)
   })
 
   it("background preflight compaction receives the run cancellation signal", async () => {
