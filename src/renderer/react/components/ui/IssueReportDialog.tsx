@@ -8,7 +8,7 @@ import { SettingsSelect } from "./SettingsControls";
 import "./IssueReportDialog.css";
 
 const ISSUES_URL = "https://github.com/Playa-Cyrene/Cyrene-Agent/issues";
-const REPORT_EMAIL = "ky2569ly@gmail.com";
+const REPORT_EMAIL = "Liang_zh_@outlook.com";
 
 // 源码运行与安装包的 GitHub 表单字段并不相同：安装包模板填应用版本，源码模板必填提交号。
 // 所以进入表单前先让用户选运行方式，据此决定打开哪个模板、预填哪些字段。

@@ -143,8 +143,7 @@ miHoYo / HoYoverse またはその他の正当な権利者が、本ソフトウ�
 問題、不具合、機能に関する提案は、以下の窓口にお寄せください。
 
 - [GitHub Issues](https://github.com/Playa-Cyrene/Cyrene-Agent/issues)。
-- メール：[ky2569ly@gmail.com](mailto:ky2569ly@gmail.com)。件名に「反馈」または「Bug」と記載することを推奨します。
-- [Playa0](https://space.bilibili.com/260670644) への Bilibili 私信。冒頭に「反馈/Bug」と記載してください。
+- メール：[Liang_zh_@outlook.com](mailto:Liang_zh_@outlook.com)。件名に「反馈」または「Bug」と記載することを推奨します。
 
 送信前に、API キー、アクセストークン、アカウントの認証情報、個人的な会話など、公開に適さない情報を削除してください。必要なバージョン情報、再現手順、エラーメッセージ、機微な情報を除いたログの抜粋を優先し、設定全体や無関係なユーザーデータを公開しないでください。
 

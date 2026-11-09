@@ -16,15 +16,15 @@ beforeEach(async () => {
   await act(async () => root.render(<DisclaimerSettingsPanel />));
 });
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.unstubAllGlobals(); });
-async function clickEmail() {
+async function clickEmail(email = "ky2569ly@gmail.com") {
   const event = new MouseEvent("click", { bubbles: true, cancelable: true });
-  await act(async () => host.querySelector<HTMLAnchorElement>('a[href^="mailto:"]')!.dispatchEvent(event));
+  await act(async () => host.querySelector<HTMLAnchorElement>(`a[href="mailto:${email}"]`)!.dispatchEvent(event));
   return event;
 }
-it("邮件点击取消新窗口导航，通过受限系统 IPC 打开原地址", async () => {
-  const event = await clickEmail();
+it.each(["ky2569ly@gmail.com", "Liang_zh_@outlook.com"])("邮件点击 %s 取消新窗口导航，通过受限系统 IPC 打开对应地址", async (email) => {
+  const event = await clickEmail(email);
   expect(event.defaultPrevented).toBe(true);
-  expect(openExternal).toHaveBeenCalledExactlyOnceWith("mailto:ky2569ly@gmail.com");
+  expect(openExternal).toHaveBeenCalledExactlyOnceWith(`mailto:${email}`);
   expect(host.querySelector('[role="alert"]')).toBeNull();
 });
 it.each(["response", "rejection", "unavailable"])("邮件打开失败 %s 可见提示、保留地址且不回退导航", async (mode) => {

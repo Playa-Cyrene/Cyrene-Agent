@@ -23,12 +23,26 @@ describe("完整条款与本地化", () => {
     expect(html.match(/<h3>/g)).toHaveLength(3);
     expect(html).toContain(terms.sections[8].title); // 未成年人限制不能仅留在外部文档。
     expect(html).toContain('href="mailto:ky2569ly@gmail.com"');
+    expect(html).toContain('href="mailto:Liang_zh_@outlook.com"');
     expect(html).toContain('href="https://github.com/Playa-Cyrene/Cyrene-Agent/blob/master/docs/CONTRIBUTORS.md"');
     expect(html).toContain('href="https://github.com/Playa-Cyrene/Cyrene-Agent/blob/master/docs/MAINTAINERS.md"');
     expect(html).not.toContain("Playa-0v0");
     expect(html.replace(/<[^>]*>/g, "")).not.toContain("settingsPage.disclaimer.");
     expect(html).not.toMatch(/维护者审阅附录|中文整合审阅稿|尚未发布或生效/);
     expect(html).toContain('rel="noopener noreferrer"');
+  });
+
+  it.each(Object.keys(documents) as Array<keyof typeof documents>)("%s 将版权联系和问题反馈分流到各自的联系人", (locale) => {
+    const sections = documents[locale].settingsPage.disclaimer.sections;
+    const copyright = JSON.stringify(sections[11]);
+    const feedback = JSON.stringify(sections[12]);
+    expect(copyright).toContain("mailto:ky2569ly@gmail.com");
+    expect(copyright).toContain("https://space.bilibili.com/260670644");
+    expect(copyright).not.toContain("Liang_zh_@outlook.com");
+    expect(feedback).toContain("mailto:Liang_zh_@outlook.com");
+    expect(feedback).toContain("https://github.com/Playa-Cyrene/Cyrene-Agent/issues");
+    expect(feedback).not.toContain("ky2569ly@gmail.com");
+    expect(feedback).not.toContain("https://space.bilibili.com/260670644");
   });
 
   it.each(Object.keys(documents) as Array<keyof typeof documents>)("%s 应用中的条款与随仓文档逐段一致", (locale) => {
