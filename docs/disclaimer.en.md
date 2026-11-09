@@ -143,8 +143,8 @@ Upon receiving a valid notice, we will investigate and address it as soon as pos
 If you encounter a problem or bug, or have a feature suggestion, you are welcome to use:
 
 - [GitHub Issues](https://github.com/Playa-Cyrene/Cyrene-Agent/issues);
-- Email: [ky2569ly@gmail.com](mailto:ky2569ly@gmail.com), preferably with “反馈” (feedback) or “Bug” in the subject;
-- A Bilibili private message to [Playa0](https://space.bilibili.com/260670644), beginning with “反馈/Bug” (feedback/bug).
+- Email: [Liang_zh_@outlook.com](mailto:Liang_zh_@outlook.com), preferably with “反馈” (feedback) or “Bug” in the subject;
+- A Bilibili private message to [CCOLD-AS-ICEE](https://space.bilibili.com/1098067913), beginning with “反馈/Bug” (feedback/bug).
 
 Remove API keys, access tokens, account credentials, private conversations, and other information unsuitable for public disclosure before submitting. Prefer necessary version information, reproduction steps, error messages, and redacted log excerpts. Do not publish complete configurations or unrelated user data.
 

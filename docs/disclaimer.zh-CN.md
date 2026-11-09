@@ -143,8 +143,8 @@ AI 回复可能包含事实错误、遗漏、不适当表达或前后不一致�
 如遇到问题、Bug 或有功能建议，欢迎通过以下渠道反馈：
 
 - [GitHub Issues](https://github.com/Playa-Cyrene/Cyrene-Agent/issues)；
-- 电子邮箱：[ky2569ly@gmail.com](mailto:ky2569ly@gmail.com)，标题建议注明“反馈”或“Bug”；
-- B 站私信 [Playa0](https://space.bilibili.com/260670644)，开头注明“反馈/Bug”。
+- 电子邮箱：[Liang_zh_@outlook.com](mailto:Liang_zh_@outlook.com)，标题建议注明“反馈”或“Bug”；
+- B 站私信 [CCOLD-AS-ICEE](https://space.bilibili.com/1098067913)，开头注明“反馈/Bug”。
 
 提交前请移除 API Key、访问令牌、账户凭据、私人对话及其他不宜公开的内容。优先提供必要的版本信息、复现步骤、错误提示和经过脱敏的日志片段，不要公开完整配置或不相关的用户数据。
 

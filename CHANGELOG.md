@@ -5,6 +5,42 @@ Cyrene-Agent 的版本变更记录。格式参考 [Keep a Changelog](https://kee
 
 > 本文件由 `pnpm run release` 生成，请勿手工编辑；需要调整措辞请改写对应的提交信息。
 
+## [1.3.6](https://github.com/Playa-Cyrene/Cyrene-Agent/compare/v1.3.5...v1.3.6) (2026-11-09)
+
+### 新增
+
+* **声明:** 完善多语言条款与权限风险确认 ([9dd3053](https://github.com/Playa-Cyrene/Cyrene-Agent/commit/9dd30537b8c2d80b433d8c788bf67d922c88d3ba))
+* **模型:** 补齐 Claude 当前型号并修正思考与档位规则 ([06c4974](https://github.com/Playa-Cyrene/Cyrene-Agent/commit/06c49749cc360cee92d88c0015128a569fef4b3a))
+* **表情包:** 补齐用户表情包删除入口 ([ddacb1a](https://github.com/Playa-Cyrene/Cyrene-Agent/commit/ddacb1af587fa9414ca10798a4ed66fb4c62e0ff))
+* **设置:** 添加分层搜索与定位提示 ([905ec04](https://github.com/Playa-Cyrene/Cyrene-Agent/commit/905ec04aff958d9e8fbb7d85cd98a4ae33890c06))
+
+### 修复
+
+* **Git权限:** 阻止未沙箱化推送借用只读放行 ([506fa86](https://github.com/Playa-Cyrene/Cyrene-Agent/commit/506fa86cfe33cc476363346ad4bbc501d7d48b30))
+* **MCP执行:** 保留只读调用的超时重试语义 ([745e79d](https://github.com/Playa-Cyrene/Cyrene-Agent/commit/745e79d0d7fc9e1258a04a64bf211f79035071f7))
+* **MCP执行:** 保留响应失败后的不确定副作用 ([b9a5e2f](https://github.com/Playa-Cyrene/Cyrene-Agent/commit/b9a5e2f52e9d4d73840ad4d17ca402a0601710a7))
+* **MCP权限:** 阻止未隔离工具按默认安全等级放行 ([6eebe82](https://github.com/Playa-Cyrene/Cyrene-Agent/commit/6eebe8291aed3d9bf664ffc35b411c0a5e329b93))
+* **反馈:** 分离问题反馈与版权联系方式 ([a9f10b1](https://github.com/Playa-Cyrene/Cyrene-Agent/commit/a9f10b18993592eaa855701ef982eb6401d34fbf))
+* **反馈:** 补上维护者 B 站私信入口 ([2ef57e2](https://github.com/Playa-Cyrene/Cyrene-Agent/commit/2ef57e274f111b23969659604c61ebdeff1dfe1b))
+* **声明:** 修复缓存降权与邮件链接入口 ([6452e2c](https://github.com/Playa-Cyrene/Cyrene-Agent/commit/6452e2c530605d9dbb49345b6dccc40d72d6474c))
+* **安全:** 补齐渠道历史隔离和浏览器快照脱敏 ([e5b5550](https://github.com/Playa-Cyrene/Cyrene-Agent/commit/e5b5550f945b0e1e860565016b615da386a5dd46))
+* **插件市场:** 校验下载来源和跳转目标 ([a56ed79](https://github.com/Playa-Cyrene/Cyrene-Agent/commit/a56ed79d8711ab7c8a50a2aca8403b23ee5c392e))
+* **文件工具:** 保留成功消息中的原路径 ([70bde72](https://github.com/Playa-Cyrene/Cyrene-Agent/commit/70bde729f8fcc1f71d067918eedf4c0337480d6d))
+* **文件工具:** 修正路径校验和权限失败反馈 ([2d548e7](https://github.com/Playa-Cyrene/Cyrene-Agent/commit/2d548e77f531d96beb404099708515ac836492d0))
+* **文件权限:** 校验下载文档和源码工具的真实路径 ([3c7d9ea](https://github.com/Playa-Cyrene/Cyrene-Agent/commit/3c7d9ea7cbef0061606da9e1a55c367dad25896c))
+* **浏览器:** 过滤下拉框的原始表单属性 ([1b95562](https://github.com/Playa-Cyrene/Cyrene-Agent/commit/1b955627c3a5e6c20da564562252de338046c2fd))
+* **浏览器:** 隔离渠道并保护网页表单值 ([8c88ae3](https://github.com/Playa-Cyrene/Cyrene-Agent/commit/8c88ae333a355bbfcb0633b7336a47aeace1f8d9))
+* **源码工具:** 区分权限拒绝和正常零匹配 ([3b662ee](https://github.com/Playa-Cyrene/Cyrene-Agent/commit/3b662ee5ee312deee9083f57dd60772dbca816f5))
+* **聊天:** 补齐响应式图卡固有尺寸 ([7f43ecb](https://github.com/Playa-Cyrene/Cyrene-Agent/commit/7f43ecb49f33695ec59fe622e664f63c28aadae1))
+* **聊天:** 隔离图卡并限制文件链接 ([a3c09a1](https://github.com/Playa-Cyrene/Cyrene-Agent/commit/a3c09a1cb74e40b4c38a7bf21a15a8c3597fec51))
+* **记忆:** 等待摘要任务的异步有效性检查 ([96fb1ab](https://github.com/Playa-Cyrene/Cyrene-Agent/commit/96fb1ab7b50c775eda2e3d07187e4993c1ae99e5))
+* **记忆:** 统一队列清理和错误传播的 Promise ([efa9cde](https://github.com/Playa-Cyrene/Cyrene-Agent/commit/efa9cde318ecfb4893000bfcae644856008ba843))
+* **设置:** 展开搜索结果所在的模型折叠面板 ([75a93c5](https://github.com/Playa-Cyrene/Cyrene-Agent/commit/75a93c5125dd159d5e0fc357b86e2655a616a775))
+* **设置搜索:** 修复条件项过滤与定位反馈 ([470709a](https://github.com/Playa-Cyrene/Cyrene-Agent/commit/470709a14c489cea2de7c72fe1563a9920adc089))
+* **设置:** 收紧更新说明的渲染并补齐结构与无障碍 ([e37153b](https://github.com/Playa-Cyrene/Cyrene-Agent/commit/e37153b969fb7c84e8a2df64c3ba416a1b11153a))
+* **设置:** 更新说明只在以块级 HTML 开头时按 HTML 处理 ([9d13025](https://github.com/Playa-Cyrene/Cyrene-Agent/commit/9d1302575ce677bcd8aa4b33be52cc567643eb98))
+* **设置:** 更新说明按 HTML 渲染，不再显示原始标签 ([c833d5b](https://github.com/Playa-Cyrene/Cyrene-Agent/commit/c833d5b961fe6b3794679fd3a29bbcc9d5d45e7f))
+
 ## [1.3.5](https://github.com/Playa-Cyrene/Cyrene-Agent/compare/v1.3.4...v1.3.5) (2026-11-01)
 
 ### 新增
