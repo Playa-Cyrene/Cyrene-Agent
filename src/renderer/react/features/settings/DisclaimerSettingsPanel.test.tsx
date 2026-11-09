@@ -24,6 +24,7 @@ describe("完整条款与本地化", () => {
     expect(html).toContain(terms.sections[8].title); // 未成年人限制不能仅留在外部文档。
     expect(html).toContain('href="mailto:ky2569ly@gmail.com"');
     expect(html).toContain('href="mailto:Liang_zh_@outlook.com"');
+    expect(html).toContain('href="https://space.bilibili.com/1098067913"');
     expect(html).toContain('href="https://github.com/Playa-Cyrene/Cyrene-Agent/blob/master/docs/CONTRIBUTORS.md"');
     expect(html).toContain('href="https://github.com/Playa-Cyrene/Cyrene-Agent/blob/master/docs/MAINTAINERS.md"');
     expect(html).not.toContain("Playa-0v0");
@@ -39,7 +40,9 @@ describe("完整条款与本地化", () => {
     expect(copyright).toContain("mailto:ky2569ly@gmail.com");
     expect(copyright).toContain("https://space.bilibili.com/260670644");
     expect(copyright).not.toContain("Liang_zh_@outlook.com");
+    expect(copyright).not.toContain("https://space.bilibili.com/1098067913");
     expect(feedback).toContain("mailto:Liang_zh_@outlook.com");
+    expect(feedback).toContain("[CCOLD-AS-ICEE](https://space.bilibili.com/1098067913)");
     expect(feedback).toContain("https://github.com/Playa-Cyrene/Cyrene-Agent/issues");
     expect(feedback).not.toContain("ky2569ly@gmail.com");
     expect(feedback).not.toContain("https://space.bilibili.com/260670644");

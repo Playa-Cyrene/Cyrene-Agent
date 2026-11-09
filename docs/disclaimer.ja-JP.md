@@ -144,6 +144,7 @@ miHoYo / HoYoverse またはその他の正当な権利者が、本ソフトウ�
 
 - [GitHub Issues](https://github.com/Playa-Cyrene/Cyrene-Agent/issues)。
 - メール：[Liang_zh_@outlook.com](mailto:Liang_zh_@outlook.com)。件名に「反馈」または「Bug」と記載することを推奨します。
+- [CCOLD-AS-ICEE](https://space.bilibili.com/1098067913) への Bilibili 私信。冒頭に「反馈/Bug」と記載してください。
 
 送信前に、API キー、アクセストークン、アカウントの認証情報、個人的な会話など、公開に適さない情報を削除してください。必要なバージョン情報、再現手順、エラーメッセージ、機微な情報を除いたログの抜粋を優先し、設定全体や無関係なユーザーデータを公開しないでください。
 
