@@ -53,6 +53,30 @@ afterEach(() => {
 
 describe("MarkdownContent Streamdown lifecycle", () => {
 
+  it.each([
+    String.raw`\(a \(b\) + \(c\)\)`,
+    String.raw`\[a \[b\] + \[c\]\]`,
+    String.raw`\(a \[b\] + \(c\)\)`,
+    String.raw`\[a \(b\) + \[c\]\]`,
+    String.raw`\(a \[b\] + \[c\]`,
+  ])("never renders a partial nested group while streaming: %s", (nested) => {
+    const first = String.raw`\(p\)`;
+    const last = String.raw`\(q\)`;
+    const content = first + "\n\n" + nested + "\n\n" + last + "\n\n后文";
+    const lastClosedAt = content.indexOf(last) + last.length;
+    for (let index = 0; index <= content.length; index += 1) {
+      update(content.slice(0, index), true);
+      const expected = index < first.length ? [] : index < lastClosedAt ? ["p"] : ["p", "q"];
+      expect([...container.querySelectorAll("annotation")].map((node) => node.textContent)).toEqual(expected);
+    }
+    expect(container.querySelector("p:last-child")?.textContent).toBe("后文");
+    const nodes = [...container.querySelectorAll(".katex")];
+    update(content, false);
+    nodes.forEach((node, index) => expect(container.querySelectorAll(".katex")[index]).toBe(node));
+    expect([...container.querySelectorAll("annotation")].map((node) => node.textContent)).toEqual(["p", "q"]);
+    expect(container.querySelector("p:last-child")?.textContent).toBe("后文");
+  });
+
 
   it("keeps ordinary message completion stable without math-range analysis", () => {
     const detect = vi.spyOn(streamdownMath, "analyzeCompletedMarkdown");

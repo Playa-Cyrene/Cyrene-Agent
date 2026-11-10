@@ -21,6 +21,32 @@ function mathValues(input: string): string[] {
 
 describe("backslash math tokenizer", () => {
 
+  it.each([
+    String.raw`\(a \(b\) + \(c\)\)`,
+    String.raw`\[a \[b\] + \[c\]\]`,
+    String.raw`\(a \[b\] + \(c\)\)`,
+    String.raw`\[a \(b\) + \[c\]\]`,
+    String.raw`\(a \(b\) + \(c\)`,
+    String.raw`\[a \[b\] + \[c\]`,
+    String.raw`\(a \[b\] + \[c\]`,
+    String.raw`\[a \(b\) + \(c\)`,
+  ])("keeps the entire container native for multiple nested groups: %s", (input) => {
+    expect(mathValues(input)).toEqual([]);
+    expect(parser.parse(input)).toEqual(nativeParser.parse(input));
+    expect(containsBackslashMath(input)).toBe(false);
+  });
+
+  it("limits conservative rejection to the affected container", () => {
+    const nested = String.raw`\(a \(b\) + \(c\)\)`;
+    const sameParagraph = String.raw`\(p\) before ` + nested + String.raw` after \(q\)`;
+    expect(parser.parse(sameParagraph)).toEqual(nativeParser.parse(sameParagraph));
+    expect(mathValues(String.raw`\(p\)` + "\n\n" + nested + "\n\n" + String.raw`\(q\)`))
+      .toEqual(["p", "q"]);
+    const aligned = String.raw`\begin{aligned}a&=b\\[4pt]c&=d\end{aligned}`;
+    expect(mathValues(String.raw`\(p\) ` + `\\(${aligned}\\)` + String.raw` \(q\)`))
+      .toEqual(["p", aligned, "q"]);
+  });
+
   it.each(["(", "["])("distinguishes escaped row-spacing syntax from nested delimiters inside %s", (opener) => {
     const closer = opener === "(" ? ")" : "]";
     const wrap = (body: string) => `\\${opener}${body}\\${closer}`;
@@ -57,6 +83,7 @@ describe("backslash math tokenizer", () => {
     expect(containsBackslashMath(input)).toBe(false);
   });
   const untouched = [
+    String.raw`\[incomplete but \(x\)`,
     String.raw`\(not closed`, String.raw`\[not closed`, String.raw`\(\)`, String.raw`\[ \]`,
     String.raw`\\(escaped\\)`, String.raw`\\[escaped\\]`,
     String.raw`$\(already math\)$`, String.raw`$$\[already math\]$$`,
@@ -87,7 +114,6 @@ describe("backslash math tokenizer", () => {
     [String.raw`高度 \(h=\dfrac{5b}{12}\)。`, [String.raw`h=\dfrac{5b}{12}`]],
     [String.raw`\(a*b*c\)\(x\ \)\[y\ \]`, ["a*b*c", "x\\ ", "y\\ "]],
     ["\\(x\n+y\\) 价格 $5\n\n后文", ["x\n+y"]],
-    [String.raw`\[incomplete but \(x\)`, ["x"]],
     [String.raw`\(x\) and ` + "`\\(code\\)`" + String.raw` and [link](https://example.com/\(path\)) and \(y\)`, ["x", "y"]],
     [String.raw`- [ ] \[x\]`, ["x"]],
     ["-\t\\[x\\]", ["x"]],

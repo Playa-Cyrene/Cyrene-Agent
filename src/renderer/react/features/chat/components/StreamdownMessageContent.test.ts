@@ -52,6 +52,32 @@ function texAnnotations(markup: string): string[] {
 
 describe("StreamdownMessageContent", () => {
 
+  it.each([false, true])("keeps multiple nested groups as native text (streaming=%s)", (streaming) => {
+    for (const [input, text] of [
+      [String.raw`\(a \(b\) + \(c\)\)`, "(a (b) + (c))"],
+      [String.raw`\[a \[b\] + \[c\]\]`, "[a [b] + [c]]"],
+      [String.raw`\(a \[b\] + \(c\)\)`, "(a [b] + (c))"],
+      [String.raw`\[a \(b\) + \[c\]\]`, "[a (b) + [c]]"],
+      [String.raw`\(a \[b\] + \[c\]`, "(a [b] + [c]"],
+    ]) {
+      const markup = render(input + "\n\n后文", streaming);
+      expect(texAnnotations(markup)).toEqual([]);
+      expect(markup).toContain(`<p>${text}</p>`);
+      expect(markup).toContain("<p>后文</p>");
+    }
+  });
+
+  it.each([false, true])("retains independent formulas in other paragraphs around a rejected container (streaming=%s)", (streaming) => {
+    const bad = String.raw`\(a \(b\) + \(c\)\)`;
+    const same = render(String.raw`\(p\) before ` + bad + String.raw` after \(q\)`, streaming);
+    expect(texAnnotations(same)).toEqual([]);
+    expect(same).toContain("<p>(p) before (a (b) + (c)) after (q)</p>");
+    const separate = render(String.raw`\(p\)` + "\n\n" + bad + "\n\n" + String.raw`\(q\)` + "\n\n后文", streaming);
+    expect(texAnnotations(separate)).toEqual(["p", "q"]);
+    expect(separate).toContain("<p>(a (b) + (c))</p>");
+    expect(separate).toContain("<p>后文</p>");
+  });
+
 
   it.each([String.raw`\(x\)`, "$x$"])("keeps reference images and collapsed reference hrefs on completion: %s", (formula) => {
     const markup = render(formula + "\n\n[引用][]\n\n![示意][img]\n\n[引用]: https://example.com\n\n[img]: https://example.com/a.png", false);

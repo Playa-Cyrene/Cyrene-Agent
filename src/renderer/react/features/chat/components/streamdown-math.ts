@@ -28,10 +28,22 @@ function escaped(input: string, index: number): boolean {
   return count % 2 === 1;
 }
 
-function hasNestedMathDelimiter(input: string): boolean {
-  for (const match of input.matchAll(/\\[()[\]]/g)) {
-    // TeX 的 \\[4pt] 是换行间距参数，第二个反斜杠不能当成嵌套的 \[。
-    if (!escaped(input, match.index)) return true;
+function hasNestedMathDelimiter(
+  input: string, start: number, end: number, overlaps: (from: number, to: number) => boolean,
+): boolean {
+  let opener: string | undefined;
+  for (const match of input.slice(start, end).matchAll(/\\[()[\]]/g)) {
+    const index = start + match.index;
+    // TeX 的 \\[4pt] 是换行间距参数，代码/链接中的伪标记也不参与配对。
+    if (escaped(input, index) || overlaps(index, index + 2)) continue;
+    const delimiter = match[0][1];
+    if (delimiter === "(" || delimiter === "[") {
+      if (opener) return true;
+      opener = delimiter;
+    } else if (opener) {
+      if (delimiter !== (opener === "(" ? ")" : "]")) return true;
+      opener = undefined;
+    }
   }
   return false;
 }
@@ -62,6 +74,11 @@ function findBackslashMath(input: string, tree: MarkdownNode, includeUnclosed = 
     // HTML 标签可能包住正文，保守保留整段（包括 <code> 内的示例）。
     if (hasHtml) return;
     const overlaps = (from: number, to: number) => protectedRanges.some(([a, b]) => a < to && b > from);
+    // 有歧义的容器整体保留，不能拒绝第一组后继续渲染后面的内层公式。
+    if (hasNestedMathDelimiter(input, start, end, overlaps)) {
+      if (includeUnclosed) ranges.set(start, { end });
+      return;
+    }
     const unclosed = new Set<string>();
     for (let cursor = start; cursor < end - 1; cursor += 1) {
       if (input[cursor] !== "\\" || escaped(input, cursor) || overlaps(cursor, cursor + 2)) continue;
@@ -82,7 +99,7 @@ function findBackslashMath(input: string, tree: MarkdownNode, includeUnclosed = 
       cursor = close + 1;
       if (overlaps(open, close + 2)) continue;
       const body = input.slice(open + 2, close);
-      if (!body.trim() || hasNestedMathDelimiter(body) || /(^|[^\\])\$/.test(body)) continue;
+      if (!body.trim() || /(^|[^\\])\$/.test(body)) continue;
       if (opener === "[" && (node.type === "tableCell" || node.type === "heading")) continue;
       ranges.set(open, { end: close + 2 });
     }
