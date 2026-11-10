@@ -5,9 +5,9 @@ import {
   type Components,
   type ControlsConfig,
 } from "streamdown";
-import type { PluggableList } from "unified";
+import type { PluggableList, Plugin } from "unified";
 import React, { isValidElement, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
-import { messageMathPlugin, normalizeBackslashMath } from "./streamdown-math";
+import { messageMathPlugin, containsBackslashMath } from "./streamdown-math";
 import { useTranslation } from "../../../i18n";
 import { MessageStreamingContext } from "./ChatMessageList";
 import { chatStore } from "../pages/chat-page-bridge";
@@ -360,10 +360,25 @@ const messageComponents: Components = {
   td: (props) => <DemoFileNameTableCell {...props} />,
   th: (props) => <DemoFileNameTableHeader {...props} />,
 };
+// 保留 KaTeX 的显示/行内类名；其余清洗规则沿用 Streamdown 的锁定默认 schema。
+const [sanitize, sanitizeSchema] = defaultRehypePlugins.sanitize as [Plugin, {
+  attributes: Record<string, (string | [string, ...unknown[]])[]>;
+}];
+const mathSanitizeSchema = {
+  ...sanitizeSchema,
+  attributes: {
+    ...sanitizeSchema.attributes,
+    code: sanitizeSchema.attributes.code.map((attribute) =>
+      Array.isArray(attribute) && attribute[0] === "className"
+        ? [...attribute, "math-display", "math-inline"] : attribute),
+  },
+};
+// remend 1.4.0 把未闭合的 \[ 当成链接，可能补造 \]；数学配对必须来自原文。
+const backslashMathRemend = { links: false, images: false };
 const rehypePlugins: PluggableList = [
   defaultRehypePlugins.raw,
   encodeStreamdownFileLinksInHast,
-  defaultRehypePlugins.sanitize,
+  [sanitize, mathSanitizeSchema],
   defaultRehypePlugins.harden,
 ];
 
@@ -404,22 +419,23 @@ function containsRenderedMath(content: string): boolean {
 }
 
 export function StreamdownMessageContent({ content, streaming }: StreamdownMessageContentProps) {
-  const normalized = useMemo(() => normalizeBackslashMath(content), [content]);
+  const hasBackslashMath = useMemo(() => containsBackslashMath(content), [content]);
   // Streamdown's block mode preserves the already-rendered KaTeX blocks. Switching a long
   // math response to static mode on completion would tear down and rebuild the entire tree.
-  const useBlockMode = streaming || containsRenderedMath(normalized);
+  const useBlockMode = streaming || hasBackslashMath || containsRenderedMath(content);
 
   return (
     <Streamdown
       mode={useBlockMode ? "streaming" : "static"}
       parseIncompleteMarkdown={streaming}
+      remend={content.lastIndexOf("\\[") > content.lastIndexOf("\\]") ? backslashMathRemend : undefined}
       plugins={messagePlugins}
       components={messageComponents}
       rehypePlugins={rehypePlugins}
       controls={chatControls}
       className="cy-message-markdown cy-streamdown-message"
     >
-      {normalized}
+      {content}
     </Streamdown>
   );
 }

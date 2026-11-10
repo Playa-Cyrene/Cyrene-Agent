@@ -51,6 +51,35 @@ function texAnnotations(markup: string): string[] {
 }
 
 describe("StreamdownMessageContent", () => {
+
+  it.each([false, true])("keeps multiline inline math out of flow fences (streaming=%s)", (streaming) => {
+    const markup = render("\\(x\n+y\\) 价格 $5\n\n后文", streaming);
+    expect(texAnnotations(markup)).toEqual(["x\n+y"]);
+    expect(markup).toContain(" 价格 $5</p>");
+    expect(markup).toContain("<p>后文</p>");
+    expect(markup).not.toContain('class="katex-display"');
+    expect(markup).not.toContain('class="katex-error"');
+  });
+
+  it.each([false, true])("preserves formatting around display math (streaming=%s)", (streaming) => {
+    for (const [marker, tag] of [["**", "strong"], ["*", "em"], ["~~", "del"]]) {
+      const markup = render(`${marker}结果 \\[x=1\\] 完成${marker}\n\n后文`, streaming);
+      expect(texAnnotations(markup)).toEqual(["x=1"]);
+      expect(markup).toContain(tag === "strong" ? 'data-streamdown="strong">结果 ' : `<${tag}>结果 `);
+      expect(markup).toContain(` 完成</${tag === "strong" ? "span" : tag}>`);
+      expect(markup).toContain('class="katex-display"');
+      expect(markup).toContain("<p>后文</p>");
+    }
+  });
+
+  it.each([false, true])("preserves trailing TeX control spaces (streaming=%s)", (streaming) => {
+    for (const [open, close] of [["\\[", "\\]"], ["\\(", "\\)"]]) {
+      const markup = render(`${open}x\\ ${close}\n\n后文`, streaming);
+      expect(texAnnotations(markup)).toEqual(["x\\ "]);
+      expect(markup).not.toContain('class="katex-error"');
+      expect(markup).toContain("<p>后文</p>");
+    }
+  });
   it.each([false, true])("isolates backslash formulas from currency and adjacent math (streaming=%s)", (streaming) => {
     const currency = render(String.raw`价格 $5，税率 \(r=0.2\)。`, streaming);
     expect(texAnnotations(currency)).toEqual(["r=0.2"]);
@@ -92,6 +121,24 @@ describe("StreamdownMessageContent", () => {
     expect(texAnnotations(render("> \\[\n>x>0\n> \\]", streaming))).toEqual(["x>0"]);
     const aligned = String.raw`\begin{aligned}x&=1\\y&=2\end{aligned}`;
     expect(texAnnotations(render("> \\[\n>" + aligned + "\n> \\]", streaming))).toEqual([aligned]);
+  });
+
+
+  it.each([false, true])("keeps display math in task items without losing checkbox state (streaming=%s)", (streaming) => {
+    const markup = render("- [x] \\[x\\]\n- [ ] \\[y\\] tail", streaming);
+    expect(texAnnotations(markup)).toEqual(["x", "y"]);
+    expect(markup.match(/type="checkbox"/g)).toHaveLength(2);
+    expect(markup).toMatch(/type="checkbox"[^>]*checked/);
+    expect(markup.match(/class="katex-display"/g)).toHaveLength(2);
+    expect(markup).toContain(" tail");
+  });
+
+  it("keeps regular links and images after a complete display formula while streaming", () => {
+    const markup = render(String.raw`\[x\] [site](https://example.com) ![alt](https://example.com/a.png)`, true);
+    expect(texAnnotations(markup)).toEqual(["x"]);
+    expect(markup).toContain("https://example.com");
+    expect(markup).toContain('alt="alt"');
+    expect(markup).toContain('src="https://example.com/a.png"');
   });
 
   it("keeps chat tables free of copy, download, and fullscreen controls", () => {

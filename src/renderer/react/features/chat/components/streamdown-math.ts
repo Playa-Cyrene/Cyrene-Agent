@@ -1,10 +1,13 @@
 import { createMathPlugin } from "@streamdown/math";
+import type { Extension as FromMarkdownExtension } from "mdast-util-from-markdown";
+import type { InlineMath } from "mdast-util-math";
+import type { Extension, State, Tokenizer } from "micromark-util-types";
 import remarkParse from "remark-parse";
 import { defaultRemarkPlugins } from "streamdown";
-import { unified } from "unified";
+import { unified, type Processor } from "unified";
 
-export const messageMathPlugin = createMathPlugin({ singleDollarTextMath: true });
-const parser = unified().use(remarkParse).use([defaultRemarkPlugins.gfm, messageMathPlugin.remarkPlugin]);
+const dollarMathPlugin = createMathPlugin({ singleDollarTextMath: true });
+const protectionParser = unified().use(remarkParse).use([defaultRemarkPlugins.gfm, dollarMathPlugin.remarkPlugin]);
 
 interface MarkdownNode {
   type: string;
@@ -12,7 +15,7 @@ interface MarkdownNode {
   position?: { start: { offset?: number }; end: { offset?: number } };
 }
 
-interface Edit { start: number; end: number; value: string }
+interface MathRange { end: number }
 
 const protectedTypes = new Set([
   "code", "inlineCode", "html", "link", "linkReference", "image", "imageReference",
@@ -25,50 +28,9 @@ function escaped(input: string, index: number): boolean {
   return count % 2 === 1;
 }
 
-/** 按容器标记逐行消费前缀；引用的可选空格和惰性续行不能按首行字串匹配。 */
-function stripContainerPrefixes(body: string, prefix: string): string | undefined {
-  const parts: ("quote" | number)[] = [];
-  for (let cursor = 0; cursor < prefix.length;) {
-    const rest = prefix.slice(cursor);
-    const quote = /^ {0,3}> ?/.exec(rest);
-    if (quote) {
-      parts.push("quote");
-      cursor += quote[0].length;
-      continue;
-    }
-    const indent = /^(?: *(?:[-+*]|\d+[.)]) +| +)/.exec(rest);
-    // 无法可靠解释的容器形式（例如 tab 的虚拟列）保持原文。
-    if (!indent) return undefined;
-    parts.push(indent[0].length);
-    cursor += indent[0].length;
-  }
-  return body.split("\n").map((line, index) => {
-    if (index === 0) return line;
-    let cursor = 0;
-    for (const part of parts) {
-      if (part === "quote") {
-        const quote = /^ {0,3}> ?/.exec(line.slice(cursor));
-        if (quote) cursor += quote[0].length;
-      } else {
-        let consumed = 0;
-        while (consumed < part && line[cursor + consumed] === " ") consumed += 1;
-        // 不足列表延续缩进时是惰性续行，其文字空格应保留。
-        if (consumed === part) cursor += consumed;
-      }
-    }
-    return line.slice(cursor);
-  }).join("\n");
-}
-
-/**
- * 只在 Markdown 正文的完整配对范围转换分隔符，原始消息不变。
- * 用解析器给出的源码范围保护代码、链接和现有公式；不能在整串文本上裸替换。
- */
-export function normalizeBackslashMath(input: string): string {
-  if (!input.includes("\\(") && !input.includes("\\[")) return input;
-  const tree: MarkdownNode = parser.parse(input);
-  const edits: Edit[] = [];
-
+/** 原生解析只决定可转换的源码范围，不重写美元、空白或 Markdown 块边界。 */
+function findBackslashMath(input: string, tree: MarkdownNode): Map<number, MathRange> {
+  const ranges = new Map<number, MathRange>();
   function visit(node: MarkdownNode) {
     if (protectedTypes.has(node.type)) return;
     if (node.type !== "paragraph" && node.type !== "heading" && node.type !== "tableCell") {
@@ -89,17 +51,10 @@ export function normalizeBackslashMath(input: string): string {
       } else child.children?.forEach(protect);
     }
     node.children?.forEach(protect);
-    // 行内 HTML 的成对标签可能包住正文；保守保留整段，避免改写 <code> 等内容。
+    // HTML 标签可能包住正文，保守保留整段（包括 <code> 内的示例）。
     if (hasHtml) return;
     const overlaps = (from: number, to: number) => protectedRanges.some(([a, b]) => a < to && b > from);
     const unclosed = new Set<string>();
-    // 必须避开整段已有美元序列（包括未配对金额），而不只是公式正文里的美元。
-    let delimiterLength = 1;
-    for (const match of input.slice(start, end).matchAll(/\$+/g)) {
-      delimiterLength = Math.max(delimiterLength, match[0].length + 1);
-    }
-    const inlineDelimiter = "$".repeat(delimiterLength);
-
     for (let cursor = start; cursor < end - 1; cursor += 1) {
       if (input[cursor] !== "\\" || escaped(input, cursor) || overlaps(cursor, cursor + 2)) continue;
       const opener = input[cursor + 1];
@@ -109,7 +64,7 @@ export function normalizeBackslashMath(input: string): string {
       for (; close < end - 1; close += 1) {
         if (input[close] === "\\" && !escaped(input, close) && input[close + 1] === closer) break;
       }
-      // 找不到闭合符时，本段后续同类开符也不可能闭合，避免重复扫描长流式片段。
+      // 未闭合流式片段保持原文，同类开符不再重复扫描。
       if (close >= end - 1) {
         unclosed.add(opener);
         continue;
@@ -117,35 +72,114 @@ export function normalizeBackslashMath(input: string): string {
       const open = cursor;
       cursor = close + 1;
       if (overlaps(open, close + 2)) continue;
-      let body = input.slice(open + 2, close);
-      // 不把嵌套/混合分隔符或空公式猜成有效数学；未闭合流式片段也不补闭合符。
+      const body = input.slice(open + 2, close);
       if (!body.trim() || /\\[()[\]]/.test(body) || /(^|[^\\])\$/.test(body)) continue;
-      if (opener === "(") {
-        // Markdown 数学行内节点会把换行变空格；容器前缀由解析器正常处理。
-        // 注释不产生可见文字，同时隔开相邻编辑和已有美元，避免拼成更长的序列。
-        // 行首不添加注释，避免 CommonMark 把整行当作 HTML 块。
-        const before = input[open - 1] === "$" ? "<!-- -->" : "";
-        edits.push({ start: open, end: close + 2, value: `${before}${inlineDelimiter}${body.trim()}${inlineDelimiter}<!-- -->` });
-      } else {
-        if (node.type === "tableCell" || node.type === "heading") continue;
-        // 显示数学需要独立的 flow 节点；保留引用/列表的延续缩进，避免跳出嵌套容器。
-        const lineStart = input.lastIndexOf("\n", start - 1) + 1;
-        const sourcePrefix = input.slice(lineStart, start);
-        const isTask = /\[[ xX]\][ \t]+$/.test(sourcePrefix);
-        // 单独的任务公式变成 flow 后会使 GFM 丢失复选框；保留原文，而非破坏列表状态。
-        if (isTask && open === start) continue;
-        const containerPrefix = sourcePrefix.replace(/\[[ xX]\][ \t]+$/, "");
-        const stripped = stripContainerPrefixes(body, containerPrefix);
-        if (stripped === undefined) continue;
-        const prefix = containerPrefix.replace(/[^>\t ]/g, " ");
-        body = stripped.trim();
-        const value = `\n${prefix}\n${prefix}$$\n${prefix}${body.replaceAll("\n", `\n${prefix}`)}\n${prefix}$$\n${prefix}\n${prefix}`;
-        edits.push({ start: open, end: close + 2, value });
-      }
+      if (opener === "[" && (node.type === "tableCell" || node.type === "heading")) continue;
+      ranges.set(open, { end: close + 2 });
     }
   }
   visit(tree);
-  let output = input;
-  for (const edit of edits.reverse()) output = output.slice(0, edit.start) + edit.value + output.slice(edit.end);
-  return output;
+  return ranges;
 }
+
+export function containsBackslashMath(input: string): boolean {
+  return (input.includes("\\(") || input.includes("\\[")) &&
+    findBackslashMath(input, protectionParser.parse(input)).size > 0;
+}
+
+declare module "micromark-util-types" {
+  interface TokenTypeMap {
+    cyreneBackslashMath: "cyreneBackslashMath";
+    cyreneBackslashMathData: "cyreneBackslashMathData";
+  }
+}
+
+/**
+ * 在字符转义/强调解析前消费完整公式，直接输出 KaTeX 认识的数学节点。
+ * 使用 text token 保留 strong/emphasis/delete 等容器，显示语义由 math-display 提供；
+ * 不提升为 flow 节点，避免拆段、丢任务复选框或吞掉后文。
+ */
+function remarkBackslashMath(this: Processor) {
+  const nativeParse = this.parser!;
+  let ranges = new Map<number, MathRange>();
+  const tokenize: Tokenizer = function (effects, ok, nok) {
+    const context = this;
+    const range = ranges.get(context.now().offset);
+    if (!range) return nok;
+    let inData = false;
+    const consume: State = (code) => {
+      if (context.now().offset === range.end) {
+        if (inData) effects.exit("cyreneBackslashMathData");
+        effects.exit("cyreneBackslashMath");
+        return ok(code);
+      }
+      if (code === null) return nok(code);
+      const lineEnding = code === -5 || code === -4 || code === -3;
+      if (lineEnding) {
+        if (inData) effects.exit("cyreneBackslashMathData");
+        inData = false;
+        effects.enter("lineEnding");
+      } else if (!inData) {
+        effects.enter("cyreneBackslashMathData");
+        inData = true;
+      }
+      effects.consume(code);
+      if (lineEnding) effects.exit("lineEnding");
+      return consume;
+    };
+    return (code) => {
+      effects.enter("cyreneBackslashMath");
+      return consume(code);
+    };
+  };
+  const syntax: Extension = { text: { 92: { name: "cyreneBackslashMath", tokenize } } };
+  const fromMarkdown: FromMarkdownExtension = {
+    enter: {
+      cyreneBackslashMath(token) {
+        const raw = this.sliceSerialize(token);
+        const display = raw[1] === "[";
+        // 仅去掉显示分隔符独占行造成的首尾换行，不能 trim 掉 TeX 控制空格。
+        let value = raw.slice(2, -2).replace(/\r\n?/g, "\n");
+        if (display) {
+          value = value.replace(/^[ \t]*\n/, "");
+          const trailingLine = /\n[ \t]*$/.exec(value);
+          if (trailingLine && !escaped(value, trailingLine.index)) value = value.slice(0, trailingLine.index);
+        }
+        const node: InlineMath = {
+          type: "inlineMath",
+          value,
+          data: {
+            hName: "code",
+            hProperties: { className: ["language-math", display ? "math-display" : "math-inline"] },
+            hChildren: [{ type: "text", value }],
+          },
+        };
+        this.enter(node, token);
+      },
+    },
+    exit: { cyreneBackslashMath(token) { this.exit(token); } },
+  };
+  const data = this.data();
+  (data.micromarkExtensions ??= []).push(syntax);
+  (data.fromMarkdownExtensions ??= []).push(fromMarkdown);
+  this.parser = (input, file) => {
+    // 第一遍让原生插件标记链接、代码、HTML、美元数学和容器边界。
+    // 第二遍只允许已验证的范围进入 tokenizer；每次 parse 均清空，不能泄漏到下一块。
+    ranges = new Map();
+    const tree = nativeParse(input, file);
+    if (!input.includes("\\(") && !input.includes("\\[")) return tree;
+    ranges = findBackslashMath(input, tree);
+    if (!ranges.size) return tree;
+    try {
+      return nativeParse(input, file);
+    } finally {
+      ranges = new Map();
+    }
+  };
+}
+
+function remarkMessageMath(this: Processor) {
+  this.use([dollarMathPlugin.remarkPlugin]).use(remarkBackslashMath);
+}
+
+export const messageMathPlugin = { ...dollarMathPlugin, remarkPlugin: remarkMessageMath };

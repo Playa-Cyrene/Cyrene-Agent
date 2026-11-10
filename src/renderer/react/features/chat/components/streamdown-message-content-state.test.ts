@@ -51,6 +51,32 @@ afterEach(() => {
 });
 
 describe("MarkdownContent Streamdown lifecycle", () => {
+
+  it.each([
+    ["\\(x\n+y\\) 价格 $5\n\n后文", "x\n+y", undefined],
+    ["**结果 \\[x=1\\] 完成**\n\n后文", "x=1", '[data-streamdown="strong"]'],
+    ["*结果 \\[x=1\\] 完成*\n\n后文", "x=1", "em"],
+    ["~~结果 \\[x=1\\] 完成~~\n\n后文", "x=1", "del"],
+    ["\\[x\\ \\]\n\n后文", "x\\ ", undefined],
+    ["\\(x\\ \\)\n\n后文", "x\\ ", undefined],
+  ])("keeps exact math, following prose and formatting through every prefix: %s", (content, tex, tag) => {
+    const close = Math.max(content.indexOf("\\)"), content.indexOf("\\]")) + 2;
+    for (let index = 0; index <= content.length; index += 1) {
+      update(content.slice(0, index), true);
+      expect([...container.querySelectorAll("annotation")].map((node) => node.textContent))
+        .toEqual(index < close ? [] : [tex]);
+      expect(container.querySelector(".katex-error")).toBeNull();
+    }
+    expect(container.querySelector("p:last-child")?.textContent).toBe("后文");
+    if (content.includes("价格")) expect(container.textContent).toContain("价格 $5");
+    if (tag) expect(container.querySelector(tag)?.textContent).toMatch(/^结果 .* 完成$/s);
+    const nodes = [...container.querySelectorAll(".katex")];
+    update(content, false);
+    expect([...container.querySelectorAll("annotation")].map((node) => node.textContent)).toEqual([tex]);
+    nodes.forEach((node, index) => expect(container.querySelectorAll(".katex")[index]).toBe(node));
+    if (tag) expect(container.querySelector(tag)?.textContent).toMatch(/^结果 .* 完成$/s);
+    expect(container.querySelector("p:last-child")?.textContent).toBe("后文");
+  });
   it("keeps exact math and currency text through character-by-character streaming", () => {
     const content = String.raw`价格 $5，税率 \(r=0.2\)\(a\)` + "\n\n> - > \\[\n>   >x>0\n>   > \\]";
     const expected = ["r=0.2", "a", "x>0"];
