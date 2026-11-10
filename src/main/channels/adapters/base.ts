@@ -21,7 +21,7 @@ export interface ChannelAdapter {
   readonly capability: ChannelCapability;
 
   /** 启动：注册 webhook / 启子进程 / 加载凭证 / 写运行时配置 */
-  start(): Promise<void>;
+  start(signal?: AbortSignal): Promise<void>;
 
   /** 关闭：停止子进程、关闭监听并释放协议资源。 */
   stop(): Promise<void>;

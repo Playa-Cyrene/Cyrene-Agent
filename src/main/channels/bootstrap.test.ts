@@ -12,6 +12,8 @@ const channelMocks = vi.hoisted(() => ({
   buildAndRunAgent: undefined as ((...args: unknown[]) => Promise<unknown>) | undefined,
   dispatcherDeps: [] as Array<Record<string, any>>,
   agentError: undefined as Error | undefined,
+  beforeComplete: undefined as (() => void) | undefined,
+  runOptions: [] as Array<{ signal?: AbortSignal }>,
   agentResult: { reply: "渠道回复", toolResults: [] } as {
     reply: string;
     toolResults: unknown[];
@@ -88,8 +90,10 @@ vi.mock("../orchestrator/cyrene-agent", () => ({
       return channelMocks.agentResult;
     }
 
-    runWithEvents() {
+    runWithEvents(options: { signal?: AbortSignal }) {
+      channelMocks.runOptions.push(options);
       return { subscribe: ({ complete, error }: { complete: () => void; error: (err: Error) => void }) => {
+        channelMocks.beforeComplete?.();
         if (channelMocks.agentError) error(channelMocks.agentError);
         else complete();
       } };
@@ -149,11 +153,30 @@ function makeAgentRuntime(onRunFinished = vi.fn(async () => ({ sticker: null }))
 beforeEach(() => {
   vi.clearAllMocks();
   channelMocks.agentError = undefined;
+  channelMocks.beforeComplete = undefined;
+  channelMocks.runOptions.length = 0;
   channelMocks.agentResult = { reply: "渠道回复", toolResults: [] };
   channelMocks.dispatcherDeps.length = 0;
 });
 
 describe("createChannelsSubsystem lifecycle", () => {
+  it("把渠道撤销信号传入智能体，迟到完成不启动记忆和索引收尾", async () => {
+    const activity = new AbortController();
+    const runtime = makeAgentRuntime();
+    const publishLifecycle = makePublishLifecycle();
+    createChannelsSubsystem({ ...makeChannelsDeps(), agentRuntime: runtime, publishLifecycle });
+    channelMocks.beforeComplete = () => activity.abort(new Error("channel_stopped"));
+    const buildAndRun = channelMocks.dispatcherDeps[0].buildAndRunAgent;
+    await expect(buildAndRun({
+      channel: "wechat", senderId: "synthetic", chatId: "synthetic", text: "hello", at: new Date(0), signal: activity.signal,
+    }, "synthetic-channel")).rejects.toThrow("channel_stopped");
+    expect(channelMocks.runOptions[0].signal?.aborted).toBe(true);
+    expect(runtime.onRunFinished).not.toHaveBeenCalled();
+    const { indexConversationTurn } = await import("../orchestrator/tools/history-tools");
+    expect(indexConversationTurn).not.toHaveBeenCalled();
+    expect(publishLifecycle.publishTurnFinished).toHaveBeenCalledWith(expect.objectContaining({ status: "cancelled" }));
+  });
+
   it("为每个子系统保留独立的调度器依赖", async () => {
     const firstRuntime = makeAgentRuntime();
     const secondRuntime = makeAgentRuntime();

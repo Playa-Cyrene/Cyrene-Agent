@@ -122,6 +122,7 @@ export interface GetUploadUrlResponse {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface ILinkClientOptions {
+  signal?: AbortSignal;
   /** 注入的随机 wechat-uin 生成器（测试时可固定） */
   wechatUin?: string;
 }
@@ -132,7 +133,7 @@ export class ILinkClient {
   private botId: string;
   private wechatUin: string;
 
-  constructor(creds: Credentials, opts: ILinkClientOptions = {}) {
+  constructor(creds: Credentials, private readonly opts: ILinkClientOptions = {}) {
     this.baseUrl = creds.baseUrl || BASE_URL;
     this.botToken = creds.botToken;
     this.botId = creds.ilinkBotId;
@@ -300,11 +301,15 @@ export class ILinkClient {
   // ── Low level ───────────────────────────────────────────────────────────
 
   private async doJson<T>(method: string, path: string, body: unknown, init?: RequestInit): Promise<T> {
+    const signals = [this.opts.signal, init?.signal].filter((signal): signal is AbortSignal => !!signal);
+    const signal = signals.length ? AbortSignal.any(signals) : undefined;
+    signal?.throwIfAborted();
     const res = await fetch(this.baseUrl + path, {
       method,
       headers: this.headers(),
       body: JSON.stringify(body),
       ...init,
+      signal,
     });
     const text = await res.text();
     if (!res.ok) {

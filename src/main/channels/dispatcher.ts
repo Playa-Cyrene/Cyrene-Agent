@@ -158,10 +158,12 @@ export class ChannelDispatcher {
    * 返回的出站消息仅供调用方观测和测试，不要求适配器再次发送。
    */
   async handleIncoming(msg: IncomingMessage): Promise<OutgoingMessage | null> {
+    if (msg.signal?.aborted) return null;
     const sessionId = makeSessionId(msg.channel, msg.chatId);
     // 读取设置会同步刷新限速器，必须发生在本轮额度消费之前。
     void this.settings;
     return this.deps.queue.run(`external:${sessionId}`, async () => {
+      if (msg.signal?.aborted) return null;
       if (!this.deps.limiter.tryConsume(msg.channel, msg.senderId)) {
         console.warn(LOG, `限速: ${msg.channel}:${msg.senderId}`);
         return null;
@@ -196,6 +198,7 @@ export class ChannelDispatcher {
     msg: IncomingMessage,
     context: DispatchContext,
   ): Promise<OutgoingMessage | null> {
+    if (msg.signal?.aborted) return null;
     const journal = this.deps.journal!;
     const target = resolveChannelConversationTarget(context);
     const turnId = makeChannelTurnId(msg, "user");
@@ -247,6 +250,7 @@ export class ChannelDispatcher {
       else await journal.appendPresentation(target.conversationId, userEntry.id, 1, userPresentation);
     } catch (error) { console.warn(LOG, "渠道用户展示更新失败:", error); }
     const modelContext = await journal.buildModelContext(target.conversationId, true);
+    if (msg.signal?.aborted) return null;
     const transcriptSink = journal.createRunSink({
       conversationId: target.conversationId,
       runId,
@@ -269,6 +273,7 @@ export class ChannelDispatcher {
       return null;
     }
 
+    if (msg.signal?.aborted) return null;
     const prepared = await this.deps.composer.compose({
       incoming: msg,
       replyText: result.text,
@@ -280,6 +285,8 @@ export class ChannelDispatcher {
       mobileMessageSegmentation: this.deps.loadGeneralSettings().mobileMessageSegmentation,
     });
     try {
+      if (msg.signal?.aborted) return null;
+      prepared.message.signal = msg.signal;
       // 先落盘保守状态：若进程在远端发送窗口崩溃，下一轮只能看到
       // 未确认，不得把 assistant 的持久化误当成已送达并盲重发。
       try {

@@ -116,6 +116,7 @@ describe("external channel settings migration", () => {
 
   it("does not send the saved Feishu secret back when saving the channel without replacing it", async () => {
     const saveConfig = vi.fn().mockResolvedValue({});
+    const restartAll = vi.fn();
     Object.assign(window, {
       settings: {
         getGeneral: async () => ({}),
@@ -124,7 +125,7 @@ describe("external channel settings migration", () => {
         channelsLogGet: async () => [],
         channelsContextBindingsGet: async () => ({ externalChats: [], bindings: [], conversations: [] }),
         channelsSaveConfig: saveConfig,
-        channelsRestart: async () => ({}),
+        channelsRestart: restartAll,
         onChannelsStatusChanged: () => () => {},
         onChannelsWechatQrcode: () => () => {},
         onChannelsWechatLoginDone: () => () => {},
@@ -138,6 +139,7 @@ describe("external channel settings migration", () => {
     await act(async () => { saveButton!.click(); await new Promise((resolve) => setTimeout(resolve, 0)); });
 
     expect(saveConfig).toHaveBeenCalledWith({ feishu: { enabled: false, appId: "cli_demo" } });
+    expect(restartAll).not.toHaveBeenCalled();
     expect(document.body.textContent).not.toContain("must-not-be-echoed");
   });
 });

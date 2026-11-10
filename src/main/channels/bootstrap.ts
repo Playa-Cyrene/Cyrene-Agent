@@ -104,6 +104,7 @@ export function createChannelsSubsystem(
     msg,
     input,
   ) => {
+    msg.signal?.throwIfAborted();
     const channelInput = typeof input === "string"
       ? {
         sessionId: input,
@@ -143,6 +144,7 @@ export function createChannelsSubsystem(
       },
     });
     const agentUserText = formatChannelUserText(msg);
+    msg.signal?.throwIfAborted();
     const { options } = await deps.agentRuntime.buildOptions({
       modelContext: channelInput.modelContext,
       currentUser: {
@@ -164,6 +166,8 @@ export function createChannelsSubsystem(
       } : {}),
     });
     if (channelInput.transcriptSink) options.transcriptSink = channelInput.transcriptSink;
+    msg.signal?.throwIfAborted();
+    if (msg.signal) options.signal = options.signal ? AbortSignal.any([options.signal, msg.signal]) : msg.signal;
     // 运行标识贯通：sink 写入、runStore 会话与生命周期事件使用同一 runId，
     // 崩溃孤儿工具才能按 assistant 条目上的 runId 查回运行状态。
     options.runId = channelInput.runId;
@@ -197,6 +201,8 @@ export function createChannelsSubsystem(
         });
       });
       lifecycleStatus = agent.lastResult?.terminal?.status ?? "success";
+      if (msg.signal?.aborted) lifecycleStatus = "cancelled";
+      msg.signal?.throwIfAborted();
       channelResult.text = reply;
       // Observable 在超时终态下也会正常 complete；只有成功终态才能进入记忆、表情等成功收尾。
       const terminalStatus = agent.lastResult?.terminal?.status;
@@ -211,7 +217,7 @@ export function createChannelsSubsystem(
         });
         channelResult.sticker = finished.sticker;
       }
-      void indexConversationTurn(channelInput.target.conversationId, agentUserText, reply);
+      if (!msg.signal?.aborted) void indexConversationTurn(channelInput.target.conversationId, agentUserText, reply);
       return channelResult;
     } finally {
       // 无论成功、超时还是异常退出，轮次结束事件都要发布一次

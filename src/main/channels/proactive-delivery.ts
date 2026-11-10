@@ -15,6 +15,7 @@ export type ProactiveMobileChannel = Extract<ChannelId, "wechat" | "feishu">;
 // persistence must not be presented as channel exactly-once delivery.
 
 export interface RecentProactiveChannelRecipient {
+  signal?: AbortSignal;
   targetId: string;
   threadId?: string;
   sessionId: string;
@@ -34,6 +35,7 @@ export function createProactiveChannelRecipientRegistry(): ProactiveChannelRecip
       const targetId = message.chatId.trim();
       if (!targetId || !sessionId) return;
       recipients.set(message.channel, {
+        signal: message.signal,
         targetId,
         ...(message.threadId ? { threadId: message.threadId } : {}),
         sessionId,
@@ -41,7 +43,8 @@ export function createProactiveChannelRecipientRegistry(): ProactiveChannelRecip
       });
     },
     get(channel): RecentProactiveChannelRecipient | null {
-      return recipients.get(channel) ?? null;
+      const recipient = recipients.get(channel);
+      return recipient?.signal?.aborted ? null : recipient ?? null;
     },
   };
 }
@@ -96,8 +99,10 @@ export async function sendProactiveChannelMessage(
   const deliveredTexts: string[] = [];
   for (const text of texts) {
     if (input.canContinue && !input.canContinue()) break;
+    if (recipient.signal?.aborted) break;
     if (adapter.getStatus().phase !== "running") break;
     const message: OutgoingMessage = {
+      signal: recipient.signal,
       channel: input.channel,
       targetId: recipient.targetId,
       ...(recipient.threadId ? { threadId: recipient.threadId } : {}),

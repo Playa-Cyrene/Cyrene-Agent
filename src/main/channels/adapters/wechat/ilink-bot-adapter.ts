@@ -51,6 +51,8 @@ import type {
 } from "../../types";
 import type { ChannelAdapter } from "../base";
 import { logger, LogTag } from "../../../logger";
+import { AdapterActivity } from "../../adapter-activity";
+import { loadChannelsSettings } from "../../settings-store";
 
 const LOG_PREFIX = "[WechatBot]";
 const USER_PROFILE_FILE = "user-profile.json";
@@ -90,6 +92,7 @@ export class ILinkBotAdapter implements ChannelAdapter {
   onMessage: MessageHandler | null = null;
 
   private client: ILinkClient | null = null;
+  private activity = new AdapterActivity();
   private pollAbort: AbortController | null = null;
   private pollLoopPromise: Promise<void> | null = null;
   /** 账号是否已登录（凭证存在） */
@@ -111,12 +114,18 @@ export class ILinkBotAdapter implements ChannelAdapter {
 
   // ── ChannelAdapter ────────────────────────────────────────────────────────
 
-  async start(): Promise<void> {
+  async start(parent?: AbortSignal): Promise<void> {
+    const signal = this.activity.start(parent);
+    if (!loadChannelsSettings().wechat.enabled || signal.aborted) {
+      this.status = { enabled: false, phase: "offline", message: "未启用" };
+      return;
+    }
     this.status = { enabled: true, phase: "starting" };
     logger.info(LogTag.Wechat, "Starting...");
 
     // 1. 加载已存凭证
     const creds = await loadCredentials();
+    if (signal.aborted) return;
     if (!creds) {
       this.status = {
         enabled: true,
@@ -128,7 +137,7 @@ export class ILinkBotAdapter implements ChannelAdapter {
     }
 
     this.currentCredentials = creds;
-    this.client = new ILinkClient(creds);
+    this.client = new ILinkClient(creds, { signal });
     this.isLoggedIn = true;
 
     // 2. 启动 long-poll 循环
@@ -140,6 +149,10 @@ export class ILinkBotAdapter implements ChannelAdapter {
   }
 
   async stop(): Promise<void> {
+    this.activity.stop();
+    this.replyContextByTarget.clear();
+    this.pendingSaveIntentByTarget.clear();
+    this.pendingUnsupportedMediaByTarget.clear();
     console.log(LOG_PREFIX, "Stopping...");
     this.pollAbort?.abort();
     if (this.pollLoopPromise) {
@@ -155,6 +168,9 @@ export class ILinkBotAdapter implements ChannelAdapter {
   }
 
   async send(msg: OutgoingMessage): Promise<{ ok: boolean; error?: string }> {
+    const signal = msg.signal
+      ? AbortSignal.any([msg.signal, this.activity.signal]) : this.activity.signal;
+    if (signal.aborted) return { ok: false, error: "channel_stopped" };
     if (!this.client) return { ok: false, error: "微信未连接" };
     const contextToken = this.replyContextByTarget.get(msg.targetId);
     if (!contextToken) return { ok: false, error: "缺少微信 context_token，无法回复" };
@@ -163,6 +179,7 @@ export class ILinkBotAdapter implements ChannelAdapter {
     let lastErr: string | undefined;
 
     for (const part of msg.parts) {
+      if (signal.aborted) return { ok: false, error: "channel_stopped" };
       if (part.kind === "text") {
         const text = part.text.trim();
         if (!text) continue;
@@ -175,7 +192,8 @@ export class ILinkBotAdapter implements ChannelAdapter {
         }
       } else if (part.kind === "image") {
         if (!part.filePath) return { ok: false, error: "微信图片发送需要本地 filePath" };
-        const media = await this.uploadMedia(this.client, msg.targetId, part.filePath, MediaType.IMAGE);
+        const media = await this.uploadMedia(this.client, msg.targetId, part.filePath, MediaType.IMAGE, { signal });
+        if (signal.aborted) return { ok: false, error: "channel_stopped" };
         const result = await this.client.sendMessage(msg.targetId, [buildImageItem(media)], contextToken);
         if (result.ok) anyOk = true;
         else {
@@ -183,7 +201,8 @@ export class ILinkBotAdapter implements ChannelAdapter {
           console.warn(LOG_PREFIX, "image_item 发送失败:", lastErr);
         }
       } else if (part.kind === "sticker") {
-        const media = await this.uploadMedia(this.client, msg.targetId, part.imagePath, MediaType.IMAGE);
+        const media = await this.uploadMedia(this.client, msg.targetId, part.imagePath, MediaType.IMAGE, { signal });
+        if (signal.aborted) return { ok: false, error: "channel_stopped" };
         const result = await this.client.sendMessage(msg.targetId, [buildImageItem(media)], contextToken);
         if (result.ok) anyOk = true;
         else {
@@ -191,11 +210,12 @@ export class ILinkBotAdapter implements ChannelAdapter {
           console.warn(LOG_PREFIX, "sticker image_item 发送失败:", lastErr);
         }
       } else if (part.kind === "audio") {
-        const voice = await this.buildVoiceItem(msg.targetId, part.filePath).catch((err) => {
+        const voice = await this.buildVoiceItem(msg.targetId, part.filePath, signal).catch((err) => {
           console.warn(LOG_PREFIX, "voice_item 构造失败（跳过语音）:", err instanceof Error ? err.message : err);
           return null;
         });
         if (voice) {
+          if (signal.aborted) return { ok: false, error: "channel_stopped" };
           const result = await this.client.sendMessage(msg.targetId, [voice], contextToken);
           if (result.ok) anyOk = true;
           else {
@@ -204,7 +224,8 @@ export class ILinkBotAdapter implements ChannelAdapter {
           }
         }
       } else if (part.kind === "file") {
-        const media = await this.uploadMedia(this.client, msg.targetId, part.filePath, MediaType.FILE);
+        const media = await this.uploadMedia(this.client, msg.targetId, part.filePath, MediaType.FILE, { signal });
+        if (signal.aborted) return { ok: false, error: "channel_stopped" };
         const result = await this.client.sendMessage(msg.targetId, [buildFileItem(media, path.basename(part.name ?? part.filePath))], contextToken);
         if (result.ok) anyOk = true;
         else {
@@ -212,7 +233,8 @@ export class ILinkBotAdapter implements ChannelAdapter {
           console.warn(LOG_PREFIX, "file_item 发送失败:", lastErr);
         }
       } else if (part.kind === "video") {
-        const media = await this.uploadMedia(this.client, msg.targetId, part.filePath, MediaType.VIDEO);
+        const media = await this.uploadMedia(this.client, msg.targetId, part.filePath, MediaType.VIDEO, { signal });
+        if (signal.aborted) return { ok: false, error: "channel_stopped" };
         const result = await this.client.sendMessage(msg.targetId, [buildVideoItem(media)], contextToken);
         if (result.ok) anyOk = true;
         else {
@@ -225,11 +247,12 @@ export class ILinkBotAdapter implements ChannelAdapter {
     return { ok: true };
   }
 
-  private async buildVoiceItem(targetId: string, filePath: string): Promise<SendMessageItem> {
+  private async buildVoiceItem(targetId: string, filePath: string, signal: AbortSignal): Promise<SendMessageItem> {
     if (!this.client) throw new Error("微信未连接");
     const source = await fs.readFile(filePath);
     const encoded = await this.encodeVoice(source, { format: "wav" });
-    const media = await this.uploadMediaData(this.client, targetId, encoded.data, MediaType.VOICE);
+    signal.throwIfAborted();
+    const media = await this.uploadMediaData(this.client, targetId, encoded.data, MediaType.VOICE, { signal });
     return buildVoiceItem(media, encoded.durationMs, encoded.sampleRate, encoded.encodeType);
   }
 
@@ -294,15 +317,18 @@ export class ILinkBotAdapter implements ChannelAdapter {
     if (!this.client || !this.pollAbort) return;
     // 捕获本轮轮询的信号：stop() 会把它置空，循环体只认这一个信号。
     const signal = this.pollAbort.signal;
+    const activity = this.activity.signal;
     let buf = "";
     let sessionExpired = false;
 
     while (!signal.aborted && !sessionExpired) {
       try {
         const { messages, buf: newBuf } = await this.client.getUpdates(buf, signal);
+        if (signal.aborted || activity.aborted) break;
         buf = newBuf;
         for (const msg of messages) {
-          await this.dispatchInbound(msg);
+          if (signal.aborted || activity.aborted) break;
+          await this.dispatchInbound(msg, activity);
         }
       } catch (err) {
         if (err instanceof SessionExpiredError) {
@@ -322,7 +348,9 @@ export class ILinkBotAdapter implements ChannelAdapter {
     }
   }
 
-  private async dispatchInbound(msg: WeixinMessage): Promise<void> {
+  private async dispatchInbound(msg: WeixinMessage, signal = this.activity.signal): Promise<void> {
+    if (signal.aborted) return;
+    const onMessage = this.onMessage;
     if (!this.onMessage) {
       console.warn(LOG_PREFIX, "onMessage 未注入，跳过消息");
       return;
@@ -331,17 +359,21 @@ export class ILinkBotAdapter implements ChannelAdapter {
     this.replyContextByTarget.set(msg.fromUserId, msg.contextToken);
 
     const media = describeInboundWechatMedia(msg.items);
-    const voiceText = await this.#maybeTranscribeInboundVoice(msg, media);
+    const voiceText = await this.#maybeTranscribeInboundVoice(msg, media, signal);
+    if (signal.aborted) return;
     if (voiceText === null) return;
-    const intercept = await this.#maybeInterceptInboundMedia(msg, media);
+    const intercept = await this.#maybeInterceptInboundMedia(msg, media, signal);
+    if (signal.aborted) return;
     if (intercept.handled) {
-      if (intercept.text) void this.#sendInterceptText(msg.fromUserId, msg.contextToken, intercept.text);
+      if (intercept.text) void this.#sendInterceptText(msg.fromUserId, msg.contextToken, intercept.text, signal);
       return;
     }
-    const attachments = await this.#downloadInboundAttachments(msg, media);
+    const attachments = await this.#downloadInboundAttachments(msg, media, signal);
+    if (signal.aborted) return;
     if (attachments === null) return;
 
     const incoming: IncomingMessage = {
+      signal,
       channel: "wechat",
       senderId: msg.fromUserId,
       chatId: msg.fromUserId,
@@ -353,12 +385,12 @@ export class ILinkBotAdapter implements ChannelAdapter {
       _raw: msg,
     };
 
-    void this.onMessage(incoming).catch((err) => {
+    void onMessage?.(incoming).catch((err) => {
       console.error(LOG_PREFIX, "dispatcher error:", err);
     });
   }
 
-  async #maybeInterceptInboundMedia(msg: WeixinMessage, media: InboundMediaDescriptor[]): Promise<{ handled: boolean; text?: string }> {
+  async #maybeInterceptInboundMedia(msg: WeixinMessage, media: InboundMediaDescriptor[], signal: AbortSignal): Promise<{ handled: boolean; text?: string }> {
     const now = Date.now();
     this.#clearExpiredInboundState(msg.fromUserId, now);
 
@@ -368,12 +400,12 @@ export class ILinkBotAdapter implements ChannelAdapter {
     if (isWechatSaveIntent(text)) {
       const mediaToSave = firstSaveableMedia(media);
       if (mediaToSave) {
-        const result = await this.#saveInboundMedia(mediaToSave, msg.msgId || String(now), username);
+        const result = await this.#saveInboundMedia(mediaToSave, msg.msgId || String(now), username, signal);
         return { handled: true, text: result };
       }
       const pending = this.pendingUnsupportedMediaByTarget.get(msg.fromUserId);
       if (pending) {
-        const result = await this.#saveInboundMedia(pending.media, pending.messageId, username);
+        const result = await this.#saveInboundMedia(pending.media, pending.messageId, username, signal);
         this.pendingUnsupportedMediaByTarget.delete(msg.fromUserId);
         return { handled: true, text: result };
       }
@@ -388,7 +420,7 @@ export class ILinkBotAdapter implements ChannelAdapter {
       const mediaToSave = firstSaveableMedia(media);
       if (mediaToSave) {
         this.pendingSaveIntentByTarget.delete(msg.fromUserId);
-        const result = await this.#saveInboundMedia(mediaToSave, msg.msgId || String(now), username);
+        const result = await this.#saveInboundMedia(mediaToSave, msg.msgId || String(now), username, signal);
         return { handled: true, text: result };
       }
     }
@@ -397,7 +429,7 @@ export class ILinkBotAdapter implements ChannelAdapter {
     if (video) {
       if (this.pendingSaveIntentByTarget.has(msg.fromUserId)) {
         this.pendingSaveIntentByTarget.delete(msg.fromUserId);
-        const result = await this.#saveInboundMedia(video, msg.msgId || String(now), username);
+        const result = await this.#saveInboundMedia(video, msg.msgId || String(now), username, signal);
         return { handled: true, text: result };
       }
       this.pendingUnsupportedMediaByTarget.set(msg.fromUserId, { media: video, messageId: msg.msgId || String(now), expiresAt: now + SAVE_INTENT_TTL_MS });
@@ -413,7 +445,7 @@ export class ILinkBotAdapter implements ChannelAdapter {
     if (unsupportedFile) {
       if (this.pendingSaveIntentByTarget.has(msg.fromUserId)) {
         this.pendingSaveIntentByTarget.delete(msg.fromUserId);
-        const result = await this.#saveInboundMedia(unsupportedFile, msg.msgId || String(now), username);
+        const result = await this.#saveInboundMedia(unsupportedFile, msg.msgId || String(now), username, signal);
         return { handled: true, text: result };
       }
       this.pendingUnsupportedMediaByTarget.set(msg.fromUserId, { media: unsupportedFile, messageId: msg.msgId || String(now), expiresAt: now + SAVE_INTENT_TTL_MS });
@@ -427,9 +459,10 @@ export class ILinkBotAdapter implements ChannelAdapter {
     media: InboundMediaDescriptor,
     messageId: string,
     username: string,
+    signal: AbortSignal,
   ): Promise<string> {
     try {
-      const filePath = await this.saveInboundMedia(media, messageId);
+      const filePath = await this.saveInboundMedia(media, messageId, signal);
       return buildWechatSaveSuccessPrompt(username, filePath);
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
@@ -438,41 +471,42 @@ export class ILinkBotAdapter implements ChannelAdapter {
     }
   }
 
-  async #maybeTranscribeInboundVoice(msg: WeixinMessage, media: InboundMediaDescriptor[]): Promise<string | undefined | null> {
+  async #maybeTranscribeInboundVoice(msg: WeixinMessage, media: InboundMediaDescriptor[], signal: AbortSignal): Promise<string | undefined | null> {
     const voice = media.find((item) => item.kind === "voice");
     if (!voice) return undefined;
 
     const username = loadWechatPreferredName();
     if (!this.isAsrConfigured()) {
-      await this.#sendInterceptText(msg.fromUserId, msg.contextToken, buildWechatAsrMissingPrompt(username));
+      await this.#sendInterceptText(msg.fromUserId, msg.contextToken, buildWechatAsrMissingPrompt(username), signal);
       return null;
     }
 
     try {
-      const transcript = (await this.transcribeVoice(voice, msg.msgId || String(Date.now()))).trim();
+      const transcript = (await this.transcribeVoice(voice, msg.msgId || String(Date.now()), signal)).trim();
       if (!transcript) {
-        await this.#sendInterceptText(msg.fromUserId, msg.contextToken, buildWechatAsrFailedPrompt(username, "没有识别到文字"));
+        await this.#sendInterceptText(msg.fromUserId, msg.contextToken, buildWechatAsrFailedPrompt(username, "没有识别到文字"), signal);
         return null;
       }
       return transcript;
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
       console.warn(LOG_PREFIX, "入站语音识别失败:", reason);
-      await this.#sendInterceptText(msg.fromUserId, msg.contextToken, buildWechatAsrFailedPrompt(username, reason));
+      await this.#sendInterceptText(msg.fromUserId, msg.contextToken, buildWechatAsrFailedPrompt(username, reason), signal);
       return null;
     }
   }
 
-  async #downloadInboundAttachments(msg: WeixinMessage, media: InboundMediaDescriptor[]): Promise<ChannelAttachment[] | null> {
+  async #downloadInboundAttachments(msg: WeixinMessage, media: InboundMediaDescriptor[], signal: AbortSignal): Promise<ChannelAttachment[] | null> {
     const attachments: ChannelAttachment[] = [];
     for (const item of media) {
+      if (signal.aborted) return null;
       if (item.kind !== "image" && !(item.kind === "file" && item.analyzable)) continue;
       if (!item.media) {
-        await this.#sendInterceptText(msg.fromUserId, msg.contextToken, `${loadWechatPreferredName()}，这个微信附件缺少下载信息，可以再发一次试试看哦~~`);
+        await this.#sendInterceptText(msg.fromUserId, msg.contextToken, `${loadWechatPreferredName()}，这个微信附件缺少下载信息，可以再发一次试试看哦~~`, signal);
         return null;
       }
       try {
-        const downloaded = await this.downloadMedia(item, msg.msgId || String(Date.now()));
+        const downloaded = await this.downloadMedia(item, msg.msgId || String(Date.now()), signal);
         attachments.push({
           kind: item.kind === "image" ? "image" : "file",
           filePath: downloaded.filePath,
@@ -482,7 +516,7 @@ export class ILinkBotAdapter implements ChannelAdapter {
       } catch (err) {
         const reason = err instanceof Error ? err.message : String(err);
         console.warn(LOG_PREFIX, "入站媒体下载失败:", reason);
-        await this.#sendInterceptText(msg.fromUserId, msg.contextToken, `${loadWechatPreferredName()}，这个微信附件下载失败啦：${reason}。可以再发一次试试看哦~~`);
+        await this.#sendInterceptText(msg.fromUserId, msg.contextToken, `${loadWechatPreferredName()}，这个微信附件下载失败啦：${reason}。可以再发一次试试看哦~~`, signal);
         return null;
       }
     }
@@ -500,8 +534,8 @@ export class ILinkBotAdapter implements ChannelAdapter {
     }
   }
 
-  async #sendInterceptText(toUserId: string, contextToken: string, text: string): Promise<void> {
-    if (!this.client) return;
+  async #sendInterceptText(toUserId: string, contextToken: string, text: string, signal: AbortSignal): Promise<void> {
+    if (!this.client || signal.aborted) return;
     const result = await this.client.sendText(toUserId, text, contextToken);
     if (!result.ok) {
       console.warn(LOG_PREFIX, "入站媒体拦截回复发送失败:", result.error);
@@ -561,34 +595,41 @@ interface DownloadedInboundMedia {
 async function downloadInboundWechatMedia(
   item: InboundMediaDescriptor,
   messageId: string,
+  signal?: AbortSignal,
 ): Promise<DownloadedInboundMedia> {
   if (!item.media) throw new Error("缺少媒体下载参数");
-  const data = await downloadWechatMedia(item.media);
+  const data = await downloadWechatMedia(item.media, { signal });
+  signal?.throwIfAborted();
   const ext = pickInboundExtension(item, data);
   const cacheDir = path.join(app.getPath("userData"), "channels", "cache");
   await fs.mkdir(cacheDir, { recursive: true });
   const filePath = path.join(cacheDir, buildStoredFileName("wechat", messageId, item.fileName || item.kind, ext));
-  await fs.writeFile(filePath, data);
+  signal?.throwIfAborted();
+  await fs.writeFile(filePath, data, { signal });
   return { filePath, mime: mimeFromExtension(ext) };
 }
 
 async function saveInboundWechatMedia(
   item: InboundMediaDescriptor,
   messageId: string,
+  signal?: AbortSignal,
 ): Promise<string> {
   if (!item.media) throw new Error("缺少媒体下载参数");
-  const data = await downloadWechatMedia(item.media);
+  const data = await downloadWechatMedia(item.media, { signal });
+  signal?.throwIfAborted();
   const ext = pickInboundExtension(item, data);
   const inboxDir = path.join(app.getPath("desktop"), "Cyrene 收件箱");
   await fs.mkdir(inboxDir, { recursive: true });
   const filePath = path.join(inboxDir, buildStoredFileName("wechat", messageId, item.fileName || item.kind, ext));
-  await fs.writeFile(filePath, data);
+  signal?.throwIfAborted();
+  await fs.writeFile(filePath, data, { signal });
   return filePath;
 }
 
 async function transcribeInboundWechatVoice(
   item: InboundMediaDescriptor,
   _messageId: string,
+  signal?: AbortSignal,
 ): Promise<string> {
   if (!item.media) throw new Error("缺少语音下载参数");
   const cfg = getAsrConfig();
@@ -598,7 +639,7 @@ async function transcribeInboundWechatVoice(
     throw new Error("ASR 未配置");
   }
 
-  const source = await downloadWechatMedia(item.media);
+  const source = await downloadWechatMedia(item.media, { signal });
   const sampleRate = item.sampleRate ?? 16000;
   if (sampleRate !== 16000) {
     throw new Error(`暂不支持 ${sampleRate}Hz 微信语音识别`);
@@ -609,10 +650,12 @@ async function transcribeInboundWechatVoice(
     const decoded = await decode(source, sampleRate);
     pcm = Buffer.from(decoded.data);
   }
-  return transcribePcmWithConfiguredAsr(pcm, cfg);
+  signal?.throwIfAborted();
+  return transcribePcmWithConfiguredAsr(pcm, cfg, signal);
 }
 
-async function transcribePcmWithConfiguredAsr(pcm: Buffer, cfg: AsrConfig): Promise<string> {
+async function transcribePcmWithConfiguredAsr(pcm: Buffer, cfg: AsrConfig, signal?: AbortSignal): Promise<string> {
+  signal?.throwIfAborted();
   const finals: string[] = [];
   const stream = createAsrStream(
     cfg,
@@ -624,6 +667,10 @@ async function transcribePcmWithConfiguredAsr(pcm: Buffer, cfg: AsrConfig): Prom
 
   if (cfg.engine === "mossland" || cfg.engine === "minimax") {
     await stream.start();
+    if (signal?.aborted) {
+      await stream.stop();
+      signal.throwIfAborted();
+    }
     stream.sendAudio(pcm);
     const completed = await stream.stop();
     const result = (completed || finals.join("")).trim();
@@ -642,6 +689,7 @@ async function transcribePcmWithConfiguredAsr(pcm: Buffer, cfg: AsrConfig): Prom
     stream.start()
       .then(async () => {
         await delay(500);
+        signal?.throwIfAborted();
         stream.sendAudio(pcm);
         stream.stop();
         await delay(2500);

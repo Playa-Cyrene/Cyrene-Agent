@@ -7,6 +7,7 @@ type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
 interface DownloadOptions {
   fetchImpl?: FetchLike;
+  signal?: AbortSignal;
 }
 
 export function decodeWechatAesKey(value: string): Buffer {
@@ -43,11 +44,13 @@ export async function downloadWechatMedia(
   const key = decodeWechatAesKey(media.aes_key);
   const fetchImpl = options.fetchImpl ?? fetch;
   const url = `${CDN_BASE_URL}/download?encrypted_query_param=${encodeURIComponent(encryptQueryParam)}`;
-  const response = await fetchImpl(url);
+  options.signal?.throwIfAborted();
+  const response = await fetchImpl(url, ...(options.signal ? [{ signal: options.signal }] : []));
   if (!response.ok) {
     const message = await response.text().catch(() => "");
     throw new Error(`CDN download failed: HTTP ${response.status} ${message.slice(0, 120)}`.trim());
   }
   const encrypted = Buffer.from(await response.arrayBuffer());
+  options.signal?.throwIfAborted();
   return media.encrypt_type === 0 ? encrypted : decryptAesEcb(encrypted, key);
 }

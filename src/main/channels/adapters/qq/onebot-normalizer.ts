@@ -83,6 +83,7 @@ export async function normalizeOneBotMessage(
     client: OneBotActionClient;
     media: OneBotMediaManager;
     supportsStream: boolean;
+    signal?: AbortSignal;
   },
 ): Promise<IncomingMessage> {
   const senderId = oneBotId(event.user_id);
@@ -95,6 +96,7 @@ export async function normalizeOneBotMessage(
   let skippedFirstSelfMention = false;
 
   for (const segment of event.message) {
+    context.signal?.throwIfAborted();
     if (!segment || typeof segment !== "object") continue;
     if (segment.type === "text") {
       textParts.push(String(segment.data.text ?? ""));
@@ -124,7 +126,7 @@ export async function normalizeOneBotMessage(
     }
     if (["image", "mface", "record", "file", "video"].includes(segment.type)) {
       try {
-        attachments.push(await context.media.downloadSegment(segment, context.supportsStream));
+        attachments.push(await context.media.downloadSegment(segment, context.supportsStream, context.signal));
         textParts.push(`[${segment.type === "record" ? "语音" : segment.type === "mface" ? "图片表情" : segment.type}]`);
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
@@ -145,6 +147,7 @@ export async function normalizeOneBotMessage(
   }
 
   const text = textParts.join("").trim() || String(event.raw_message ?? "").trim() || "[空消息]";
+  context.signal?.throwIfAborted();
   return {
     channel: "qq",
     chatType: event.message_type,

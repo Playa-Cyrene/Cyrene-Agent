@@ -10,7 +10,7 @@ export interface ChannelDeliveryService {
 }
 
 export function createChannelDeliveryService(
-  manager: Pick<ChannelManager, "getAdapter">,
+  manager: Pick<ChannelManager, "getAdapter"> & Partial<Pick<ChannelManager, "getActivitySignal">>,
 ): ChannelDeliveryService {
   return {
     async send(message): Promise<DeliveryResult> {
@@ -18,9 +18,16 @@ export function createChannelDeliveryService(
       if (!adapter) {
         return { ok: false, error: "adapter_not_found" };
       }
+      const activity = manager.getActivitySignal?.(message.channel);
+      if (message.signal?.aborted || activity?.aborted
+        || (manager.getActivitySignal && !activity) || !adapter.getStatus().enabled) {
+        return { ok: false, error: "channel_stopped" };
+      }
+      const signals = [message.signal, activity].filter((signal): signal is AbortSignal => !!signal);
+      const signal = signals.length ? AbortSignal.any(signals) : undefined;
 
       try {
-        const result = await adapter.send(message);
+        const result = await adapter.send({ ...message, ...(signal ? { signal } : {}) });
         if (result.ok) return { ok: true };
         return { ok: false, error: result.error || "send_failed" };
       } catch (err) {

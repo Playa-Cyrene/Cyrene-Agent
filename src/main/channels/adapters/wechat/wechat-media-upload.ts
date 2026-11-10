@@ -12,6 +12,7 @@ interface UploadClient {
 }
 
 interface UploadOptions {
+  signal?: AbortSignal;
   aesKey?: Buffer;
   fileKey?: string;
   fetchImpl?: FetchLike;
@@ -40,6 +41,7 @@ export async function uploadWechatMedia(
   mediaType: MediaType,
   options: UploadOptions = {},
 ): Promise<CDNMedia> {
+  options.signal?.throwIfAborted();
   const aesKey = options.aesKey ?? randomBytes(16);
   const filekey = options.fileKey ?? randomBytes(16).toString("hex");
   const ciphertext = encryptAesEcb(data, aesKey);
@@ -55,6 +57,7 @@ export async function uploadWechatMedia(
   });
 
   const uploadFullUrl = uploadParams.upload_full_url?.trim();
+  options.signal?.throwIfAborted();
   if (!uploadFullUrl && !uploadParams.upload_param) {
     throw new Error("getuploadurl returned no upload URL");
   }
@@ -63,6 +66,7 @@ export async function uploadWechatMedia(
 
   const fetchImpl = options.fetchImpl ?? fetch;
   const response = await fetchImpl(uploadUrl, {
+    signal: options.signal,
     method: "POST",
     headers: { "Content-Type": "application/octet-stream" },
     body: new Uint8Array(ciphertext),
@@ -88,7 +92,9 @@ export async function uploadWechatMediaFile(
   userId: string,
   filePath: string,
   mediaType: MediaType,
+  options: UploadOptions = {},
 ): Promise<CDNMedia> {
-  const data = await fs.readFile(filePath);
-  return uploadWechatMedia(client, userId, data, mediaType);
+  options.signal?.throwIfAborted();
+  const data = await fs.readFile(filePath, { signal: options.signal });
+  return uploadWechatMedia(client, userId, data, mediaType, options);
 }

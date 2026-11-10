@@ -80,7 +80,8 @@ export class OneBotMediaManager {
     this.cleanupTimer = null;
   }
 
-  async downloadSegment(segment: OneBotSegment, supportsStream: boolean): Promise<ChannelAttachment> {
+  async downloadSegment(segment: OneBotSegment, supportsStream: boolean, signal?: AbortSignal): Promise<ChannelAttachment> {
+    signal?.throwIfAborted();
     const kind = this.segmentKind(segment.type);
     const data = segment.data;
     const file = String(data.file_id ?? data.file ?? data.url ?? "");
@@ -94,7 +95,7 @@ export class OneBotMediaManager {
           ? "download_file_record_stream"
           : "download_file_stream";
       try {
-        filePath = await this.downloadStream(action, file, kind);
+        filePath = await this.downloadStream(action, file, kind, signal);
       } catch (error) {
         this.reportStreamUnavailable(error);
         throw error;
@@ -104,8 +105,9 @@ export class OneBotMediaManager {
       if (!/^https?:\/\//i.test(url)) {
         throw new Error("当前 NapCat 不支持 Stream API，且消息没有可下载 URL");
       }
-      filePath = await this.downloadUrl(url, kind);
+      filePath = await this.downloadUrl(url, kind, signal);
     }
+    signal?.throwIfAborted();
     await this.cleanupCache(new Set([filePath]));
 
     return {
@@ -120,20 +122,22 @@ export class OneBotMediaManager {
     };
   }
 
-  async encodeOutbound(filePath: string, kind: MediaKind, supportsStream: boolean): Promise<string> {
+  async encodeOutbound(filePath: string, kind: MediaKind, supportsStream: boolean, signal?: AbortSignal): Promise<string> {
+    signal?.throwIfAborted();
     const resolved = await fs.promises.realpath(filePath);
     const stat = await fs.promises.stat(resolved);
+    signal?.throwIfAborted();
     if (!stat.isFile()) throw new Error(`QQ 媒体路径不是文件: ${filePath}`);
     if (stat.size > ONEBOT_MAX_FILE_BYTES) throw new Error("QQ 单文件不能超过 100 MiB");
 
     if ((kind === "image" || kind === "audio") && stat.size <= ONEBOT_BASE64_THRESHOLD_BYTES) {
-      return `base64://${(await fs.promises.readFile(resolved)).toString("base64")}`;
+      return `base64://${(await fs.promises.readFile(resolved, { signal })).toString("base64")}`;
     }
     if (!supportsStream) {
       throw new Error("NapCat Stream API 不可用，无法跨 WSL 发送此媒体");
     }
     try {
-      return await this.uploadStream(resolved, stat.size);
+      return await this.uploadStream(resolved, stat.size, signal);
     } catch (error) {
       this.reportStreamUnavailable(error);
       throw error;
@@ -179,7 +183,8 @@ export class OneBotMediaManager {
     throw new Error(`不支持的 QQ 媒体类型: ${type}`);
   }
 
-  private async downloadStream(action: string, file: string, kind: MediaKind): Promise<string> {
+  private async downloadStream(action: string, file: string, kind: MediaKind, signal?: AbortSignal): Promise<string> {
+    signal?.throwIfAborted();
     const client = this.getClient();
     if (!client) throw new Error("NapCat 未连接");
 
@@ -193,6 +198,7 @@ export class OneBotMediaManager {
       const payload: Record<string, unknown> = { file, chunk_size: ONEBOT_STREAM_CHUNK_BYTES };
       if (kind === "audio") payload.out_format = "mp3";
       const completed = await client.callStream<OneBotStreamPacket>(action, payload, async (packet) => {
+        signal?.throwIfAborted();
         if (packet.data_type === "file_info") {
           if (state.handle || targetPath) throw new Error("Duplicate stream file_info packet");
           expectedSize = Number(packet.file_size ?? 0);
@@ -225,6 +231,7 @@ export class OneBotMediaManager {
         indexes.add(index);
         bytesWritten += buffer.length;
       });
+      signal?.throwIfAborted();
       await state.handle?.close();
       state.handle = undefined;
       if (!targetPath) throw new Error("Stream did not provide file_info");
@@ -256,8 +263,10 @@ export class OneBotMediaManager {
     }
   }
 
-  private async downloadUrl(url: string, kind: MediaKind): Promise<string> {
-    const response = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+  private async downloadUrl(url: string, kind: MediaKind, signal?: AbortSignal): Promise<string> {
+    signal?.throwIfAborted();
+    const requestSignal = AbortSignal.any([AbortSignal.timeout(30_000), ...(signal ? [signal] : [])]);
+    const response = await fetch(url, { signal: requestSignal });
     if (!response.ok) throw new Error(`QQ 媒体下载失败: HTTP ${response.status}`);
     const declared = Number(response.headers.get("content-length") ?? 0);
     if (declared > ONEBOT_BASE64_THRESHOLD_BYTES) throw new Error("旧版 NapCat URL 媒体超过 8 MiB");
@@ -271,6 +280,7 @@ export class OneBotMediaManager {
       let exceeded = false;
       try {
         for (;;) {
+          signal?.throwIfAborted();
           const { done, value } = await reader.read();
           if (done) break;
           if (!value) continue;
@@ -282,30 +292,33 @@ export class OneBotMediaManager {
           chunks.push(Buffer.from(value));
         }
       } finally {
-        if (exceeded) void reader.cancel().catch(() => undefined);
+        if (exceeded || signal?.aborted) void reader.cancel().catch(() => undefined);
       }
       buffer = Buffer.concat(chunks);
     } else {
       buffer = Buffer.from(await response.arrayBuffer());
       if (buffer.length > ONEBOT_BASE64_THRESHOLD_BYTES) throw new Error("旧版 NapCat URL 媒体超过 8 MiB");
     }
+    signal?.throwIfAborted();
     const ext = extensionFor(kind, new URL(url).pathname);
     const targetPath = path.join(this.cacheDir, `qq-${Date.now()}-${randomUUID()}${ext}`);
-    await fs.promises.writeFile(targetPath, buffer);
+    await fs.promises.writeFile(targetPath, buffer, { signal });
     return targetPath;
   }
 
-  private async uploadStream(filePath: string, fileSize: number): Promise<string> {
+  private async uploadStream(filePath: string, fileSize: number, signal?: AbortSignal): Promise<string> {
+    signal?.throwIfAborted();
     const client = this.getClient();
     if (!client) throw new Error("NapCat 未连接");
     if (fileSize === 0) throw new Error("QQ 不支持发送空文件");
     const streamId = randomUUID();
     const totalChunks = Math.max(1, Math.ceil(fileSize / ONEBOT_STREAM_CHUNK_BYTES));
     const hash = createHash("sha256");
-    for await (const chunk of fs.createReadStream(filePath)) hash.update(chunk as Buffer);
+    for await (const chunk of fs.createReadStream(filePath, { signal })) hash.update(chunk as Buffer);
     const expectedSha256 = hash.digest("hex");
     let index = 0;
-    for await (const rawChunk of fs.createReadStream(filePath, { highWaterMark: ONEBOT_STREAM_CHUNK_BYTES })) {
+    for await (const rawChunk of fs.createReadStream(filePath, { highWaterMark: ONEBOT_STREAM_CHUNK_BYTES, signal })) {
+      signal?.throwIfAborted();
       const chunk = rawChunk as Buffer;
       const packet = await client.call<OneBotStreamPacket>("upload_file_stream", {
         stream_id: streamId,
@@ -322,6 +335,7 @@ export class OneBotMediaManager {
       }
       index++;
     }
+    signal?.throwIfAborted();
     const completed = await client.call<OneBotStreamPacket>("upload_file_stream", {
       stream_id: streamId,
       is_complete: true,

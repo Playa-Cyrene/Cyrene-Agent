@@ -30,6 +30,7 @@ export interface QqBotSendTarget {
 }
 
 export interface QqBotSendOptions {
+  signal?: AbortSignal;
   /** 被动回复必须携带的入站消息 id */
   msgId: string;
   /** 同一 msg_id 的第几次回复（1 起，单聊上限 4 / 群上限 5） */
@@ -107,6 +108,7 @@ export class QqBotApiClient {
       ? `/v2/groups/${encodeURIComponent(target.openid)}/messages`
       : `/v2/users/${encodeURIComponent(target.openid)}/messages`;
     await this.request(path, {
+      signal: options.signal,
       method: "POST",
       body: JSON.stringify({
         msg_type: 0,
@@ -118,7 +120,9 @@ export class QqBotApiClient {
   }
 
   private async request<T>(path: string, init?: RequestInit): Promise<T> {
+    init?.signal?.throwIfAborted();
     const token = await this.getAccessToken();
+    init?.signal?.throwIfAborted();
     const res = await this.fetchFn(`${API_BASE}${path}`, {
       ...init,
       headers: {

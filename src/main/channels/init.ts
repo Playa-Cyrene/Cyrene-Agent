@@ -159,9 +159,18 @@ function registerChannelsIpc(
   const ipc = ipcOption ?? createIpcScope();
   ipc.handle(IPC.CHANNELS_GET_CONFIG, () => getPublicChannelsSettings());
 
-  ipc.handle(IPC.CHANNELS_SAVE_CONFIG, (_e, patch: unknown) => {
-    saveChannelsSettings(patch as Parameters<typeof saveChannelsSettings>[0]);
+  ipc.handle(IPC.CHANNELS_SAVE_CONFIG, async (_e, patch: unknown) => {
+    const previous = loadChannelsSettings();
+    const current = saveChannelsSettings(patch as Parameters<typeof saveChannelsSettings>[0]);
     reloadDispatcherSettings();
+    // 仅重建配置变化的内置渠道；插件渠道继续由插件生命周期管理。
+    const changed = (["wechat", "feishu", "qq", "qqbot"] as const)
+      .filter((id) => JSON.stringify(previous[id]) !== JSON.stringify(current[id]));
+    await Promise.all(changed.map(async (id) => {
+      await channelManager.stopOne(id);
+      if (started && loadChannelsSettings()[id].enabled) await channelManager.startOne(id);
+    }));
+    broadcastChannelsStatus();
     return getPublicChannelsSettings();
   });
 
@@ -215,8 +224,8 @@ function registerChannelsIpc(
 	      void (async () => {
 	        try {
 	          const creds = await wxAdapter!.login(qrcode);
-	          await wxAdapter!.stop();
-	          await wxAdapter!.start();
+	          await channelManager.stopOne("wechat");
+	          if (started && loadChannelsSettings().wechat.enabled) await channelManager.startOne("wechat");
 	          win?.webContents.send(IPC.CHANNELS_WECHAT_LOGIN_DONE, { ok: true, botId: creds.ilinkBotId });
 	        } catch (err) {
 	          win?.webContents.send(IPC.CHANNELS_WECHAT_LOGIN_DONE, { ok: false, error: String(err) });
@@ -252,6 +261,7 @@ function registerChannelsIpc(
 
   ipc.handle(IPC.CHANNELS_WECHAT_LOGOUT, async () => {
     if (!wxAdapter) return { ok: false };
+    await channelManager.stopOne("wechat");
     await wxAdapter.logout();
     return { ok: true };
   });
@@ -265,8 +275,8 @@ function registerChannelsIpc(
 
   ipc.handle(IPC.CHANNELS_WECHAT_INSTALL, async () => {
     if (!wxAdapter) return { ok: false };
-    await wxAdapter.stop();
-    await wxAdapter.start();
+    await channelManager.stopOne("wechat");
+    if (started && loadChannelsSettings().wechat.enabled) await channelManager.startOne("wechat");
     return { ok: true, phase: "ready" };
   });
 
@@ -280,7 +290,8 @@ function registerChannelsIpc(
       return { ok: false, error: "App ID / App Secret 未配置" };
     }
     try {
-      await adapter.rebuild();
+      await channelManager.stopOne("feishu");
+      if (started && loadChannelsSettings().feishu.enabled) await channelManager.startOne("feishu");
       const s = adapter.getStatus();
       if (s.phase === "running") {
         return { ok: true, message: "WSS 长连接已建立" };

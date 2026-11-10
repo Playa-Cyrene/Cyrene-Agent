@@ -21,6 +21,78 @@ function fakeAdapter(id: string): ChannelAdapter {
 }
 
 describe("ChannelManager", () => {
+  const incoming = { channel: "qq" as const, chatId: "chat", senderId: "user", text: "hello", at: new Date(0) };
+
+  it("停止立即撤销当前轮次，重启后旧回调仍无效且其他渠道不受影响", async () => {
+    const mgr = new ChannelManager();
+    const qq = fakeAdapter("qq");
+    const feishu = fakeAdapter("feishu");
+    const dispatch = vi.fn(async () => null);
+    mgr.register(qq);
+    mgr.register(feishu);
+    mgr.setDispatcher(dispatch);
+    await mgr.startAll();
+    const oldHandler = qq.onMessage!;
+    await oldHandler(incoming);
+    const signal = (dispatch.mock.calls[0] as unknown as [{ signal: AbortSignal }])[0].signal;
+    const stopping = mgr.stopOne("qq");
+    expect(signal.aborted).toBe(true);
+    expect(mgr.getActivitySignal("feishu")?.aborted).toBe(false);
+    await stopping;
+    await mgr.startOne("qq");
+    await oldHandler(incoming);
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    await qq.onMessage!(incoming);
+    await feishu.onMessage!({ ...incoming, channel: "feishu" });
+    expect(dispatch).toHaveBeenCalledTimes(3);
+    await mgr.stopAll();
+  });
+
+  it("拒绝适配器冒用其他渠道及已撤销的连接消息", async () => {
+    const mgr = new ChannelManager();
+    const qq = fakeAdapter("qq");
+    const dispatch = vi.fn(async () => null);
+    mgr.register(qq);
+    mgr.setDispatcher(dispatch);
+    await mgr.startOne("qq");
+    await qq.onMessage!({ ...incoming, channel: "wechat" });
+    await qq.onMessage!({ ...incoming, signal: AbortSignal.abort() });
+    expect(dispatch).not.toHaveBeenCalled();
+    await mgr.stopAll();
+  });
+
+  it("启动尚未完成时停止，不会被迟到启动重新启用", async () => {
+    const mgr = new ChannelManager();
+    const qq = fakeAdapter("qq");
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    qq.start = async () => { started.resolve(); await release.promise; };
+    const stop = vi.spyOn(qq, "stop");
+    mgr.register(qq);
+    const starting = mgr.startOne("qq");
+    await started.promise;
+    const oldSignal = mgr.getActivitySignal("qq")!;
+    const stopping = mgr.stopOne("qq");
+    expect(oldSignal.aborted).toBe(true);
+    release.resolve();
+    await Promise.all([starting, stopping]);
+    expect(stop).toHaveBeenCalledOnce();
+    expect(qq.onMessage).toBeNull();
+    expect(mgr.getActivitySignal("qq")).toBeUndefined();
+  });
+
+  it("启动失败也撤销回调并释放部分初始化资源", async () => {
+    const mgr = new ChannelManager();
+    const qq = fakeAdapter("qq");
+    qq.start = async () => { throw new Error("connect failed"); };
+    const stop = vi.spyOn(qq, "stop");
+    mgr.register(qq);
+    await expect(mgr.startOne("qq")).rejects.toThrow("connect failed");
+    expect(mgr.getActivitySignal("qq")?.aborted).toBe(true);
+    expect(stop).toHaveBeenCalledOnce();
+    await mgr.stopAll();
+  });
+
   it("startOne 启动单个 adapter；unregister 先 stop 再移除", async () => {
     const mgr = new ChannelManager();
     const adapter = fakeAdapter("qq");
@@ -38,6 +110,49 @@ describe("ChannelManager", () => {
   it("unregister 不存在的 id 返回 false", async () => {
     const mgr = new ChannelManager();
     expect(await mgr.unregister("nope" as never)).toBe(false);
+  });
+
+  it("注销与启动竞争时不会留下已经脱离注册表的连接", async () => {
+    const mgr = new ChannelManager();
+    const adapter = fakeAdapter("qq");
+    const start = vi.spyOn(adapter, "start");
+    mgr.register(adapter);
+    await mgr.startOne("qq");
+    await Promise.all([mgr.unregister("qq"), mgr.startOne("qq")]);
+    expect(start).toHaveBeenCalledOnce();
+    expect(mgr.has("qq")).toBe(false);
+    expect(mgr.getActivitySignal("qq")).toBeUndefined();
+    expect(adapter.getStatus().phase).toBe("offline");
+  });
+
+  it("适配器停止抛错仍完成注销，允许插件重新注册", async () => {
+    const mgr = new ChannelManager();
+    const adapter = fakeAdapter("qq");
+    mgr.register(adapter);
+    await mgr.startOne("qq");
+    const signal = mgr.getActivitySignal("qq")!;
+    adapter.stop = async () => { throw new Error("broken transport"); };
+    expect(await mgr.unregister("qq")).toBe(true);
+    expect(signal.aborted).toBe(true);
+    expect(adapter.onMessage).toBeNull();
+    expect(mgr.has("qq")).toBe(false);
+    expect(() => mgr.register(fakeAdapter("qq"))).not.toThrow();
+  });
+
+  it("并发注销的迟到清理不能删除同 id 的新适配器", async () => {
+    const mgr = new ChannelManager();
+    mgr.register(fakeAdapter("qq"));
+    await mgr.startOne("qq");
+    const first = mgr.unregister("qq");
+    const second = mgr.unregister("qq");
+    await first;
+    const replacement = fakeAdapter("qq");
+    mgr.register(replacement);
+    await second;
+    await mgr.startOne("qq");
+    expect(mgr.getAdapter("qq")).toBe(replacement);
+    expect(replacement.getStatus().phase).toBe("running");
+    await mgr.stopAll();
   });
 
   it("startAll 跳过已启动的 adapter（避免渠道插件双启动）", async () => {
