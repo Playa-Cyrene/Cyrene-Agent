@@ -23,6 +23,18 @@ export const CLAUDE_REGISTRY = defineVendor({
   },
   models: [
     {
+      model: "claude-fable-5-2",
+      recommendedFor: ["chat"],
+      note: "2026-11-09 发布；固定型号名，无日期后缀。",
+      unknownCapabilities: [
+        {
+          feature: "sampling",
+          transport: "anthropic",
+          note: "官方说明非默认 temperature/top_p/top_k 返回 400；未加采样白名单即不注入采样参数。",
+        },
+      ],
+    },
+    {
       model: "claude-fable-5-1",
       recommendedFor: ["chat"],
       unknownCapabilities: [
@@ -141,12 +153,12 @@ export const CLAUDE_REGISTRY = defineVendor({
         },
       },
     },
-    // Fable 5.1 / Opus 5.5 / Opus 5 / Sonnet 5.5：output_config.format 结构化输出（官方结构化输出文档），
+    // Fable 5.2 / Fable 5.1 / Opus 5.5 / Opus 5 / Sonnet 5.5：output_config.format 结构化输出（官方结构化输出文档），
     // 按完整名称匹配；下方历史规则的 fable-5 / sonnet-5 分支只匹配无后缀或日期后缀，不会误吞这几个名称。
     {
       id: "claude-current-structured-output",
       transport: "anthropic",
-      modelPattern: /^claude-(?:fable-5-1|opus-5-5|opus-5|sonnet-5-5)$/i,
+      modelPattern: /^claude-(?:fable-5-2|fable-5-1|opus-5-5|opus-5|sonnet-5-5)$/i,
       tier: "A",
       mode: "provider_json_schema",
       verification: "official",
@@ -176,7 +188,23 @@ export const CLAUDE_REGISTRY = defineVendor({
     // 依据官方 effort / 思考文档与模型总览（核验 2026-11-01）。具体型号在前，同前缀的旧型号在后。
     // supportsDisable=false 的型号思考始终开启：本项目把「关闭」折叠为开启并按默认档位发送，
     // 不会发出 thinking:{type:"disabled"}；思考开启时 must-call 走 tool_choice:auto，
-    // 也避开了 Fable 5.1 / Opus 5.5 / Sonnet 5.5 对 any / tool 强制工具调用的 400。
+    // 也避开了 Fable 5.2 / Fable 5.1 / Opus 5.5 / Sonnet 5.5 对 any / tool 强制工具调用的 400。
+    // Fable 5.2：与 Fable 5.1 相同，思考始终开启，disabled 返回 400；五档 effort，默认 high（核验 2026-11-10）。
+    { modelPattern: /^claude-fable-5-2$/i, modelInferencePattern: /^claude-fable-5-2$/i, metadata: {
+      status: "supported",
+      evidence: {
+        kind: "official",
+        url: "https://platform.claude.com/docs/en/models/fable-5-2/whats-new-fable-5-2",
+        checkedAt: "2026-11-10",
+        transports: ["anthropic"],
+      },
+    }, capability: {
+      control: "toggle-effort",
+      supportedEfforts: ["low", "medium", "high", "xhigh", "max"],
+      defaultEffort: "high",
+      requestStyle: "anthropic-adaptive",
+      supportsDisable: false,
+    } },
     // Fable 5.1：思考始终开启，disabled 返回 400；五档 effort，默认 high。
     { modelPattern: /^claude-fable-5-1$/i, modelInferencePattern: /^claude-fable-5-1$/i, metadata: {
       status: "supported",

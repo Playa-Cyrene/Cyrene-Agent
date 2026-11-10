@@ -64,8 +64,9 @@ describe("resolveReasoningCapability — 行为基准", () => {
   });
 
   // 预期值按官方文档独立填写（effort 文档，核验 2026-10-08），不从注册表复制。
-  // 预期值按官方模型总览与 effort 文档独立填写（核验 2026-11-01），不从注册表复制。
+  // 预期值按官方模型总览与 effort 文档独立填写（核验 2026-11-01；Fable 5.2 核验 2026-11-10），不从注册表复制。
   test.each([
+    ["claude-fable-5-2", "high", false],
     ["claude-fable-5-1", "high", false],
     ["claude-opus-5-5", "medium", false],
     ["claude-opus-5", "high", true],

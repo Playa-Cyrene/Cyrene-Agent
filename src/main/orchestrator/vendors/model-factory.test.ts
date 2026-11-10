@@ -2,10 +2,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { getAdapterForConfig, PROVIDER_CAPABILITIES } from "./index";
 import { generateChatWithAiSdk } from "./model-runtime";
 import { prepareModelCall } from "./model-factory";
-import type { ChatRequest, VendorConfig } from "./types";
+import { setVendorRuntimeSettingsGetter } from "./runtime-settings";
+import { CUSTOM_ENDPOINT_PROVIDERS } from "../../../shared/custom-endpoint-state";
+import type { ChatMessage, ChatRequest, VendorConfig } from "./types";
 import { jsonResponse, responseBody, weatherTool } from "./sdk-stream/model-fixtures";
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  setVendorRuntimeSettingsGetter(() => ({}));
+});
 
 describe("AI SDK 厂商策略兼容", () => {
   it.each(PROVIDER_CAPABILITIES)("$displayName 保留端点、鉴权、推理、采样与预算策略", async capability => {
@@ -119,5 +124,72 @@ describe("AI SDK 厂商策略兼容", () => {
       model: config.model, messages: [], imageGeneration: { enabled: true, model: "gpt-image-2.5-flare" },
       tools: [{ ...weatherTool, name: "image_generation" }],
     } })).toThrow("image_generation");
+  });
+});
+
+describe("Claude Fable 5.2 思考块前缀校验", () => {
+  const claude = PROVIDER_CAPABILITIES.find(capability => capability.id === "claude")!;
+  const configFor = (model: string): VendorConfig => ({ provider: claude.displayName, baseUrl: claude.baseUrl,
+    model, apiKey: "test-key", explicitTransport: "anthropic", reasoning: { mode: "on", effort: "high" } });
+
+  // 第二轮请求的前缀与第一轮不同：Chat 模式换了尾部运行时上下文，或历史压缩把早期消息换成摘要；
+  // 第一轮带签名的思考块照常重放，服务端按 drop_block 丢弃失效的块，而不是返回 400。
+  it.each([
+    ["连续聊天时更换运行时上下文", (assistant: ChatMessage): ChatMessage[] => [
+      { role: "system", content: "系统" }, { role: "user", content: "你好" }, assistant,
+      { role: "user", content: "继续\n<runtime_context>第二轮</runtime_context>" },
+    ]],
+    ["历史压缩替换早期消息", (assistant: ChatMessage): ChatMessage[] => [
+      { role: "system", content: "系统" }, { role: "user", content: "[早期对话摘要]" }, assistant,
+      { role: "user", content: "继续" },
+    ]],
+  ] as const)("%s：重放签名思考块并请服务端丢弃失效的块", async (_case, history) => {
+    const config = configFor("claude-fable-5-2");
+    const adapter = getAdapterForConfig(config);
+    const sent: { body: any; headers: Headers }[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (_url, init) => {
+      sent.push({ body: JSON.parse(init.body), headers: new Headers(init.headers) });
+      return jsonResponse(responseBody("anthropic", { reasoning: true }));
+    }));
+    const first = await generateChatWithAiSdk({ adapter, config, timeoutMs: 2000,
+      request: { model: config.model, messages: [{ role: "system", content: "系统" }, { role: "user", content: "你好\n<runtime_context>第一轮</runtime_context>" }] } });
+    await generateChatWithAiSdk({ adapter, config, timeoutMs: 2000,
+      request: { model: config.model, messages: history(first.assistantMessage) } });
+
+    expect(sent).toHaveLength(2);
+    for (const request of sent) {
+      expect(request.body.thinking).toEqual({ type: "adaptive", block_binding: { prefix_mismatch_behavior: "drop_block" } });
+      expect(request.headers.get("anthropic-beta")).toBe("thinking-binding-controls-2026-08-01");
+    }
+    expect(JSON.stringify(sent[1].body.messages)).toContain("sig_private");
+  });
+
+  it.each(["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-4-6"])("%s 不发送 block_binding 和对应 beta", async model => {
+    const config = configFor(model);
+    let sent: { body: any; headers: Headers } | undefined;
+    vi.stubGlobal("fetch", vi.fn(async (_url, init) => {
+      sent = { body: JSON.parse(init.body), headers: new Headers(init.headers) };
+      return jsonResponse(responseBody("anthropic"));
+    }));
+    await generateChatWithAiSdk({ adapter: getAdapterForConfig(config), config, timeoutMs: 2000,
+      request: { model, messages: [{ role: "user", content: "你好" }] } });
+    expect(sent?.body.thinking?.block_binding).toBeUndefined();
+    expect(sent?.headers.has("anthropic-beta")).toBe(false);
+  });
+
+  // 自定义端点关闭推理字段注入（thinkingOverride=-1）后，不能再自行补出 thinking 或 beta 头。
+  it("自定义端点禁止注入推理字段时，claude-fable-5-2 不发送 thinking 和 beta", async () => {
+    setVendorRuntimeSettingsGetter(() => ({ thinkingOverride: -1 }));
+    const config: VendorConfig = { provider: CUSTOM_ENDPOINT_PROVIDERS.cloud, baseUrl: "https://proxy.test/v1", model: "claude-fable-5-2",
+      apiKey: "test-key", explicitTransport: "anthropic" };
+    let sent: { body: any; headers: Headers } | undefined;
+    vi.stubGlobal("fetch", vi.fn(async (_url, init) => {
+      sent = { body: JSON.parse(init.body), headers: new Headers(init.headers) };
+      return jsonResponse(responseBody("anthropic"));
+    }));
+    await generateChatWithAiSdk({ adapter: getAdapterForConfig(config), config, timeoutMs: 2000,
+      request: { model: config.model, messages: [{ role: "user", content: "你好" }] } });
+    expect(sent?.body.thinking).toBeUndefined();
+    expect(sent?.headers.has("anthropic-beta")).toBe(false);
   });
 });
