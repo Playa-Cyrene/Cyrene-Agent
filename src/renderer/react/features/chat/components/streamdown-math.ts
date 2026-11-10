@@ -37,7 +37,7 @@ function hasNestedMathDelimiter(input: string): boolean {
 }
 
 /** 原生解析只决定可转换的源码范围，不重写美元、空白或 Markdown 块边界。 */
-function findBackslashMath(input: string, tree: MarkdownNode): Map<number, MathRange> {
+function findBackslashMath(input: string, tree: MarkdownNode, includeUnclosed = false): Map<number, MathRange> {
   const ranges = new Map<number, MathRange>();
   function visit(node: MarkdownNode) {
     if (protectedTypes.has(node.type)) return;
@@ -74,6 +74,7 @@ function findBackslashMath(input: string, tree: MarkdownNode): Map<number, MathR
       }
       // 未闭合流式片段保持原文，同类开符不再重复扫描。
       if (close >= end - 1) {
+        if (includeUnclosed) ranges.set(cursor, { end });
         unclosed.add(opener);
         continue;
       }
@@ -93,6 +94,43 @@ function findBackslashMath(input: string, tree: MarkdownNode): Map<number, MathR
 export function containsBackslashMath(input: string): boolean {
   return (input.includes("\\(") || input.includes("\\[")) &&
     findBackslashMath(input, protectionParser.parse(input)).size > 0;
+}
+
+export interface StreamingMathRange { start: number; end: number }
+
+/** 只供补全阶段分析当前变化的块；冻结块的范围由调用方缓存。 */
+export function getStreamingMathRanges(input: string): { ranges: StreamingMathRange[]; stableEnd: number } {
+  if (!input.includes("\\(") && !input.includes("\\[") && !input.includes("$")) return { ranges: [], stableEnd: 0 };
+  const tree = protectionParser.parse(input);
+  const ranges = [...findBackslashMath(input, tree, true)]
+    .map(([start, range]) => ({ start, end: range.end }));
+  function visit(node: MarkdownNode) {
+    if (node.type === "math" || node.type === "inlineMath") {
+      const start = node.position?.start.offset;
+      const end = node.position?.end.offset;
+      if (start !== undefined && end !== undefined) ranges.push({ start, end });
+    } else node.children?.forEach(visit);
+  }
+  visit(tree);
+  // footnote 等消息在 Streamdown 中是单块；仍可冻结最后一个顶层节点之前的范围。
+  const stableEnd = tree.children.at(-1)?.position?.start.offset ?? 0;
+  return { ranges: ranges.sort((a, b) => a.start - b.start), stableEnd };
+}
+
+export function analyzeCompletedMarkdown(input: string): { hasMath: boolean; hasReferences: boolean } {
+  if (!input.includes("\\(") && !input.includes("\\[") && !input.includes("$")) {
+    return { hasMath: false, hasReferences: false };
+  }
+  const tree = protectionParser.parse(input);
+  let hasMath = findBackslashMath(input, tree).size > 0;
+  let hasReferences = false;
+  function visit(node: MarkdownNode) {
+    hasMath ||= node.type === "math" || node.type === "inlineMath";
+    hasReferences ||= node.type === "linkReference" || node.type === "imageReference";
+    node.children?.forEach(visit);
+  }
+  visit(tree);
+  return { hasMath, hasReferences };
 }
 
 declare module "micromark-util-types" {

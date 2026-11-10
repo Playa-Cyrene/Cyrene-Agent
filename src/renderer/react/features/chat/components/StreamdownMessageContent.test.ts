@@ -52,6 +52,64 @@ function texAnnotations(markup: string): string[] {
 
 describe("StreamdownMessageContent", () => {
 
+
+  it.each([String.raw`\(x\)`, "$x$"])("keeps reference images and collapsed reference hrefs on completion: %s", (formula) => {
+    const markup = render(formula + "\n\n[引用][]\n\n![示意][img]\n\n[引用]: https://example.com\n\n[img]: https://example.com/a.png", false);
+    expect(texAnnotations(markup)).toEqual(["x"]);
+    expect(markup).toContain('href="https://example.com/"');
+    expect(markup).toContain('src="https://example.com/a.png"');
+    expect(markup).not.toContain("[引用][]");
+  });
+
+  it.each([String.raw`\(x [0,1)`, String.raw`\[x [0,1)`])("limits unfinished math protection to its paragraph: %s", (formula) => {
+    const markup = render(formula + "\n\n![示意](https://example.com/im", true);
+    expect(texAnnotations(markup)).toEqual([]);
+    expect(markup).toContain('data-streamdown="image-placeholder"');
+    expect(markup).not.toContain("streamdown:incomplete-link");
+  });
+
+  it.each([false, true])("keeps bracket syntax inside math through link completion (streaming=%s)", (streaming) => {
+    for (const tex of [String.raw`x\in [0,1)`, String.raw`f([a,b),\{x\})`, String.raw`\left[0,\frac{1}{2}\right)`]) {
+      const markup = render(`\\(${tex}\\) 完成\n\n后文`, streaming);
+      expect(texAnnotations(markup)).toEqual([tex]);
+      expect(markup).toContain(" 完成</p>");
+      expect(markup).toContain("<p>后文</p>");
+      expect(markup).not.toContain('class="katex-error"');
+    }
+  });
+
+  it.each([
+    "```text\n\\[\n```", "`\\[`", String.raw`<code>\[</code>`, String.raw`<div>\[</div>`,
+    String.raw`[\[示例](https://example.com)`,
+    String.raw`[文档](https://example.com/\[)`, String.raw`![旧图](https://example.com/\[)`,
+  ])("keeps ordinary image completion after protected pseudo math: %s", (prefix) => {
+    const markup = render(prefix + "\n\n![示意](https://example.com/im", true);
+    expect(markup).toContain('data-streamdown="image-placeholder"');
+    expect(markup).not.toContain("![示意](");
+    expect(texAnnotations(markup)).toEqual([]);
+  });
+
+  it.each([String.raw`\(x\in [0,1)\)`, String.raw`\[x\]`, "$x$"])("completes following images and links outside math: %s", (formula) => {
+    const image = render(formula + "\n\n![示意](https://example.com/im", true);
+    expect(texAnnotations(image)).toEqual([formula.includes("in ") ? String.raw`x\in [0,1)` : "x"]);
+    expect(image).toContain('data-streamdown="image-placeholder"');
+    const link = render(formula + "\n\n[链接](https://example.com/li", true);
+    expect(link).toContain('href="streamdown:incomplete-link"');
+    expect(link).not.toContain("[链接](");
+  });
+
+  it.each([String.raw`\(x\)`, String.raw`\[x\]`, "$x$", "$$\nx\n$$"])("resolves cross-block references in either order with math: %s", (formula) => {
+    for (const before of [true, false]) {
+      const paragraphs = [formula, "[引用][ref]", "后文"];
+      paragraphs.splice(before ? 0 : paragraphs.length, 0, "[ref]: https://example.com");
+      const markup = render(paragraphs.join("\n\n"), false);
+      expect(texAnnotations(markup)).toEqual(["x"]);
+      expect(markup).toContain('href="https://example.com/"');
+      expect(markup).not.toContain("[引用][ref]");
+      expect(markup).toContain("<p>后文</p>");
+    }
+  });
+
   it.each([false, true])("preserves aligned and matrix row spacing (streaming=%s)", (streaming) => {
     for (const tex of [
       String.raw`\begin{aligned}a&=b\\[4pt]c&=d\end{aligned}`,
@@ -236,11 +294,11 @@ describe("StreamdownMessageContent", () => {
     expect(markup).toContain('href="https://example.com/"');
   });
 
-  it("keeps completed math messages in block mode instead of rebuilding the full KaTeX tree", () => {
+  it("resolves completed reference links even when math requires a static-mode fallback", () => {
     const markup = render("$E=mc^2$\n\n[引用][ref]\n\n[ref]: https://example.com", false);
 
     expect(markup).toContain("katex");
-    expect(markup).not.toContain('href="https://example.com/"');
+    expect(markup).toContain('href="https://example.com/"');
   });
 
   it("does not treat escaped dollars or code examples as rendered math", () => {

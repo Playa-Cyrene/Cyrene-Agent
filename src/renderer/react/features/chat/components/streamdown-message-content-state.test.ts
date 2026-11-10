@@ -53,8 +53,75 @@ afterEach(() => {
 
 describe("MarkdownContent Streamdown lifecycle", () => {
 
+
+  it("keeps ordinary message completion stable without math-range analysis", () => {
+    const detect = vi.spyOn(streamdownMath, "analyzeCompletedMarkdown");
+    const ranges = vi.spyOn(streamdownMath, "getStreamingMathRanges");
+    try {
+      update("普通", true);
+      update("普通正文", true);
+      expect(detect).not.toHaveBeenCalled();
+      expect(ranges).not.toHaveBeenCalled();
+      update("普通正文", false);
+      expect(detect).toHaveBeenCalledTimes(1);
+      const paragraph = container.querySelector("p");
+      expect(paragraph?.textContent).toBe("普通正文");
+      update("普通正文", false);
+      expect(detect).toHaveBeenCalledTimes(1);
+      expect(container.querySelector("p")).toBe(paragraph);
+      expect(ranges).not.toHaveBeenCalled();
+    } finally {
+      detect.mockRestore();
+      ranges.mockRestore();
+    }
+  });
+
+  it.each([String.raw`x\in [0,1)`, String.raw`f([a,b),\{x\})`])("protects real math ranges through every character prefix: %s", (tex) => {
+    const formula = `\\(${tex}\\)`;
+    const content = formula + " 完成\n\n后文";
+    for (let index = 0; index <= content.length; index += 1) {
+      update(content.slice(0, index), true);
+      expect([...container.querySelectorAll("annotation")].map((node) => node.textContent))
+        .toEqual(index < formula.length ? [] : [tex]);
+      expect(container.querySelector(".katex-error")).toBeNull();
+    }
+    const math = container.querySelector(".katex");
+    expect(math).not.toBeNull();
+    update(content, false);
+    expect(container.querySelector(".katex")).toBe(math);
+    expect(container.querySelector("p:last-child")?.textContent).toBe("后文");
+  });
+
+  it.each(["```text\n\\[\n```", String.raw`<code>\[</code>`, String.raw`[文档](https://example.com/\[)`])("keeps later image completion through streaming with a pseudo opener: %s", (prefix) => {
+    const start = prefix + "\n\n![示意](https://example.com/";
+    const content = start + "image";
+    for (let index = start.length; index <= content.length; index += 1) {
+      update(content.slice(0, index), true);
+      expect(container.querySelector('[data-streamdown="image-placeholder"]')).not.toBeNull();
+    }
+    update(content + ".png)", true);
+    expect(container.querySelector('img[alt="示意"]')?.getAttribute("src")).toBe("https://example.com/image.png");
+    update(content + ".png)", false);
+    expect(container.querySelector('img[alt="示意"]')?.getAttribute("src")).toBe("https://example.com/image.png");
+    expect(container.querySelector(".katex")).toBeNull();
+  });
+
+  it.each([String.raw`\(x\)`, "$x$"])("restores cross-block reference hrefs on completion: %s", (formula) => {
+    for (const definitionFirst of [false, true]) {
+      const parts = [formula, "[引用][ref]", "后文"];
+      parts.splice(definitionFirst ? 0 : parts.length, 0, "[ref]: https://example.com");
+      const content = parts.join("\n\n");
+      for (let index = 0; index <= content.length; index += 1) update(content.slice(0, index), true);
+      update(content, false);
+      expect([...container.querySelectorAll("annotation")].map((node) => node.textContent)).toEqual(["x"]);
+      expect(container.querySelector('a[href="https://example.com/"]')).not.toBeNull();
+      expect(container.textContent).not.toContain("[引用][ref]");
+      expect(container.textContent).toContain("后文");
+    }
+  });
+
   it("skips whole-document detection while streaming and detects once on completion without rebuilding math", () => {
-    const detect = vi.spyOn(streamdownMath, "containsBackslashMath");
+    const detect = vi.spyOn(streamdownMath, "analyzeCompletedMarkdown");
     try {
       const content = String.raw`\(x\)` + "\n\n已冻结正文。\n\n后续流式文字。";
       for (let index = 0; index <= content.length; index += 1) update(content.slice(0, index), true);
