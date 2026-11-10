@@ -196,17 +196,15 @@ type ExecutablePlan = Exclude<ExecutionPlan, { kind: "rejected" }>;
  *
  * 分流规则（按失败原因区分）：
  * - wrap 成功 → sandboxed
- * - wrap 失败 + reason "disabled"（用户显式无沙箱：CYRENE_SRT=0 / 非 Windows）+ read 类命令
- *   → direct（graceful degradation，保留开发环境可用性）
- * - wrap 失败（not_ready / wrap_failed），或 disabled + 写副作用命令，或 wrap 意外抛错
- *   → rejected（fail-closed，无论 read/write 都不执行）
+ * - wrap 失败（disabled / not_ready / wrap_failed），或 wrap 意外抛错 → rejected
+ * - 命令分类仅用于结果说明，不能证明命令没有写入副作用；受限档位不降级直跑
+ * - full 档位由调用方直接构造 direct 计划，不进入本函数
  */
 async function resolveExecutionPlan(
   command: string,
   cwd: string | undefined,
   requestedShell: ShellKind,
   resolvedShell: ResolvedShellExecutable,
-  requiresSandbox: boolean,
   trustedWorkspaceRoot?: string,
 ): Promise<ExecutionPlan> {
   const base = { command, cwd, requestedShell };
@@ -229,18 +227,12 @@ async function resolveExecutionPlan(
     return { ...base, kind: "sandboxed", argv: outcome.argv, env: outcome.env };
   }
 
-  // 用户显式无沙箱 + 只读命令 → 允许降级直跑
-  if (outcome.reason === "disabled" && !requiresSandbox) {
-    logger.warn(LogTag.BuiltinTools, `[run_shell] sandbox disabled, read-effect fallback to direct ${requestedShell}`);
-    return { ...base, kind: "direct" };
-  }
-
   const REJECT_REASON: Record<"disabled" | "not_ready" | "wrap_failed", string> = {
-    disabled: "沙箱未启用，该命令可能修改工作区，已终止",
+    disabled: "沙箱未启用，无法保证当前权限档位的文件访问限制，该命令已终止（未执行）。请启用沙箱后重试。",
     not_ready: "沙箱不可用（初始化失败），该命令已终止。请在设置中安装沙箱或提升权限档位。",
     wrap_failed: "沙箱包装失败，该命令已终止（未执行）",
   };
-  logger.warn(LogTag.BuiltinTools, `[run_shell] fail-closed before spawn: reason=${outcome.reason} detail=${outcome.detail ?? "(none)"} effect=${requiresSandbox ? "write/unknown" : "read"} command="${command.slice(0, 200)}"`);
+  logger.warn(LogTag.BuiltinTools, `[run_shell] fail-closed before spawn: reason=${outcome.reason} detail=${outcome.detail ?? "(none)"} command="${command.slice(0, 200)}"`);
   return { ...base, kind: "rejected", reason: REJECT_REASON[outcome.reason] };
 }
 
@@ -553,15 +545,13 @@ async function executeRunShell(args: Record<string, unknown>, context?: import("
     });
   }
 
-  const requiresSandbox = effect !== "read";
-
   // 后台执行：spawn 后立即返回 jobId，输出流式写日志文件（状态机与护栏见 shell-job-manager）。
   // 后台任务不做"无输出判卡死"检测，执行上限沿用 timeout_ms（未传则 30 分钟）；
   // 与本轮 agent 调用解耦——取消本轮不杀后台任务，由用户 stop / 执行上限 / 应用退出控制。
   if (args.run_in_background === true || args.run_in_background === "true") {
     const plan: ExecutionPlan = level === "full"
       ? { kind: "direct", command, cwd, requestedShell }
-      : await resolveExecutionPlan(command, cwd, requestedShell, resolvedShell, requiresSandbox, context?.resolvedWorkspaceRoot);
+      : await resolveExecutionPlan(command, cwd, requestedShell, resolvedShell, context?.resolvedWorkspaceRoot);
     if (plan.kind === "rejected") {
       // 与前台一致的拒绝协议：spawn 从未被调用，stdout 必然为空
       return JSON.stringify({
@@ -610,10 +600,8 @@ async function executeRunShell(args: Record<string, unknown>, context?: import("
   }
 
   // 非 full 档位：spawn 前通过 ExecutionPlan 完成全部安全决策
-  // - read  → 仅当"用户显式无沙箱"（reason: disabled）时允许 direct 降级
-  // - write/unknown → 必须 wrap 成功，否则 rejected（fail-closed，不执行）
-  // （requiresSandbox 已在后台分支前声明，此处复用）
-  const plan = await resolveExecutionPlan(command, cwd, requestedShell, resolvedShell, requiresSandbox, context?.resolvedWorkspaceRoot);
+  // 所有命令必须 wrap 成功，否则 rejected（fail-closed，不依赖首词分类推断安全性）。
+  const plan = await resolveExecutionPlan(command, cwd, requestedShell, resolvedShell, context?.resolvedWorkspaceRoot);
 
   if (plan.kind === "rejected") {
     // 到达这里时 spawn 从未被调用——命令没有执行过，stdout 必然为空
@@ -675,7 +663,7 @@ export const runShellTool: ToolDefinition = {
     "后台模式：传 run_in_background:true 后命令在后台启动，立即返回 jobId 与 logFile（输出流式写日志文件，" +
     "stdout+stderr 合计上限 64MB，超限自动终止），不阻塞本轮对话。执行上限沿用 timeout_ms（未传则 30 分钟）。" +
     "之后用 shell_job 工具查询状态（可带 wait_ms 阻塞等待）或终止任务。\n\n" +
-    "安全说明：非完全信任档位下，写副作用的命令会在沙箱中执行（限制文件系统访问范围）。" +
+    "安全说明：非完全访问档位下，所有命令都必须在沙箱中执行（限制文件系统访问范围）；沙箱未启用或不可用时拒绝执行。" +
     "灾难命令（format/shutdown/dd 等）一律拒绝。\n" +
     "参数：command (完整命令行字符串，如 \"git status\")，cwd (可选工作目录)，shell (cmd 或 bash，默认 cmd)，" +
     "timeout_ms (可选执行上限毫秒数，1000–1800000，设置后禁用无输出检测)，" +

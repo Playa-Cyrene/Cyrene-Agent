@@ -4,8 +4,7 @@
 // - 启动时 initSandbox() 检测 SRT 安装状态；装了就启用 SandboxManager。
 // - wrapWithSandbox(command, cwd) 把命令字符串包成 SandboxWrapOutcome 返回：
 //   { ok: true, argv, env } 或 { ok: false, reason }（disabled / not_ready / wrap_failed）。
-//   本层只归一化结果、不做 fallback 决策；拒绝还是降级由 run_shell 的 ExecutionPlan 路由
-//   （不可因 wrap 失败而 fail-open：需要沙箱的命令在 wrap 成功前不允许 spawn）。
+//   本层只归一化结果；run_shell 在受限档位要求 wrap 成功后才能 spawn，失败一律拒绝。
 // - CYRENE_SRT=0 环境变量可强制禁用（reason: "disabled"）。
 //
 // SRT API 要点（已 PoC 验证）：
@@ -240,7 +239,7 @@ export async function initSandbox(): Promise<void> {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     // 故障不伪装成"用户显式禁用"：保持 not_ready 语义（fail-closed），
-    // 否则 run_shell 会把初始化失败当成 disabled 而 read 类命令降级直跑
+    // 保留明确的故障原因，受限档位不会因初始化失败而降级直跑。
     logger.error(LogTag.Runtime, `[Sandbox] init failed, staying not-ready: ${msg}`);
   }
 }
@@ -321,8 +320,7 @@ export async function ensureSandboxReady(cwd: string = process.cwd(), trustedWor
     return true;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    // 初始化故障保持 not_ready 语义（fail-closed），不伪装成"用户显式禁用"，
-    // 否则 run_shell 会让 read 类命令绕过沙箱降级直跑
+    // 初始化故障保持 not_ready 语义，与用户显式禁用区分；受限档位下两者均拒绝执行。
     ensureFailCount += 1;
     lastFailedSessionKey = desiredSessionKey;
     logger.error(LogTag.Runtime, `[Sandbox] lazy init failed (${ensureFailCount}/${ENSURE_MAX_FAILURES}), staying not-ready: ${msg}`);
@@ -334,10 +332,10 @@ export async function ensureSandboxReady(cwd: string = process.cwd(), trustedWor
  * wrapWithSandbox 的归一化结果。
  *
  * 本函数只回答"能不能把这个命令安全包装起来"，不做任何 fallback 策略决策：
- * 包装失败后是拒绝还是降级直跑，由调用方（run_shell 的 ExecutionPlan 路由）判定。
+ * 包装失败时，调用方 run_shell 在受限档位一律拒绝；full 档位在包装前单独分流。
  *
  * - ok:false + reason:"disabled"    → 环境层面显式无沙箱（CYRENE_SRT=0 / 非 Windows / full 档），
- *                                     属于用户主动选择，调用方可按 effect 分流
+ *                                     不代表命令已获得绕过当前文件权限的授权
  * - ok:false + reason:"not_ready"   → 沙箱本应可用但初始化失败（ensure 失败 / SRT 模块缺失）
  * - ok:false + reason:"wrap_failed" → wrap 阶段抛错或返回非法 argv
  */
@@ -351,7 +349,7 @@ export type SandboxWrapOutcome =
  * @param command 完整命令行字符串（如 "git status | findstr TODO"）
  * @param binShell 可选命令解释器；缺省时 SRT 在 Windows 使用 cmd.exe
  * @returns SandboxWrapOutcome；ok:false 时 reason 区分"显式禁用"与"故障失败"，
- *          调用方据此决定 fail-closed 还是降级（见 run-shell-tool.ts 的 ExecutionPlan）
+ *          调用方据此说明拒绝原因（见 run-shell-tool.ts 的 ExecutionPlan）
  *
  * 流程：
  * 1. 沙箱未就绪 → 用可信工作区初始化权限，cwd 只决定命令执行位置（失败返回 not_ready）

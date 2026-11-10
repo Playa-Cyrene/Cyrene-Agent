@@ -2,8 +2,8 @@
 //
 // 不变量：非 full 档位下，ExecutionPlan 未确定为可执行（sandboxed/direct）之前
 // 不允许出现任何 spawn 调用。本测试用故障注入验证：
-// wrap 抛错 / wrap_failed / not_ready / disabled+写副作用 → spawn 调用次数 === 0；
-// 仅 disabled + read 命令允许降级直跑（用户显式无沙箱的 graceful degradation）。
+// wrap 抛错 / wrap_failed / not_ready / disabled → spawn 调用次数 === 0；
+// 即使命令被分类为 read，也不能在受限档位降级直跑。
 //
 // 断言优先级：spawn 调用次数（直接验证安全不变量）> marker 文件不存在（行为验证）。
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -23,7 +23,7 @@ vi.mock("../../sandbox/sandbox-exec", () => ({
 }));
 
 vi.mock("../../../permission", () => ({
-  getCurrentLevel: () => "ask",
+  getCurrentLevel: () => "read-only",
 }));
 
 vi.mock("child_process", async (importOriginal) => {
@@ -112,13 +112,14 @@ describe.runIf(process.platform === "win32")("run_shell sandbox fail-closed gate
     expect(result.stderr).toContain("沙箱未启用");
   });
 
-  it("wrap 返回 disabled：read 命令允许降级直跑（1 次 spawn，sandboxed=false）", async () => {
+  it("wrap 返回 disabled：read 命令同样拒绝（0 次 spawn）", async () => {
     wrapMock.mockResolvedValue({ ok: false, reason: "disabled" });
     const result = await run("echo cyrene-fc-direct");
-    expect(spawnCalls).toHaveLength(1);
+    expect(spawnCalls).toHaveLength(0);
     expect(result.sandboxed).toBe(false);
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("cyrene-fc-direct");
+    expect(result.exitCode).toBe(-1);
+    expect(result.stderr).toContain("沙箱未启用");
+    expect(result.stdout).toBe("");
   });
 
   it("wrap 返回 not_ready：后台模式同样 fail-closed（0 次 spawn，无 jobId）", async () => {
@@ -146,5 +147,19 @@ describe.runIf(process.platform === "win32")("run_shell sandbox fail-closed gate
     expect(result.sandboxed).toBe(true);
     // 原始命令未被直跑：marker 不存在（只有包装进程被启动且立即失败）
     expect(fs.existsSync(markerPath)).toBe(false);
+  });
+
+  it("wrap 成功：read 命令仍使用包装结果并返回真实输出", async () => {
+    wrapMock.mockResolvedValue({
+      ok: true,
+      argv: [process.execPath, "-e", "process.stdout.write('CYRENE_WRAPPED_READ')"],
+      env: { ...process.env },
+    });
+    const result = await run("echo read-command");
+    expect(spawnCalls).toHaveLength(1);
+    expect(spawnCalls[0].command).toBe(process.execPath);
+    expect(result.sandboxed).toBe(true);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("CYRENE_WRAPPED_READ");
   });
 });
