@@ -45,7 +45,55 @@ function render(content: string, streaming: boolean, workspaceRoot?: string): st
   );
 }
 
+function texAnnotations(markup: string): string[] {
+  return [...markup.matchAll(/<annotation encoding="application\/x-tex">([\s\S]*?)<\/annotation>/g)]
+    .map((match) => match[1].replaceAll("&gt;", ">").replaceAll("&lt;", "<").replaceAll("&amp;", "&"));
+}
+
 describe("StreamdownMessageContent", () => {
+  it.each([false, true])("isolates backslash formulas from currency and adjacent math (streaming=%s)", (streaming) => {
+    const currency = render(String.raw`价格 $5，税率 \(r=0.2\)。`, streaming);
+    expect(texAnnotations(currency)).toEqual(["r=0.2"]);
+    expect(currency).toContain("<p>价格 $5，税率 ");
+    expect(currency).not.toContain("<!-- -->");
+    expect(texAnnotations(render(String.raw`\(a\)\(b\)\(c\)`, streaming))).toEqual(["a", "b", "c"]);
+    expect(texAnnotations(render(String.raw`$existing$\(a\)\(b\)$$other$$，价格 $5`, streaming)))
+      .toEqual(["existing", "a", "b", "other"]);
+  });
+
+  it.each([false, true])("preserves exact inline TeX at dollar boundaries (streaming=%s)", (streaming) => {
+    for (const [content, expected] of [
+      [String.raw`\(a\)$`, ["a"]],
+      [String.raw`$\(a\)`, ["a"]],
+      [String.raw`\(a\)$existing$`, ["a", "existing"]],
+      [String.raw`价格 \$5，\(a\)\(\text{cost }\$5\)`, ["a", String.raw`\text{cost }\$5`]],
+      [String.raw`价格 $5，\(a\)\[b\]`, ["a", "b"]],
+      [String.raw`# \(a\)\(b\)`, ["a", "b"]],
+      ["| 公式 |\n| --- |\n| \\(a\\)\\(b\\) |", ["a", "b"]],
+      ["> \\(x\n>y\\)", ["x\ny"]],
+      ["- > \\(x\n  >y\\)", ["x\ny"]],
+    ] as const) {
+      expect(texAnnotations(render(content, streaming)), content).toEqual(expected);
+    }
+  });
+
+  it.each([false, true])("removes actual quote prefixes without changing TeX (streaming=%s)", (streaming) => {
+    for (const content of [
+      "> \\[\n>x+1\n> \\]",
+      ">> \\[\n> > x+1\n>>\\]",
+      "- > \\[\n  >x+1\n  > \\]",
+      "> - > \\[\n>   >x+1\n>   > \\]",
+      "> \\[\nx+1\n>\\]",
+      "1. > \\[\n   >x+1\n   > \\]",
+      "> \\[\r\n>x+1\r\n> \\]",
+    ]) {
+      expect(texAnnotations(render(content, streaming)), content).toEqual(["x+1"]);
+    }
+    expect(texAnnotations(render("> \\[\n>x>0\n> \\]", streaming))).toEqual(["x>0"]);
+    const aligned = String.raw`\begin{aligned}x&=1\\y&=2\end{aligned}`;
+    expect(texAnnotations(render("> \\[\n>" + aligned + "\n> \\]", streaming))).toEqual([aligned]);
+  });
+
   it("keeps chat tables free of copy, download, and fullscreen controls", () => {
     const markup = render("| 报文 | 验证 |\n| --- | --- |\n| SYN | 客户端可发 |", false);
 

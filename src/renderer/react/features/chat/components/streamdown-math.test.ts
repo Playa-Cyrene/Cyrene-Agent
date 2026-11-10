@@ -4,7 +4,7 @@ import { normalizeBackslashMath } from "./streamdown-math";
 describe("normalizeBackslashMath", () => {
   it("normalizes complete inline math without changing TeX", () => {
     expect(normalizeBackslashMath(String.raw`高度 \(h=\dfrac{5b}{12}\)。`))
-      .toBe(String.raw`高度 $h=\dfrac{5b}{12}$。`);
+      .toBe(String.raw`高度 $h=\dfrac{5b}{12}$<!-- -->。`);
   });
 
   const untouched = [
@@ -28,6 +28,7 @@ describe("normalizeBackslashMath", () => {
     String.raw`- [ ] \[x\]`,
     String.raw`# \[x\]`,
     "| formula |\n| --- |\n| \\[x\\] |",
+    "-\t\\[x\\]",
   ];
   it.each(untouched)("preserves protected or incomplete Markdown: %s", (input) => {
     expect(normalizeBackslashMath(input)).toBe(input);
@@ -35,7 +36,7 @@ describe("normalizeBackslashMath", () => {
 
   it("only changes math outside protected code and links", () => {
     const input = String.raw`\(x\) and ` + "`\\(code\\)`" + String.raw` and [link](https://example.com/\(path\)) and \(y\)`;
-    expect(normalizeBackslashMath(input)).toBe(String.raw`$x$ and ` + "`\\(code\\)`" + String.raw` and [link](https://example.com/\(path\)) and $y$`);
+    expect(normalizeBackslashMath(input)).toBe(String.raw`$x$<!-- --> and ` + "`\\(code\\)`" + String.raw` and [link](https://example.com/\(path\)) and $y$<!-- -->`);
   });
 
   it("does not pair delimiters across paragraphs or list items", () => {
@@ -44,11 +45,17 @@ describe("normalizeBackslashMath", () => {
   });
 
   it("still renders a complete other kind of math after an unclosed delimiter", () => {
-    expect(normalizeBackslashMath(String.raw`\[incomplete but \(x\)`)).toBe(String.raw`\[incomplete but $x$`);
+    expect(normalizeBackslashMath(String.raw`\[incomplete but \(x\)`)).toBe(String.raw`\[incomplete but $x$<!-- -->`);
   });
 
   it.each([
     String.raw`\(x\) \[y\]`,
+    String.raw`价格 $5，税率 \(r=0.2\)。`,
+    String.raw`\(a\)\(b\)\(c\)`,
+    String.raw`$existing$\(a\)\(b\)$$other$$，价格 $5`,
+    "> \\[\n>x+1\n> \\]",
+    ">> \\[\n> >x>0\n>>\\]",
+    "- > \\[\n  >x+1\n  > \\]",
     "> - before \\[\n>   x^2 + y^2\n>   \\] after",
     "1. \\[x\\]",
     "| formula |\n| --- |\n| \\(x\\) |",

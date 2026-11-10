@@ -25,6 +25,41 @@ function escaped(input: string, index: number): boolean {
   return count % 2 === 1;
 }
 
+/** 按容器标记逐行消费前缀；引用的可选空格和惰性续行不能按首行字串匹配。 */
+function stripContainerPrefixes(body: string, prefix: string): string | undefined {
+  const parts: ("quote" | number)[] = [];
+  for (let cursor = 0; cursor < prefix.length;) {
+    const rest = prefix.slice(cursor);
+    const quote = /^ {0,3}> ?/.exec(rest);
+    if (quote) {
+      parts.push("quote");
+      cursor += quote[0].length;
+      continue;
+    }
+    const indent = /^(?: *(?:[-+*]|\d+[.)]) +| +)/.exec(rest);
+    // 无法可靠解释的容器形式（例如 tab 的虚拟列）保持原文。
+    if (!indent) return undefined;
+    parts.push(indent[0].length);
+    cursor += indent[0].length;
+  }
+  return body.split("\n").map((line, index) => {
+    if (index === 0) return line;
+    let cursor = 0;
+    for (const part of parts) {
+      if (part === "quote") {
+        const quote = /^ {0,3}> ?/.exec(line.slice(cursor));
+        if (quote) cursor += quote[0].length;
+      } else {
+        let consumed = 0;
+        while (consumed < part && line[cursor + consumed] === " ") consumed += 1;
+        // 不足列表延续缩进时是惰性续行，其文字空格应保留。
+        if (consumed === part) cursor += consumed;
+      }
+    }
+    return line.slice(cursor);
+  }).join("\n");
+}
+
 /**
  * 只在 Markdown 正文的完整配对范围转换分隔符，原始消息不变。
  * 用解析器给出的源码范围保护代码、链接和现有公式；不能在整串文本上裸替换。
@@ -58,6 +93,12 @@ export function normalizeBackslashMath(input: string): string {
     if (hasHtml) return;
     const overlaps = (from: number, to: number) => protectedRanges.some(([a, b]) => a < to && b > from);
     const unclosed = new Set<string>();
+    // 必须避开整段已有美元序列（包括未配对金额），而不只是公式正文里的美元。
+    let delimiterLength = 1;
+    for (const match of input.slice(start, end).matchAll(/\$+/g)) {
+      delimiterLength = Math.max(delimiterLength, match[0].length + 1);
+    }
+    const inlineDelimiter = "$".repeat(delimiterLength);
 
     for (let cursor = start; cursor < end - 1; cursor += 1) {
       if (input[cursor] !== "\\" || escaped(input, cursor) || overlaps(cursor, cursor + 2)) continue;
@@ -81,10 +122,10 @@ export function normalizeBackslashMath(input: string): string {
       if (!body.trim() || /\\[()[\]]/.test(body) || /(^|[^\\])\$/.test(body)) continue;
       if (opener === "(") {
         // Markdown 数学行内节点会把换行变空格；容器前缀由解析器正常处理。
-        if (input[open - 1] === "$" || input[close + 2] === "$") continue;
-        // remark-math 用分隔符长度配对，正文里的 \\$ 也会被看作单个美元序列。
-        const delimiter = "$".repeat(Math.max(1, ...[...body.matchAll(/\$+/g)].map((match) => match[0].length + 1)));
-        edits.push({ start: open, end: close + 2, value: `${delimiter}${body.trim()}${delimiter}` });
+        // 注释不产生可见文字，同时隔开相邻编辑和已有美元，避免拼成更长的序列。
+        // 行首不添加注释，避免 CommonMark 把整行当作 HTML 块。
+        const before = input[open - 1] === "$" ? "<!-- -->" : "";
+        edits.push({ start: open, end: close + 2, value: `${before}${inlineDelimiter}${body.trim()}${inlineDelimiter}<!-- -->` });
       } else {
         if (node.type === "tableCell" || node.type === "heading") continue;
         // 显示数学需要独立的 flow 节点；保留引用/列表的延续缩进，避免跳出嵌套容器。
@@ -93,10 +134,11 @@ export function normalizeBackslashMath(input: string): string {
         const isTask = /\[[ xX]\][ \t]+$/.test(sourcePrefix);
         // 单独的任务公式变成 flow 后会使 GFM 丢失复选框；保留原文，而非破坏列表状态。
         if (isTask && open === start) continue;
-        const prefix = sourcePrefix.replace(/\[[ xX]\][ \t]+$/, "").replace(/[^>\t ]/g, " ");
-        body = body.split("\n").map((line, index) =>
-          index > 0 && line.startsWith(prefix) ? line.slice(prefix.length) : line,
-        ).join("\n").trim();
+        const containerPrefix = sourcePrefix.replace(/\[[ xX]\][ \t]+$/, "");
+        const stripped = stripContainerPrefixes(body, containerPrefix);
+        if (stripped === undefined) continue;
+        const prefix = containerPrefix.replace(/[^>\t ]/g, " ");
+        body = stripped.trim();
         const value = `\n${prefix}\n${prefix}$$\n${prefix}${body.replaceAll("\n", `\n${prefix}`)}\n${prefix}$$\n${prefix}\n${prefix}`;
         edits.push({ start: open, end: close + 2, value });
       }

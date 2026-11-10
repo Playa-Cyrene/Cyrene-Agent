@@ -51,6 +51,26 @@ afterEach(() => {
 });
 
 describe("MarkdownContent Streamdown lifecycle", () => {
+  it("keeps exact math and currency text through character-by-character streaming", () => {
+    const content = String.raw`价格 $5，税率 \(r=0.2\)\(a\)` + "\n\n> - > \\[\n>   >x>0\n>   > \\]";
+    const expected = ["r=0.2", "a", "x>0"];
+    for (let index = 0; index <= content.length; index += 1) {
+      update(content.slice(0, index), true);
+      if (index >= content.indexOf("\\)") + 2) {
+        const annotations = [...container.querySelectorAll("annotation")].map((node) => node.textContent);
+        expect(annotations).toEqual(expected.slice(0, annotations.length));
+      }
+    }
+    expect([...container.querySelectorAll("annotation")].map((node) => node.textContent)).toEqual(expected);
+    const copy = container.cloneNode(true) as HTMLElement;
+    copy.querySelectorAll(".katex").forEach((node) => node.remove());
+    expect(copy.textContent).toContain("价格 $5，税率 ");
+    const nodes = [...container.querySelectorAll(".katex")];
+    update(content, false);
+    expect([...container.querySelectorAll("annotation")].map((node) => node.textContent)).toEqual(expected);
+    nodes.forEach((node, index) => expect(container.querySelectorAll(".katex")[index]).toBe(node));
+  });
+
   it("waits for a closing backslash delimiter and preserves the completed KaTeX nodes", () => {
     const content = "行内 \\(h=\\dfrac{5b}{12}\\)\n\n\\[\nx^2+y^2=z^2\n\\]";
     const displayStart = content.indexOf("\\[");
