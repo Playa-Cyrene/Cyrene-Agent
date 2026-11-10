@@ -24,7 +24,7 @@ test("the assisted installer exposes Cyrene setup choices and an uninstall entry
 test("the assisted installer stores launch preferences under the application package name", () => {
   assert.match(
     installerInclude,
-    /\$APPDATA\\\$\{APP_PACKAGE_NAME\}\\installer-options\.json/,
+    /!insertmacro CyreneSaveLaunchAtLoginSelection "\$APPDATA\\\$\{APP_PACKAGE_NAME\}"/,
   );
   assert.doesNotMatch(
     installerInclude,

@@ -42,6 +42,18 @@ describe("consumeInstallerLaunchAtLoginSelection", () => {
 });
 
 describe("applyInstallerLaunchAtLoginSelection", () => {
+  it.each([true, false])("preserves existing launchAtLogin=%s without an installer selection", (enabled) => {
+    expect(applyInstallerLaunchAtLoginSelection(
+      { launchAtLogin: enabled, language: "zh-CN" },
+      null,
+    )).toEqual({ launchAtLogin: enabled, language: "zh-CN" });
+  });
+
+  it("honors an explicit unchecked interactive selection", () => {
+    expect(applyInstallerLaunchAtLoginSelection({ launchAtLogin: true }, false))
+      .toEqual({ launchAtLogin: false });
+  });
+
   it("persists the one-shot installer selection into the normal settings payload", () => {
     expect(applyInstallerLaunchAtLoginSelection(
       { launchAtLogin: false, language: "zh-CN" },
