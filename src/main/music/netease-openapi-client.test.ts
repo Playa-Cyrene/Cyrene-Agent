@@ -91,7 +91,8 @@ describe("NeteaseOpenapiClient transport", () => {
 
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     const [url, init] = fetchImpl.mock.calls[0];
-    expect(String(url).startsWith("http://openapi.music.163.com/openapi/music/basic/user/profile/get/v2?")).toBe(true);
+    expect(String(url).startsWith("https://openapi.music.163.com/openapi/music/basic/user/profile/get/v2?")).toBe(true);
+    expect(init.redirect).toBe("error");
     expect((init.headers as Record<string, string>)["User-Agent"]).toBe("ncm-0.1.6");
     expect((init.headers as Record<string, string>).Referer).toBe("https://music.163.com/");
 
@@ -112,6 +113,7 @@ describe("NeteaseOpenapiClient transport", () => {
     const [url, init] = fetchImpl.mock.calls[0];
     expect(String(url).endsWith("/openapi/music/basic/playlist/song/batch/like")).toBe(true);
     expect(init.method).toBe("POST");
+    expect(init.redirect).toBe("error");
     expect((init.headers as Record<string, string>)["Content-Type"]).toBe("application/json");
 
     const params = paramsFromPostCall(fetchImpl);
@@ -159,6 +161,52 @@ describe("NeteaseOpenapiClient transport", () => {
     const { client, fetchImpl } = makeClient();
     fetchImpl.mockRejectedValue(new Error("ECONNREFUSED"));
     await expect(client.getUserProfile()).rejects.toThrow(/E_OPENAPI_-1.*ECONNREFUSED/);
+  });
+
+  it.each([
+    "http://openapi.music.163.com",
+    "http://127.0.0.1:12345",
+    "https://user:secret@openapi.music.163.com",
+    "https://openapi.music.163.com/?accessToken=secret",
+    "https://openapi.music.163.com/#secret",
+    "https://openapi.music.163.com/?",
+    "https://openapi.music.163.com/#",
+    "not-a-url-secret",
+  ])("rejects unsafe base URL before any request: %s", (baseUrl) => {
+    const fetchImpl = vi.fn();
+    expect(() => makeClient({ baseUrl, fetchImpl: fetchImpl as unknown as typeof fetch }))
+      .toThrow(/^E_OPENAPI_BASE_URL_INVALID: credential-free HTTPS endpoint required$/);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("keeps a custom HTTPS prefix and signed token after lazy configuration", async () => {
+    const { client, fetchImpl } = makeClient({ appId: "", privateKey: "", baseUrl: "https://music.example.test/proxy///" });
+    client.configure({ appId: "configured-app", privateKey: PK_B64 });
+    client.setAccessToken("configured-token");
+    fetchImpl.mockResolvedValue(jsonResponse({ code: 200, data: { userId: 1 } }));
+
+    await client.getUserProfile();
+
+    const url = new URL(fetchImpl.mock.calls[0][0] as string);
+    expect(url.origin).toBe("https://music.example.test");
+    expect(url.pathname).toBe("/proxy/openapi/music/basic/user/profile/get/v2");
+    const params = Object.fromEntries(url.searchParams);
+    expect(params.appId).toBe("configured-app");
+    expect(params.accessToken).toBe("configured-token");
+    expect(verifySign(params)).toBe(true);
+  });
+
+  it.each([301, 302, 303, 307, 308])("rejects redirect response %s without forwarding credentials", async (status) => {
+    const { client, fetchImpl } = makeClient();
+    client.setAccessToken("user-token");
+    fetchImpl.mockResolvedValue(new Response(JSON.stringify({ code: 200, data: {} }), {
+      status,
+      headers: { Location: "http://other.example.test/?accessToken=user-token" },
+    }));
+
+    await expect(client.getUserProfile()).rejects.toThrow(`E_OPENAPI_${status} /openapi/music/basic/user/profile/get/v2: redirects are not allowed`);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(fetchImpl.mock.calls[0][1].redirect).toBe("error");
   });
 });
 

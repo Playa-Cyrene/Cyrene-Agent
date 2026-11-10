@@ -5,7 +5,7 @@
 // `trialScene`) — the server rejects requests missing hidden defaults (400 empty body).
 import { createSign } from "node:crypto";
 
-const DEFAULT_BASE_URL = "http://openapi.music.163.com";
+const DEFAULT_BASE_URL = "https://openapi.music.163.com";
 const USER_AGENT = "ncm-0.1.6";
 const REFERER = "https://music.163.com/";
 
@@ -17,6 +17,7 @@ export interface OpenApiClientOptions {
   appId: string;
   /** Platform-assigned RSA private key: raw base64 or already-wrapped PKCS#8 PEM. */
   privateKey: string;
+  /** HTTPS endpoint without embedded credentials, query parameters or a fragment. */
   baseUrl?: string;
   /** Stable per-install device id (survives restarts; QR login binds to it). */
   deviceId?: string;
@@ -157,6 +158,20 @@ export function wrapPkcs8Pem(privateKey: string): string {
   return `-----BEGIN PRIVATE KEY-----\n${body}\n-----END PRIVATE KEY-----`;
 }
 
+function normalizeBaseUrl(value: string): string {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error("E_OPENAPI_BASE_URL_INVALID: credential-free HTTPS endpoint required");
+  }
+  // 不在错误信息中回显配置 URL，它可能包含凭据或令牌。
+  if (url.protocol !== "https:" || url.username || url.password || url.href.includes("?") || url.href.includes("#")) {
+    throw new Error("E_OPENAPI_BASE_URL_INVALID: credential-free HTTPS endpoint required");
+  }
+  return url.href.replace(/\/+$/, "");
+}
+
 // ---------------------------------------------------------------------------
 // Client
 // ---------------------------------------------------------------------------
@@ -173,7 +188,7 @@ export class NeteaseOpenapiClient {
   constructor(opts: OpenApiClientOptions) {
     this.appId = opts.appId;
     this.privateKeyPem = opts.privateKey ? wrapPkcs8Pem(opts.privateKey) : "";
-    this.baseUrl = (opts.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
+    this.baseUrl = normalizeBaseUrl(opts.baseUrl ?? DEFAULT_BASE_URL);
     this.fetchImpl = opts.fetchImpl ?? fetch;
     this.now = opts.now ?? Date.now;
     this.deviceJson = JSON.stringify({
@@ -252,10 +267,15 @@ export class NeteaseOpenapiClient {
     try {
       if (method === "GET") {
         const url = `${this.baseUrl}${path}?${new URLSearchParams(params).toString()}`;
-        res = await this.fetchImpl(url, { headers: { "User-Agent": USER_AGENT, Referer: REFERER } });
+        res = await this.fetchImpl(url, {
+          headers: { "User-Agent": USER_AGENT, Referer: REFERER },
+          // URL 携带签名和登录令牌，禁止自动转发到其他来源或降级到 HTTP。
+          redirect: "error",
+        });
       } else {
         res = await this.fetchImpl(`${this.baseUrl}${path}`, {
           method: "POST",
+          redirect: "error",
           headers: {
             "Content-Type": "application/json",
             "User-Agent": USER_AGENT,
@@ -266,6 +286,10 @@ export class NeteaseOpenapiClient {
       }
     } catch (e: unknown) {
       throw new NeteaseOpenapiError(-1, path, `network error: ${(e as Error).message}`);
+    }
+    // 注入的 transport 也可能直接返回 3xx，不能把重定向响应当业务成功。
+    if (res.status >= 300 && res.status < 400) {
+      throw new NeteaseOpenapiError(res.status, path, "redirects are not allowed");
     }
     const text = await res.text();
     let json: OpenapiEnvelope<T> & { _http?: number };
