@@ -17,11 +17,8 @@ asarUnpack:
   - "**/node_modules/@playwright/**"
   - "**/node_modules/playwright/**"
   - "**/node_modules/playwright-core/**"
-  # Filesystem MCP 同理（dist/index.js + 其依赖的 sdk / diff / glob 等）
-  - "**/node_modules/@modelcontextprotocol/**"
-  - "**/node_modules/diff/**"
-  - "**/node_modules/glob/**"
-  - "**/node_modules/minimatch/**"
+  # 文件系统 MCP 的完整 JS 依赖闭包由 build:main 打成独立 ESM，子进程只读取此文件。
+  - "**/dist/main/main/filesystem-mcp.mjs"
 electronDist: node_modules/electron/dist
 files:
   - dist/**/*

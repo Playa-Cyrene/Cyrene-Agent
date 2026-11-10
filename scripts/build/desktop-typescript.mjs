@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { assertRelativeDynamicImports } from "./verify-dynamic-imports.mjs";
 import { writeExternalContentManifest } from "./external-content-manifest.mjs";
+import { buildFilesystemMcp } from "./filesystem-mcp.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const target = process.argv[2];
@@ -66,6 +67,7 @@ if (target === "main") {
   });
   cpSync(path.join(repoRoot, "src", "main", "plugin-panel"), path.join(outDir, "plugin-panel"), { recursive: true });
   writeExternalContentManifest(repoRoot, path.join(outDir, "main", "shipped-external-content-manifest.json"));
+  await buildFilesystemMcp({ repoRoot, outfile: path.join(outDir, "main", "filesystem-mcp.mjs") });
   assertRelativeDynamicImports(outDir);
 }
 

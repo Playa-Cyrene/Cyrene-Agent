@@ -2,8 +2,12 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { migrateStagedExternalContent, type StagedContentMigrationInput } from "./external-content-migration";
+
+vi.mock("node:fs", async (importOriginal) => ({
+  ...await importOriginal<typeof import("node:fs")>(),
+}));
 
 const temporaryDirectories: string[] = [];
 
@@ -14,6 +18,7 @@ function temporaryDirectory(): string {
 }
 
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const directory of temporaryDirectories.splice(0)) {
     fs.rmSync(directory, { recursive: true, force: true });
   }
@@ -205,6 +210,40 @@ describe("migrateStagedExternalContent", () => {
     migrateStagedExternalContent(f.input);
     expect(fs.readFileSync(path.join(f.userPrompts, "blocked", "custom.md"), "utf8")).toBe("user edit");
     expect(fs.existsSync(f.staging)).toBe(false);
+  });
+
+  it.each(["prompts", "skills"] as const)("keeps the previous baseline when %s staging cleanup fails, then retries without restoring old defaults", (kind) => {
+    const f = createFixture();
+    const previous = buildManifest({}, {});
+    previous[kind] = { "default.md": sha1Of("old default") };
+    const shipped = buildManifest({}, {});
+    shipped[kind] = { "default.md": sha1Of("new default") };
+    write(f.manifestFile, JSON.stringify(previous));
+    write(f.shippedManifestFile, JSON.stringify(shipped));
+    write(path.join(f.staging, kind, "default.md"), "old default");
+    write(path.join(f.staging, kind, "custom.md"), "user edit");
+    const remove = fs.rmSync;
+    let failCleanup = true;
+    vi.spyOn(fs, "rmSync").mockImplementation((target, options) => {
+      if (target === f.staging && failCleanup) {
+        failCleanup = false;
+        throw Object.assign(new Error("staging is in use"), { code: "EBUSY" });
+      }
+      return remove(target, options);
+    });
+
+    migrateStagedExternalContent(f.input);
+    const userRoot = kind === "prompts" ? f.userPrompts : f.userSkills;
+    expect(fs.existsSync(f.staging)).toBe(true);
+    expect(JSON.parse(fs.readFileSync(f.manifestFile, "utf8"))).toEqual(previous);
+    expect(fs.existsSync(path.join(userRoot, "default.md"))).toBe(false);
+    expect(fs.readFileSync(path.join(userRoot, "custom.md"), "utf8")).toBe("user edit");
+
+    migrateStagedExternalContent(f.input);
+    expect(fs.existsSync(f.staging)).toBe(false);
+    expect(JSON.parse(fs.readFileSync(f.manifestFile, "utf8"))).toEqual(shipped);
+    expect(fs.existsSync(path.join(userRoot, "default.md"))).toBe(false);
+    expect(fs.readFileSync(path.join(userRoot, "custom.md"), "utf8")).toBe("user edit");
   });
 
   it("keeps staging when the destination directories are unavailable", () => {

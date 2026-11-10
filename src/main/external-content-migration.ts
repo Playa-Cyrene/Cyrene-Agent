@@ -34,9 +34,10 @@ export function migrateStagedExternalContent(input: StagedContentMigrationInput)
     const shipped = readManifestFile(input.shippedManifestPath ?? path.join(__dirname, "shipped-external-content-manifest.json"));
     if (fs.existsSync(stagingDir)) {
       mergeStaging(stagingDir, input, shipped);
+      // 清理失败时暂存仍属于旧版本，必须保留旧基准供下次启动重试。
+      fs.rmSync(stagingDir, { recursive: true, force: true });
     }
     writeManifest(input, shipped);
-    if (fs.existsSync(stagingDir)) fs.rmSync(stagingDir, { recursive: true, force: true });
   } catch {
     // 不把迁移失败误报为完成；源文件保留，重试时不会覆盖已存在的用户内容。
   }

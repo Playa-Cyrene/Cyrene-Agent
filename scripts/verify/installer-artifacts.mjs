@@ -16,6 +16,7 @@ import { fileURLToPath } from "node:url";
 import * as yaml from "yaml";
 import { verifyScreenshotHelper } from "./screenshot-helper.mjs";
 import { verifyMpvHelper } from "./mpv-helper.mjs";
+import { verifyFilesystemMcp } from "./filesystem-mcp.mjs";
 
 const parseYaml = yaml.parse;
 const execFileAsync = promisify(execFile);
@@ -80,6 +81,11 @@ export async function verifyInstallerArtifacts(options = {}) {
     timeout: 10_000,
   });
   await stat(path.join(resourcesDir, "cyrene-skills", "skills-snapshot.zip"));
+  // 使用发行包自身的 Electron 与真实展开入口，避免开发目录的依赖掩盖漏打包。
+  await verifyFilesystemMcp({
+    executable: path.join(outputDir, "win-unpacked", `${builderConfig.productName}.exe`),
+    entry: path.join(resourcesDir, "app.asar.unpacked", "dist", "main", "main", "filesystem-mcp.mjs"),
+  });
 
   return {
     installerPath,
