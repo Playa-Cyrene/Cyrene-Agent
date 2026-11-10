@@ -124,33 +124,73 @@ async function runtimeFor(gitService: GitService) {
   return { tool, runtime };
 }
 
+/** 子进程保留 PATH 等运行环境，但不能继承宿主的 Git 覆盖、配置或模板。 */
+function isolatedGitEnvironment() {
+  const root = path.join(fixture.root, "git-environment");
+  const home = path.join(root, "home");
+  const xdg = path.join(root, "xdg");
+  const templates = path.join(root, "templates");
+  const temp = path.join(root, "tmp");
+  for (const directory of [home, path.join(xdg, "git"), templates, temp]) fs.mkdirSync(directory, { recursive: true });
+  fs.writeFileSync(path.join(home, ".gitconfig"), "");
+  fs.writeFileSync(path.join(xdg, "git", "config"), "");
+  // 只继承启动 Git 所需的系统/语言环境；包括未知 GIT_*、PAGER/EDITOR 在内的覆盖均不带入。
+  const inherited = Object.fromEntries(Object.entries(process.env).filter(([key]) =>
+    /^(PATH|PATHEXT|SYSTEMROOT|SYSTEMDRIVE|WINDIR|COMSPEC|LANG|LC_ALL|LC_CTYPE|TZ)$/i.test(key),
+  ));
+  const env: NodeJS.ProcessEnv = {
+    ...inherited,
+    HOME: home,
+    USERPROFILE: home,
+    XDG_CONFIG_HOME: xdg,
+    TMP: temp, TEMP: temp, TMPDIR: temp,
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_ATTR_NOSYSTEM: "1",
+    GIT_TERMINAL_PROMPT: "0",
+  };
+  // 不使用 simple-git 明确拒绝的 GIT_CONFIG_GLOBAL/SYSTEM/TEMPLATE_DIR，更不打开 unsafe 选项。
+  return { env, templates };
+}
+
+function realGitFixture(extension: "hook" | "filter") {
+  const repo = path.join(fixture.root, "repo");
+  const marker = path.join(fixture.root, "outside-marker");
+  const { env, templates } = isolatedGitEnvironment();
+  fs.mkdirSync(repo);
+  // 初始化与服务必须共用同一环境，不能只隔离其中一条 Git 入口。
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: repo, env, stdio: "pipe" });
+  git("init", "--template", templates);
+  const hooks = path.join(repo, ".git", "permission-test-hooks");
+  fs.mkdirSync(hooks);
+  git("config", "--local", "core.hooksPath", hooks.replace(/\\/g, "/"));
+  git("config", "--local", "commit.gpgsign", "false");
+  git("config", "--local", "tag.gpgsign", "false");
+  git("config", "--local", "user.name", "Boundary Test");
+  git("config", "--local", "user.email", "boundary@example.invalid");
+  fs.writeFileSync(path.join(repo, "file.txt"), "test\n");
+  // 扩展仅写测试临时目录；仓库外 marker 证明路径校验无法约束 Git 子进程。
+  const script = `#!/bin/sh\nprintf marker > '../outside-marker'\n${extension === "filter" ? "cat\n" : ""}`;
+  if (extension === "hook") {
+    fs.writeFileSync(path.join(hooks, "pre-commit"), script, { mode: 0o755 });
+  } else {
+    fs.writeFileSync(path.join(repo, "clean-filter.sh"), script, { mode: 0o755 });
+    fs.writeFileSync(path.join(repo, ".gitattributes"), "file.txt filter=boundary\n");
+    git("config", "--local", "filter.boundary.clean", "sh clean-filter.sh");
+    git("config", "--local", "filter.boundary.required", "true");
+  }
+  const service = createGitService({
+    getSession: () => ({ id: "code-session", mode: "code", workspaceBinding: { workspaceRoot: repo } } as ChatSession),
+    resolveExecutable: async () => ({ command: "git", source: "system", version: "test", env }),
+  });
+  return { repo, marker, hooks, env, git, service };
+}
+
 describe.each(["hook", "filter"] as const)("真实 Git %s 权限回归", extension => {
   it.each([
     ["project-read-only", false], ["read-only", false], ["scoped", false],
     ["per-action", false], ["per-action", true], ["full", true],
   ] as const)("%s / approved=%s 在真实权限链前阻断或显式授权扩展", async (level, approved) => {
-    const repo = path.join(fixture.root, "repo");
-    const marker = path.join(fixture.root, "outside-marker");
-    fs.mkdirSync(repo);
-    const git = (...args: string[]) => execFileSync("git", args, { cwd: repo, stdio: "pipe" });
-    git("init");
-    git("config", "user.name", "Boundary Test");
-    git("config", "user.email", "boundary@example.invalid");
-    fs.writeFileSync(path.join(repo, "file.txt"), "test\n");
-    // 扩展仅写测试临时目录；仓库外 marker 证明路径校验无法约束 Git 子进程。
-    const script = `#!/bin/sh\nprintf marker > '../outside-marker'\n${extension === "filter" ? "cat\n" : ""}`;
-    if (extension === "hook") {
-      fs.writeFileSync(path.join(repo, ".git", "hooks", "pre-commit"), script, { mode: 0o755 });
-    } else {
-      fs.writeFileSync(path.join(repo, "clean-filter.sh"), script, { mode: 0o755 });
-      fs.writeFileSync(path.join(repo, ".gitattributes"), "file.txt filter=boundary\n");
-      git("config", "filter.boundary.clean", "sh clean-filter.sh");
-      git("config", "filter.boundary.required", "true");
-    }
-    const service = createGitService({
-      getSession: () => ({ id: "code-session", mode: "code", workspaceBinding: { workspaceRoot: repo } } as ChatSession),
-      resolveExecutable: async () => ({ command: "git", source: "system", version: "test" }),
-    });
+    const { marker, service } = realGitFixture(extension);
     try {
       setCurrentLevel(level);
       const { tool, runtime } = await runtimeFor(service);
@@ -174,6 +214,96 @@ describe.each(["hook", "filter"] as const)("真实 Git %s 权限回归", extensi
       await service.dispose();
     }
   });
+});
+
+/** 所有伪宿主文件都在本例临时目录内；即使回归失败也不能触碰真实用户 hooks。 */
+function poisonGitEnvironment(includeOverrides: boolean) {
+  const ambient = path.join(fixture.root, "fake-host");
+  const home = path.join(ambient, "home");
+  const xdg = path.join(ambient, "xdg");
+  const externalHooks = path.join(ambient, "hooks");
+  const templates = path.join(ambient, "templates");
+  const metadata = path.join(ambient, "metadata");
+  const worktree = path.join(ambient, "worktree");
+  for (const directory of [home, path.join(xdg, "git"), externalHooks, path.join(templates, "hooks"), metadata, worktree]) {
+    fs.mkdirSync(directory, { recursive: true });
+  }
+  const externalMarker = path.join(fixture.root, "fake-host-hook-marker");
+  const shellMarker = externalMarker.replace(/\\/g, "/").replace(/'/g, "'\\''");
+  const externalHook = `#!/bin/sh\nprintf fake-host > '${shellMarker}'\nexit 1\n`;
+  for (const directory of [externalHooks, path.join(templates, "hooks")]) {
+    fs.writeFileSync(path.join(directory, "pre-commit"), externalHook, { mode: 0o755 });
+  }
+  const hookPath = externalHooks.replace(/\\/g, "/");
+  const config = `[core]\n hooksPath = ${JSON.stringify(hookPath)}\n[commit]\n gpgsign = true\n[gpg]\n program = cyrene-signing-must-not-run\n[fixture]\n hostconfigleak = true\n`;
+  const globalConfig = path.join(ambient, "global.config");
+  const systemConfig = path.join(ambient, "system.config");
+  for (const file of [globalConfig, systemConfig, path.join(home, ".gitconfig"), path.join(xdg, "git", "config")]) {
+    fs.writeFileSync(file, config);
+  }
+  // 参数、仓库重定向、模板、执行路径与 trace 都只指向本例拥有的伪宿主目录。
+  const overrides = {
+    HOME: home, USERPROFILE: home, HOMEDRIVE: "", HOMEPATH: home, XDG_CONFIG_HOME: xdg,
+    PAGER: "cyrene-pager-must-not-run", EDITOR: "cyrene-editor-must-not-run",
+    GIT_CONFIG_GLOBAL: globalConfig, GIT_CONFIG_SYSTEM: systemConfig, GIT_CONFIG_NOSYSTEM: "0",
+    ...(includeOverrides ? {
+      GIT_CONFIG: globalConfig,
+      GIT_CONFIG_COUNT: "2", GIT_CONFIG_KEY_0: "core.hooksPath", GIT_CONFIG_VALUE_0: hookPath,
+      GIT_CONFIG_KEY_1: "commit.gpgsign", GIT_CONFIG_VALUE_1: "true",
+      GIT_CONFIG_PARAMETERS: "'commit.gpgsign=true'",
+      GIT_DIR: metadata, GIT_COMMON_DIR: metadata, GIT_WORK_TREE: worktree,
+      GIT_INDEX_FILE: path.join(ambient, "index"), GIT_OBJECT_DIRECTORY: path.join(ambient, "objects"),
+      GIT_ALTERNATE_OBJECT_DIRECTORIES: path.join(ambient, "alternates"),
+      GIT_TEMPLATE_DIR: templates, GIT_EXEC_PATH: path.join(ambient, "exec"),
+      GIT_TRACE: path.join(ambient, "trace"), GIT_TRACE_SETUP: path.join(ambient, "trace-setup"),
+      GIT_TRACE2_EVENT: path.join(ambient, "trace-event"), GIT_ATTR_NOSYSTEM: "0",
+      GIT_UNEXPECTED_TEST_OVERRIDE: "must-be-cleared",
+    } : {}),
+  };
+  for (const [key, value] of Object.entries(overrides)) vi.stubEnv(key, value);
+  return { ambient, externalMarker, metadata };
+}
+
+it.each([["hook", false], ["filter", false], ["hook", true], ["filter", true]] as const)("宿主 Git 配置污染不能替换真实 %s 夹具（环境覆盖=%s）", async (extension, includeOverrides) => {
+  const { ambient, externalMarker, metadata } = poisonGitEnvironment(includeOverrides);
+  const { repo, marker, hooks, env, git, service } = realGitFixture(extension);
+  try {
+    expect(Object.keys(env).filter(key => /^git_/i.test(key)).sort()).toEqual([
+      "GIT_ATTR_NOSYSTEM", "GIT_CONFIG_NOSYSTEM", "GIT_TERMINAL_PROMPT",
+    ]);
+    expect(env.GIT_CONFIG_NOSYSTEM).toBe("1");
+    expect(env.GIT_ATTR_NOSYSTEM).toBe("1");
+    expect(env.HOME).toBe(path.join(fixture.root, "git-environment", "home"));
+    expect(env.USERPROFILE).toBe(env.HOME);
+    expect(env.PAGER).toBeUndefined();
+    expect(env.EDITOR).toBeUndefined();
+    expect(env.XDG_CONFIG_HOME).toBe(path.join(fixture.root, "git-environment", "xdg"));
+    // 只查询测试哨兵，失败日志也不应回显任意宿主配置内容。
+    expect(() => git("config", "--get", "fixture.hostconfigleak")).toThrow();
+    expect(git("config", "core.hooksPath").toString().trim()).toBe(hooks.replace(/\\/g, "/"));
+    expect(git("config", "commit.gpgsign").toString().trim()).toBe("false");
+    expect(git("config", "tag.gpgsign").toString().trim()).toBe("false");
+    expect(fs.existsSync(path.join(repo, ".git", "config"))).toBe(true);
+    expect(fs.existsSync(path.join(repo, ".git", "hooks", "pre-commit"))).toBe(false);
+    expect(fs.existsSync(path.join(metadata, "config"))).toBe(false);
+    setCurrentLevel("scoped");
+    const { tool, runtime } = await runtimeFor(service);
+    const args = { message: "isolated", paths: ["file.txt"] };
+    expect(await runtime.checkPermission(tool.id, args)).not.toBe(true);
+    expect(fs.existsSync(marker)).toBe(false);
+    expect(fs.existsSync(externalMarker)).toBe(false);
+    // 保留已授权的真实 GitService → Git → hook/filter，不能靠禁用扩展把污染测试做绿。
+    setCurrentLevel("per-action");
+    answerApproval(true);
+    expect(await runtime.checkPermission(tool.id, args)).toBe(true);
+    await tool.execute(args, runtime.toolContext);
+    expect(fs.readFileSync(marker, "utf8")).toBe("marker");
+    expect(git("rev-list", "--count", "HEAD").toString().trim()).toBe("1");
+    expect(fs.existsSync(externalMarker)).toBe(false);
+    for (const file of ["trace", "trace-setup", "trace-event"]) expect(fs.existsSync(path.join(ambient, file))).toBe(false);
+  } finally {
+    await service.dispose();
+  }
 });
 
 /** 只替换模型网络调用；权限宿主、适配层、Harness 调度、模型历史和 UI 事件均走真实实现。 */
