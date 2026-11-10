@@ -5,6 +5,8 @@ import type { ToolFileChange } from "../../../shared/chat-types";
 import { finalizeFileChanges, parseUnifiedPatch } from "./registry/tool-evidence";
 
 export function createCodeGitTools(gitService: GitService): ToolDefinition[] {
+  // Git 写操作可能执行 hooks、filters 或其他外部程序，且不经过 Shell 沙箱。
+  // 统一按 input-control 审批，不能把它们当作仅限工作区的 fs-write。
   return [
     {
       id: "git_status",
@@ -25,12 +27,12 @@ export function createCodeGitTools(gitService: GitService): ToolDefinition[] {
       description: "仅在用户明确要求时，为当前 Code 工作区初始化 Git 仓库。",
       enabled: true,
       modes: ["code"],
-      risk: "fs-write",
+      risk: "input-control",
       effectKind: "mutation",
       verificationPolicy: "artifact",
       needsContext: true,
       inputSchema: { type: "object", properties: {} },
-      execute: async (_args, ctx) => gitService.initRepository(requireCodeContext(ctx)),
+      execute: async (_args, ctx) => gitService.initRepository(requireWritableCodeContext(ctx)),
     },
     {
       id: "git_commit",
@@ -38,7 +40,7 @@ export function createCodeGitTools(gitService: GitService): ToolDefinition[] {
       description: "把用户确认的仓库内文件加入暂存并创建一次 Git 提交。",
       enabled: true,
       modes: ["code"],
-      risk: "fs-write",
+      risk: "input-control",
       effectKind: "mutation",
       verificationPolicy: "artifact",
       needsContext: true,
@@ -51,7 +53,7 @@ export function createCodeGitTools(gitService: GitService): ToolDefinition[] {
         required: ["message", "paths"],
       },
       execute: async (args, ctx) => gitService.commit(
-        requireCodeContext(ctx),
+        requireWritableCodeContext(ctx),
         stringArg(args, "message"),
         stringArrayArg(args, "paths"),
       ),
@@ -62,7 +64,7 @@ export function createCodeGitTools(gitService: GitService): ToolDefinition[] {
       description: "切换到现有分支，或按用户请求创建并切换新分支。",
       enabled: true,
       modes: ["code"],
-      risk: "fs-write",
+      risk: "input-control",
       effectKind: "mutation",
       verificationPolicy: "artifact",
       needsContext: true,
@@ -75,7 +77,7 @@ export function createCodeGitTools(gitService: GitService): ToolDefinition[] {
         required: ["branch"],
       },
       execute: async (args, ctx) => gitService.switchBranch(
-        requireCodeContext(ctx),
+        requireWritableCodeContext(ctx),
         stringArg(args, "branch"),
         args.create === true || args.create === "true",
       ),
@@ -86,7 +88,6 @@ export function createCodeGitTools(gitService: GitService): ToolDefinition[] {
       description: "把当前分支推送到用户指定的远端；不会强制推送。",
       enabled: true,
       modes: ["code"],
-      // Git 及其钩子不经过 executeRunShell 沙箱，不能复用 Shell 的只读放行规则。
       risk: "input-control",
       effectKind: "external_side_effect",
       verificationPolicy: "none",
@@ -95,10 +96,7 @@ export function createCodeGitTools(gitService: GitService): ToolDefinition[] {
         type: "object",
         properties: { remote: { type: "string", description: "远端名称，默认 origin", default: "origin" } },
       },
-      execute: async (args, ctx) => {
-        if (ctx?.readOnly) throw new Error("本子任务处于只读模式，不允许推送 Git 提交。");
-        return gitService.push(requireCodeContext(ctx), optionalStringArg(args, "remote"));
-      },
+      execute: async (args, ctx) => gitService.push(requireWritableCodeContext(ctx), optionalStringArg(args, "remote")),
     },
     {
       id: "git_revert",
@@ -106,7 +104,7 @@ export function createCodeGitTools(gitService: GitService): ToolDefinition[] {
       description: "为指定提交创建一个新的 revert 提交，不会重写历史。",
       enabled: true,
       modes: ["code"],
-      risk: "fs-write",
+      risk: "input-control",
       effectKind: "mutation",
       verificationPolicy: "artifact",
       needsContext: true,
@@ -115,7 +113,7 @@ export function createCodeGitTools(gitService: GitService): ToolDefinition[] {
         properties: { commit: { type: "string", description: "要回退的提交 hash" } },
         required: ["commit"],
       },
-      execute: async (args, ctx) => gitService.revert(requireCodeContext(ctx), stringArg(args, "commit")),
+      execute: async (args, ctx) => gitService.revert(requireWritableCodeContext(ctx), stringArg(args, "commit")),
     },
     {
       id: "git_diff",
@@ -206,6 +204,12 @@ function requireCodeContext(ctx: ToolContext | undefined): TrustedGitContext {
   if (ctx?.mode !== "code") throw new Error("Git 工具只允许在 Code 模式使用");
   if (!ctx.conversationId || !ctx.resolvedWorkspaceRoot) throw new Error("当前 Code 对话尚未绑定工作目录");
   return { sessionId: ctx.conversationId, mode: "code", workspaceRoot: ctx.resolvedWorkspaceRoot };
+}
+
+function requireWritableCodeContext(ctx: ToolContext | undefined): TrustedGitContext {
+  // 子任务的只读契约独立于全局档位和 allow_all，必须在调用 Git 服务前拒绝。
+  if (ctx?.readOnly) throw new Error("本子任务处于只读模式，不允许执行 Git 写操作。");
+  return requireCodeContext(ctx);
 }
 
 function stringArg(args: Record<string, unknown>, key: string): string {
