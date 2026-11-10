@@ -1,7 +1,17 @@
 import { describe, expect, it } from "vitest";
+import { PROVIDER_CAPABILITIES } from "../../../main/orchestrator/vendors/capabilities";
 import { MODEL_PRESETS, presetTransportUrl } from "./presets";
 
 describe("provider preset transport endpoints", () => {
+  it("uses Sonnet 5.5 for both Claude runtime fallback and new-profile default", () => {
+    const claude = MODEL_PRESETS.find((preset) => preset.providerId === "claude")!;
+    const runtime = PROVIDER_CAPABILITIES.find((capability) => capability.id === "claude")!;
+    expect(runtime.defaultModel).toBe("claude-sonnet-5-5");
+    expect(claude.mainModels[0]).toBe(runtime.defaultModel);
+    expect(claude.mainModels).toContain("claude-sonnet-4-6");
+    expect(claude.mainModels).toContain("claude-fable-5-2");
+  });
+
   it("keeps provider display order and custom entries independent of new candidates", () => {
     expect(MODEL_PRESETS.map(({ providerId }) => providerId)).toEqual([
       "minimax", "deepseek", "doubao", "glm", "kimi", "qwen", "chatgpt", "claude", "mimo", "grok", "gemini", "custom-cloud", "custom-local",
