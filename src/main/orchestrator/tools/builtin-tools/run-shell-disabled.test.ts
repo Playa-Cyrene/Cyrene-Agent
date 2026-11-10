@@ -1,11 +1,34 @@
 // 真实 sandbox-exec disabled 路径 + 真实命令执行；全部副作用仅发生在独立临时目录。
-import { spawn as nativeSpawn } from "node:child_process";
+import type { SpawnOptions } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentFileAccessLevel } from "../../../permission-policy";
 const state = vi.hoisted(() => ({ level: "read-only" as AgentFileAccessLevel, root: "", spawns: 0 }));
+// 解释器和命令仅来自固定系统目录；不使用宿主 ComSpec/PATH 或当前目录查找。
+// Windows CI 使用标准系统目录；夹具不再通过任何宿主变量定位解释器。
+const systemRoot = "C:\\Windows";
+const systemBin = process.platform === "win32" ? path.join(systemRoot, "System32") : "/usr/bin";
+const shellExecutable = process.platform === "win32" ? path.join(systemBin, "cmd.exe") : "/bin/bash";
+let nativeSpawn: typeof import("child_process").spawn;
+
+function fixtureEnvironment(): NodeJS.ProcessEnv {
+  return {
+    PATH: process.platform === "win32" ? systemBin : "/usr/bin:/bin",
+    PATHEXT: ".COM;.EXE", NoDefaultCurrentDirectoryInExePath: "1",
+    ...(process.platform === "win32" ? { SystemRoot: systemRoot, WINDIR: systemRoot, ComSpec: shellExecutable } : {}),
+    HOME: path.join(state.root, "home"), USERPROFILE: path.join(state.root, "home"),
+    TMP: state.root, TEMP: state.root, TMPDIR: state.root, LANG: "C", LC_ALL: "C",
+  };
+}
+
+function spawnFixture(command: string, args: readonly string[], options: SpawnOptions) {
+  // 前后台共享同一替身边界；只隔离测试进程环境，命令/参数仍由真实执行计划构造。
+  expect(command).toBe(shellExecutable);
+  state.spawns++;
+  return nativeSpawn(command, args, { ...options, env: fixtureEnvironment() });
+}
 vi.mock("electron", () => ({ app: { getPath: () => state.root } }));
 vi.mock("../../../logger", () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() }, LogTag: {} }));
 vi.mock("../../../permission", async () => ({
@@ -14,16 +37,15 @@ vi.mock("../../../permission", async () => ({
 vi.mock("child_process", async (original) => {
   const actual = await original<typeof import("child_process")>();
   return { ...actual, spawn: (...args: Parameters<typeof actual.spawn>) => {
-    state.spawns++;
-    return actual.spawn(...args);
+    return spawnFixture(args[0], args[1] as string[], args[2] as SpawnOptions);
   } };
 });
 // 非 Windows 产品当前只探测 bash.exe；仅替换解释器发现，执行与 disabled 判定保持真实。
 vi.mock("../../shell-runtime", async (original) => {
   const actual = await original<typeof import("../../shell-runtime")>();
   return { ...actual, resolveShellExecutable: async () => process.platform === "win32"
-    ? { kind: "cmd", executable: process.env.ComSpec || "cmd.exe" }
-    : { kind: "bash", executable: "/bin/bash" } };
+    ? { kind: "cmd", executable: shellExecutable }
+    : { kind: "bash", executable: shellExecutable } };
 });
 const startJob = vi.hoisted(() => vi.fn());
 vi.mock("./shell-job-manager", async (original) => ({
@@ -35,15 +57,17 @@ let runShellTool: typeof import("./run-shell-tool")["runShellTool"];
 
 beforeEach(async () => {
   // initSandbox 是进程级幂等单例；每例重载才能独立验证 0 / false 两个环境值。
+  nativeSpawn = (await vi.importActual<typeof import("child_process")>("child_process")).spawn;
   vi.resetModules();
   sandbox = await import("../../sandbox/sandbox-exec");
   ({ runShellTool } = await import("./run-shell-tool"));
   state.root = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-shell-disabled-"));
+  fs.mkdirSync(path.join(state.root, "home"));
   state.level = "read-only";
   state.spawns = 0;
   startJob.mockReset().mockImplementation(async ({ spec }) => {
     // 后台测试仍启动真实进程；等待退出后再返回，避免测试泄漏进程或临时文件。
-    const child = nativeSpawn(spec.command, spec.args, { cwd: spec.cwd, env: spec.env,
+    const child = spawnFixture(spec.command, spec.args, { cwd: spec.cwd, env: spec.env,
       windowsVerbatimArguments: spec.windowsVerbatimArguments, shell: false, stdio: "ignore" });
     const exitCode = await new Promise<number | null>((resolve, reject) => {
       child.once("error", reject);
@@ -104,6 +128,63 @@ describe.each(["0", "false"])("真实 CYRENE_SRT=%s", disabled => {
     if (!background) expect(override.exitCode).toBe(0);
     const overrideOutput = fs.readFileSync(path.join(state.root, "output.txt"));
     expect(overrideOutput.toString("utf8").replace(/\r/g, ""), `output hex: ${overrideOutput.toString("hex")}`).toBe("a\nz\n");
+    expect(state.spawns).toBe(2);
+  });
+  it("宿主启动脚本、函数、PATH 与当前目录污染不进入真实前后台进程", async () => {
+    const hostBin = path.join(state.root, "fake-host-bin");
+    fs.mkdirSync(hostBin);
+    const startup = path.join(state.root, "fake-bash-env");
+    const marker = path.join(state.root, "host-startup-marker");
+    const commandMarker = path.join(state.root, "host-command-marker");
+    const quote = (value: string) => "'" + value.replace(/'/g, "'\\''") + "'";
+    fs.writeFileSync(startup, `printf contaminated > ${quote(marker)}\n`);
+    const fakeCommand = process.platform === "win32"
+      ? `@echo contaminated>"${commandMarker}"\r\n@exit /b 0\r\n`
+      : `#!/bin/sh\nprintf contaminated > ${quote(commandMarker)}\n`;
+    for (const directory of [hostBin, state.root]) {
+      fs.writeFileSync(path.join(directory, process.platform === "win32" ? "sort.cmd" : "sort"), fakeCommand, { mode: 0o755 });
+    }
+    const fakeShell = path.join(hostBin, process.platform === "win32" ? "cmd.cmd" : "bash");
+    fs.writeFileSync(fakeShell, fakeCommand, { mode: 0o755 });
+    // 仅用本例自建脚本证明污染触发器有效，绝不执行真实宿主启动文件。
+    const poisoned: NodeJS.ProcessEnv = { ...fixtureEnvironment(), BASH_ENV: startup, PATH: hostBin, PATHEXT: ".CMD;.EXE" };
+    delete poisoned.NoDefaultCurrentDirectoryInExePath;
+    const control = nativeSpawn(shellExecutable, process.platform === "win32"
+      ? ["/d", "/s", "/c", "sort"] : ["--noprofile", "--norc", "-lc", "sort"],
+    { cwd: state.root, env: poisoned, shell: false, windowsVerbatimArguments: process.platform === "win32", stdio: "ignore" });
+    expect(await new Promise<number | null>((resolve, reject) => {
+      control.once("error", reject);
+      control.once("close", resolve);
+    })).toBe(0);
+    expect(fs.readFileSync(commandMarker, "utf8").trim()).toBe("contaminated");
+    fs.unlinkSync(commandMarker);
+    if (process.platform !== "win32") {
+      expect(fs.readFileSync(marker, "utf8")).toBe("contaminated");
+      fs.unlinkSync(marker);
+    }
+    vi.stubEnv("BASH_ENV", startup);
+    vi.stubEnv("ENV", startup);
+    vi.stubEnv("BASH_FUNC_sort%%", `() { printf contaminated > ${quote(commandMarker)}; }`);
+    vi.stubEnv("PATH", hostBin);
+    vi.stubEnv("PATHEXT", ".CMD;.EXE");
+    vi.stubEnv("ComSpec", fakeShell);
+    vi.stubEnv("SystemRoot", hostBin);
+    vi.stubEnv("WINDIR", hostBin);
+    vi.stubEnv("NoDefaultCurrentDirectoryInExePath", "");
+
+    // 先走拒绝路径，再验证 full / allow_all 的实际排序执行与输出都保持。
+    expect((await run(background)).exitCode).toBe(-1);
+    expect(state.spawns).toBe(0);
+    for (const permissionMode of [undefined, "allow_all"] as const) {
+      state.level = permissionMode ? "read-only" : "full";
+      const result = await run(background, undefined, permissionMode);
+      expect(result.sandboxed).toBe(false);
+      if (!background) expect(result.exitCode).toBe(0);
+      expect(fs.readFileSync(path.join(state.root, "output.txt"), "utf8").replace(/\r/g, "")).toBe("a\nz\n");
+      fs.unlinkSync(path.join(state.root, "output.txt"));
+      expect(fs.existsSync(marker)).toBe(false);
+      expect(fs.existsSync(commandMarker)).toBe(false);
+    }
     expect(state.spawns).toBe(2);
   });
   it("伪装成 echo 的工作区脚本也不能降级", async () => {
