@@ -37,7 +37,7 @@ export async function prepareToolRuntime(input: {
   const permissionCheck: NonNullable<HarnessInput["checkPermission"]> = async (
     toolId: string,
     args: Record<string, unknown>,
-  ): Promise<boolean> => {
+  ) => {
     // 计划只读不变量：必须先于 allow_all 判断。
     // 用户说"先规划不要动"是对本轮对话的契约，任何权限档位都不能越过。
     // 判断依据从 risk（危险程度）换成 effectKind（是否改变世界），只放行纯读取工具；
@@ -59,7 +59,7 @@ export async function prepareToolRuntime(input: {
     const tool = toolRegistry.getById(toolId);
     if (!tool) return false;
     const risk: ToolRiskLevel = (tool as ToolDefinition & { risk?: ToolRiskLevel }).risk ?? "safe";
-    return (await checkPermission({
+    const decision = await checkPermission({
       toolId,
       toolName: tool.name,
       toolDescription: tool.description,
@@ -68,7 +68,12 @@ export async function prepareToolRuntime(input: {
       runId,
       signal,
       allowPrompt: options.allowPermissionPrompt,
-    })).allowed;
+    });
+    // 仅把宿主显式标记的 scoped Git 原因交给模型/UI，其他拒绝维持原有行为。
+    if (!decision.allowed && decision.denialCode === "git_scoped_write" && decision.reason) {
+      return { allowed: false, reason: decision.reason };
+    }
+    return decision.allowed;
   };
 
   const toolContext: ToolContext = {

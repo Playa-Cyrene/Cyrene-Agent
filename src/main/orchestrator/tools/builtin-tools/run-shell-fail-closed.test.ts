@@ -2,11 +2,10 @@
 //
 // 不变量：非 full 档位下，ExecutionPlan 未确定为可执行（sandboxed/direct）之前
 // 不允许出现任何 spawn 调用。本测试用故障注入验证：
-// wrap 抛错 / wrap_failed / not_ready / disabled+写副作用 → spawn 调用次数 === 0；
-// 仅 disabled + read 命令允许降级直跑（用户显式无沙箱的 graceful degradation）。
+// wrap 抛错 / wrap_failed / not_ready / disabled → 用户命令 spawn 调用次数 === 0。
 //
 // 断言优先级：spawn 调用次数（直接验证安全不变量）> marker 文件不存在（行为验证）。
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
@@ -23,7 +22,7 @@ vi.mock("../../sandbox/sandbox-exec", () => ({
 }));
 
 vi.mock("../../../permission", () => ({
-  getCurrentLevel: () => "ask",
+  getCurrentLevel: () => "per-action",
 }));
 
 vi.mock("child_process", async (importOriginal) => {
@@ -51,7 +50,7 @@ async function run(command: string): Promise<RunShellResult> {
   return JSON.parse(raw) as RunShellResult;
 }
 
-describe.runIf(process.platform === "win32")("run_shell sandbox fail-closed gate", () => {
+describe("run_shell sandbox fail-closed gate", () => {
   let markerDir: string;
   let markerPath: string;
 
@@ -61,6 +60,8 @@ describe.runIf(process.platform === "win32")("run_shell sandbox fail-closed gate
     markerDir = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-fc-"));
     markerPath = path.join(markerDir, "marker.txt");
   });
+
+  afterEach(() => fs.rmSync(markerDir, { recursive: true, force: true }));
 
   // 写副作用命令（带重定向 → classifyShellEffect = write）
   const writeCommand = () => `echo CYRENE_FAIL_CLOSED> "${markerPath.replace(/"/g, '\\"')}"`;
@@ -112,13 +113,13 @@ describe.runIf(process.platform === "win32")("run_shell sandbox fail-closed gate
     expect(result.stderr).toContain("沙箱未启用");
   });
 
-  it("wrap 返回 disabled：read 命令允许降级直跑（1 次 spawn，sandboxed=false）", async () => {
+  it("wrap 返回 disabled：read 命令同样拒绝（0 次 spawn）", async () => {
     wrapMock.mockResolvedValue({ ok: false, reason: "disabled" });
     const result = await run("echo cyrene-fc-direct");
-    expect(spawnCalls).toHaveLength(1);
+    expect(spawnCalls).toHaveLength(0);
     expect(result.sandboxed).toBe(false);
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain("cyrene-fc-direct");
+    expect(result.exitCode).toBe(-1);
+    expect(result.stderr).toContain("沙箱未启用");
   });
 
   it("wrap 返回 not_ready：后台模式同样 fail-closed（0 次 spawn，无 jobId）", async () => {
