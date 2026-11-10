@@ -1,5 +1,4 @@
 import { CodeHighlighter } from "@ant-design/x";
-import { createMathPlugin } from "@streamdown/math";
 import {
   defaultRehypePlugins,
   Streamdown,
@@ -7,7 +6,8 @@ import {
   type ControlsConfig,
 } from "streamdown";
 import type { PluggableList } from "unified";
-import React, { isValidElement, useCallback, useContext, useState, type ReactNode } from "react";
+import React, { isValidElement, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
+import { messageMathPlugin, normalizeBackslashMath } from "./streamdown-math";
 import { useTranslation } from "../../../i18n";
 import { MessageStreamingContext } from "./ChatMessageList";
 import { chatStore } from "../pages/chat-page-bridge";
@@ -350,8 +350,7 @@ function StreamdownAnchor({ href, children }: { href?: string; children?: ReactN
   return <a href={href} target="_blank" rel="noreferrer">{children}</a>;
 }
 
-const mathPlugin = createMathPlugin({ singleDollarTextMath: true });
-const messagePlugins = { math: mathPlugin };
+const messagePlugins = { math: messageMathPlugin };
 const chatControls: ControlsConfig = { table: false };
 const messageComponents: Components = {
   a: (props) => <StreamdownAnchor {...props} />,
@@ -405,9 +404,10 @@ function containsRenderedMath(content: string): boolean {
 }
 
 export function StreamdownMessageContent({ content, streaming }: StreamdownMessageContentProps) {
+  const normalized = useMemo(() => normalizeBackslashMath(content), [content]);
   // Streamdown's block mode preserves the already-rendered KaTeX blocks. Switching a long
   // math response to static mode on completion would tear down and rebuild the entire tree.
-  const useBlockMode = streaming || containsRenderedMath(content);
+  const useBlockMode = streaming || containsRenderedMath(normalized);
 
   return (
     <Streamdown
@@ -419,7 +419,7 @@ export function StreamdownMessageContent({ content, streaming }: StreamdownMessa
       controls={chatControls}
       className="cy-message-markdown cy-streamdown-message"
     >
-      {content}
+      {normalized}
     </Streamdown>
   );
 }

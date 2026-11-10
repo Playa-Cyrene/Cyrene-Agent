@@ -51,6 +51,27 @@ afterEach(() => {
 });
 
 describe("MarkdownContent Streamdown lifecycle", () => {
+  it("waits for a closing backslash delimiter and preserves the completed KaTeX nodes", () => {
+    const content = "行内 \\(h=\\dfrac{5b}{12}\\)\n\n\\[\nx^2+y^2=z^2\n\\]";
+    const displayStart = content.indexOf("\\[");
+    for (let index = 0; index <= displayStart; index += 1) {
+      update(content.slice(0, index), true);
+      if (index < content.indexOf("\\)") + 2) expect(container.querySelector(".katex")).toBeNull();
+    }
+    update(content.slice(0, -1), true);
+    expect(container.querySelectorAll(".katex")).toHaveLength(1);
+    expect(container.querySelector(".katex-display")).toBeNull();
+    update(content, true);
+    const nodes = [...container.querySelectorAll(".katex")];
+    expect(nodes).toHaveLength(2);
+    expect(container.querySelectorAll(".katex-display")).toHaveLength(1);
+    update(content, false);
+    expect([...container.querySelectorAll(".katex")]).toEqual(nodes);
+    nodes.forEach((node, index) => expect(container.querySelectorAll(".katex")[index]).toBe(node));
+    update(content, false);
+    nodes.forEach((node, index) => expect(container.querySelectorAll(".katex")[index]).toBe(node));
+  });
+
   it("preserves the rendered KaTeX tree when a math response completes and later state updates repeat", () => {
     const content = "公式：$E=mc^2$\n\n$$a^2+b^2=c^2$$";
     update(content, true);

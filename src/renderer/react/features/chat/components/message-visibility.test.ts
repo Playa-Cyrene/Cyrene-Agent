@@ -128,10 +128,14 @@ describe("assistantRenderStages", () => {
       fileURLToPath(new URL("./StreamdownMessageContent.tsx", import.meta.url)),
       "utf8",
     );
+    const mathSource = fs.readFileSync(
+      fileURLToPath(new URL("./streamdown-math.ts", import.meta.url)),
+      "utf8",
+    );
     expect(listSource).toContain("<StreamdownMessageContent content={normalized} streaming={Boolean(streaming)} />");
     expect(rendererSource).toContain("const messageComponents: Components");
     expect(rendererSource).toContain("const rehypePlugins: PluggableList");
-    expect(rendererSource).toContain("singleDollarTextMath: true");
+    expect(mathSource).toContain("singleDollarTextMath: true");
     expect(rendererSource).not.toContain("componentDidUpdate(previousProps");
     expect(rendererSource).toContain("prismLightMode={false}");
   });

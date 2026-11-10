@@ -66,6 +66,59 @@ describe("StreamdownMessageContent", () => {
     expect(markup).toMatch(/<p><span class="katex">/);
   });
 
+  it.each([false, true])("renders GPT backslash delimiters with their math semantics (streaming=%s)", (streaming) => {
+    const markup = render(String.raw`高度 \(h=\dfrac{5b}{12}\)。结果 \[\boxed{B=(25,y-55)}.\]`, streaming);
+
+    expect(markup.match(/class="katex"/g)).toHaveLength(2);
+    expect(markup.match(/class="katex-display"/g)).toHaveLength(1);
+    expect(markup).toContain(String.raw`h=\dfrac{5b}{12}`);
+    expect(markup).not.toContain("(h=");
+  });
+
+  it.each([false, true])("renders multiline display math inside nested containers (streaming=%s)", (streaming) => {
+    const markup = render("> 1. before \\[\n>    x^2 + y^2 = z^2\n>    \\] after\n>\n>    - inline \\(a+b\\)", streaming);
+    expect(markup.match(/class="katex"/g)).toHaveLength(2);
+    expect(markup.match(/class="katex-display"/g)).toHaveLength(1);
+    expect(markup).toContain("<blockquote");
+    expect(markup).toContain("<ol");
+    expect(markup).toContain("before");
+    expect(markup).toContain("after");
+    expect(markup).toContain('encoding="application/x-tex">x^2 + y^2 = z^2</annotation>');
+  });
+
+  it.each([false, true])("does not turn protected backslash examples into mathematics (streaming=%s)", (streaming) => {
+    const markup = render("`\\(example\\)`\n\n> ~~~text\n> \\[example\\]\n> ~~~\n\n    \\(example\\)\n\n\\\\(escaped\\\\)\n\n[link](https://example.com/\\(path\\))", streaming);
+    expect(markup).not.toContain('class="katex"');
+    expect(markup).toContain("example");
+    expect(markup).toContain("https://example.com/");
+  });
+
+  it("keeps existing dollar formulas and backslash formulas in the same message", () => {
+    const markup = render(String.raw`$a$ and \(b\)` + "\n\n$$\nc\n$$\n\n\\[d\\]", false);
+    expect(markup.match(/class="katex"/g)).toHaveLength(4);
+    expect(markup.match(/class="katex-display"/g)).toHaveLength(2);
+  });
+
+  it("keeps inline math in GFM table cells", () => {
+    const markup = render("| 公式 |\n| --- |\n| \\(x+1\\) |", false);
+    expect(markup).toContain('class="katex"');
+    expect(markup).toContain("<td");
+  });
+
+  it.each([
+    "> - > \\[x\\]",
+    "- [ ] result \\[x\\]",
+    "1. first\n\n   second \\[x\\] tail",
+    "\\[\r\nx+y\r\n\\]",
+    String.raw`\(a*b*c\)`,
+    String.raw`\(x` + "\n" + String.raw`+y\)`,
+    String.raw`\(\text{price }\$5\)`,
+  ])("renders math in additional Markdown containers: %s", (content) => {
+    const markup = render(content, false);
+    expect(markup).toContain('class="katex"');
+    expect(markup).not.toContain('class="katex-error"');
+  });
+
   it("keeps whole-document parsing for completed messages without math", () => {
     const markup = render("[引用][ref]\n\n[ref]: https://example.com", false);
 
