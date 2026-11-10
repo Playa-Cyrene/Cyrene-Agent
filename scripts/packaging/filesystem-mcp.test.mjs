@@ -19,7 +19,8 @@ test("packaged filesystem MCP runs without node_modules and retains its allowed-
   // 在系统临时目录构造真实 ASAR，不能意外从开发仓库的祖先目录解析依赖。
   const temp = await mkdtemp(path.join(os.tmpdir(), "cyrene-mcp-package-"));
   try {
-    const relativeEntry = "dist/main/main/filesystem-mcp.mjs";
+    // @electron/asar 按 path.sep 遍历归档目录，Windows 下不能传固定的 POSIX 路径。
+    const relativeEntry = path.join("dist", "main", "main", "filesystem-mcp.mjs");
     const app = path.join(temp, "app");
     await buildFilesystemMcp({ repoRoot: root, outfile: path.join(app, relativeEntry) });
     const config = parse(await readFile(path.join(root, "electron-builder.yml"), "utf8"));
