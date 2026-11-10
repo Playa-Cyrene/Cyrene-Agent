@@ -48,13 +48,11 @@ const THINKING_BLOCK_BINDING_BETA = "thinking-binding-controls-2026-08-01";
 function withStaleThinkingDropped(model: string, body: Record<string, unknown>): boolean {
   if (!/^claude-(?:fable|mythos)-5-2$/i.test(model.trim())) return false;
   const thinking = body.thinking;
-  // 手动推理配置写了别的思考类型时不改写；这两款型号省略 thinking 即为自适应。
-  if (thinking !== undefined && (typeof thinking !== "object" || thinking === null
-    || (thinking as { type?: unknown }).type !== "adaptive")) return false;
-  body.thinking = {
-    ...((thinking as Record<string, unknown> | undefined) ?? { type: "adaptive" }),
-    block_binding: { prefix_mismatch_behavior: "drop_block" },
-  };
+  // 只补充推理层已经发出的自适应思考：自定义端点用 thinkingOverride=-1 禁止注入推理字段时
+  // thinking 缺省，这里不能自行补出 thinking 和 beta 头；手动配置的其他思考类型同样不改写。
+  if (typeof thinking !== "object" || thinking === null
+    || (thinking as { type?: unknown }).type !== "adaptive") return false;
+  body.thinking = { ...thinking, block_binding: { prefix_mismatch_behavior: "drop_block" } };
   return true;
 }
 

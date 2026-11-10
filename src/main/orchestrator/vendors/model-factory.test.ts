@@ -2,10 +2,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { getAdapterForConfig, PROVIDER_CAPABILITIES } from "./index";
 import { generateChatWithAiSdk } from "./model-runtime";
 import { prepareModelCall } from "./model-factory";
+import { setVendorRuntimeSettingsGetter } from "./runtime-settings";
+import { CUSTOM_ENDPOINT_PROVIDERS } from "../../../shared/custom-endpoint-state";
 import type { ChatMessage, ChatRequest, VendorConfig } from "./types";
 import { jsonResponse, responseBody, weatherTool } from "./sdk-stream/model-fixtures";
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  setVendorRuntimeSettingsGetter(() => ({}));
+});
 
 describe("AI SDK 厂商策略兼容", () => {
   it.each(PROVIDER_CAPABILITIES)("$displayName 保留端点、鉴权、推理、采样与预算策略", async capability => {
@@ -169,6 +174,22 @@ describe("Claude Fable 5.2 思考块前缀校验", () => {
     await generateChatWithAiSdk({ adapter: getAdapterForConfig(config), config, timeoutMs: 2000,
       request: { model, messages: [{ role: "user", content: "你好" }] } });
     expect(sent?.body.thinking?.block_binding).toBeUndefined();
+    expect(sent?.headers.has("anthropic-beta")).toBe(false);
+  });
+
+  // 自定义端点关闭推理字段注入（thinkingOverride=-1）后，不能再自行补出 thinking 或 beta 头。
+  it("自定义端点禁止注入推理字段时，claude-fable-5-2 不发送 thinking 和 beta", async () => {
+    setVendorRuntimeSettingsGetter(() => ({ thinkingOverride: -1 }));
+    const config: VendorConfig = { provider: CUSTOM_ENDPOINT_PROVIDERS.cloud, baseUrl: "https://proxy.test/v1", model: "claude-fable-5-2",
+      apiKey: "test-key", explicitTransport: "anthropic" };
+    let sent: { body: any; headers: Headers } | undefined;
+    vi.stubGlobal("fetch", vi.fn(async (_url, init) => {
+      sent = { body: JSON.parse(init.body), headers: new Headers(init.headers) };
+      return jsonResponse(responseBody("anthropic"));
+    }));
+    await generateChatWithAiSdk({ adapter: getAdapterForConfig(config), config, timeoutMs: 2000,
+      request: { model: config.model, messages: [{ role: "user", content: "你好" }] } });
+    expect(sent?.body.thinking).toBeUndefined();
     expect(sent?.headers.has("anthropic-beta")).toBe(false);
   });
 });
