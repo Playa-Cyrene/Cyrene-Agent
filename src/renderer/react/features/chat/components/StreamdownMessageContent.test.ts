@@ -52,6 +52,22 @@ function texAnnotations(markup: string): string[] {
 
 describe("StreamdownMessageContent", () => {
 
+  it.each([false, true])("preserves aligned and matrix row spacing (streaming=%s)", (streaming) => {
+    for (const tex of [
+      String.raw`\begin{aligned}a&=b\\[4pt]c&=d\end{aligned}`,
+      String.raw`\begin{matrix}a&b\\[4pt]c&d\end{matrix}`,
+    ]) {
+      for (const [open, close, display] of [["\\(", "\\)", false], ["\\[", "\\]", true]] as const) {
+        const markup = render(`${open}${tex}${close} 完成\n\n后文`, streaming);
+        expect(texAnnotations(markup)).toEqual([tex]);
+        expect(markup).not.toContain('class="katex-error"');
+        expect(markup.includes('class="katex-display"')).toBe(display);
+        expect(markup).toContain(" 完成</p>");
+        expect(markup).toContain("<p>后文</p>");
+      }
+    }
+  });
+
   it.each([false, true])("keeps multiline inline math out of flow fences (streaming=%s)", (streaming) => {
     const markup = render("\\(x\n+y\\) 价格 $5\n\n后文", streaming);
     expect(texAnnotations(markup)).toEqual(["x\n+y"]);

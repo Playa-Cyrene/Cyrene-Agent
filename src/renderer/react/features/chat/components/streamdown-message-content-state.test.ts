@@ -27,6 +27,7 @@ vi.mock("./MermaidBlock", () => ({ MermaidBlock: () => React.createElement("div"
 vi.mock("./SvgCardBlock", () => ({ SvgCardBlock: () => React.createElement("div", null, "svg") }));
 
 import { MarkdownContent } from "./ChatMessageList";
+import * as streamdownMath from "./streamdown-math";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -51,6 +52,59 @@ afterEach(() => {
 });
 
 describe("MarkdownContent Streamdown lifecycle", () => {
+
+  it("skips whole-document detection while streaming and detects once on completion without rebuilding math", () => {
+    const detect = vi.spyOn(streamdownMath, "containsBackslashMath");
+    try {
+      const content = String.raw`\(x\)` + "\n\n已冻结正文。\n\n后续流式文字。";
+      for (let index = 0; index <= content.length; index += 1) update(content.slice(0, index), true);
+      expect(detect).not.toHaveBeenCalled();
+      expect([...container.querySelectorAll("annotation")].map((node) => node.textContent)).toEqual(["x"]);
+      const math = container.querySelector(".katex");
+      expect(math).not.toBeNull();
+      update(content, false);
+      expect(detect).toHaveBeenCalledTimes(1);
+      expect(detect).toHaveBeenLastCalledWith(content);
+      expect(container.querySelector(".katex")).toBe(math);
+      expect(container.querySelector("p:last-child")?.textContent).toBe("后续流式文字。");
+      update(content, false);
+      expect(detect).toHaveBeenCalledTimes(1);
+      expect(container.querySelector(".katex")).toBe(math);
+      update(content + "追加", true);
+      expect(detect).toHaveBeenCalledTimes(1);
+      update(content + "追加", false);
+      expect(detect).toHaveBeenCalledTimes(2);
+      expect(detect).toHaveBeenLastCalledWith(content + "追加");
+      expect(container.querySelector(".katex")).toBe(math);
+    } finally {
+      detect.mockRestore();
+    }
+  });
+
+  it.each([
+    ["inline", "aligned", String.raw`\begin{aligned}a&=b\\[4pt]c&=d\end{aligned}`],
+    ["display", "aligned", String.raw`\begin{aligned}a&=b\\[4pt]c&=d\end{aligned}`],
+    ["inline", "matrix", String.raw`\begin{matrix}a&b\\[4pt]c&d\end{matrix}`],
+    ["display", "matrix", String.raw`\begin{matrix}a&b\\[4pt]c&d\end{matrix}`],
+  ])("keeps row spacing through character streaming: %s %s", (kind, _environment, tex) => {
+    const open = kind === "inline" ? "\\(" : "\\[";
+    const close = kind === "inline" ? "\\)" : "\\]";
+    const content = `${open}${tex}${close}\n\n后文`;
+    const closedAt = open.length + tex.length + close.length;
+    for (let index = 0; index <= content.length; index += 1) {
+      update(content.slice(0, index), true);
+      expect([...container.querySelectorAll("annotation")].map((node) => node.textContent))
+        .toEqual(index < closedAt ? [] : [tex]);
+      expect(container.querySelector(".katex-error")).toBeNull();
+    }
+    expect(container.querySelector("p:last-child")?.textContent).toBe("后文");
+    expect(container.querySelectorAll(".katex-display")).toHaveLength(kind === "display" ? 1 : 0);
+    const node = container.querySelector(".katex");
+    update(content, false);
+    expect([...container.querySelectorAll("annotation")].map((node) => node.textContent)).toEqual([tex]);
+    expect(container.querySelector(".katex")).toBe(node);
+    expect(container.querySelector("p:last-child")?.textContent).toBe("后文");
+  });
 
   it.each([
     ["\\(x\n+y\\) 价格 $5\n\n后文", "x\n+y", undefined],

@@ -419,7 +419,7 @@ function containsRenderedMath(content: string): boolean {
 }
 
 export function StreamdownMessageContent({ content, streaming }: StreamdownMessageContentProps) {
-  const hasBackslashMath = useMemo(() => containsBackslashMath(content), [content]);
+  const hasBackslashMath = useMemo(() => !streaming && containsBackslashMath(content), [content, streaming]);
   // Streamdown's block mode preserves the already-rendered KaTeX blocks. Switching a long
   // math response to static mode on completion would tear down and rebuild the entire tree.
   const useBlockMode = streaming || hasBackslashMath || containsRenderedMath(content);

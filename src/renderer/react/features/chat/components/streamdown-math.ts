@@ -28,6 +28,14 @@ function escaped(input: string, index: number): boolean {
   return count % 2 === 1;
 }
 
+function hasNestedMathDelimiter(input: string): boolean {
+  for (const match of input.matchAll(/\\[()[\]]/g)) {
+    // TeX 的 \\[4pt] 是换行间距参数，第二个反斜杠不能当成嵌套的 \[。
+    if (!escaped(input, match.index)) return true;
+  }
+  return false;
+}
+
 /** 原生解析只决定可转换的源码范围，不重写美元、空白或 Markdown 块边界。 */
 function findBackslashMath(input: string, tree: MarkdownNode): Map<number, MathRange> {
   const ranges = new Map<number, MathRange>();
@@ -73,7 +81,7 @@ function findBackslashMath(input: string, tree: MarkdownNode): Map<number, MathR
       cursor = close + 1;
       if (overlaps(open, close + 2)) continue;
       const body = input.slice(open + 2, close);
-      if (!body.trim() || /\\[()[\]]/.test(body) || /(^|[^\\])\$/.test(body)) continue;
+      if (!body.trim() || hasNestedMathDelimiter(body) || /(^|[^\\])\$/.test(body)) continue;
       if (opener === "[" && (node.type === "tableCell" || node.type === "heading")) continue;
       ranges.set(open, { end: close + 2 });
     }

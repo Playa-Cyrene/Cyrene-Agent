@@ -20,6 +20,42 @@ function mathValues(input: string): string[] {
 }
 
 describe("backslash math tokenizer", () => {
+
+  it.each(["(", "["])("distinguishes escaped row-spacing syntax from nested delimiters inside %s", (opener) => {
+    const closer = opener === "(" ? ")" : "]";
+    const wrap = (body: string) => `\\${opener}${body}\\${closer}`;
+    for (const tex of [
+      String.raw`\begin{aligned}a&=b\\[4pt]c&=d\end{aligned}`,
+      String.raw`\begin{matrix}a&b\\[4pt]c&d\end{matrix}`,
+    ]) {
+      expect(mathValues(wrap(tex))).toEqual([tex]);
+      expect(containsBackslashMath(wrap(tex))).toBe(true);
+    }
+    for (const inner of ["(", "["]) {
+      for (const count of [1, 2, 3, 4]) {
+        const body = "x " + "\\".repeat(count) + inner + "4pt] y";
+        const input = wrap(body);
+        if (count % 2 === 0) {
+          expect(mathValues(input), input).toEqual([body]);
+          expect(containsBackslashMath(input), input).toBe(true);
+        } else {
+          expect(parser.parse(input), input).toEqual(nativeParser.parse(input));
+          expect(containsBackslashMath(input), input).toBe(false);
+        }
+      }
+    }
+  });
+
+  it.each([
+    String.raw`\(a \(b\) c\)`,
+    String.raw`\(a \[b\] c\)`,
+    String.raw`\[a \(b\) c\]`,
+    String.raw`\[a \[b\] c\]`,
+  ])("preserves truly nested delimiters: %s", (input) => {
+    expect(mathValues(input)).toEqual([]);
+    expect(parser.parse(input)).toEqual(nativeParser.parse(input));
+    expect(containsBackslashMath(input)).toBe(false);
+  });
   const untouched = [
     String.raw`\(not closed`, String.raw`\[not closed`, String.raw`\(\)`, String.raw`\[ \]`,
     String.raw`\\(escaped\\)`, String.raw`\\[escaped\\]`,
