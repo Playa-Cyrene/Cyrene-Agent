@@ -30,10 +30,14 @@ vi.mock("./shell-job-manager", async (original) => ({
   ...await original<typeof import("./shell-job-manager")>(),
   startShellJob: (...args: unknown[]) => startJob(...args),
 }));
-import { initSandbox, resetSandbox } from "../../sandbox/sandbox-exec";
-import { runShellTool } from "./run-shell-tool";
+let sandbox: typeof import("../../sandbox/sandbox-exec");
+let runShellTool: typeof import("./run-shell-tool")["runShellTool"];
 
 beforeEach(async () => {
+  // initSandbox 是进程级幂等单例；每例重载才能独立验证 0 / false 两个环境值。
+  vi.resetModules();
+  sandbox = await import("../../sandbox/sandbox-exec");
+  ({ runShellTool } = await import("./run-shell-tool"));
   state.root = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-shell-disabled-"));
   state.level = "read-only";
   state.spawns = 0;
@@ -46,7 +50,7 @@ beforeEach(async () => {
   });
 });
 afterEach(async () => {
-  await resetSandbox();
+  await sandbox.resetSandbox();
   vi.unstubAllEnvs();
   fs.rmSync(state.root, { recursive: true, force: true });
 });
@@ -63,7 +67,7 @@ async function run(background: boolean, command?: string, permissionMode?: "allo
 
 describe.each(["0", "false"])("真实 CYRENE_SRT=%s", disabled => {
   describe.each([false, true])("background=%s", background => {
-  beforeEach(async () => { vi.stubEnv("CYRENE_SRT", disabled); await initSandbox(); });
+  beforeEach(async () => { vi.stubEnv("CYRENE_SRT", disabled); await sandbox.initSandbox(); });
   it.each(["project-read-only", "read-only", "scoped", "per-action"] as const)("%s 前后台均在 spawn 前拒绝伪只读写命令", async level => {
     state.level = level;
     {
@@ -107,7 +111,7 @@ describe.each(["0", "false"])("真实 CYRENE_SRT=%s", disabled => {
 
 it.runIf(process.platform !== "win32")("非 Windows 未设置禁用开关时也拒绝受限执行", async () => {
   vi.stubEnv("CYRENE_SRT", "1");
-  await initSandbox();
+  await sandbox.initSandbox();
   for (const background of [false, true]) {
     const result = await run(background);
     expect(result.exitCode).toBe(-1);
