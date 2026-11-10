@@ -97,6 +97,47 @@ describe("渠道设置与管理操作的生命周期", () => {
     expect(mocks.adapters.get("qq").start).toHaveBeenCalledOnce();
   });
 
+  it.each(["qq", "qqbot"] as const)("%s 启动失败后原配置可显式重试，其他渠道不受影响", async (id) => {
+    const plugin = new mocks.Adapter("plugin-channel");
+    mocks.settings[plugin.id] = { enabled: true };
+    manager.register(plugin as never);
+    await manager.startOne(plugin.id as ChannelId);
+    const adapter = mocks.adapters.get(id);
+    await manager.stopOne(id);
+    adapter.start.mockRejectedValueOnce(new Error("temporary_start_failure"));
+    await expect(manager.startOne(id)).rejects.toThrow("temporary_start_failure");
+    const other = manager.getActivitySignal("wechat")!;
+    const starts = adapter.start.mock.calls.length;
+
+    await handlers.get(IPC.CHANNELS_SAVE_CONFIG)!(null, { [id]: { enabled: true } });
+    expect(adapter.start).toHaveBeenCalledTimes(starts);
+    await handlers.get(IPC.CHANNELS_SAVE_CONFIG)!(null, { [id]: { enabled: true } }, true);
+
+    expect(adapter.start).toHaveBeenCalledTimes(starts + 1);
+    expect(adapter.running).toBe(true);
+    expect(manager.getActivitySignal(id)?.aborted).toBe(false);
+    expect(other.aborted).toBe(false);
+    expect(mocks.adapters.get("wechat").stop).not.toHaveBeenCalled();
+    expect(mocks.adapters.get("feishu").start).toHaveBeenCalledOnce();
+    expect(plugin.stop).not.toHaveBeenCalled();
+    expect(plugin.start).toHaveBeenCalledOnce();
+  });
+
+  it("显式连接与配置变化合并为一次重建，不启动未启用或未指定的渠道", async () => {
+    const qq = mocks.adapters.get("qq");
+    await handlers.get(IPC.CHANNELS_SAVE_CONFIG)!(null, { qq: { port: 6201 } }, true);
+    expect(qq.stop).toHaveBeenCalledOnce();
+    expect(qq.start).toHaveBeenCalledTimes(2);
+    expect(qq.running).toBe(true);
+    await handlers.get(IPC.CHANNELS_SAVE_CONFIG)!(null, { qq: { enabled: false } }, true);
+    await handlers.get(IPC.CHANNELS_SAVE_CONFIG)!(null, { qq: { enabled: false } }, true);
+    await handlers.get(IPC.CHANNELS_SAVE_CONFIG)!(null, {}, true);
+    expect(qq.start).toHaveBeenCalledTimes(2);
+    expect(qq.running).toBe(false);
+    expect(mocks.adapters.get("wechat").stop).not.toHaveBeenCalled();
+    expect(mocks.adapters.get("qqbot").stop).not.toHaveBeenCalled();
+  });
+
   it("停用时仍可扫码和退出登录，但登录完成及安装不启动业务连接", async () => {
     await handlers.get(IPC.CHANNELS_SAVE_CONFIG)!(null, { wechat: { enabled: false } });
     const wx = mocks.adapters.get("wechat");

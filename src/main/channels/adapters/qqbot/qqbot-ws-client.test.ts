@@ -62,6 +62,29 @@ function sentOp(socket: FakeWebSocket, op: number): Record<string, unknown> | un
 }
 
 describe("QqBotWsClient protocol", () => {
+  it.each([false, true])("连接撤销后迟到的鉴权不会创建连接或重试 cancelledWithError=%s", async (reject) => {
+    vi.useFakeTimers();
+    const activity = new AbortController();
+    const token = Promise.withResolvers<string>();
+    const factory = vi.fn(() => new FakeWebSocket() as never);
+    const onError = vi.fn();
+    const client = new QqBotWsClient({
+      gatewayUrl: "wss://synthetic.invalid", signal: activity.signal,
+      getAccessToken: () => token.promise,
+      onDispatch: () => {}, onReadyChange: () => {}, onError,
+      websocketFactory: factory,
+    });
+    clients.push(client);
+    const starting = client.start();
+    activity.abort(new Error("channel_stopped"));
+    if (reject) token.reject(activity.signal.reason);
+    else token.resolve("synthetic");
+    await starting;
+    expect(factory).not.toHaveBeenCalled();
+    expect(onError).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it("sends Identify with QQBot token and C2C/group intents after Hello", async () => {
     const { client, socket } = createClient();
     await client.start();

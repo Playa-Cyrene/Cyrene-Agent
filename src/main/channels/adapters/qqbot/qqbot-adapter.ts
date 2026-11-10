@@ -166,13 +166,15 @@ export class QqBotAdapter implements ChannelAdapter {
       return;
     }
     this.setStatus({ enabled: true, phase: "starting", message: "正在连接 QQ 开放平台网关" });
-    this.api = new QqBotApiClient({ appId: config.appId, clientSecret: config.appSecret });
+    const api = new QqBotApiClient({ appId: config.appId, clientSecret: config.appSecret, signal });
+    this.api = api;
     try {
-      const gatewayUrl = await this.api.getGatewayUrl();
+      const gatewayUrl = await api.getGatewayUrl();
       if (signal.aborted) return;
       this.ws = new QqBotWsClient({
         gatewayUrl,
-        getAccessToken: () => this.api!.getAccessToken(),
+        signal,
+        getAccessToken: () => api.getAccessToken(),
         onDispatch: (type, data) => { if (!signal.aborted) this.handleDispatch(type, data); },
         onReadyChange: (ready) => {
           if (signal.aborted) return;

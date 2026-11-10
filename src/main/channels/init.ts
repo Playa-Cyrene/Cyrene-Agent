@@ -159,13 +159,15 @@ function registerChannelsIpc(
   const ipc = ipcOption ?? createIpcScope();
   ipc.handle(IPC.CHANNELS_GET_CONFIG, () => getPublicChannelsSettings());
 
-  ipc.handle(IPC.CHANNELS_SAVE_CONFIG, async (_e, patch: unknown) => {
+  ipc.handle(IPC.CHANNELS_SAVE_CONFIG, async (_e, patch: unknown, connect: unknown = false) => {
     const previous = loadChannelsSettings();
     const current = saveChannelsSettings(patch as Parameters<typeof saveChannelsSettings>[0]);
     reloadDispatcherSettings();
-    // 仅重建配置变化的内置渠道；插件渠道继续由插件生命周期管理。
+    // 显式连接也可重试原配置，但仅限本次提交且已启用的内置渠道。
     const changed = (["wechat", "feishu", "qq", "qqbot"] as const)
-      .filter((id) => JSON.stringify(previous[id]) !== JSON.stringify(current[id]));
+      .filter((id) => JSON.stringify(previous[id]) !== JSON.stringify(current[id])
+        || (connect === true && patch != null && typeof patch === "object"
+          && Object.hasOwn(patch, id) && current[id].enabled));
     await Promise.all(changed.map(async (id) => {
       await channelManager.stopOne(id);
       if (started && loadChannelsSettings()[id].enabled) await channelManager.startOne(id);

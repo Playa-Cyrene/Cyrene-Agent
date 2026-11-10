@@ -408,7 +408,7 @@ const settingsApi = {
   listMcpServerConfigs: () => ipcRenderer.invoke(IPC.MCP_LIST_SERVER_CONFIGS),
   // 多渠道（微信/飞书/QQ/QQ 机器人）
   channelsGetConfig: () => ipcRenderer.invoke(IPC.CHANNELS_GET_CONFIG),
-  channelsSaveConfig: (patch: unknown) => ipcRenderer.invoke(IPC.CHANNELS_SAVE_CONFIG, patch),
+  channelsSaveConfig: (patch: unknown, connect?: boolean) => ipcRenderer.invoke(IPC.CHANNELS_SAVE_CONFIG, patch, connect),
   channelsList: () => ipcRenderer.invoke(IPC.CHANNELS_LIST),
   channelsGetStatus: () => ipcRenderer.invoke(IPC.CHANNELS_GET_STATUS),
   channelsRestart: () => ipcRenderer.invoke(IPC.CHANNELS_RESTART),
