@@ -247,9 +247,15 @@ describe("G2 Claude + reasoning 透传", () => {
     cfgOf(claudeCap, { model, ...(reasoning ? { reasoning } : {}) }),
   ).body) as Record<string, unknown>;
 
-  test.each(["claude-fable-5-2", "claude-fable-5-1", "claude-fable-5", "claude-opus-5-5", "claude-sonnet-5-5"])("%s + off → 仍发送自适应思考，不发 disabled", (model) => {
+  test.each(["claude-fable-5-1", "claude-fable-5", "claude-opus-5-5", "claude-sonnet-5-5"])("%s + off → 仍发送自适应思考，不发 disabled", (model) => {
     const body = claudeBody(model, { mode: "off" });
     expect(body.thinking).toEqual({ type: "adaptive" });
+  });
+
+  // Fable 5.2 对所有账户校验思考块前缀，自适应思考还要带上 drop_block，见 anthropic-adapter。
+  test("claude-fable-5-2 + off → 仍发送自适应思考，并让服务端丢弃失效的思考块", () => {
+    const body = claudeBody("claude-fable-5-2", { mode: "off" });
+    expect(body.thinking).toEqual({ type: "adaptive", block_binding: { prefix_mismatch_behavior: "drop_block" } });
   });
 
   test("claude-opus-5-5 未设置档位 → 默认 medium；所选 xhigh 照常发送", () => {

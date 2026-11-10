@@ -38,6 +38,26 @@ function supportsMessageCacheBreakpoint(adapterId: string, model: string): boole
   return false;
 }
 
+const THINKING_BLOCK_BINDING_BETA = "thinking-binding-controls-2026-08-01";
+
+/**
+ * Fable 5.2 / Mythos 5.2 对所有账户校验思考块之前的前缀：其前面的 system、tools 或消息变了，
+ * 重放该思考块会返回 400。Chat 模式尾部的临时运行时上下文和历史压缩都会改动这段前缀，
+ * 因此请服务端丢弃失效的思考块后继续；代价是被丢弃的推理要重新生成，输出 token 可能增加。
+ */
+function withStaleThinkingDropped(model: string, body: Record<string, unknown>): boolean {
+  if (!/^claude-(?:fable|mythos)-5-2$/i.test(model.trim())) return false;
+  const thinking = body.thinking;
+  // 手动推理配置写了别的思考类型时不改写；这两款型号省略 thinking 即为自适应。
+  if (thinking !== undefined && (typeof thinking !== "object" || thinking === null
+    || (thinking as { type?: unknown }).type !== "adaptive")) return false;
+  body.thinking = {
+    ...((thinking as Record<string, unknown> | undefined) ?? { type: "adaptive" }),
+    block_binding: { prefix_mismatch_behavior: "drop_block" },
+  };
+  return true;
+}
+
 /** 给一条 wire message 的最后一个 content block 打 ephemeral 缓存断点；返回是否成功。 */
 function markMessageCacheBreakpoint(message: Record<string, unknown>): boolean {
   if (typeof message.content === "string" && message.content.length > 0) {
@@ -259,6 +279,7 @@ export class AnthropicAdapter implements ChatVendorAdapter {
       },
     );
     const wireBody = applyManualReasoningBody(finalBody, manualReasoning, cfg.reasoning ?? { mode: "auto" });
+    const dropsStaleThinking = withStaleThinkingDropped(req.model, wireBody);
     return {
       url: resolveApiEndpoint(cfg.baseUrl, "anthropic").url,
       method: "POST",
@@ -266,6 +287,7 @@ export class AnthropicAdapter implements ChatVendorAdapter {
         "Content-Type": "application/json",
         ...authHeaderFor(this.capability, cfg.apiKey, "anthropic"),
         "anthropic-version": ANTHROPIC_VERSION,
+        ...(dropsStaleThinking ? { "anthropic-beta": THINKING_BLOCK_BINDING_BETA } : {}),
       },
       body: JSON.stringify(wireBody),
     };
