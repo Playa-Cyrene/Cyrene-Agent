@@ -25,12 +25,13 @@ export function createCodeGitTools(gitService: GitService): ToolDefinition[] {
       description: "仅在用户明确要求时，为当前 Code 工作区初始化 Git 仓库。",
       enabled: true,
       modes: ["code"],
-      risk: "fs-write",
+      // Git 写操作可能执行仓库 hooks/filters，副作用不受工作区路径限制。
+      risk: "input-control",
       effectKind: "mutation",
       verificationPolicy: "artifact",
       needsContext: true,
       inputSchema: { type: "object", properties: {} },
-      execute: async (_args, ctx) => gitService.initRepository(requireCodeContext(ctx)),
+      execute: async (_args, ctx) => gitService.initRepository(requireGitWriteContext(ctx)),
     },
     {
       id: "git_commit",
@@ -38,7 +39,8 @@ export function createCodeGitTools(gitService: GitService): ToolDefinition[] {
       description: "把用户确认的仓库内文件加入暂存并创建一次 Git 提交。",
       enabled: true,
       modes: ["code"],
-      risk: "fs-write",
+      // Git 写操作可能执行仓库 hooks/filters，副作用不受工作区路径限制。
+      risk: "input-control",
       effectKind: "mutation",
       verificationPolicy: "artifact",
       needsContext: true,
@@ -51,7 +53,7 @@ export function createCodeGitTools(gitService: GitService): ToolDefinition[] {
         required: ["message", "paths"],
       },
       execute: async (args, ctx) => gitService.commit(
-        requireCodeContext(ctx),
+        requireGitWriteContext(ctx),
         stringArg(args, "message"),
         stringArrayArg(args, "paths"),
       ),
@@ -62,7 +64,8 @@ export function createCodeGitTools(gitService: GitService): ToolDefinition[] {
       description: "切换到现有分支，或按用户请求创建并切换新分支。",
       enabled: true,
       modes: ["code"],
-      risk: "fs-write",
+      // Git 写操作可能执行仓库 hooks/filters，副作用不受工作区路径限制。
+      risk: "input-control",
       effectKind: "mutation",
       verificationPolicy: "artifact",
       needsContext: true,
@@ -75,7 +78,7 @@ export function createCodeGitTools(gitService: GitService): ToolDefinition[] {
         required: ["branch"],
       },
       execute: async (args, ctx) => gitService.switchBranch(
-        requireCodeContext(ctx),
+        requireGitWriteContext(ctx),
         stringArg(args, "branch"),
         args.create === true || args.create === "true",
       ),
@@ -95,10 +98,7 @@ export function createCodeGitTools(gitService: GitService): ToolDefinition[] {
         type: "object",
         properties: { remote: { type: "string", description: "远端名称，默认 origin", default: "origin" } },
       },
-      execute: async (args, ctx) => {
-        if (ctx?.readOnly) throw new Error("本子任务处于只读模式，不允许推送 Git 提交。");
-        return gitService.push(requireCodeContext(ctx), optionalStringArg(args, "remote"));
-      },
+      execute: async (args, ctx) => gitService.push(requireGitWriteContext(ctx), optionalStringArg(args, "remote")),
     },
     {
       id: "git_revert",
@@ -106,7 +106,8 @@ export function createCodeGitTools(gitService: GitService): ToolDefinition[] {
       description: "为指定提交创建一个新的 revert 提交，不会重写历史。",
       enabled: true,
       modes: ["code"],
-      risk: "fs-write",
+      // Git 写操作可能执行仓库 hooks/filters，副作用不受工作区路径限制。
+      risk: "input-control",
       effectKind: "mutation",
       verificationPolicy: "artifact",
       needsContext: true,
@@ -115,7 +116,7 @@ export function createCodeGitTools(gitService: GitService): ToolDefinition[] {
         properties: { commit: { type: "string", description: "要回退的提交 hash" } },
         required: ["commit"],
       },
-      execute: async (args, ctx) => gitService.revert(requireCodeContext(ctx), stringArg(args, "commit")),
+      execute: async (args, ctx) => gitService.revert(requireGitWriteContext(ctx), stringArg(args, "commit")),
     },
     {
       id: "git_diff",
@@ -200,6 +201,11 @@ export function registerCodeGitTools(
   registry: Pick<import("./registry/tool-registry").ToolRegistry, "register">,
 ): void {
   for (const tool of createCodeGitTools(gitService)) registry.register(tool);
+}
+
+function requireGitWriteContext(ctx: ToolContext | undefined): TrustedGitContext {
+  if (ctx?.readOnly) throw new Error("本子任务处于只读模式，不允许执行 Git 写操作。");
+  return requireCodeContext(ctx);
 }
 
 function requireCodeContext(ctx: ToolContext | undefined): TrustedGitContext {

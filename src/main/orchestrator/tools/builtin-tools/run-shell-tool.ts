@@ -194,19 +194,15 @@ type ExecutablePlan = Exclude<ExecutionPlan, { kind: "rejected" }>;
 /**
  * spawn 前完成全部安全决策（唯一调用沙箱 wrap 的地方）。
  *
- * 分流规则（按失败原因区分）：
- * - wrap 成功 → sandboxed
- * - wrap 失败 + reason "disabled"（用户显式无沙箱：CYRENE_SRT=0 / 非 Windows）+ read 类命令
- *   → direct（graceful degradation，保留开发环境可用性）
- * - wrap 失败（not_ready / wrap_failed），或 disabled + 写副作用命令，或 wrap 意外抛错
- *   → rejected（fail-closed，无论 read/write 都不执行）
+ * 非 full 的有效权限必须成功包装；命令首词分类无法证明没有写入或进程副作用。
+ * disabled（含 CYRENE_SRT=0 / 非 Windows）、not_ready、wrap_failed 和异常均拒绝。
+ * full / allow_all 的明确授权由调用方分流，不由一次审批或分类结果推导。
  */
 async function resolveExecutionPlan(
   command: string,
   cwd: string | undefined,
   requestedShell: ShellKind,
   resolvedShell: ResolvedShellExecutable,
-  requiresSandbox: boolean,
   trustedWorkspaceRoot?: string,
 ): Promise<ExecutionPlan> {
   const base = { command, cwd, requestedShell };
@@ -229,18 +225,12 @@ async function resolveExecutionPlan(
     return { ...base, kind: "sandboxed", argv: outcome.argv, env: outcome.env };
   }
 
-  // 用户显式无沙箱 + 只读命令 → 允许降级直跑
-  if (outcome.reason === "disabled" && !requiresSandbox) {
-    logger.warn(LogTag.BuiltinTools, `[run_shell] sandbox disabled, read-effect fallback to direct ${requestedShell}`);
-    return { ...base, kind: "direct" };
-  }
-
   const REJECT_REASON: Record<"disabled" | "not_ready" | "wrap_failed", string> = {
-    disabled: "沙箱未启用，该命令可能修改工作区，已终止",
+    disabled: "沙箱未启用，受限权限下不能执行命令。请恢复沙箱或由用户选择完全访问权限。",
     not_ready: "沙箱不可用（初始化失败），该命令已终止。请在设置中安装沙箱或提升权限档位。",
     wrap_failed: "沙箱包装失败，该命令已终止（未执行）",
   };
-  logger.warn(LogTag.BuiltinTools, `[run_shell] fail-closed before spawn: reason=${outcome.reason} detail=${outcome.detail ?? "(none)"} effect=${requiresSandbox ? "write/unknown" : "read"} command="${command.slice(0, 200)}"`);
+  logger.warn(LogTag.BuiltinTools, `[run_shell] fail-closed before spawn: reason=${outcome.reason} detail=${outcome.detail ?? "(none)"} command="${command.slice(0, 200)}"`);
   return { ...base, kind: "rejected", reason: REJECT_REASON[outcome.reason] };
 }
 
@@ -553,15 +543,13 @@ async function executeRunShell(args: Record<string, unknown>, context?: import("
     });
   }
 
-  const requiresSandbox = effect !== "read";
-
   // 后台执行：spawn 后立即返回 jobId，输出流式写日志文件（状态机与护栏见 shell-job-manager）。
   // 后台任务不做"无输出判卡死"检测，执行上限沿用 timeout_ms（未传则 30 分钟）；
   // 与本轮 agent 调用解耦——取消本轮不杀后台任务，由用户 stop / 执行上限 / 应用退出控制。
   if (args.run_in_background === true || args.run_in_background === "true") {
     const plan: ExecutionPlan = level === "full"
       ? { kind: "direct", command, cwd, requestedShell }
-      : await resolveExecutionPlan(command, cwd, requestedShell, resolvedShell, requiresSandbox, context?.resolvedWorkspaceRoot);
+      : await resolveExecutionPlan(command, cwd, requestedShell, resolvedShell, context?.resolvedWorkspaceRoot);
     if (plan.kind === "rejected") {
       // 与前台一致的拒绝协议：spawn 从未被调用，stdout 必然为空
       return JSON.stringify({
@@ -610,10 +598,8 @@ async function executeRunShell(args: Record<string, unknown>, context?: import("
   }
 
   // 非 full 档位：spawn 前通过 ExecutionPlan 完成全部安全决策
-  // - read  → 仅当"用户显式无沙箱"（reason: disabled）时允许 direct 降级
-  // - write/unknown → 必须 wrap 成功，否则 rejected（fail-closed，不执行）
-  // （requiresSandbox 已在后台分支前声明，此处复用）
-  const plan = await resolveExecutionPlan(command, cwd, requestedShell, resolvedShell, requiresSandbox, context?.resolvedWorkspaceRoot);
+  // 命令效果分类仅用于展示；所有命令都必须 wrap 成功，否则拒绝执行。
+  const plan = await resolveExecutionPlan(command, cwd, requestedShell, resolvedShell, context?.resolvedWorkspaceRoot);
 
   if (plan.kind === "rejected") {
     // 到达这里时 spawn 从未被调用——命令没有执行过，stdout 必然为空
