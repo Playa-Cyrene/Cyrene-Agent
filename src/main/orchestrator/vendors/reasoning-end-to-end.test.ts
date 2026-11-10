@@ -247,7 +247,7 @@ describe("G2 Claude + reasoning 透传", () => {
     cfgOf(claudeCap, { model, ...(reasoning ? { reasoning } : {}) }),
   ).body) as Record<string, unknown>;
 
-  test.each(["claude-fable-5-1", "claude-fable-5", "claude-opus-5-5", "claude-sonnet-5-5"])("%s + off → 仍发送自适应思考，不发 disabled", (model) => {
+  test.each(["claude-fable-5-2", "claude-fable-5-1", "claude-fable-5", "claude-opus-5-5", "claude-sonnet-5-5"])("%s + off → 仍发送自适应思考，不发 disabled", (model) => {
     const body = claudeBody(model, { mode: "off" });
     expect(body.thinking).toEqual({ type: "adaptive" });
   });
@@ -257,7 +257,7 @@ describe("G2 Claude + reasoning 透传", () => {
     expect((claudeBody("claude-opus-5-5", { mode: "on", effort: "xhigh" }).output_config as Record<string, unknown>).effort).toBe("xhigh");
   });
 
-  test.each(["claude-fable-5-1", "claude-sonnet-5-5"])("%s 未设置档位 → 默认 high", (model) => {
+  test.each(["claude-fable-5-2", "claude-fable-5-1", "claude-sonnet-5-5"])("%s 未设置档位 → 默认 high", (model) => {
     expect((claudeBody(model).output_config as Record<string, unknown>).effort).toBe("high");
   });
 

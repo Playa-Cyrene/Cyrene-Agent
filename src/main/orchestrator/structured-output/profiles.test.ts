@@ -13,6 +13,7 @@ describe("resolveStructuredOutputProfile", () => {
     ["chatgpt", "gpt-5.6", "openai", "provider_json_schema"],
     ["claude", "claude-sonnet-4-6", "anthropic", "provider_json_schema"],
     ["claude", "claude-haiku-5-5", "anthropic", "provider_json_schema"],
+    ["claude", "claude-fable-5-2", "anthropic", "provider_json_schema"],
     ["claude", "claude-fable-5-1", "anthropic", "provider_json_schema"],
     ["claude", "claude-opus-5-5", "anthropic", "provider_json_schema"],
     ["claude", "claude-opus-5", "anthropic", "provider_json_schema"],

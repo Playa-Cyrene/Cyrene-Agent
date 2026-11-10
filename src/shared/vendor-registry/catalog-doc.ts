@@ -51,6 +51,7 @@ const NOTES_EN: Readonly<Record<string, string>> = {
   "K3.1 Pro 的高速版，约 2～3 倍输出速度。": "The high-speed variant of K3.1 Pro, with roughly 2–3× the output speed.",
   "官方说明 temperature/top_p 为固定值、建议不显式传入；未加采样白名单即不注入采样参数。": "Officially, temperature/top_p are fixed and should not be passed; with no sampling allowlist, no sampling parameters are sent.",
   "2026-10-07 发布；固定型号名，无日期后缀、无别名。": "Released 2026-10-07; a fixed model name with no date suffix and no alias.",
+  "2026-11-09 发布；固定型号名，无日期后缀。": "Released 2026-11-09; a fixed model name with no date suffix.",
   "官方说明非默认 temperature/top_p/top_k 返回 400；未加采样白名单即不注入采样参数。": "Officially, non-default temperature/top_p/top_k return a 400; with no sampling allowlist, no sampling parameters are sent.",
   "2026-09-30 发布的旗舰推理模型（Stable）；固定型号名，无日期后缀。": "Flagship reasoning model released 2026-09-30 (Stable); a fixed model name with no date suffix.",
   "官方文档未说明 temperature/top_p 取值约束；未加采样白名单即不注入采样参数。": "The official docs do not state temperature/top_p constraints; with no sampling allowlist, no sampling parameters are sent.",
