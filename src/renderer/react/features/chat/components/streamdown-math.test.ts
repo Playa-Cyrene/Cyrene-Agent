@@ -3,7 +3,7 @@ import remarkParse from "remark-parse";
 import { defaultRemarkPlugins } from "streamdown";
 import { createMathPlugin } from "@streamdown/math";
 import { unified } from "unified";
-import { containsBackslashMath, messageMathPlugin } from "./streamdown-math";
+import { containsBackslashMath, findBackslashMath, messageMathPlugin } from "./streamdown-math";
 
 const parser = unified().use(remarkParse).use([defaultRemarkPlugins.gfm, messageMathPlugin.remarkPlugin]);
 const nativeParser = unified().use(remarkParse).use([defaultRemarkPlugins.gfm, createMathPlugin({ singleDollarTextMath: true }).remarkPlugin]);
@@ -20,6 +20,37 @@ function mathValues(input: string): string[] {
 }
 
 describe("backslash math tokenizer", () => {
+
+  it.each(["paragraph", "separate paragraph", "inline code", "formula body"])("has bounded scan growth for a long slash run in %s", (layout) => {
+    const build = (length: number) => {
+      const run = "\\".repeat(length);
+      if (layout === "formula body") return "\\(x " + run + " y\\)";
+      return String.raw`\(x\) ` + (layout === "inline code" ? "`" + run + "`" : layout === "separate paragraph" ? "\n\n" + run : run + " end");
+    };
+    const reads = (length: number) => {
+      const input = build(length);
+      const tree = nativeParser.parse(input);
+      let count = 0;
+      // 只统计扫描器读取字符的工作量，原生 AST 仍由真实字符串解析。
+      const observed = new Proxy(new String(input), {
+        get(target, key) {
+          if (typeof key === "string" && /^\d+$/.test(key)) {
+            count += 1;
+            if (count > length * 8) throw new Error(`scan exceeded linear read budget: ${count} for ${length} slashes`);
+          }
+          const value = Reflect.get(target, key);
+          return typeof value === "function" ? value.bind(input) : value;
+        },
+      }) as unknown as string;
+      expect(findBackslashMath(observed, tree).size).toBe(1);
+      return count;
+    };
+    const small = reads(5000);
+    const large = reads(20000);
+    // 输入增长 4 倍，字符读取量也至多线性增长；不依赖机器速度或 GC。
+    expect(large).toBeLessThanOrEqual(small * 4.1);
+    expect(large).toBeLessThan(20000 * 8);
+  });
 
   it.each([
     String.raw`\(a \(b\) + \(c\)\)`,

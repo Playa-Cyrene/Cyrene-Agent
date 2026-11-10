@@ -53,6 +53,41 @@ afterEach(() => {
 
 describe("MarkdownContent Streamdown lifecycle", () => {
 
+  it("keeps native dollar TeX correct through every closing-fence prefix and completion", () => {
+    const stem = "$$\nx^2\n";
+    for (const closing of ["", "$", "$$"]) {
+      update(stem + closing, true);
+      expect([...container.querySelectorAll("annotation")].map((node) => node.textContent)).toEqual(["x^2"]);
+      expect(container.querySelector(".katex-error")).toBeNull();
+    }
+    const content = stem + "$$\n\n后文";
+    update(content, true);
+    const node = container.querySelector(".katex");
+    update(content, false);
+    expect([...container.querySelectorAll("annotation")].map((node) => node.textContent)).toEqual(["x^2"]);
+    expect(container.querySelector(".katex")).toBe(node);
+    expect(container.querySelector("p:last-child")?.textContent).toBe("后文");
+  });
+
+  it("keeps math aligned to raw source during duplicate-definition streaming and replacement", () => {
+    const defs = "[r]: https://example.com\n[r]: https://example.com\n\n";
+    const formula = String.raw`\(x\in [0,1)\)`;
+    const content = defs + formula + "\n\n[引用][r]\n\n后文";
+    for (let index = 0; index <= content.length; index += 1) {
+      update(content.slice(0, index), true);
+      expect([...container.querySelectorAll("annotation")].map((node) => node.textContent))
+        .toEqual(index < defs.length + formula.length ? [] : [String.raw`x\in [0,1)`]);
+      expect(container.querySelector(".katex-error")).toBeNull();
+    }
+    update(content, false);
+    expect(container.querySelector('a[href="https://example.com/"]')).not.toBeNull();
+    expect(container.querySelector("p:last-child")?.textContent).toBe("后文");
+    update(String.raw`\(y\in [1,2)\)` + "\n\n后续正文", true);
+    expect([...container.querySelectorAll("annotation")].map((node) => node.textContent)).toEqual([String.raw`y\in [1,2)`]);
+    update(String.raw`\(y\in [1,2)\)` + "\n\n后续正文", false);
+    expect(container.querySelector("p:last-child")?.textContent).toBe("后续正文");
+  });
+
   it.each([
     String.raw`\(a \(b\) + \(c\)\)`,
     String.raw`\[a \[b\] + \[c\]\]`,

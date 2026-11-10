@@ -23,7 +23,9 @@ export function createMessageRemendOptions(): RemendOptions {
           return remend(input);
         }
         const text = input.replace(/\r\n?/g, "\n");
-        const blocks = parseMarkdownIntoBlocks(text);
+        const split = parseMarkdownIntoBlocks(text);
+        // 分块器可能合并重复定义；坐标必须对应完整原文，否则退回可增量缓存的单块。
+        const blocks = split.join("") === text ? split : [text];
         const next = blocks.map((source, index) => {
           const old = previous[index];
           if (old?.source === source) return old;
@@ -35,7 +37,7 @@ export function createMessageRemendOptions(): RemendOptions {
             stableEnd: base + active.stableEnd,
             ranges: [
               ...(old?.ranges.filter((range) => range.end <= base) ?? []),
-              ...active.ranges.map((range) => ({ start: range.start + base, end: range.end + base })),
+              ...active.ranges.map((range) => ({ ...range, start: range.start + base, end: range.end + base })),
             ],
           };
         });
@@ -43,7 +45,7 @@ export function createMessageRemendOptions(): RemendOptions {
         const ranges: StreamingMathRange[] = [];
         let offset = 0;
         for (const block of next) {
-          for (const range of block.ranges) ranges.push({ start: range.start + offset, end: range.end + offset });
+          for (const range of block.ranges) ranges.push({ ...range, start: range.start + offset, end: range.end + offset });
           offset += block.source.length;
         }
         // 临时标记只在补全调用内部存在，随后逐字恢复；不会送入 Markdown/KaTeX。
@@ -51,7 +53,9 @@ export function createMessageRemendOptions(): RemendOptions {
         let prefix = "\uE000";
         while (text.includes(prefix)) prefix += prefix;
         const tokens = new Map<string, string>();
-        const mask = (value: string) => value.replace(/[\\`[\]()!<>$*_~]/g, (character) => {
+        const mask = (value: string, nativeDollar = false) => value.replace(/[\\`[\]()!<>$*_~]/g, (character) => {
+          // 美元围栏和转义交给原生数学补全，仍遮住会触发链接等补全的正文符号。
+          if (nativeDollar && (character === "$" || character === "\\")) return character;
           if (!tokens.has(character)) tokens.set(character, `${prefix}${tokens.size}\uE001`);
           return tokens.get(character)!;
         });
@@ -60,7 +64,7 @@ export function createMessageRemendOptions(): RemendOptions {
         for (const range of ranges) {
           if (range.end <= cursor) continue;
           masked += text.slice(cursor, Math.max(cursor, range.start));
-          masked += mask(text.slice(Math.max(cursor, range.start), range.end));
+          masked += mask(text.slice(Math.max(cursor, range.start), range.end), range.nativeDollar);
           cursor = range.end;
         }
         masked += text.slice(cursor);

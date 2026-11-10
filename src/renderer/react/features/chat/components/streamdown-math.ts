@@ -35,7 +35,7 @@ function hasNestedMathDelimiter(
   for (const match of input.slice(start, end).matchAll(/\\[()[\]]/g)) {
     const index = start + match.index;
     // TeX 的 \\[4pt] 是换行间距参数，代码/链接中的伪标记也不参与配对。
-    if (escaped(input, index) || overlaps(index, index + 2)) continue;
+    if (overlaps(index, index + 2) || escaped(input, index)) continue;
     const delimiter = match[0][1];
     if (delimiter === "(" || delimiter === "[") {
       if (opener) return true;
@@ -49,7 +49,7 @@ function hasNestedMathDelimiter(
 }
 
 /** 原生解析只决定可转换的源码范围，不重写美元、空白或 Markdown 块边界。 */
-function findBackslashMath(input: string, tree: MarkdownNode, includeUnclosed = false): Map<number, MathRange> {
+export function findBackslashMath(input: string, tree: MarkdownNode, includeUnclosed = false): Map<number, MathRange> {
   const ranges = new Map<number, MathRange>();
   function visit(node: MarkdownNode) {
     if (protectedTypes.has(node.type)) return;
@@ -81,13 +81,15 @@ function findBackslashMath(input: string, tree: MarkdownNode, includeUnclosed = 
     }
     const unclosed = new Set<string>();
     for (let cursor = start; cursor < end - 1; cursor += 1) {
-      if (input[cursor] !== "\\" || escaped(input, cursor) || overlaps(cursor, cursor + 2)) continue;
+      if (input[cursor] !== "\\") continue;
       const opener = input[cursor + 1];
-      if ((opener !== "(" && opener !== "[") || unclosed.has(opener)) continue;
+      // 只有分隔符候选才回看转义奇偶，避免连续反斜杠逐字符回扫。
+      if ((opener !== "(" && opener !== "[") || unclosed.has(opener) ||
+        overlaps(cursor, cursor + 2) || escaped(input, cursor)) continue;
       const closer = opener === "(" ? ")" : "]";
       let close = cursor + 2;
       for (; close < end - 1; close += 1) {
-        if (input[close] === "\\" && !escaped(input, close) && input[close + 1] === closer) break;
+        if (input[close] === "\\" && input[close + 1] === closer && !escaped(input, close)) break;
       }
       // 未闭合流式片段保持原文，同类开符不再重复扫描。
       if (close >= end - 1) {
@@ -113,19 +115,19 @@ export function containsBackslashMath(input: string): boolean {
     findBackslashMath(input, protectionParser.parse(input)).size > 0;
 }
 
-export interface StreamingMathRange { start: number; end: number }
+export interface StreamingMathRange { start: number; end: number; nativeDollar?: boolean }
 
 /** 只供补全阶段分析当前变化的块；冻结块的范围由调用方缓存。 */
 export function getStreamingMathRanges(input: string): { ranges: StreamingMathRange[]; stableEnd: number } {
   if (!input.includes("\\(") && !input.includes("\\[") && !input.includes("$")) return { ranges: [], stableEnd: 0 };
   const tree = protectionParser.parse(input);
-  const ranges = [...findBackslashMath(input, tree, true)]
+  const ranges: StreamingMathRange[] = [...findBackslashMath(input, tree, true)]
     .map(([start, range]) => ({ start, end: range.end }));
   function visit(node: MarkdownNode) {
     if (node.type === "math" || node.type === "inlineMath") {
       const start = node.position?.start.offset;
       const end = node.position?.end.offset;
-      if (start !== undefined && end !== undefined) ranges.push({ start, end });
+      if (start !== undefined && end !== undefined) ranges.push({ start, end, nativeDollar: true });
     } else node.children?.forEach(visit);
   }
   visit(tree);

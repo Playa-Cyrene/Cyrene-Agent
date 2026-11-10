@@ -52,6 +52,29 @@ function texAnnotations(markup: string): string[] {
 
 describe("StreamdownMessageContent", () => {
 
+  it.each(["x^2", String.raw`\text{cost }\$5`])("renders the native dollar fence while its closing marker is partial: %s", (tex) => {
+    for (const closing of ["", "$", "$$"]) {
+      const markup = render(`$$\n${tex}\n${closing}`, true);
+      expect(texAnnotations(markup)).toEqual([tex]);
+      expect(markup).not.toContain('class="katex-error"');
+    }
+  });
+
+  it.each([false, true])("keeps original math coordinates with duplicate definitions (streaming=%s)", (streaming) => {
+    const formula = String.raw`\(x\in [0,1)\)`;
+    for (const separator of ["\n", "\n\n"]) {
+      for (const first of [true, false]) {
+        const defs = "[r]: https://example.com" + separator + "[r]: https://example.com";
+        const parts = [formula, "[引用][r]", "后文"];
+        parts.splice(first ? 0 : parts.length, 0, defs);
+        const markup = render(parts.join("\n\n"), streaming);
+        expect(texAnnotations(markup)).toEqual([String.raw`x\in [0,1)`]);
+        expect(markup).toContain("<p>后文</p>");
+        if (!streaming) expect(markup).toContain('href="https://example.com/"');
+      }
+    }
+  });
+
   it.each([false, true])("keeps multiple nested groups as native text (streaming=%s)", (streaming) => {
     for (const [input, text] of [
       [String.raw`\(a \(b\) + \(c\)\)`, "(a (b) + (c))"],
