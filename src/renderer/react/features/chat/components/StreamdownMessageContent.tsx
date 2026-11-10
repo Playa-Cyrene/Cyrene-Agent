@@ -1,13 +1,14 @@
 import { CodeHighlighter } from "@ant-design/x";
-import { createMathPlugin } from "@streamdown/math";
 import {
   defaultRehypePlugins,
   Streamdown,
   type Components,
   type ControlsConfig,
 } from "streamdown";
-import type { PluggableList } from "unified";
-import React, { isValidElement, useCallback, useContext, useState, type ReactNode } from "react";
+import type { PluggableList, Plugin } from "unified";
+import React, { isValidElement, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
+import { messageMathPlugin, analyzeCompletedMarkdown } from "./streamdown-math";
+import { createMessageRemendOptions } from "./streamdown-termination";
 import { useTranslation } from "../../../i18n";
 import { MessageStreamingContext } from "./ChatMessageList";
 import { chatStore } from "../pages/chat-page-bridge";
@@ -350,8 +351,7 @@ function StreamdownAnchor({ href, children }: { href?: string; children?: ReactN
   return <a href={href} target="_blank" rel="noreferrer">{children}</a>;
 }
 
-const mathPlugin = createMathPlugin({ singleDollarTextMath: true });
-const messagePlugins = { math: mathPlugin };
+const messagePlugins = { math: messageMathPlugin };
 const chatControls: ControlsConfig = { table: false };
 const messageComponents: Components = {
   a: (props) => <StreamdownAnchor {...props} />,
@@ -361,58 +361,37 @@ const messageComponents: Components = {
   td: (props) => <DemoFileNameTableCell {...props} />,
   th: (props) => <DemoFileNameTableHeader {...props} />,
 };
+// 保留 KaTeX 的显示/行内类名；其余清洗规则沿用 Streamdown 的锁定默认 schema。
+const [sanitize, sanitizeSchema] = defaultRehypePlugins.sanitize as [Plugin, {
+  attributes: Record<string, (string | [string, ...unknown[]])[]>;
+}];
+const mathSanitizeSchema = {
+  ...sanitizeSchema,
+  attributes: {
+    ...sanitizeSchema.attributes,
+    code: sanitizeSchema.attributes.code.map((attribute) =>
+      Array.isArray(attribute) && attribute[0] === "className"
+        ? [...attribute, "math-display", "math-inline"] : attribute),
+  },
+};
 const rehypePlugins: PluggableList = [
   defaultRehypePlugins.raw,
   encodeStreamdownFileLinksInHast,
-  defaultRehypePlugins.sanitize,
+  [sanitize, mathSanitizeSchema],
   defaultRehypePlugins.harden,
 ];
 
-function stripMarkdownCode(content: string): string {
-  return content
-    .replace(/(^|\n)[ \t]{0,3}(`{3,}|~{3,})[^\n]*(?:\n[\s\S]*?\n[ \t]{0,3}\2[ \t]*(?=\n|$)|$)/g, "$1")
-    .replace(/(`+)[^\n]*?\1/g, "");
-}
-
-function isEscaped(content: string, index: number): boolean {
-  let slashCount = 0;
-  for (let cursor = index - 1; cursor >= 0 && content[cursor] === "\\"; cursor -= 1) {
-    slashCount += 1;
-  }
-  return slashCount % 2 === 1;
-}
-
-function containsRenderedMath(content: string): boolean {
-  const visibleContent = stripMarkdownCode(content);
-  let inlineStart = -1;
-  let displayStart = -1;
-
-  for (let index = 0; index < visibleContent.length; index += 1) {
-    if (visibleContent[index] !== "$" || isEscaped(visibleContent, index)) continue;
-
-    if (visibleContent[index + 1] === "$" && !isEscaped(visibleContent, index + 1)) {
-      if (displayStart >= 0 && visibleContent.slice(displayStart, index).trim()) return true;
-      displayStart = index + 2;
-      index += 1;
-      continue;
-    }
-
-    if (inlineStart >= 0 && visibleContent.slice(inlineStart, index).trim()) return true;
-    inlineStart = index + 1;
-  }
-
-  return false;
-}
-
 export function StreamdownMessageContent({ content, streaming }: StreamdownMessageContentProps) {
-  // Streamdown's block mode preserves the already-rendered KaTeX blocks. Switching a long
-  // math response to static mode on completion would tear down and rebuild the entire tree.
-  const useBlockMode = streaming || containsRenderedMath(content);
+  const completed = useMemo(() => streaming ? null : analyzeCompletedMarkdown(content), [content, streaming]);
+  const remendOptions = useMemo(createMessageRemendOptions, []);
+  // 普通公式保留 DOM；引用链接需要整篇解析，才能共享前后块的定义。
+  const useBlockMode = streaming || Boolean(completed?.hasMath && !completed.hasReferences);
 
   return (
     <Streamdown
       mode={useBlockMode ? "streaming" : "static"}
       parseIncompleteMarkdown={streaming}
+      remend={remendOptions}
       plugins={messagePlugins}
       components={messageComponents}
       rehypePlugins={rehypePlugins}
