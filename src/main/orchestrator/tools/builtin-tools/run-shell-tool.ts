@@ -218,7 +218,7 @@ async function resolveExecutionPlan(
     // 契约上 wrapWithSandbox 永不抛错；此处兜底防止 API 破约重新打开 fail-open 缺口
     const detail = err instanceof Error ? err.message : String(err);
     logger.warn(LogTag.BuiltinTools, `[run_shell] wrapWithSandbox threw unexpectedly, fail-closed: ${detail}`);
-    return { ...base, kind: "rejected", reason: "沙箱包装异常，该命令已终止（未执行）" };
+    return { ...base, kind: "rejected", reason: "沙箱包装异常，该命令已终止（未执行）。受限权限下所有 Shell 命令都必须成功包装，请修复沙箱后重试；单次批准不能绕过沙箱。" };
   }
 
   if (outcome.ok) {
@@ -226,9 +226,11 @@ async function resolveExecutionPlan(
   }
 
   const REJECT_REASON: Record<"disabled" | "not_ready" | "wrap_failed", string> = {
-    disabled: "沙箱未启用，受限权限下不能执行命令。请恢复沙箱或由用户选择完全访问权限。",
-    not_ready: "沙箱不可用（初始化失败），该命令已终止。请在设置中安装沙箱或提升权限档位。",
-    wrap_failed: "沙箱包装失败，该命令已终止（未执行）",
+    disabled: process.platform === "win32"
+      ? "沙箱未启用，受限权限下所有 Shell 命令（包括只读命令）都要求沙箱可用，本次未执行。请恢复沙箱；「每次审批」的单次批准也不能绕过已禁用的沙箱。"
+      : "沙箱未启用：当前平台尚不支持受限 Shell 沙箱，所有命令（包括只读命令）都要求沙箱可用，本次未执行。请改用专用读取/搜索工具；「每次审批」的单次批准也不能绕过不可用的沙箱。",
+    not_ready: "沙箱不可用（初始化失败），本次未执行。受限权限下包括只读命令在内的所有 Shell 命令都要求沙箱可用，请在设置中安装或修复沙箱后重试；单次批准不能绕过沙箱。",
+    wrap_failed: "沙箱包装失败，该命令已终止（未执行）。受限权限下所有 Shell 命令都必须成功包装，请修复沙箱后重试；单次批准不能绕过沙箱。",
   };
   logger.warn(LogTag.BuiltinTools, `[run_shell] fail-closed before spawn: reason=${outcome.reason} detail=${outcome.detail ?? "(none)"} command="${command.slice(0, 200)}"`);
   return { ...base, kind: "rejected", reason: REJECT_REASON[outcome.reason] };
@@ -553,6 +555,7 @@ async function executeRunShell(args: Record<string, unknown>, context?: import("
     if (plan.kind === "rejected") {
       // 与前台一致的拒绝协议：spawn 从未被调用，stdout 必然为空
       return JSON.stringify({
+        success: false, errorCode: "SANDBOX_UNAVAILABLE", category: "permission_denied", error: `[拒绝] ${plan.reason}`,
         command, cwd, shell: requestedShell,
         exitCode: -1, timedOut: false, captureTruncated: false, effect, sandboxed: false,
         stderr: `[拒绝] ${plan.reason}`, stdout: "",
@@ -604,6 +607,7 @@ async function executeRunShell(args: Record<string, unknown>, context?: import("
   if (plan.kind === "rejected") {
     // 到达这里时 spawn 从未被调用——命令没有执行过，stdout 必然为空
     return JSON.stringify({
+      success: false, errorCode: "SANDBOX_UNAVAILABLE", category: "permission_denied", error: `[拒绝] ${plan.reason}`,
       command, cwd, shell: requestedShell,
       exitCode: -1, timedOut: false, captureTruncated: false, effect, sandboxed: false,
       stderr: `[拒绝] ${plan.reason}`, stdout: "",
@@ -661,7 +665,8 @@ export const runShellTool: ToolDefinition = {
     "后台模式：传 run_in_background:true 后命令在后台启动，立即返回 jobId 与 logFile（输出流式写日志文件，" +
     "stdout+stderr 合计上限 64MB，超限自动终止），不阻塞本轮对话。执行上限沿用 timeout_ms（未传则 30 分钟）。" +
     "之后用 shell_job 工具查询状态（可带 wait_ms 阻塞等待）或终止任务。\n\n" +
-    "安全说明：非完全信任档位下，写副作用的命令会在沙箱中执行（限制文件系统访问范围）。" +
+    "安全说明：受限权限（完全只读、只读、指定目录、每次审批）下，前后台所有命令（包括只读命令）都必须在沙箱可用且包装成功后执行。" +
+    "沙箱被关闭或不可用时会拒绝执行；逐次批准不等于绕过已禁用的沙箱。当前受限沙箱仅支持 Windows，非 Windows 平台不可用；请优先使用专用读取/搜索工具，或由用户修复、恢复沙箱。" +
     "灾难命令（format/shutdown/dd 等）一律拒绝。\n" +
     "参数：command (完整命令行字符串，如 \"git status\")，cwd (可选工作目录)，shell (cmd 或 bash，默认 cmd)，" +
     "timeout_ms (可选执行上限毫秒数，1000–1800000，设置后禁用无输出检测)，" +

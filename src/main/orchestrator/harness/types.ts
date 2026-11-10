@@ -20,6 +20,9 @@ import { createHash } from "node:crypto";
 export type { ToolErrorCategory } from "../tools/registry/tool-execution-error";
 export type { TodoItem, TodoStatus } from "../../../shared/task-session";
 
+/** 保留布尔权限回调兼容性；结构化结果只承载拒绝，不能授予执行权限。 */
+export type ToolPermissionResult = boolean | { allowed: false; reason: string };
+
 // ── 工具调用结果 ──────────────────────────────────────────
 
 /**
@@ -320,7 +323,7 @@ export interface HarnessInput {
   /** 工具上下文（权限检查等） */
   toolContext?: import("../tools/registry/tool-context").ToolContext;
   /** 权限检查函数 */
-  checkPermission?: (toolId: string, args: Record<string, unknown>) => Promise<boolean>;
+  checkPermission?: (toolId: string, args: Record<string, unknown>) => Promise<ToolPermissionResult>;
   /** ExecutionLedger：可选的同进程工具去重缓存（用于副作用重复执行防护） */
   executionLedger?: import("../execution-ledger").ExecutionLedger;
   /** ToolOutputStore：生产 Harness 注入的完整工具结果存储。 */

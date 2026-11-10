@@ -12,7 +12,7 @@ import { requiresUserInteraction } from "./interactive-tools";
 import type { ToolCall } from "../vendors/types";
 import type { ToolDefinition } from "../tools/registry/tool-registry";
 import type { ToolCallResult } from "../types";
-import type { AgentState, HarnessEvent, SideEffectKind, TodoItem, ToolObservation } from "./types";
+import type { AgentState, HarnessEvent, SideEffectKind, TodoItem, ToolObservation, ToolPermissionResult } from "./types";
 import { parseToolCallArgs, toolCallFingerprint } from "./types";
 import {
   CONFIRM_UNCERTAIN_EFFECT_TOOL_ID,
@@ -148,7 +148,7 @@ export interface ToolDispatchContext {
   includeInteractiveTools?: boolean;
   allowedBuiltinToolIds?: ReadonlySet<string>;
   signal?: AbortSignal;
-  checkPermission?: (toolId: string, args: Record<string, unknown>) => Promise<boolean>;
+  checkPermission?: (toolId: string, args: Record<string, unknown>) => Promise<ToolPermissionResult>;
   toolContext?: import("../tools/registry/tool-context").ToolContext;
   truncation?: TruncationConfig;
   /** 完整工具输出持久化；生产 Harness 必须注入。 */
@@ -272,13 +272,15 @@ export async function dispatchToolCall(
 
   // 权限检查
   if (ctx.checkPermission) {
-    const allowed = await ctx.checkPermission(tool.id, args);
-    if (!allowed) {
+    const decision = await ctx.checkPermission(tool.id, args);
+    // 只有字面 true 可执行；拒绝对象不能因 JavaScript truthiness 误变成授权。
+    if (decision !== true) {
       return {
         outcome: "failure",
         category: "permission_denied",
         tool: call.name,
-        message: `工具 "${tool.id}" 被权限系统拒绝`,
+        message: decision && typeof decision === "object" && decision.allowed === false && typeof decision.reason === "string"
+          ? decision.reason : `工具 "${tool.id}" 被权限系统拒绝`,
       };
     }
   }

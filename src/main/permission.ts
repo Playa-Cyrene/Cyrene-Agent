@@ -236,7 +236,7 @@ export async function checkPermission(input: {
   signal?: AbortSignal;
   /** 后台续轮没有所属会话的审批界面，遇到 ask 时直接拒绝。 */
   allowPrompt?: boolean;
-}): Promise<{ allowed: boolean; reason?: string }> {
+}): Promise<{ allowed: boolean; reason?: string; denialCode?: "git_scoped_write" }> {
   if (input.signal?.aborted) throw createAbortError();
   const level = currentLevel;
   const policy = policyFor(level, input.risk);
@@ -244,6 +244,11 @@ export async function checkPermission(input: {
 
   if (policy === "allow") return { allowed: true };
   if (policy === "deny") {
+    // 仅补充 scoped Git 写拒绝的解释；不改变档位矩阵、审批或其他拒绝路径。
+    const gitReason = level === "scoped" && input.risk === "input-control"
+      ? scopedGitWriteDeniedReason(input.toolId)
+      : undefined;
+    if (gitReason) return { allowed: false, reason: gitReason, denialCode: "git_scoped_write" };
     return {
       allowed: false,
       reason: "当前档位「" + ACCESS_LEVEL_LABEL[level] + "」不允许此操作（risk=" + input.risk + "）。请到设置 → 昔涟 → 本地文件权限提升档位。",
@@ -278,4 +283,20 @@ export function cancelPendingApprovalsForRun(runId: string): void {
       console.log(LOG_PREFIX, "cancelPendingApprovalsForRun 清理:", id, "runId=", runId);
     }
   }
+}
+
+/** 只使用工具 ID 选择静态文案，拒绝原因不回显路径、提交信息或其他模型参数。 */
+function scopedGitWriteDeniedReason(toolId: string): string | undefined {
+  let panelAction: string | undefined;
+  switch (toolId) {
+    case "git_commit": panelAction = "提交"; break;
+    case "git_switch_branch": panelAction = "切换或创建分支"; break;
+    case "git_push": panelAction = "推送"; break;
+    case "git_init":
+    case "git_revert": break;
+    default: return undefined;
+  }
+  return "当前「指定目录」权限拒绝 Agent 的 Git 写操作：仓库 hooks/filters 可能产生工作区外副作用。" +
+    "请由用户切换为「每次审批」，重新发起并逐次批准本次操作。" +
+    (panelAction ? `Git 面板可用时，用户也可手动${panelAction}。` : "");
 }

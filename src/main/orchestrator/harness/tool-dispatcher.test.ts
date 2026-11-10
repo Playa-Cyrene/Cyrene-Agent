@@ -32,6 +32,31 @@ function call(id: string, args: Record<string, unknown> = { to: "a@example.com" 
 }
 
 describe("dispatchToolCall truthful execution", () => {
+  it.each([
+    [false, '工具 "send_email" 被权限系统拒绝'],
+    [{ allowed: false, reason: "需要用户逐次审批" }, "需要用户逐次审批"],
+    [{ allowed: true }, '工具 "send_email" 被权限系统拒绝'],
+  ])("布尔或结构化拒绝都不启动工具：%j", async (decision, message) => {
+    const execute = vi.fn(async () => "should not execute");
+    const started = vi.fn();
+    const result = await dispatchToolCall(call("denied"), {
+      state: state(), tools: [tool(execute)], onToolStarted: started,
+      checkPermission: async () => decision as never,
+    });
+    expect(result).toMatchObject({ outcome: "failure", category: "permission_denied", message });
+    expect(execute).not.toHaveBeenCalled();
+    expect(started).not.toHaveBeenCalled();
+  });
+
+  it("布尔 true 的既有权限回调仍可执行工具", async () => {
+    const execute = vi.fn(async () => "ok");
+    const result = await dispatchToolCall(call("allowed"), {
+      state: state(), tools: [tool(execute)], checkPermission: async () => true,
+    });
+    expect(result.outcome).toBe("success");
+    expect(execute).toHaveBeenCalledOnce();
+  });
+
   it.each(["ask_user", "confirm_uncertain_effect", "enter_plan_mode", "write_plan", "submit_plan", "pop_quiz",
     "learn_exam_create_plan", "learn_exam_publish", "learn_exam_add_single_choice", "learn_exam_add_multiple_choice",
     "learn_exam_add_true_false", "learn_exam_add_fill_blank", "learn_exam_add_written"])("rejects stale %s calls without invoking interactive handlers", async name => {
