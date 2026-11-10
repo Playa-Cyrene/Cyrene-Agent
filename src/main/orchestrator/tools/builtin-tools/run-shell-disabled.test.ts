@@ -45,7 +45,11 @@ beforeEach(async () => {
     // 后台测试仍启动真实进程；等待退出后再返回，避免测试泄漏进程或临时文件。
     const child = nativeSpawn(spec.command, spec.args, { cwd: spec.cwd, env: spec.env,
       windowsVerbatimArguments: spec.windowsVerbatimArguments, shell: false, stdio: "ignore" });
-    await new Promise<void>((resolve, reject) => { child.once("error", reject); child.once("close", () => resolve()); });
+    const exitCode = await new Promise<number | null>((resolve, reject) => {
+      child.once("error", reject);
+      child.once("close", resolve);
+    });
+    expect(exitCode).toBe(0);
     return { jobId: "test-completed", logFile: path.join(state.root, "test.log") };
   });
 });
@@ -56,7 +60,8 @@ afterEach(async () => {
 });
 
 async function run(background: boolean, command?: string, permissionMode?: "allow_all") {
-  fs.writeFileSync(path.join(state.root, "input.txt"), "z\na\n");
+  // 固定 ASCII + CRLF 文本夹具，避免把平台文本差异混入权限验证。
+  fs.writeFileSync(path.join(state.root, "input.txt"), "z\r\na\r\n", "ascii");
   // sort 的写参数被首词分类误认 read：Windows 原生 /O 由 Windows CI 验证。
   command ??= process.platform === "win32" ? "sort /O output.txt input.txt" : "sort -o output.txt input.txt";
   const raw = await runShellTool.execute({ command, cwd: state.root,
@@ -89,12 +94,16 @@ describe.each(["0", "false"])("真实 CYRENE_SRT=%s", disabled => {
     state.level = "full";
     const full = await run(background);
     expect(full.sandboxed).toBe(false);
-    expect(fs.readFileSync(path.join(state.root, "output.txt"), "utf8").replace(/\r/g, "").trim()).toBe("a\nz");
+    if (!background) expect(full.exitCode).toBe(0);
+    const fullOutput = fs.readFileSync(path.join(state.root, "output.txt"));
+    expect(fullOutput.toString("utf8").replace(/\r/g, ""), `output hex: ${fullOutput.toString("hex")}`).toBe("a\nz\n");
     fs.unlinkSync(path.join(state.root, "output.txt"));
     state.level = "read-only";
     const override = await run(background, undefined, "allow_all");
     expect(override.sandboxed).toBe(false);
-    expect(fs.existsSync(path.join(state.root, "output.txt"))).toBe(true);
+    if (!background) expect(override.exitCode).toBe(0);
+    const overrideOutput = fs.readFileSync(path.join(state.root, "output.txt"));
+    expect(overrideOutput.toString("utf8").replace(/\r/g, ""), `output hex: ${overrideOutput.toString("hex")}`).toBe("a\nz\n");
     expect(state.spawns).toBe(2);
   });
   it("伪装成 echo 的工作区脚本也不能降级", async () => {
