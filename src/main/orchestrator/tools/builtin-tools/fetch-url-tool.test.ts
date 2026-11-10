@@ -4,7 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clearFetchUrlCache, fetchUrlTool } from "./fetch-url-tool";
 
-/** 构造 fetch Response 形状的桩（工具只用到 ok/status/statusText/headers/arrayBuffer/json） */
+/** 使用真实 Response，覆盖流式读取而非仅模拟 arrayBuffer。 */
 function makeResp(opts: {
   ok?: boolean;
   status?: number;
@@ -13,17 +13,11 @@ function makeResp(opts: {
   body?: string;
   json?: unknown;
 }): Response {
-  const body = opts.body ?? "";
-  return {
-    ok: opts.ok ?? true,
-    status: opts.status ?? 200,
+  return new Response(opts.json !== undefined ? JSON.stringify(opts.json) : opts.body ?? "", {
+    status: opts.status ?? (opts.ok === false ? 500 : 200),
     statusText: opts.statusText ?? "OK",
-    headers: {
-      get: (name: string) => (name.toLowerCase() === "content-type" ? opts.contentType ?? "" : null),
-    },
-    arrayBuffer: async () => new TextEncoder().encode(body).buffer,
-    json: async () => (opts.json !== undefined ? opts.json : JSON.parse(body)),
-  } as unknown as Response;
+    headers: { "content-type": opts.contentType ?? "" },
+  });
 }
 
 afterEach(() => {

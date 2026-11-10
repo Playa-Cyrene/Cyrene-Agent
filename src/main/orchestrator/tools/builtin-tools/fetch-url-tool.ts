@@ -18,7 +18,38 @@ import { TtlResultCache } from "./ttl-result-cache";
 const LOG_PREFIX = "[BuiltinTools]";
 
 const FETCH_TIMEOUT_MS = 20_000;
-const FETCH_MAX_BYTES = 512 * 1024; // 单次最多 512KB，防止 LLM 上下文爆炸
+const FETCH_MAX_BYTES = 512 * 1024; // 每个响应体最多保留 512KB，并立即停止读取
+
+/** 按实际解压后的字节计数，不信任 Content-Length，也不先把整个响应加载进内存。 */
+async function readLimitedText(response: Response, signal: AbortSignal): Promise<{ text: string; truncated: boolean }> {
+  signal.throwIfAborted();
+  if (!response.body) return { text: "", truncated: false };
+  const reader = response.body.getReader();
+  const buffer = new Uint8Array(FETCH_MAX_BYTES);
+  let length = 0;
+  let done = false;
+  // 取消也要唤醒正在等待数据的 reader；不能只在下一块数据到达时检查 signal。
+  const cancel = () => { void reader.cancel().catch(() => {}); };
+  signal.addEventListener("abort", cancel, { once: true });
+  try {
+    signal.throwIfAborted();
+    while (length < FETCH_MAX_BYTES) {
+      const chunk = await reader.read();
+      signal.throwIfAborted();
+      if (chunk.done) { done = true; break; }
+      const count = Math.min(chunk.value.byteLength, FETCH_MAX_BYTES - length);
+      buffer.set(chunk.value.subarray(0, count), length);
+      length += count;
+    }
+    // 达到边界即取消，不为判断“恰好等长”再等待下一块；保守标记为截断。
+    // stream=true 丢弃截断点处不完整的 UTF-8 尾字节，避免输出替换字符。
+    return { text: new TextDecoder("utf-8").decode(buffer.subarray(0, length), { stream: !done }), truncated: !done };
+  } finally {
+    signal.removeEventListener("abort", cancel);
+    if (!done) cancel();
+    reader.releaseLock();
+  }
+}
 
 // ── 抓取结果缓存 ─────────────────────────────────────────
 // 模型常在同一会话里对同一链接反复 fetch（web_search 结果里挑链接来回看），
@@ -155,21 +186,21 @@ async function fetchGithubRepoSummary(
     if (!readmeResp.ok) return null;
 
     // README 同样按字节上限截断，与普通抓取保持一致
-    const buf = await readmeResp.arrayBuffer();
-    const truncated = buf.byteLength > FETCH_MAX_BYTES;
-    const readme = new TextDecoder("utf-8").decode(
-      truncated ? buf.slice(0, FETCH_MAX_BYTES) : buf,
-    );
+    const { text: readme, truncated } = await readLimitedText(readmeResp, combinedSignal);
 
     let header = "";
     if (metaResp.ok) {
       try {
-        header = formatGithubMeta((await metaResp.json()) as Record<string, unknown>, repo) + "\n\n---\n\n";
+        const metadata = await readLimitedText(metaResp, combinedSignal);
+        if (!metadata.truncated) {
+          header = formatGithubMeta(JSON.parse(metadata.text) as Record<string, unknown>, repo) + "\n\n---\n\n";
+        }
       } catch {
         // 元信息 JSON 解析失败不影响 README 输出
       }
     }
 
+    combinedSignal.throwIfAborted();
     const meta = "URL: " + url + "\n来源: GitHub API（仓库元信息 + README 原文）"
       + (truncated ? "\n[README 已截断到 " + FETCH_MAX_BYTES + " 字节]" : "") + "\n\n";
     return meta + header + readme.trim();
@@ -177,6 +208,8 @@ async function fetchGithubRepoSummary(
     // 网络失败或超时，回退普通抓取
     return null;
   } finally {
+    // 包括失败响应、提前回退和并行请求部分失败，均停止未消费的响应体。
+    ac.abort();
     clearTimeout(timer);
   }
 }
@@ -248,10 +281,9 @@ async function executeFetchUrl(args: Record<string, unknown>, ctx?: ToolContext)
       return "[错误] HTTP " + resp.status + " " + resp.statusText;
     }
     const ctype = resp.headers.get("content-type") || "";
-    const buf = await resp.arrayBuffer();
-    const truncated = buf.byteLength > FETCH_MAX_BYTES;
-    const slice = truncated ? buf.slice(0, FETCH_MAX_BYTES) : buf;
-    let text = new TextDecoder("utf-8").decode(slice);
+    const body = await readLimitedText(resp, combinedSignal);
+    const truncated = body.truncated;
+    let text = body.text;
     if (asMarkdown && /text\/html|application\/xhtml/i.test(ctype)) {
       text = stripHtml(text);
     }
@@ -264,6 +296,7 @@ async function executeFetchUrl(args: Record<string, unknown>, ctx?: ToolContext)
     const msg = err instanceof Error ? err.message : String(err);
     return "[错误] fetch 失败: " + msg;
   } finally {
+    ac.abort();
     clearTimeout(timer);
   }
 }
