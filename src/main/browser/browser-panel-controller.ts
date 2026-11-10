@@ -279,7 +279,7 @@ export class BrowserPanelController {
         this.controlResumeWaiters.delete(check);
         input.signal?.removeEventListener("abort", onAbort);
         if (this.matchesControlOwner(input.conversationId, input.runId)) {
-          this.setControlAction(result === "resumed" ? "waiting" : "active");
+          this.setControlAction("active");
         }
         resolve(result);
       };
