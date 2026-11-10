@@ -8,7 +8,7 @@ export const CLAUDE_REGISTRY = defineVendor({
     transport: "anthropic",
     baseUrl: "https://api.anthropic.com/v1",
     authStyle: "x-api-key",
-    defaultModel: "claude-sonnet-4-6",
+    defaultModel: "claude-sonnet-5-5",
     supportsTools: true,
     supportsThinking: true,
     thinkingField: "thinking",
@@ -22,6 +22,17 @@ export const CLAUDE_REGISTRY = defineVendor({
     transport: "anthropic",
   },
   models: [
+    {
+      model: "claude-sonnet-5-5",
+      recommendedFor: ["chat"],
+      unknownCapabilities: [
+        {
+          feature: "sampling",
+          transport: "anthropic",
+          note: "官方说明非默认 temperature/top_p/top_k 返回 400；未加采样白名单即不注入采样参数。",
+        },
+      ],
+    },
     {
       model: "claude-fable-5-2",
       recommendedFor: ["chat"],
@@ -47,17 +58,6 @@ export const CLAUDE_REGISTRY = defineVendor({
     },
     {
       model: "claude-opus-5-5",
-      recommendedFor: ["chat"],
-      unknownCapabilities: [
-        {
-          feature: "sampling",
-          transport: "anthropic",
-          note: "官方说明非默认 temperature/top_p/top_k 返回 400；未加采样白名单即不注入采样参数。",
-        },
-      ],
-    },
-    {
-      model: "claude-sonnet-5-5",
       recommendedFor: ["chat"],
       unknownCapabilities: [
         {
