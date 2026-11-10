@@ -103,7 +103,7 @@ describe("syncFilesystemMcp", () => {
       transport: "stdio",
       command: process.execPath,
       args: expect.arrayContaining([
-        expect.stringContaining("index.js"),
+        expect.stringContaining("filesystem-mcp.mjs"),
         "C:/Users/u/Downloads",
       ]),
       env: { ELECTRON_RUN_AS_NODE: "1" },
@@ -132,5 +132,14 @@ describe("syncFilesystemMcp", () => {
     expect(mockAdd).toHaveBeenCalledWith(expect.objectContaining({
       args: expect.arrayContaining(["D:/New/Downloads"]),
     }));
+  });
+
+  it("migrates the previous package entry to the standalone bundle", async () => {
+    const previous = buildFilesystemMcpConfig("C:/Downloads");
+    previous.args = ["C:/Cyrene/resources/app.asar.unpacked/node_modules/@modelcontextprotocol/server-filesystem/dist/index.js", "C:/Downloads"];
+    mockListConfigs.mockReturnValue([previous]);
+    await syncFilesystemMcp({ filesystemMcpEnabled: true, allowedDir: "C:/Downloads" });
+    expect(mockRemove).toHaveBeenCalledWith(FILESYSTEM_MCP_ID);
+    expect(mockAdd).toHaveBeenCalledWith(buildFilesystemMcpConfig("C:/Downloads"));
   });
 });
