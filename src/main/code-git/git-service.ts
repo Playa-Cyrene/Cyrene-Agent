@@ -7,7 +7,7 @@ import {
   type CodeGitFileChange,
   type CodeGitStatus,
 } from "../../shared/code-git-types";
-import type { ResolvedGitExecutable } from "./git-executable";
+import { createBundledGitEnvironment, type ResolvedGitExecutable } from "./git-executable";
 import { createGitWorkspaceWatcher, type GitWorkspaceWatcher } from "./git-workspace-watcher";
 
 export interface GitStatusFile {
@@ -312,12 +312,22 @@ export function createGitService(deps: GitServiceDeps): GitService {
 }
 
 function createSimpleGitClient(input: { workspaceRoot: string; executable: ResolvedGitExecutable }): GitClient {
+  const bundled = input.executable.source === "bundled";
+  if (bundled && !path.isAbsolute(input.executable.command)) {
+    throw new Error("内置 Git 必须使用已探测的绝对路径");
+  }
   const git = simpleGit({
     baseDir: input.workspaceRoot,
     binary: input.executable.command,
+    // 路径由宿主解析并经 --version 探测，不来自工具参数。仅放行内置 Git 路径中的
+    // 空格/中文；仍以单个可执行文件参数直接 spawn，保留其他 unsafe 操作防护。
+    // ConfigPaths 只用于下面强制固定到系统空设备的 GIT_CONFIG_GLOBAL。
+    // Pager、SSH 命令、配置注入等其他 unsafe 类别继续由 simple-git 拦截。
+    unsafe: { allowUnsafeCustomBinary: bundled, allowUnsafeConfigPaths: bundled },
     maxConcurrentProcesses: 1,
   });
-  if (input.executable.env) git.env(input.executable.env);
+  const env = bundled ? createBundledGitEnvironment(input.executable.env) : input.executable.env;
+  if (env) git.env(env);
 
   return {
     isRepository: () => git.checkIsRepo(),
