@@ -5,6 +5,7 @@ import { basename, dirname, extname, join, resolve } from "node:path";
 import { QQ_MEDIA_LIMITS, type QqConversation, type QqMedia } from "../../shared/qq-module";
 import type { ChannelAttachment, OutgoingPart } from "../channels/types";
 import type { QqModuleRuntime } from "./runtime";
+import { identifyQqImage, QQ_IMAGE_HEADER_BYTES } from "./image-format";
 
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const CACHE_NAME = /^qq-media-[a-f0-9-]{36}(?:\.[a-z0-9]{1,8})?$/;
@@ -125,25 +126,43 @@ export class QqMediaBroker {
     context = { ...context, signal: AbortSignal.any([...(context.signal ? [context.signal] : []), AbortSignal.timeout(QQ_MEDIA_LIMITS.transferTimeoutMs)]) };
     const check = this.guard(context); check(); await this.cleanup(); check();
     if (media.kind === "sticker" || media.size === undefined) throw new Error("QQ_MEDIA_UNSUPPORTED");
-    this.reserve(media.size); const path = join(this.cacheDir, `qq-media-${randomUUID()}${safeExtension(media.filename)}`); let complete = false;
+    this.reserve(media.size); let path: string | undefined; let complete = false;
     try {
-      const fd = await open(path, "wx", 0o600);
+      const read = async (offset: number, limit: number): Promise<Buffer> => {
+        check();
+        const chunk = await context.runtime.request("mediaRead", { connectionEpoch: context.connectionEpoch, mediaId: media.mediaId, eventId, offset, limit }, context.signal); check();
+        const bytes = Buffer.from(chunk.data, "base64");
+        if (!bytes.length || bytes.length > limit || bytes.toString("base64") !== chunk.data || chunk.eof !== (offset + bytes.length === media.size)) throw new Error("QQ_MEDIA_INVALID_CHUNK");
+        return bytes;
+      };
+      let prefix = Buffer.alloc(0); let mime = media.mime; let extension = safeExtension(media.filename);
+      if (media.kind === "image") {
+        // Probe only a bounded prefix, including peers that return short chunks.
+        // Open the final random path exclusively: no rename/overwrite window and
+        // no path or executable suffix supplied by the module can select it.
+        const headerSize = Math.min(QQ_IMAGE_HEADER_BYTES, media.size);
+        while (prefix.length < headerSize) {
+          const bytes = await read(prefix.length, headerSize - prefix.length); check();
+          prefix = Buffer.concat([prefix, bytes]);
+        }
+        const format = identifyQqImage(prefix, media.size);
+        extension = format.extension; mime = format.mime;
+      }
+      const target = join(this.cacheDir, `qq-media-${randomUUID()}${extension}`);
+      const fd = await open(target, "wx", 0o600); path = target;
       try {
         check(); let offset = 0;
         while (offset < media.size) {
-          const limit = Math.min(QQ_MEDIA_LIMITS.chunkBytes, media.size - offset);
-          const chunk = await context.runtime.request("mediaRead", { connectionEpoch: context.connectionEpoch, mediaId: media.mediaId, eventId, offset, limit }, context.signal); check();
-          const bytes = Buffer.from(chunk.data, "base64");
-          if (!bytes.length || bytes.length > limit || bytes.toString("base64") !== chunk.data || chunk.eof !== (offset + bytes.length === media.size)) throw new Error("QQ_MEDIA_INVALID_CHUNK");
+          const bytes = offset === 0 && prefix.length ? prefix : await read(offset, Math.min(QQ_MEDIA_LIMITS.chunkBytes, media.size - offset)); check();
           let written = 0;
           while (written < bytes.length) { const result = await fd.write(bytes, written, bytes.length - written, offset + written); check(); if (!result.bytesWritten) throw new Error("QQ_MEDIA_WRITE_FAILED"); written += result.bytesWritten; }
           offset += bytes.length;
         }
       } finally { await fd.close(); }
       check(); this.files.set(path, { size: media.size, created: Date.now() }); complete = true;
-      return { kind: media.kind, filePath: path, ...(media.mime ? { mime: media.mime } : {}), ...(media.caption ? { caption: media.caption } : {}) };
+      return { kind: media.kind, filePath: path, ...(mime ? { mime } : {}), ...(media.caption ? { caption: media.caption } : {}) };
     } finally {
-      if (!complete) { this.reserved -= media.size; await unlink(path).catch(() => {}); }
+      if (!complete) { this.reserved -= media.size; if (path) await unlink(path).catch(() => {}); }
     }
   }
 }

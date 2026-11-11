@@ -11,11 +11,13 @@ import { QqMediaBroker } from "./media-broker";
 import type { QqProcessTransport } from "./runtime";
 import type { IncomingMessage } from "../channels/types";
 import { configuration } from "../../../scripts/verify/qq-module/fixtures";
+import { pngFixture } from "../../../scripts/verify/qq-module/image-fixtures";
+import { buildImageOptions } from "../../../scripts/verify/qq-module/image-options";
 const candidateEntry = process.env.QFCA_ENTRY;
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
 interface Action { action: string; params: Record<string, any>; echo: string }
-async function startPair(options: { stream?: boolean; corruptDownload?: boolean; broker?: boolean; quarantine?: boolean } = {}) {
+async function startPair(options: { stream?: boolean; corruptDownload?: boolean; broker?: boolean; quarantine?: boolean; filename?: string | null } = {}) {
   if (!candidateEntry || !isAbsolute(candidateEntry)) throw new Error("QFCA_ENTRY must identify a reviewed local build");
   const directory = await mkdtemp(join(tmpdir(), "qq-media-integration-"));
   cleanups.push(() => rm(directory, { recursive: true, force: true }));
@@ -45,7 +47,7 @@ async function startPair(options: { stream?: boolean; corruptDownload?: boolean;
   cleanups.push(async () => { socket.terminate(); });
   const actions: Action[] = [];
   const uploads = new Map<string, { chunks: Buffer[]; size: number; sha256: string; filename: string }>();
-  const media = new Map<string, Buffer>([["picture.png", Buffer.alloc(70001, 42)], ["sound", Buffer.from("audio fixture")], ["document", Buffer.from("file fixture")], ["movie", Buffer.from("video fixture")]]);
+  const media = new Map<string, Buffer>([["picture.png", pngFixture], ["sound", Buffer.from("audio fixture")], ["document", Buffer.from("file fixture")], ["movie", Buffer.from("video fixture")]]);
   socket.on("message", (raw) => {
     const a: Action = JSON.parse(raw.toString()); actions.push(a);
     const respond = (data: unknown) => socket.send(JSON.stringify({ status: "ok", retcode: 0, echo: a.echo, data }));
@@ -72,7 +74,7 @@ async function startPair(options: { stream?: boolean; corruptDownload?: boolean;
     if (/^download_file(?:_image|_record)?_stream$/.test(a.action)) {
       const bytes = media.get(a.params.file_id ?? a.params.file);
       if (!bytes) return socket.send(JSON.stringify({ status: "failed", retcode: 1200, echo: a.echo, data: null }));
-      respond({ type: "stream", data_type: "file_info", file_name: "fixture.bin", file_size: bytes.length, chunk_size: 65536 });
+      respond({ type: "stream", data_type: "file_info", ...(options.filename === null ? {} : { file_name: options.filename ?? "fixture.bin" }), file_size: bytes.length, chunk_size: 65536 });
       let chunks = 0;
       for (let offset = 0; offset < bytes.length; offset += 65536) {
         const block = bytes.subarray(offset, offset + 65536);
@@ -108,6 +110,34 @@ it.skipIf(!candidateEntry)("transfers image/audio/file/video through real child 
   // Host-owned attachment files survive module stop for the existing history path.
   expect(await readFile(p.received[0].attachments![0].filePath!)).toEqual(p.media.get("picture.png"));
 }, 15000);
+it.skipIf(!candidateEntry).each([null, "fixture.bin", "misleading.jpg"])("routes an actual downloaded image with backend filename %s through real IPC into production vision options", async (filename) => {
+  const p = await startPair({ filename });
+  p.incoming(330, [{ type: "image", data: { file: "picture.png" } }]);
+  await vi.waitFor(() => expect(p.received).toHaveLength(1), { timeout: 5000 });
+  const attachment = p.received[0].attachments![0];
+  expect(attachment).toMatchObject({ kind: "image", mime: "image/png", filePath: expect.stringMatching(/\.png$/) });
+  expect(await readFile(attachment.filePath!)).toEqual(pngFixture);
+  const result = await buildImageOptions(attachment);
+  expect(result.options.messages.at(-1)?.content).toContainEqual({ type: "image_url", image_url: { url: `data:image/png;base64,${pngFixture.toString("base64")}` } });
+  const inbound = p.envelopes.find((value: any) => value.event === "inbound") as any;
+  expect(inbound.payload.attachments[0].filename).toBe(filename ?? undefined);
+  expect(p.envelopes.filter((value: any) => value.method === "mediaRelease")).toHaveLength(1);
+  expect(JSON.stringify(p.envelopes)).not.toContain(p.directory);
+}, 10000);
+it.skipIf(!candidateEntry)("rejects executable bytes claiming an image over real IPC, retains text, then accepts the next valid image", async () => {
+  const p = await startPair({ filename: "picture.png" });
+  p.media.set("picture.png", Buffer.from("MZ fixture is not an image"));
+  p.incoming(331, [{ type: "text", data: { text: "text survives" } }, { type: "image", data: { file: "picture.png" } }]);
+  await vi.waitFor(() => expect(p.received).toHaveLength(1), { timeout: 5000 });
+  expect(p.received[0].text).toContain("text survives"); expect(p.received[0].text).toContain("[附件加载失败]");
+  expect(p.received[0].attachments).toBeUndefined(); expect(await readdir(join(p.directory, "cache"))).toEqual([]);
+  p.media.set("picture.png", pngFixture);
+  p.incoming(332, [{ type: "image", data: { file: "picture.png" } }]);
+  await vi.waitFor(() => expect(p.received).toHaveLength(2), { timeout: 5000 });
+  const result = await buildImageOptions(p.received[1].attachments![0]);
+  expect(result.options.messages.at(-1)?.content).toContainEqual({ type: "image_url", image_url: { url: `data:image/png;base64,${pngFixture.toString("base64")}` } });
+  expect(p.envelopes.filter((value: any) => value.method === "mediaRelease")).toHaveLength(2);
+}, 10000);
 it.skipIf(!candidateEntry)("keeps text working when real media probe is unsupported", async () => {
   const p = await startPair({ stream: false });
   expect(p.manager.getCapabilities().messages.image).toBe(false);
