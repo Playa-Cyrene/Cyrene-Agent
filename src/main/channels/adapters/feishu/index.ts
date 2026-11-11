@@ -438,6 +438,7 @@ export class FeishuAdapter implements ChannelAdapter {
         console.log(LOG, `send ok: messageId=${r?.messageId ?? "?"}`);
         anyOk = true;
       } catch (err) {
+        if (signal.aborted) return { ok: false, error: "channel_stopped" };
         lastErr = err instanceof Error ? err.message : String(err);
         console.error(LOG, `send part failed: targetId=${msg.targetId} part=${part.kind} err=`, lastErr, err);
       }

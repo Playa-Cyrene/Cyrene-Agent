@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { FeishuAdapter } from "./index";
+import { createChannelDeliveryService } from "../../delivery-service";
 
 const mocks = vi.hoisted(() => ({
   channels: [] as Array<any>,
@@ -70,5 +71,25 @@ describe("飞书连接撤销", () => {
     await expect(adapter.send({ channel: "feishu", targetId: "peer", parts: [{ kind: "text", text: "one" }, { kind: "text", text: "two" }] }))
       .resolves.toEqual({ ok: false, error: "channel_stopped" });
     expect(channel.send).toHaveBeenCalledOnce();
+  });
+
+  it.each([false, true])("末段已发起后停用，仅完整成功可确认送达 rejected=%s", async (rejected) => {
+    const activity = new AbortController();
+    const adapter = new FeishuAdapter();
+    await adapter.start(activity.signal);
+    const channel = mocks.channels[0];
+    const entered = Promise.withResolvers<void>();
+    const last = Promise.withResolvers<{ messageId: string }>();
+    channel.send.mockResolvedValueOnce({ messageId: "first" })
+      .mockImplementationOnce(() => { entered.resolve(); return last.promise; });
+    const delivery = createChannelDeliveryService({ getAdapter: () => adapter, getActivitySignal: () => activity.signal });
+    const sending = delivery.send({ channel: "feishu", targetId: "peer", parts: [{ kind: "text", text: "one" }, { kind: "text", text: "two" }] });
+    await entered.promise;
+    activity.abort(new Error("channel_stopped"));
+    await adapter.stop();
+    if (rejected) last.reject(activity.signal.reason);
+    else last.resolve({ messageId: "last" });
+    await expect(sending).resolves.toEqual(rejected ? { ok: false, error: "channel_stopped" } : { ok: true });
+    expect(channel.send).toHaveBeenCalledTimes(2);
   });
 });

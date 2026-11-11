@@ -22,6 +22,25 @@ vi.mock("ws", async () => {
 afterEach(() => { vi.unstubAllGlobals(); sockets.created = 0; sockets.closed = 0; });
 
 describe("QQ Bot 启动请求的完整取消链", () => {
+  it("无效凭证启动失败在资源释放后仍可查询原因，显式停止与正常重试清除错误", async () => {
+    const manager = new ChannelManager();
+    manager.register(new QqBotAdapter());
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("invalid credentials", { status: 401 })));
+    try {
+      await manager.startAll();
+      expect(manager.getAllStatus().qqbot).toMatchObject({ enabled: true, phase: "error", message: expect.stringContaining("401") });
+      expect(manager.getActivitySignal("qqbot")?.aborted).toBe(true);
+      expect(sockets.created).toBe(0);
+      await manager.stopOne("qqbot");
+      expect(manager.getAllStatus().qqbot.phase).toBe("offline");
+      vi.stubGlobal("fetch", vi.fn(async (url: string) => new Response(JSON.stringify(url.includes("getAppAccessToken")
+        ? { access_token: "synthetic", expires_in: 7200 } : { url: "wss://synthetic.invalid" }))));
+      await manager.startOne("qqbot");
+      expect(manager.getAllStatus().qqbot.phase).toBe("starting");
+      expect(sockets.created).toBe(1);
+    } finally { await manager.stopAll(); }
+  });
+
   it.each(["token", "gateway"])("%s 请求挂起时停止能释放队列，其他渠道保持可用且可以重新连接", async (stage) => {
     const manager = new ChannelManager();
     const adapter = new QqBotAdapter();

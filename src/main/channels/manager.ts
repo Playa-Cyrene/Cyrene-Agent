@@ -23,6 +23,8 @@ export class ChannelManager {
   /** 启动后已开启的 adapter（start 成功的才会调 stop） */
   private startedAdapters = new Set<ChannelId>();
   private activities = new Map<ChannelId, AbortController>();
+  /** 连接清理后仍向设置页保留启动诊断，不改变适配器的已停止状态。 */
+  private startupFailures = new Map<ChannelId, ChannelStatus>();
   private revisions = new Map<ChannelId, number>();
   private lifecycleQueue = createKeyedQueue();
 
@@ -58,6 +60,7 @@ export class ChannelManager {
   async unregister(id: ChannelId): Promise<boolean> {
     const adapter = this.adapters.get(id);
     if (!adapter) return false;
+    this.startupFailures.delete(id);
     this.revisions.set(id, (this.revisions.get(id) ?? 0) + 1);
     this.activities.get(id)?.abort(new Error("channel_stopped"));
     await this.lifecycleQueue.run(id, async () => {
@@ -85,6 +88,7 @@ export class ChannelManager {
     return this.lifecycleQueue.run(id, async () => {
       if (this.adapters.get(id) !== adapter || this.revisions.get(id) !== revision) return;
       if (this.startedAdapters.has(id)) return;
+      this.startupFailures.delete(id);
       const activity = new AbortController();
       this.activities.set(id, activity);
       setAdapterHandler(adapter, this.makeAdapterHandler(id, activity.signal));
@@ -93,6 +97,13 @@ export class ChannelManager {
         if (!activity.signal.aborted) this.startedAdapters.add(id);
         logger.info(LogTag.Channels, `started: ${id} (${adapter.displayName})`);
       } catch (error) {
+        // 用户撤销引发的失败不应重新覆盖停用状态。
+        if (!activity.signal.aborted) {
+          this.startupFailures.set(id, {
+            ...adapter.getStatus(), phase: "error",
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
         activity.abort(error);
         try { await adapter.stop(); } catch (stopError) { console.warn(LOG, stopError); }
         throw error;
@@ -104,6 +115,7 @@ export class ChannelManager {
   async stopOne(id: ChannelId): Promise<void> {
     const adapter = this.adapters.get(id);
     if (!adapter) return;
+    this.startupFailures.delete(id);
     this.revisions.set(id, (this.revisions.get(id) ?? 0) + 1);
     this.activities.get(id)?.abort(new Error("channel_stopped"));
     return this.lifecycleQueue.run(id, async () => {
@@ -146,7 +158,7 @@ export class ChannelManager {
   getAllStatus(): Record<ChannelId, ChannelStatus> {
     const out: Partial<Record<ChannelId, ChannelStatus>> = {};
     for (const [id, adapter] of this.adapters.entries()) {
-      out[id] = adapter.getStatus();
+      out[id] = this.startupFailures.get(id) ?? adapter.getStatus();
     }
     return out as Record<ChannelId, ChannelStatus>;
   }

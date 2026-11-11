@@ -637,7 +637,7 @@ describe("channels/dispatcher", () => {
     expect(journal.buildModelContext).toHaveBeenLastCalledWith(expect.any(String), true);
   });
 
-  it("发送失败写入 failed receipt 且保留已落盘 assistant", async () => {
+  it.each(["offline", "channel_stopped"])("发送失败 %s 写入 failed receipt 且保留已落盘 assistant", async (error) => {
     const appendDeliveryReceipt = vi.fn(async () => undefined);
     const appendAssistant = vi.fn(async () => "assistant-turn-1");
     const journal = {
@@ -655,7 +655,7 @@ describe("channels/dispatcher", () => {
     const dispatcher = makeDispatcher({
       manager: makeManager(),
       journal: journal as never,
-      delivery: { send: vi.fn(async () => ({ ok: false as const, error: "offline" })) },
+      delivery: { send: vi.fn(async () => ({ ok: false as const, error })) },
       buildAndRunAgent: vi.fn(async (_msg: IncomingMessage, input: { transcriptSink: { appendAssistant: (input: unknown) => Promise<string> } }) => {
         await input.transcriptSink.appendAssistant({ message: { role: "assistant", content: "回复" } });
         return { text: "回复", sticker: null };
@@ -668,8 +668,9 @@ describe("channels/dispatcher", () => {
       assistantTurnId: "qq:chat-1:m-1:assistant",
       channel: "qq",
       status: "failed",
-      errorCode: "offline",
+      errorCode: error,
     }));
+    expect(appendDeliveryReceipt).not.toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ status: "delivered" }));
   });
 
   it("预回执写失败时禁止发送", async () => {

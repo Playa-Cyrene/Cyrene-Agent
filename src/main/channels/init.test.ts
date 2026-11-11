@@ -10,7 +10,6 @@ const mocks = vi.hoisted(() => {
     capability = {};
     displayName: string;
     running = false;
-    isLoggedIn = true;
     constructor(readonly id: string) { this.displayName = id; adapters.set(id, this); }
     start = vi.fn(async () => { this.running = settings[this.id].enabled; });
     stop = vi.fn(async () => { this.running = false; });

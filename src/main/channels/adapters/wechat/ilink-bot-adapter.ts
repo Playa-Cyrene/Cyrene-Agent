@@ -95,8 +95,6 @@ export class ILinkBotAdapter implements ChannelAdapter {
   private activity = new AdapterActivity();
   private pollAbort: AbortController | null = null;
   private pollLoopPromise: Promise<void> | null = null;
-  /** 账号是否已登录（凭证存在） */
-  isLoggedIn = false;
   /** 当前 credentials（动态加载） */
   currentCredentials: Credentials | null = null;
   private replyContextByTarget = new Map<string, string>();
@@ -138,7 +136,6 @@ export class ILinkBotAdapter implements ChannelAdapter {
 
     this.currentCredentials = creds;
     this.client = new ILinkClient(creds, { signal });
-    this.isLoggedIn = true;
 
     // 2. 启动 long-poll 循环
     this.pollAbort = new AbortController();
@@ -163,7 +160,6 @@ export class ILinkBotAdapter implements ChannelAdapter {
     }
     this.pollAbort = null;
     this.client = null;
-    this.isLoggedIn = false;
     this.status = { enabled: false, phase: "offline" };
   }
 
@@ -307,7 +303,6 @@ export class ILinkBotAdapter implements ChannelAdapter {
     await this.stop();
     await deleteCredentials();
     this.currentCredentials = null;
-    this.isLoggedIn = false;
     this.status = { enabled: false, phase: "offline", message: "已登出" };
   }
 

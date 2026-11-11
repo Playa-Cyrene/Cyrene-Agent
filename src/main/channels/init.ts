@@ -161,7 +161,9 @@ function registerChannelsIpc(
 
   ipc.handle(IPC.CHANNELS_SAVE_CONFIG, async (_e, patch: unknown, connect: unknown = false) => {
     const previous = loadChannelsSettings();
-    const current = saveChannelsSettings(patch as Parameters<typeof saveChannelsSettings>[0]);
+    saveChannelsSettings(patch as Parameters<typeof saveChannelsSettings>[0]);
+    // save 的返回值会将缺省密钥补成空串；两侧必须使用相同的持久化读取形态。
+    const current = loadChannelsSettings();
     reloadDispatcherSettings();
     // 显式连接也可重试原配置，但仅限本次提交且已启用的内置渠道。
     const changed = (["wechat", "feishu", "qq", "qqbot"] as const)
@@ -250,7 +252,8 @@ function registerChannelsIpc(
     return {
       running: status.phase === "starting",
       connected: status.phase === "running",
-      loggedIn: wxAdapter.isLoggedIn,
+      // 本地凭证存在与业务连接运行是两个独立状态；停用不等于注销。
+      loggedIn: Boolean(await loadCredentials()),
     };
   });
 

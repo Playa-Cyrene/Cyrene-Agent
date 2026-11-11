@@ -91,6 +91,8 @@ vi.mock("./qqbot-ws-client", () => ({
 }));
 
 import { QqBotAdapter, isQqBotEventAllowed, normalizeQqBotEvent } from "./qqbot-adapter";
+import { QqBotApiClient } from "./qqbot-api-client";
+import { createChannelDeliveryService } from "../../delivery-service";
 import type { IncomingMessage, OutgoingMessage } from "../../types";
 
 const adapters: QqBotAdapter[] = [];
@@ -98,6 +100,7 @@ const adapters: QqBotAdapter[] = [];
 afterEach(async () => {
   for (const adapter of adapters.splice(0)) await adapter.stop();
   apiState.sent.length = 0;
+  vi.restoreAllMocks();
 });
 
 function c2cEvent(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -181,6 +184,30 @@ describe("isQqBotEventAllowed", () => {
 });
 
 describe("QqBotAdapter", () => {
+  it.each([false, true])("末段已发起后停用，仅完整成功可确认送达 rejected=%s", async (rejected) => {
+    const activity = new AbortController();
+    const adapter = new QqBotAdapter();
+    adapters.push(adapter);
+    await adapter.start(activity.signal);
+    adapter.onMessage = vi.fn(async () => null);
+    wsState.options.onDispatch("C2C_MESSAGE_CREATE", c2cEvent());
+    await vi.waitFor(() => expect(adapter.onMessage).toHaveBeenCalledOnce());
+    const entered = Promise.withResolvers<void>();
+    const last = Promise.withResolvers<void>();
+    const send = vi.spyOn(QqBotApiClient.prototype, "sendText")
+      .mockResolvedValueOnce(undefined)
+      .mockImplementationOnce(() => { entered.resolve(); return last.promise; });
+    const delivery = createChannelDeliveryService({ getAdapter: () => adapter, getActivitySignal: () => activity.signal });
+    const sending = delivery.send({ channel: "qqbot", targetId: "OPENUSER0000000000000000000001", parts: [{ kind: "text", text: "one" }, { kind: "text", text: "two" }] });
+    await entered.promise;
+    activity.abort(new Error("channel_stopped"));
+    await adapter.stop();
+    if (rejected) last.reject(activity.signal.reason);
+    else last.resolve();
+    await expect(sending).resolves.toEqual(rejected ? { ok: false, error: "channel_stopped" } : { ok: true });
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
   it("starts, records rejected openid, and reports it in status detail", async () => {
     const adapter = new QqBotAdapter();
     adapters.push(adapter);

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { ChannelManager } from "./manager";
 import type { ChannelAdapter } from "./adapters/base";
+import type { ChannelStatus } from "./types";
 
 function fakeAdapter(id: string): ChannelAdapter {
   let started = false;
@@ -91,6 +92,42 @@ describe("ChannelManager", () => {
     expect(mgr.getActivitySignal("qq")?.aborted).toBe(true);
     expect(stop).toHaveBeenCalledOnce();
     await mgr.stopAll();
+  });
+
+  it("启动失败清理资源后仍显示原始诊断，重试或显式停止清除错误", async () => {
+    const mgr = new ChannelManager();
+    const adapter = fakeAdapter("qq");
+    let status: ChannelStatus = { enabled: true, phase: "starting" };
+    adapter.getStatus = () => status;
+    adapter.start = vi.fn(async () => { status = { enabled: true, phase: "error", message: "EADDRINUSE", detail: { port: 6200 } }; throw new Error("EADDRINUSE"); });
+    adapter.stop = vi.fn(async () => { status = { enabled: false, phase: "offline", message: "已停止" }; });
+    mgr.register(adapter);
+    await mgr.startAll();
+    expect(adapter.stop).toHaveBeenCalledOnce();
+    expect(mgr.getActivitySignal("qq")?.aborted).toBe(true);
+    expect(mgr.getAllStatus().qq).toMatchObject({ enabled: true, phase: "error", message: "EADDRINUSE", detail: { port: 6200 } });
+    adapter.start = async () => { status = { enabled: true, phase: "running" }; };
+    await mgr.startOne("qq");
+    expect(mgr.getAllStatus().qq.phase).toBe("running");
+    await mgr.stopOne("qq");
+    expect(mgr.getAllStatus().qq.phase).toBe("offline");
+  });
+
+  it("用户在启动期间停用时不把取消记录为启动错误", async () => {
+    const mgr = new ChannelManager();
+    const adapter = fakeAdapter("qq");
+    const entered = Promise.withResolvers<void>();
+    const failure = Promise.withResolvers<void>();
+    adapter.start = async () => { entered.resolve(); return failure.promise; };
+    mgr.register(adapter);
+    const starting = mgr.startOne("qq");
+    const rejected = expect(starting).rejects.toThrow("channel_stopped");
+    await entered.promise;
+    const stopping = mgr.stopOne("qq");
+    failure.reject(new Error("channel_stopped"));
+    await rejected;
+    await stopping;
+    expect(mgr.getAllStatus().qq.phase).toBe("offline");
   });
 
   it("startOne 启动单个 adapter；unregister 先 stop 再移除", async () => {

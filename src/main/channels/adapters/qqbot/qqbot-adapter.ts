@@ -281,6 +281,7 @@ export class QqBotAdapter implements ChannelAdapter {
         );
         sent++;
       } catch (error) {
+        if (signal.aborted) return { ok: false, error: "channel_stopped" };
         lastError = error instanceof Error ? error.message : String(error);
       }
     }
