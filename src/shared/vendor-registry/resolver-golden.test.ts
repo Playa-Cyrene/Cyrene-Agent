@@ -102,9 +102,9 @@ describe("resolveReasoningCapability — 行为基准", () => {
     expect(resolveReasoningCapability("unknown-provider", "claude-haiku-5-5").defaultEffort).toBe("medium");
   });
 
-  // 预期值按官方文档独立填写（思考文档、OpenAI 兼容文档与模型页，核验 2026-10-18），不从注册表复制。
-  test("gemini + gemini-4-argon → reasoning_effort 三档 low/medium/high，默认 medium，不可关闭", () => {
-    const cap = resolveReasoningCapability("gemini", "gemini-4-argon");
+  // 预期值按官方文档独立填写（思考文档、OpenAI 兼容文档与模型页；Argon 核验 2026-10-18，Carbon 核验 2026-11-11），不从注册表复制。
+  test.each(["gemini-4-argon", "gemini-4-carbon"])("gemini + %s → reasoning_effort 三档 low/medium/high，默认 medium，不可关闭", (model) => {
+    const cap = resolveReasoningCapability("gemini", model);
     expect(cap.control).toBe("effort");
     expect(cap.requestStyle).toBe("openai-effort");
     expect(cap.supportedEfforts).toEqual(["low", "medium", "high"]);
@@ -112,8 +112,8 @@ describe("resolveReasoningCapability — 行为基准", () => {
     expect(cap.supportsDisable).toBe(false);
   });
 
-  test("Gemini 4 Argon 规则可跨厂商推断：托管端点使用同一型号名", () => {
-    expect(resolveReasoningCapability("unknown-provider", "gemini-4-argon").defaultEffort).toBe("medium");
+  test.each(["gemini-4-argon", "gemini-4-carbon"])("%s 规则可跨厂商推断：托管端点使用同一型号名", (model) => {
+    expect(resolveReasoningCapability("unknown-provider", model).defaultEffort).toBe("medium");
   });
 
   test("邻近反例：gemini-3.8-flash 仍走 gemini-3 规则，未核实的 gemini-4-flash 落兜底", () => {

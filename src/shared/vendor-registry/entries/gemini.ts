@@ -27,6 +27,14 @@ export const GEMINI_REGISTRY = defineVendor({
   },
   models: [
     {
+      model: "gemini-4-carbon",
+      recommendedFor: ["chat"],
+      note: "2026-11-10 正式发布（GA）；固定型号名，无日期后缀。",
+      unknownCapabilities: [
+        { feature: "sampling", transport: "openai", note: "官方说明 temperature/top_p/top_k 应移除，传入会被忽略；未加采样白名单即不注入采样参数。" },
+      ],
+    },
+    {
       model: "gemini-4-argon",
       recommendedFor: ["chat"],
       note: "2026-09-30 发布的旗舰推理模型（Stable）；固定型号名，无日期后缀。",
@@ -77,6 +85,23 @@ export const GEMINI_REGISTRY = defineVendor({
     // 官方模型页列出 Structured outputs 为已支持；OpenAI 兼容层文档以 response_format（parse）示例说明。
     // 只覆盖已核实的完整型号名，其余 Gemini 型号仍走提示词 JSON 回退。
     {
+      id: "gemini-4-carbon-structured-output",
+      transport: "openai",
+      modelPattern: /^gemini-4-carbon$/i,
+      tier: "A",
+      mode: "provider_json_schema",
+      verification: "official",
+      metadata: {
+        status: "supported",
+        evidence: {
+          kind: "official",
+          url: "https://ai.google.dev/gemini-api/docs/models/gemini-4-carbon",
+          checkedAt: "2026-11-11",
+          transports: ["openai"],
+        },
+      },
+    },
+    {
       id: "gemini-4-argon-structured-output",
       transport: "openai",
       modelPattern: /^gemini-4-argon$/i,
@@ -123,6 +148,23 @@ export const GEMINI_REGISTRY = defineVendor({
         kind: "official",
         url: "https://ai.google.dev/gemini-api/docs/openai",
         checkedAt: "2026-10-18",
+        transports: ["openai"],
+      },
+    }, capability: {
+      control: "effort",
+      supportedEfforts: ["low", "medium", "high"],
+      defaultEffort: "medium",
+      requestStyle: "openai-effort",
+      supportsDisable: false,
+    } },
+    // Gemini 4 Carbon：与 Argon 相同，thinking_level 仅 low/medium/high，默认 medium；
+    // 兼容文档写明 Gemini 4 的思考不能关闭 → supportsDisable=false（核验 2026-11-11）。
+    { modelPattern: /^gemini-4-carbon/i, modelInferencePattern: /^gemini-4-carbon/i, metadata: {
+      status: "supported",
+      evidence: {
+        kind: "official",
+        url: "https://ai.google.dev/gemini-api/docs/openai",
+        checkedAt: "2026-11-11",
         transports: ["openai"],
       },
     }, capability: {
