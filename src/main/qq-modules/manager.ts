@@ -43,6 +43,7 @@ export class QqModuleManager {
   onMessage: MessageHandler | null = null;
   private state: QqModuleState = { phase: "disabled", runtimeEpoch: 0, enabled: false };
   private current?: Generation;
+  private migrationQuarantine = false;
   private sequence = Promise.resolve();
   private readonly context = new AsyncLocalStorage<TurnLease>();
   constructor(private readonly options: QqModuleManagerOptions) {}
@@ -59,6 +60,40 @@ export class QqModuleManager {
   }
   start(): Promise<void> { return this.serialize(() => this.startInternal()); }
   stop(): Promise<void> { return this.serialize(() => this.stopInternal()); }
+  /** Migration probes must not dispatch or send before the durable host selection.
+   * Not connected to production IPC; a confirmed host migration owns this manager. */
+  stageForMigration(): Promise<void> {
+    return this.serialize(async () => {
+      if (this.current) throw new Error("QQ_MODULE_ALREADY_STARTED");
+      this.migrationQuarantine = true;
+      await this.startInternal();
+    });
+  }
+  getMigrationIdentity(): { selfId: string; connectionEpoch: number } | null {
+    const gen = this.current;
+    return gen?.authorized && gen.connectionEpoch !== undefined && this.state.phase === "running"
+      ? { selfId: gen.config.expectedSelfId, connectionEpoch: gen.connectionEpoch } : null;
+  }
+  /** Reverse-WS backends reconnect asynchronously after the old listener closes. */
+  async waitForMigrationIdentity(timeoutMs = 30_000): Promise<{ selfId: string; connectionEpoch: number } | null> {
+    if (!Number.isFinite(timeoutMs) || timeoutMs < 1 || timeoutMs > 120_000) return null;
+    const deadline = Date.now() + timeoutMs;
+    while (this.migrationQuarantine) {
+      const identity = this.getMigrationIdentity();
+      if (identity) return identity;
+      if (!["starting", "waiting-backend"].includes(this.state.phase) || Date.now() >= deadline) return null;
+      await new Promise<void>((resolve) => setTimeout(resolve, Math.min(20, Math.max(1, deadline - Date.now()))));
+    }
+    return null;
+  }
+  activateMigration(): boolean {
+    const gen = this.current;
+    if (!this.migrationQuarantine || !gen || !this.getMigrationIdentity()) return false;
+    this.migrationQuarantine = false;
+    gen.accepting = true;
+    return true;
+  }
+  isStoppedForMigration(): boolean { return !this.current && this.state.phase === "stopped"; }
   restart(): Promise<void> { return this.serialize(async () => { await this.stopInternal(); await this.startInternal(); }); }
   private setPhase(phase: QqModulePhase): void { this.state = { ...this.state, phase }; }
   private async startInternal(): Promise<void> {
@@ -120,7 +155,7 @@ export class QqModuleManager {
       if (gen.connectionEpoch === undefined && status.connectionEpoch <= gen.highestConnectionEpoch) { gen.runtime.close("protocol"); return; }
       gen.highestConnectionEpoch = status.connectionEpoch;
       gen.connectionEpoch = status.connectionEpoch;
-      if (this.state.phase !== "draining") { gen.accepting = true; this.setPhase("running"); }
+      if (this.state.phase !== "draining") { gen.accepting = !this.migrationQuarantine; this.setPhase("running"); }
     } else {
       gen.connectionEpoch = undefined; gen.accepting = false;
       if (this.state.phase !== "draining") this.setPhase("waiting-backend");
@@ -174,7 +209,7 @@ export class QqModuleManager {
     const lease = this.context.getStore();
     const operationId = randomUUID();
     const failure = (outcome: "failed" | "unknown", errorCode: "rejected" | "unsupported" | "disconnected" | "timeout" | "internal"): QqSendResultV1 => ({ operationId, outcome, parts: message.parts.map((_, partIndex) => ({ partIndex, outcome, errorCode })) });
-    if (!gen || !gen.authorized || gen.connectionEpoch === undefined || message.channel !== "qq" || !message.chatType
+    if (this.migrationQuarantine || !gen || !gen.authorized || gen.connectionEpoch === undefined || message.channel !== "qq" || !message.chatType
       || (lease && (lease.generation !== gen || lease.connectionEpoch !== gen.connectionEpoch))
       || (this.state.phase === "draining" && !lease)) return failure("failed", "rejected");
     const conversation = message.chatType === "group" ? { type: "group" as const, groupId: message.targetId } : { type: "private" as const, peerId: message.targetId };
