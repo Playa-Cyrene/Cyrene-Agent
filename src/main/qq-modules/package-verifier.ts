@@ -92,11 +92,20 @@ export function verifyQqPackage(input: QqSignedPackage, context: QqPackageVerifi
     || !manifest.targets.some((t) => t.platform === context.platform && t.arch === context.arch)) fail("incompatible-package");
   if (!manifest.entry.endsWith(".js") && !manifest.entry.endsWith(".cjs") && !manifest.entry.endsWith(".mjs")) fail("invalid-entry");
   const paths = new Set<string>();
+  const directories = new Map<string, string>();
   let total = 0;
   for (const file of manifest.files) {
     const lower = file.path.toLowerCase();
     if (paths.has(lower)) fail("invalid-file-inventory");
     paths.add(lower);
+    // Every shared directory must keep one spelling for exact-path readback on Windows.
+    const parts = file.path.split("/");
+    while (parts.length > 1) {
+      parts.pop();
+      const directory = parts.join("/"), key = directory.toLowerCase();
+      if (directories.has(key) && directories.get(key) !== directory) fail("invalid-file-inventory");
+      directories.set(key, directory);
+    }
     total += file.size;
     if (total > QQ_PACKAGE_LIMITS.totalBytes) fail("package-too-large");
   }
