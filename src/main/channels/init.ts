@@ -29,7 +29,7 @@ import { startInboundServer, stopInboundServer } from "./inbound-server";
 import { FeishuAdapter } from "./adapters/feishu";
 import { ILinkBotAdapter, loadCredentials } from "./adapters/wechat/ilink-bot-adapter";
 import { NapCatAdapter } from "./adapters/qq/napcat-adapter";
-import { resolveQqListenAuthRequirement } from "./adapters/qq/onebot-reverse-ws";
+import { resolveQqListenAuthRequirement } from "./qq-listen-policy";
 import { QqBotAdapter } from "./adapters/qqbot/qqbot-adapter";
 import { getRecentLog, clearLog, reloadLogFromDisk } from "./message-log";
 import { logger, LogTag } from "../logger";

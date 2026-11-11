@@ -101,3 +101,89 @@ describe("ChannelManager", () => {
     expect(send).not.toHaveBeenCalled();
   });
 });
+
+describe("ChannelManager 宿主身份边界", () => {
+  it.each(["qq", "qqbot"])("即使空槽也拒绝普通插件管理保留身份 %s", async (id) => {
+    const mgr = new ChannelManager();
+    const plugins = mgr.createPluginPort();
+    const adapter = fakeAdapter(id);
+    expect(() => plugins.register(adapter)).toThrow(/宿主保留身份/);
+    await expect(plugins.startOne(adapter.id)).rejects.toThrow(/宿主保留身份/);
+    await expect(plugins.unregister(adapter.id)).rejects.toThrow(/宿主保留身份/);
+    expect(mgr.has(adapter.id)).toBe(false);
+
+    // 宿主仍能正常注册、启动、停止既有普通 QQ/官方 QQ。
+    mgr.register(adapter);
+    await mgr.startOne(adapter.id);
+    await expect(plugins.unregister(adapter.id)).rejects.toThrow(/宿主保留身份/);
+    expect(mgr.getAdapter(adapter.id)).toBe(adapter);
+    expect(adapter.getStatus().phase).toBe("running");
+    expect(await mgr.unregister(adapter.id)).toBe(true);
+  });
+
+  it("注册归属由端口持有，另一端口或宿主单项操作不能注销它", async () => {
+    const mgr = new ChannelManager();
+    const first = mgr.createPluginPort();
+    const other = mgr.createPluginPort();
+    const adapter = fakeAdapter("custom-plugin");
+    first.register(adapter);
+    await first.startOne(adapter.id);
+    await expect(other.startOne(adapter.id)).rejects.toThrow(/不属于/);
+    await expect(other.unregister(adapter.id)).rejects.toThrow(/不属于/);
+    await expect(mgr.unregister(adapter.id)).rejects.toThrow(/不属于/);
+    expect(mgr.getAdapter(adapter.id)).toBe(adapter);
+    // 全局启停仍覆盖插件渠道，且不改变归属。
+    await mgr.stopAll();
+    await mgr.startAll();
+    expect(adapter.getStatus().phase).toBe("running");
+    expect(await first.unregister(adapter.id)).toBe(true);
+    expect(await first.unregister(adapter.id)).toBe(false);
+  });
+
+  it("普通插件不能注销由宿主注册的非 QQ 渠道", async () => {
+    const mgr = new ChannelManager();
+    const adapter = fakeAdapter("feishu");
+    mgr.register(adapter);
+    await expect(mgr.createPluginPort().unregister(adapter.id)).rejects.toThrow(/不属于/);
+    expect(mgr.getAdapter(adapter.id)).toBe(adapter);
+  });
+
+  it("拒绝入站渠道冒充，但保留合法消息中的 mentions/reply", async () => {
+    const mgr = new ChannelManager();
+    const plugins = mgr.createPluginPort();
+    const adapter = fakeAdapter("custom-plugin");
+    const dispatch = vi.fn(async () => null);
+    plugins.register(adapter);
+    mgr.setDispatcher(dispatch);
+    await plugins.startOne(adapter.id);
+    const message = {
+      channel: adapter.id,
+      chatType: "group" as const,
+      chatId: "group-1",
+      senderId: "sender-1",
+      text: "你好",
+      mentions: [{ userId: "bot-1", isBot: true }],
+      reply: { messageId: "message-0", text: "原消息" },
+      at: new Date(0),
+    };
+    await adapter.onMessage?.({ ...message, channel: "qq" });
+    expect(dispatch).not.toHaveBeenCalled();
+    await adapter.onMessage?.(message);
+    expect(dispatch).toHaveBeenCalledExactlyOnceWith(message);
+  });
+
+  it("注销后保存的旧回调不能向同 ID 的新实例注入消息", async () => {
+    const mgr = new ChannelManager();
+    const adapter = fakeAdapter("qq");
+    const dispatch = vi.fn(async () => null);
+    mgr.register(adapter);
+    mgr.setDispatcher(dispatch);
+    await mgr.startOne(adapter.id);
+    const oldHandler = adapter.onMessage!;
+    await mgr.unregister(adapter.id);
+    expect(adapter.onMessage).toBeNull();
+    mgr.register(fakeAdapter("qq"));
+    await oldHandler({ channel: "qq", chatId: "1", senderId: "1", text: "late", at: new Date(0) });
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+});

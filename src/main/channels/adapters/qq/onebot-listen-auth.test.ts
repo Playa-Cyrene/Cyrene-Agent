@@ -10,7 +10,12 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { resolveQqListenAuthRequirement } from "./onebot-reverse-ws";
+import {
+  isLoopbackHost,
+  resolveOneBotListenHost,
+  resolveQqListenAuthRequirement,
+} from "../../qq-listen-policy";
+import * as legacyPolicy from "./onebot-reverse-ws";
 
 type InterfaceMap = Parameters<typeof resolveQqListenAuthRequirement>[1];
 
@@ -56,6 +61,12 @@ const LOOPBACK_SPELLINGS = [
 const NON_LOOPBACK_SPELLINGS = ["0.0.0.0", "::", "192.168.1.20", "172.20.0.1"];
 
 describe("resolveQqListenAuthRequirement", () => {
+  it("既有后端导出与宿主策略为同一实现", () => {
+    expect(legacyPolicy.isLoopbackHost).toBe(isLoopbackHost);
+    expect(legacyPolicy.resolveOneBotListenHost).toBe(resolveOneBotListenHost);
+    expect(legacyPolicy.resolveQqListenAuthRequirement).toBe(resolveQqListenAuthRequirement);
+  });
+
   it("auto 按机器是否装了 WSL 分叉：有 WSL 网卡即要求 token", () => {
     // 回归锚点：渲染端曾按模式名把 auto 当成回环，导致这一分支漏报。
     expect(resolveQqListenAuthRequirement({ listenMode: "auto" }, WSL_INTERFACES)).toEqual({
