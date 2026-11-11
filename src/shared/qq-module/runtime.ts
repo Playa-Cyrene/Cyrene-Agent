@@ -1,3 +1,4 @@
+import { validateMediaBeginUpload, validateMediaWrite, validateMediaRead, validateMediaRelease, validateMediaChunk, type QqMediaBeginUpload, type QqMediaWrite, type QqMediaRead, type QqMediaRelease, type QqMediaChunk } from "./media";
 import type { QqApiSupport, QqApiVersion, QqCapabilitySnapshot, QqInboundMessageV1, QqSendRequestV1, QqSendResultV1 } from "./types";
 import { isBoundedJson, strictObject, validateCapabilitySnapshot, validateInboundMessage, validateSendRequest, validateSendResult } from "./validation";
 import { validateApiSupport } from "./version";
@@ -14,7 +15,12 @@ export interface QqRuntimeConfig {
   allowedGroupIds: string[];
   groupRequireMention: boolean;
 }
-export interface QqInitialize { config: QqRuntimeConfig; credentials: { accessToken: string } }
+export interface QqInitialize {
+  config: QqRuntimeConfig;
+  credentials: { accessToken: string };
+  /** Trusted host opt-in only. Omission preserves text-only behavior with older hosts. */
+  mediaTransfer?: "chunked-v1";
+}
 export type QqBackendStatus =
   | { phase: "waiting-backend" }
   | { phase: "running"; selfId: string; connectionEpoch: number };
@@ -24,6 +30,10 @@ export interface QqRequestPayloads {
   initialize: QqInitialize;
   start: Record<string, never>;
   send: QqSendRequestV1;
+  mediaBeginUpload: QqMediaBeginUpload;
+  mediaWrite: QqMediaWrite;
+  mediaRead: QqMediaRead;
+  mediaRelease: QqMediaRelease;
   ackInbound: QqInboundAck;
   quiesce: Record<string, never>;
   stop: Record<string, never>;
@@ -34,6 +44,10 @@ export interface QqResponsePayloads {
   initialize: { capabilities: QqCapabilitySnapshot };
   start: QqBackendStatus;
   send: QqSendResultV1;
+  mediaBeginUpload: { mediaId: string };
+  mediaWrite: Record<string, never>;
+  mediaRead: QqMediaChunk;
+  mediaRelease: Record<string, never>;
   ackInbound: Record<string, never>;
   quiesce: Record<string, never>;
   stop: Record<string, never>;
@@ -68,8 +82,12 @@ export function validateBackendStatus(v: unknown): v is QqBackendStatus {
 export function validateRequestPayload(method: QqMethod, v: unknown): boolean {
   if (!isBoundedJson(v)) return false;
   switch (method) {
-    case "initialize": return strictObject(v, { config: validateRuntimeConfig, credentials: (c) => strictObject(c, { accessToken: (s) => typeof s === "string" && s.length <= 4096 }) });
+    case "initialize": return strictObject(v, { config: validateRuntimeConfig, credentials: (c) => strictObject(c, { accessToken: (s) => typeof s === "string" && s.length <= 4096 }) }, { mediaTransfer: (m) => m === "chunked-v1" });
     case "send": return validateSendRequest(v);
+    case "mediaBeginUpload": return validateMediaBeginUpload(v);
+    case "mediaWrite": return validateMediaWrite(v);
+    case "mediaRead": return validateMediaRead(v);
+    case "mediaRelease": return validateMediaRelease(v);
     case "ackInbound": return strictObject(v, { eventId: id, outcome: (o) => ["accepted", "rejected-policy", "busy", "stale-instance", "unsupported", "duplicate"].includes(o as string) });
     default: return empty(v);
   }
@@ -81,10 +99,12 @@ export function validateResponsePayload(method: QqMethod, v: unknown, request?: 
     case "initialize": return strictObject(v, { capabilities: validateCapabilitySnapshot });
     case "start": return validateBackendStatus(v);
     case "send": return validateSendResult(v, request as QqSendRequestV1);
+    case "mediaBeginUpload": return strictObject(v, { mediaId: id });
+    case "mediaRead": return validateMediaChunk(v, request as QqMediaRead);
     default: return empty(v);
   }
 }
-const methods = ["hello", "initialize", "start", "send", "ackInbound", "quiesce", "stop", "ping"];
+const methods = ["hello", "initialize", "start", "send", "mediaBeginUpload", "mediaWrite", "mediaRead", "mediaRelease", "ackInbound", "quiesce", "stop", "ping"];
 const identity = {
   apiVersion: (v: unknown) => strictObject(v, { major: (n) => n === 1, minor: (n) => n === 0 }),
   instanceId: id, runtimeEpoch: integer,
