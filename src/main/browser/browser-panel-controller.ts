@@ -532,10 +532,25 @@ export class BrowserPanelController {
     const contents = tab?.view?.webContents;
     if (!tab || !contents || contents.isDestroyed() || contents.isLoading() || !tab.state.url
       || !this.bounds || this.bounds.width <= 0 || this.bounds.height <= 0) return false;
+    const observationGeneration = this.observationGenerations.get(tab.id) ?? 0;
+    const initialUrl = tab.state.url;
+    const initialControlLease = this.controlLease ? { ...this.controlLease } : null;
+    const isSnapshotCurrent = () => {
+      const currentLease = this.controlLease;
+      return (this.observationGenerations.get(tab.id) ?? 0) === observationGeneration
+        && this.hasVisibleBounds()
+        && this.activeTabId === tab.id
+        && this.getActiveTab() === tab
+        && tab.state.url === initialUrl
+        && !contents.isDestroyed()
+        && !contents.isLoading()
+        && currentLease?.conversationId === initialControlLease?.conversationId
+        && currentLease?.tabId === initialControlLease?.tabId;
+    };
     this.clearElementPicker();
     try {
       const snapshot = await startPlaywrightElementPicker(contents);
-      if (this.getActiveTab()?.id !== tab.id || tab.state.loading || contents.isDestroyed()) {
+      if (!isSnapshotCurrent() || tab.state.loading) {
         if (!contents.isDestroyed()) await cancelPlaywrightElementPicker(contents).catch(() => undefined);
         return false;
       }
@@ -948,9 +963,12 @@ export class BrowserPanelController {
   setBounds(bounds: BrowserPanelBounds | null): void {
     const wasVisible = this.hasVisibleBounds();
     this.bounds = bounds;
-    if (wasVisible && !this.hasVisibleBounds() && this.controlLease) {
-      this.controlNeedsObservation = true;
-      this.forgetTabObservations(this.controlLease.tabId);
+    if (wasVisible && !this.hasVisibleBounds()) {
+      if (this.controlLease) this.controlNeedsObservation = true;
+      this.forgetTabObservations(this.activeTabId);
+      if (this.controlLease && this.controlLease.tabId !== this.activeTabId) {
+        this.forgetTabObservations(this.controlLease.tabId);
+      }
     }
     if (bounds && bounds.width > 0 && bounds.height > 0) {
       for (const resolve of [...this.visibleBoundsWaiters]) resolve();
