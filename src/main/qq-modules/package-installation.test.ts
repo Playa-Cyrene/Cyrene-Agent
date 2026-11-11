@@ -24,6 +24,12 @@ function signed(manifest: QqPackageManifest, files: ReadonlyMap<string, Uint8Arr
   const bytes = Buffer.from(JSON.stringify(manifest));
   return { manifest: bytes, signature: sign(null, Buffer.concat([Buffer.from(QQ_PACKAGE_SIGNATURE_DOMAIN), bytes]), keys.privateKey), files };
 }
+function candidateWithPaths(paths: string[]): QqSignedPackage {
+  const manifest: QqPackageManifest = JSON.parse(Buffer.from(candidate().manifest).toString());
+  const files = new Map(paths.map((path) => [path, Buffer.from(`// inert fixture ${path}`)]));
+  return signed({ ...manifest, entry: paths[0],
+    files: [...files].map(([path, bytes]) => ({ path, size: bytes.length, sha256: qqPackageDigest(bytes) })) }, files);
+}
 const temp: string[] = [];
 function store(checkpoint?: ConstructorParameters<typeof QqPackageStore>[2]) {
   const parent = mkdtempSync(join(tmpdir(), "cyrene-package-test-")); temp.push(parent);
@@ -69,6 +75,36 @@ describe("QQ signed package gate", () => {
     expect(() => verifyQqPackage({ ...input, files: new Map() }, context)).toThrow("invalid-file-inventory");
     expect(() => verifyQqPackage(signed({ ...manifest, files: [manifest.files[0], { ...manifest.files[0], path: "INDEX.cjs" }] }, input.files), context)).toThrow("invalid-file-inventory");
     expect(() => verifyQqPackage(signed({ ...manifest, files: [manifest.files[0], { ...manifest.files[1], path: "index.cjs/child" }] }, input.files), context)).toThrow("invalid-file-inventory");
+  });
+  it.each([
+    ["Lib/a.js", "lib/b.js"],
+    ["lib/a.js", "Lib/b.js"],
+    ["lib/Utils/a.js", "lib/utils/b.js"],
+    ["Lib/deep/a.js", "lib/other/b.js"],
+    ["lib/Utils/deep/a.js", "lib/utils/other/b.js"],
+  ])("rejects directory case aliases %s and %s before writing", (first, second) => {
+    const input = candidateWithPaths([first, second]);
+    expect(() => verifyQqPackage(input, context)).toThrow("invalid-file-inventory");
+    const s = store();
+    expect(() => s.instance.install(input, consent)).toThrow("invalid-file-inventory");
+    expect(existsSync(s.root)).toBe(false);
+  });
+  it.each([
+    ["lib.js", "lib.js/child.js"],
+    ["lib.js/child.js", "lib.js"],
+    ["Lib.js", "lib.js/child.js"],
+    ["lib.js/child.js", "Lib.js"],
+    ["Lib/a.js", "Lib/A.js"],
+  ])("still rejects file aliases %s and %s", (first, second) => {
+    expect(() => verifyQqPackage(candidateWithPaths([first, second]), context)).toThrow("invalid-file-inventory");
+  });
+  it("round-trips shared, nested and distinct directory prefixes with consistent casing", () => {
+    const input = candidateWithPaths(["Lib/index.js", "Lib/b.js", "Lib/Utils/a.js", "Lib/Utils/b.js",
+      "Lib/Utils/Nested/a.js", "Other/Utils/a.js", "Library/a.js"]);
+    expect(verifyQqPackage(input, context).files).toHaveLength(7);
+    const s = store(), installed = s.instance.install(input, consent);
+    const restarted = new QqPackageStore(s.root, () => context);
+    expect(restarted.getSelected()).toEqual(installed);
   });
   it("rejects oversized, noncanonical and unknown-field manifests", () => {
     const input = candidate();
