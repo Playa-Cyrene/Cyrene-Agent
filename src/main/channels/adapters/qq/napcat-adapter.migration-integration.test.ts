@@ -19,8 +19,9 @@ import { ConversationDatabase } from "../../../storage/conversation-database";
 import { QqMigrationCoordinator } from "../../../qq-modules/migration";
 import { QqMigrationStore } from "../../../qq-modules/migration-store";
 import { QqModuleManager } from "../../../qq-modules/manager";
+import { QqMediaBroker } from "../../../qq-modules/media-broker";
 import { QqModuleAdapter } from "../qq-module-adapter";
-import { FakeTransport, inbound } from "../../../../../scripts/verify/qq-module/fixtures";
+import { capabilities, FakeTransport, inbound } from "../../../../../scripts/verify/qq-module/fixtures";
 
 let history: ConversationDatabase | undefined;
 let old: NapCatAdapter | undefined;
@@ -105,12 +106,19 @@ it("rehearses a confirmed legacy WS migration without changing original data or 
     user_id: "30000", message_id: "old-pending", message: [{ type: "text", data: { text: "old" } }] }));
   await until(() => entered);
   const peer = new FakeTransport();
+  const behavior = peer.behavior;
+  peer.behavior = (request) => request.method === "initialize" ? peer.reply(request, {
+    capabilities: { ...capabilities, messages: { ...capabilities.messages, file: true, maxFileBytes: 1000 } } })
+    : request.method === "mediaRead" ? peer.reply(request, { data: "aGVsbG8=", eof: true })
+      : request.method === "mediaBeginUpload" ? peer.reply(request, { mediaId: "host-upload" }) : behavior(request);
+  const media = { kind: "file" as const, mediaId: "module-file", size: 5, filename: "history.txt" };
+  const source = join(fixture.directory, "selected-reply.txt"); writeFileSync(source, "hello");
   const dispatched: IncomingMessage[] = [];
   const stagedSends: Array<ReturnType<QqModuleManager["send"]>> = [];
   const store = new QqMigrationStore(join(fixture.directory, "migration-sidecar"), (record) => {
     if (record.phase === "module-staged" || record.phase === "committed") {
-      peer.event("inbound", inbound(`quarantine-${record.phase}`));
-      stagedSends.push(manager!.send({ channel: "qq", chatType: "group", targetId: "20000", parts: [{ kind: "text", text: "blocked" }] }));
+      peer.event("inbound", { ...inbound(`quarantine-${record.phase}`), attachments: [{ ...media, mediaId: `${media.mediaId}-${record.phase}` }] });
+      stagedSends.push(manager!.send({ channel: "qq", chatType: "group", targetId: "20000", parts: [{ kind: "text", text: "blocked" }, { kind: "file", filePath: source }] }));
       expect(dispatched).toEqual([]);
     }
   });
@@ -122,7 +130,8 @@ it("rehearses a confirmed legacy WS migration without changing original data or 
   });
   const createModule = vi.fn((input: QqInitialize) => {
     expect(input.config.expectedSelfId).toBe("10000");
-    manager = new QqModuleManager({ getConfiguration: () => input, createTransport, requestTimeoutMs: 100 });
+    manager = new QqModuleManager({ getConfiguration: () => input, createTransport, requestTimeoutMs: 100,
+      mediaBroker: new QqMediaBroker(join(fixture.directory, "module-media-cache")) });
     manager.onMessage = async (message) => { dispatched.push(message); return null; };
     return manager;
   });
@@ -145,13 +154,18 @@ it("rehearses a confirmed legacy WS migration without changing original data or 
   expect(stagedSends).toHaveLength(2);
   for (const result of await Promise.all(stagedSends)) expect(result.outcome).toBe("failed");
   expect(dispatched).toEqual([]);
-  expect(peer.messages.filter((message) => message.method === "send")).toEqual([]);
+  expect(peer.messages.filter((message) => ["send", "mediaRead", "mediaBeginUpload"].includes(message.method))).toEqual([]);
   const newAdapter = new QqModuleAdapter(manager!);
   expect(old.id).toBe("qq");
   expect(newAdapter.id).toBe("qq");
-  peer.event("inbound", inbound("after-commit"));
+  peer.event("inbound", { ...inbound("after-commit"), attachments: [media] });
   await until(() => dispatched.length === 1);
-  expect(dispatched[0]).toMatchObject({ channel: "qq", chatId: "20000", senderId: "30000" });
+  expect(dispatched[0]).toMatchObject({ channel: "qq", chatId: "20000", senderId: "30000", text: "hello" });
+  const cachedAttachment = dispatched[0].attachments![0].filePath!;
+  expect(readFileSync(cachedAttachment).toString()).toBe("hello");
+  expect((await manager!.send({ channel: "qq", chatType: "group", targetId: "20000",
+    parts: [{ kind: "text", text: "new reply" }, { kind: "file", filePath: source }] })).outcome).toBe("sent");
+  expect(JSON.stringify(peer.messages)).not.toContain(fixture.directory);
   expect(manager!.getMigrationIdentity()).toEqual({ selfId: "10000", connectionEpoch: 1 });
   const migratedSessionId = makeSessionId(dispatched[0].channel, dispatched[0].chatId);
   expect(migratedSessionId).toBe(sessionId);
@@ -160,4 +174,6 @@ it("rehearses a confirmed legacy WS migration without changing original data or 
   expect(history.entries(reloadedBindings.resolve(migratedSessionId)!)).toEqual([savedEntry]);
   expect(getRecentLog()).toEqual([logEntry]);
   for (const [name, bytes] of Object.entries(originalFiles)) expect(readFileSync(join(fixture.directory, name))).toEqual(bytes);
+  await manager!.stop();
+  expect(readFileSync(cachedAttachment).toString()).toBe("hello");
 });
