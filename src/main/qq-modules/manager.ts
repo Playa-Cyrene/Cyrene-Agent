@@ -183,6 +183,13 @@ export class QqModuleManager {
   private ack(gen: Generation, eventId: string, outcome: QqInboundAck["outcome"]): void {
     void gen.runtime.request("ackInbound", { eventId, outcome }).catch(() => {});
   }
+  private async releaseInboundMedia(gen: Generation, connectionEpoch: number, mediaIds: Iterable<string>): Promise<void> {
+    // Releasing opaque handles needs no broker, local file access or active lease.
+    // Each RPC keeps the bounded control timeout; disconnect also revokes handles.
+    await Promise.all([...mediaIds].map(async (mediaId) => {
+      try { await gen.runtime.request("mediaRelease", { connectionEpoch, mediaId }); } catch { /* best effort on a closed/unresponsive module */ }
+    }));
+  }
   private acceptInbound(gen: Generation, message: QqInboundMessageV1): void {
     let rejection: QqInboundAck["outcome"] | undefined;
     const conversation = message.conversation;
@@ -194,7 +201,19 @@ export class QqModuleManager {
     else if (message.attachments?.length && !this.options.mediaBroker) rejection = "unsupported";
     else if (gen.seen.has(message.eventId)) rejection = "duplicate";
     else if (!this.onMessage || gen.turns.size >= 16) rejection = "busy";
-    if (rejection) { this.ack(gen, message.eventId, rejection); return; }
+    if (rejection) {
+      // ACK releases transport pressure only. A rejected event's pre-downloaded
+      // module handles must be released before allowing the next event through.
+      // A previously accepted event still owns its handles, even if a duplicate
+      // arrives after policy revocation or stop changes the rejection reason.
+      if (!message.attachments?.length || gen.seen.has(message.eventId)) { this.ack(gen, message.eventId, rejection); return; }
+      const outcome = rejection;
+      const cleanup = this.releaseInboundMedia(gen, message.connectionEpoch, new Set(message.attachments.map((media) => media.mediaId)))
+        .then(() => this.ack(gen, message.eventId, outcome));
+      gen.turns.add(cleanup);
+      void cleanup.finally(() => gen.turns.delete(cleanup));
+      return;
+    }
     gen.seen.add(message.eventId);
     if (gen.seen.size > 1024) gen.seen.delete(gen.seen.values().next().value!);
     const handler = this.onMessage!;
@@ -219,10 +238,16 @@ export class QqModuleManager {
     };
     const turn = this.context.run(lease, async () => {
       const attachments = [];
+      const unclaimed = new Set((message.attachments ?? []).map((media) => media.mediaId));
       let dispatched = false;
       try {
         for (const media of message.attachments ?? []) {
-          try { check(); attachments.push(await this.options.mediaBroker!.download({ runtime: gen.runtime, connectionEpoch: message.connectionEpoch, signal: gen.mediaAbort.signal, assertAuthorized: check }, message.eventId, media)); }
+          try {
+            check();
+            // From this point the broker releases the handle on success/failure.
+            unclaimed.delete(media.mediaId);
+            attachments.push(await this.options.mediaBroker!.download({ runtime: gen.runtime, connectionEpoch: message.connectionEpoch, signal: gen.mediaAbort.signal, assertAuthorized: check }, message.eventId, media));
+          }
           catch { incoming.text += `${incoming.text ? "\n" : ""}[附件加载失败]`; }
         }
         check(); if (attachments.length) incoming.attachments = attachments;
@@ -231,7 +256,10 @@ export class QqModuleManager {
         return await handler(incoming);
       } finally {
         if (!dispatched && message.attachments?.length) {
-          await Promise.all(attachments.map((attachment) => this.options.mediaBroker!.discard(attachment)));
+          await Promise.all([
+            ...attachments.map((attachment) => this.options.mediaBroker!.discard(attachment)),
+            this.releaseInboundMedia(gen, message.connectionEpoch, unclaimed),
+          ]);
           this.ack(gen, message.eventId, "stale-instance");
         }
       }

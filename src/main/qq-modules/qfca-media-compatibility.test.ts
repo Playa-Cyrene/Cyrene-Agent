@@ -15,7 +15,7 @@ const candidateEntry = process.env.QFCA_ENTRY;
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
 interface Action { action: string; params: Record<string, any>; echo: string }
-async function startPair(options: { stream?: boolean; corruptDownload?: boolean; broker?: boolean } = {}) {
+async function startPair(options: { stream?: boolean; corruptDownload?: boolean; broker?: boolean; quarantine?: boolean } = {}) {
   if (!candidateEntry || !isAbsolute(candidateEntry)) throw new Error("QFCA_ENTRY must identify a reviewed local build");
   const directory = await mkdtemp(join(tmpdir(), "qq-media-integration-"));
   cleanups.push(() => rm(directory, { recursive: true, force: true }));
@@ -30,16 +30,17 @@ async function startPair(options: { stream?: boolean; corruptDownload?: boolean;
   const manager = new QqModuleManager({ getConfiguration: () => config, requestTimeoutMs: 2500, drainTimeoutMs: 200,
     ...(options.broker === false ? {} : { mediaBroker: new QqMediaBroker(join(directory, "cache")) }),
     createTransport: (): QqProcessTransport => {
-      child = fork(candidateEntry, [], { execArgv: [], env: {}, stdio: ["ignore", "ignore", "ignore", "ipc"], serialization: "advanced" });
+      child = fork(candidateEntry, [], { execArgv: [], env: { TMPDIR: directory, TMP: directory, TEMP: directory }, stdio: ["ignore", "ignore", "ignore", "ipc"], serialization: "advanced" });
       const peer = child; exited = new Promise<void>((resolve) => peer.once("exit", () => resolve()));
       return { postMessage: (message) => { envelopes.push(message); peer.send(message as object); },
         onMessage: (listener) => { const receive = (value: unknown) => { envelopes.push(value); listener(value); }; peer.on("message", receive); return () => { peer.removeListener("message", receive); }; },
         onExit: (listener) => { peer.on("exit", listener); return () => { peer.removeListener("exit", listener); }; },
+        onError: (listener) => { peer.on("error", listener); return () => { peer.removeListener("error", listener); }; },
         terminate: async () => { peer.kill(); await exited; } };
     } });
   cleanups.push(async () => { await manager.stop(); child?.kill(); await exited; });
   const received: IncomingMessage[] = []; manager.onMessage = async (message) => { received.push(message); return null; };
-  await manager.start();
+  if (options.quarantine) await manager.stageForMigration(); else await manager.start();
   const socket = new WebSocket(`ws://127.0.0.1:${port}/onebot/v11/ws`, { headers: { Authorization: `Bearer ${config.credentials.accessToken}`, "X-Self-ID": "10000" } });
   cleanups.push(async () => { socket.terminate(); });
   const actions: Action[] = [];
@@ -136,9 +137,35 @@ it.skipIf(!candidateEntry)("omits media opt-in without a broker and preserves le
   expect(initialize.payload).not.toHaveProperty("mediaTransfer");
   expect((await p.manager.send({ channel: "qq", chatType: "private", targetId: "30000", parts: [{ kind: "text", text: "legacy reply" }] })).outcome).toBe("sent");
 }, 10000);
-it.skipIf(!candidateEntry || process.env.QFCA_LARGE_MEDIA_TEST !== "1")("sends an actual 100 MiB fixture through bounded IPC and backend chunks", async () => {
-  const p = await startPair();
+it.skipIf(!candidateEntry)("releases rejected migration media before ACK so activation retains full handle capacity", async () => {
+  const p = await startPair({ quarantine: true });
   await vi.waitFor(() => expect(p.manager.getCapabilities().messages.file).toBe(true));
+  p.media.set("document", Buffer.from("x"));
+  // Respect the backend's 64-event queue; exercise cumulative handle retention,
+  // not queue overflow. Each ACK must make capacity available for the next event.
+  for (let index = 0; index < 257; index++) {
+    p.incoming(1000 + index, [{ type: "file", data: { file: "document" } }]);
+    await vi.waitFor(() => expect(p.envelopes.filter((value: any) => value.method === "ackInbound")).toHaveLength(index + 1), { timeout: 1000, interval: 2 });
+  }
+  expect(p.received).toEqual([]);
+  const events = p.envelopes.filter((value: any) => value.event === "inbound") as any[];
+  expect(events).toHaveLength(257); expect(events.every((value) => value.payload.attachments?.length === 1)).toBe(true);
+  expect(p.envelopes.filter((value: any) => value.method === "mediaRelease")).toHaveLength(257);
+  expect(p.envelopes.filter((value: any) => value.method === "mediaRead")).toHaveLength(0);
+  for (const event of events) {
+    const releasedAt = p.envelopes.findIndex((value: any) => value.method === "mediaRelease" && value.payload.mediaId === event.payload.attachments[0].mediaId);
+    const acknowledgedAt = p.envelopes.findIndex((value: any) => value.method === "ackInbound" && value.payload.eventId === event.payload.eventId);
+    expect(releasedAt).toBeGreaterThanOrEqual(0); expect(releasedAt).toBeLessThan(acknowledgedAt);
+  }
+  expect(p.manager.activateMigration()).toBe(true);
+  p.incoming(2000, [{ type: "text", data: { text: "activated" } }, { type: "file", data: { file: "document" } }]);
+  await vi.waitFor(() => expect(p.received).toHaveLength(1));
+  expect(p.received[0].text).toBe("activated"); await expect(readFile(p.received[0].attachments![0].filePath!)).resolves.toEqual(Buffer.from("x"));
+}, 15000);
+it.skipIf(!candidateEntry || process.env.QFCA_LARGE_MEDIA_TEST !== "1")("sends an actual 100 MiB fixture through bounded IPC and backend chunks", async () => {
+  const p = await startPair({ quarantine: true });
+  await vi.waitFor(() => expect(p.manager.getCapabilities().messages.file).toBe(true));
+  expect(p.manager.activateMigration()).toBe(true);
   const source = join(p.directory, "large.bin"); const bytes = Buffer.alloc(100 * 1024 * 1024, 47); await writeFile(source, bytes);
   const result = await p.manager.send({ channel: "qq", chatType: "private", targetId: "30000", parts: [{ kind: "file", filePath: source, name: "large.bin" }] });
   expect(result.outcome).toBe("sent");
