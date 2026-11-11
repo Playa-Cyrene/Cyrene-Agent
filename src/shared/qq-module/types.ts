@@ -42,6 +42,8 @@ export type QqOutboundPart =
 export interface QqSendRequestV1 {
   operationId: string;
   runtimeEpoch: number;
+  /** Must also match the backend connection when the module accepts and sends. */
+  connectionEpoch: number;
   selfId: string;
   conversation: QqConversation;
   parts: QqOutboundPart[];

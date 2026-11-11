@@ -10,7 +10,7 @@ const inbound = (): QqInboundMessageV1 => ({
   attachments: [{ kind: "image", mediaId: "media_abc-123", mime: "image/png", filename: "图片.png", size: 42 }],
 });
 const outbound = (): QqSendRequestV1 => ({
-  operationId: "send-1", runtimeEpoch: 1, selfId: "10000", conversation: { type: "group", groupId: "20000" },
+  operationId: "send-1", runtimeEpoch: 1, connectionEpoch: 1, selfId: "10000", conversation: { type: "group", groupId: "20000" },
   parts: [{ kind: "text", text: "回复" }, { kind: "image", mediaId: "media-image" }],
   replyContext: { messageId: "-124", mentionUserId: "30000" },
 });
@@ -80,6 +80,12 @@ describe("QQ dedicated contract candidate", () => {
     } finally {
       stringify.mockRestore();
     }
+  });
+  it("requires an explicit backend connection epoch for sending", () => {
+    const { connectionEpoch: _epoch, ...missing } = outbound();
+    expect(validateSendRequest(missing)).toBe(false);
+    expect(validateSendRequest({ ...outbound(), connectionEpoch: -1 })).toBe(false);
+    expect(validateSendRequest({ ...outbound(), connectionEpoch: 1.5 })).toBe(false);
   });
   it("accepts all specified outbound part variants without internal paths", () => {
     expect(validateSendRequest({ ...outbound(), parts: [

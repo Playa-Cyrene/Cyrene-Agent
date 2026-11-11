@@ -82,10 +82,12 @@ jobs:
         run: pnpm exec vitest run src/main/memory src/main/rag
       - name: Test · main / channels
         run: pnpm exec vitest run src/main/channels
+      - name: Test QQ dedicated host runtime
+        run: pnpm exec vitest run src/main/qq-modules
       - name: Test · main / platform（app / plugins / tts / cita / skills / scheduler / proactive / chats）
         run: pnpm exec vitest run src/main/tts/ src/main/plugin-host/ src/main/application/ src/main/cita/ src/main/skills/ src/main/scheduler/ src/main/proactive/ src/main/chats/
       - name: Test · main / core（其余）
-        run: pnpm exec vitest run src/main --exclude "src/main/orchestrator/**" --exclude "src/main/moments/**" --exclude "src/main/music/**" --exclude "src/main/memory/**" --exclude "src/main/rag/**" --exclude "src/main/channels/**" --exclude "src/main/tts/**" --exclude "src/main/plugin-host/**" --exclude "src/main/application/**" --exclude "src/main/cita/**" --exclude "src/main/skills/**" --exclude "src/main/scheduler/**" --exclude "src/main/proactive/**" --exclude "src/main/chats/**"
+        run: pnpm exec vitest run src/main --exclude "src/main/orchestrator/**" --exclude "src/main/moments/**" --exclude "src/main/music/**" --exclude "src/main/memory/**" --exclude "src/main/rag/**" --exclude "src/main/channels/**" --exclude "src/main/qq-modules/**" --exclude "src/main/tts/**" --exclude "src/main/plugin-host/**" --exclude "src/main/application/**" --exclude "src/main/cita/**" --exclude "src/main/skills/**" --exclude "src/main/scheduler/**" --exclude "src/main/proactive/**" --exclude "src/main/chats/**"
       - name: Test · packages + skills + poc
         # packages 的 include 目前在 vitest.config.mts 中临时禁用（windows-2025 镜像下
         # fork worker 静默崩溃，改由 plugin-sdk workflow 单独验证），skills / cline-poc

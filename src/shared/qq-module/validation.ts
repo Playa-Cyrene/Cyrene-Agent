@@ -79,7 +79,7 @@ export function validateInboundMessage(v: unknown): v is QqInboundMessageV1 {
 }
 export function validateSendRequest(v: unknown): v is QqSendRequestV1 {
   return isBoundedJson(v) && strictObject(v, {
-    operationId: id, runtimeEpoch: integer(), selfId: id, conversation, parts: array(part, QQ_CONTRACT_LIMITS.maxParts, 1),
+    operationId: id, runtimeEpoch: integer(), connectionEpoch: integer(), selfId: id, conversation, parts: array(part, QQ_CONTRACT_LIMITS.maxParts, 1),
   }, { replyContext: (r) => strictObject(r, { messageId: id }, { mentionUserId: id }) });
 }
 const errorCode = oneOf("backend-unavailable", "unsupported", "rejected", "timeout", "disconnected", "internal");
