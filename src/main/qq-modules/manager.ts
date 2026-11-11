@@ -215,7 +215,9 @@ export class QqModuleManager {
       || (lease && (!lease.active || lease.generation !== gen || lease.connectionEpoch !== gen.connectionEpoch))
       || (this.state.phase === "draining" && !lease)) return failure("failed", "rejected");
     const conversation = message.chatType === "group" ? { type: "group" as const, groupId: message.targetId } : { type: "private" as const, peerId: message.targetId };
-    if (lease && JSON.stringify(lease.conversation) !== JSON.stringify(conversation)) return failure("failed", "rejected");
+    if (lease && (conversation.type === "private"
+      ? lease.conversation.type !== "private" || lease.conversation.peerId !== conversation.peerId
+      : lease.conversation.type !== "group" || lease.conversation.groupId !== conversation.groupId)) return failure("failed", "rejected");
     if (conversation.type === "private" ? !gen.policy.allowedPrivateUserIds.includes(conversation.peerId) : !gen.policy.allowedGroupIds.includes(conversation.groupId)) return failure("failed", "rejected");
     const epoch = gen.connectionEpoch;
     const mediaEpoch = gen.mediaEpoch;

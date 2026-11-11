@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { QqModuleAdapter } from "../channels/adapters/qq-module-adapter";
 import { QqModuleManager } from "./manager";
 import { FakeTransport, capabilities, configuration, inbound } from "../../../scripts/verify/qq-module/fixtures";
+import type { QqInboundMessageV1, QqSendResultV1 } from "../../shared/qq-module";
 import type { OutgoingMessage } from "../channels/types";
 
 const outgoing = (): OutgoingMessage => ({ channel: "qq", chatType: "group", targetId: "20000", parts: [{ kind: "text", text: "response" }] });
@@ -55,6 +56,51 @@ describe("QQ host runtime manager", () => {
     manager.updateAccessPolicy({ ...configuration().config, configRevision: 2, allowedGroupIds: [] });
     peer.event("inbound", inbound("revoked")); await tick(); expect(handler).toHaveBeenCalledOnce();
     expect((await manager.send(outgoing())).outcome).toBe("failed");
+  });
+  const conversations: QqInboundMessageV1["conversation"][] = [
+    { type: "private", peerId: "30000" }, { peerId: "30000", type: "private" },
+    { type: "group", groupId: "20000" }, { groupId: "20000", type: "group" },
+  ];
+  it.each(conversations)("matches reply identity regardless of key order: %j", async (conversation) => {
+    const { peer, manager } = setup(); let result: QqSendResultV1 | undefined;
+    manager.onMessage = async (message) => {
+      result = await manager.send({ ...outgoing(), chatType: message.chatType, targetId: message.chatId });
+      return null;
+    };
+    await manager.start(); peer.event("inbound", { ...inbound(), conversation }); await tick();
+    expect(result).toMatchObject({ outcome: "sent" });
+    const sends = peer.messages.filter((m) => m.method === "send");
+    expect(sends).toHaveLength(1); expect(sends[0].payload).toMatchObject({ conversation });
+  });
+  it.each(conversations)("rejects a different reply type or ID even when whitelisted: %j", async (conversation) => {
+    const { peer, manager } = setup({ getConfiguration: () => ({
+      ...configuration(), config: { ...configuration().config, allowedPrivateUserIds: ["20000", "30000", "40000"], allowedGroupIds: ["20000", "30000", "40000"] },
+    }) });
+    const results: QqSendResultV1[] = [];
+    manager.onMessage = async (message) => {
+      results.push(await manager.send({ ...outgoing(), chatType: message.chatType === "group" ? "private" : "group", targetId: message.chatId }));
+      results.push(await manager.send({ ...outgoing(), chatType: message.chatType, targetId: "40000" }));
+      return null;
+    };
+    await manager.start(); peer.event("inbound", { ...inbound(), conversation }); await tick();
+    expect(results).toHaveLength(2);
+    for (const result of results) expect(result).toMatchObject({ outcome: "failed", parts: [{ errorCode: "rejected" }] });
+    expect(peer.messages.filter((m) => m.method === "send")).toHaveLength(0);
+  });
+  it.each(conversations)("does not renew an old reply lease after reconnect: %j", async (conversation) => {
+    const { peer, manager } = setup(); let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; }); let result: QqSendResultV1 | undefined;
+    manager.onMessage = async (message) => {
+      await gate;
+      result = await manager.send({ ...outgoing(), chatType: message.chatType, targetId: message.chatId });
+      return null;
+    };
+    await manager.start(); peer.event("inbound", { ...inbound(), conversation }); await tick();
+    peer.event("status", { phase: "waiting-backend" });
+    peer.event("status", { phase: "running", selfId: "10000", connectionEpoch: 2 });
+    release(); await tick();
+    expect(result).toMatchObject({ outcome: "failed", parts: [{ errorCode: "rejected" }] });
+    expect(peer.messages.filter((m) => m.method === "send")).toHaveLength(0);
   });
   it("keeps accepted turns sending while draining, then terminates and removes listeners", async () => {
     const { peer, manager } = setup(); let finish!: () => void;
