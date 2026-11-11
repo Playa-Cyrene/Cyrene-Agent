@@ -322,33 +322,33 @@ describe("kimi-k3.1-pro 请求体", () => {
   });
 });
 
-describe("gemini-4-argon 请求体", () => {
+describe.each(["gemini-4-argon", "gemini-4-carbon"])("%s 请求体", (model) => {
   const adapter = new OpenAICompatAdapter("gemini", geminiCap);
   // 官方：thinking_level 仅 low/medium/high，默认 medium；兼容层 reasoning_effort 映射 thinking_level，
   // "none" 关闭思考只写明适用于 2.5 系。下面验证实际请求体不越出这些档位、也不发送采样参数。
   const argonBody = (reasoning?: ReasoningPreference) => {
     const http = adapter.buildRequest(
-      { model: "gemini-4-argon", messages: [{ role: "user", content: "hi" }] },
-      cfgOf(geminiCap, { model: "gemini-4-argon", ...(reasoning ? { reasoning } : {}) }),
+      { model, messages: [{ role: "user", content: "hi" }] },
+      cfgOf(geminiCap, { model, ...(reasoning ? { reasoning } : {}) }),
     );
     return JSON.parse(http.body) as Record<string, unknown>;
   };
 
-  test("gemini-4-argon + {mode:'on', effort:'high'} → reasoning_effort=high", () => {
+  test("+ {mode:'on', effort:'high'} → reasoning_effort=high", () => {
     expect(argonBody({ mode: "on", effort: "high" }).reasoning_effort).toBe("high");
   });
 
-  test("gemini-4-argon 未设置档位 → reasoning_effort=medium，且不发 temperature", () => {
+  test("未设置档位 → reasoning_effort=medium，且不发 temperature", () => {
     const body = argonBody();
     expect(body.reasoning_effort).toBe("medium");
     expect("temperature" in body).toBe(false);
   });
 
-  test("gemini-4-argon + off → 不发送 none（Gemini 4 未写明可关闭），回到默认 medium", () => {
+  test("+ off → 不发送 none（Gemini 4 未写明可关闭），回到默认 medium", () => {
     expect(argonBody({ mode: "off" }).reasoning_effort).toBe("medium");
   });
 
-  test("gemini-4-argon + 不支持的 max → 收敛到默认 medium", () => {
+  test("+ 不支持的 max → 收敛到默认 medium", () => {
     expect(argonBody({ mode: "on", effort: "max" }).reasoning_effort).toBe("medium");
   });
 });
