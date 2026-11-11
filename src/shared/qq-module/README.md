@@ -17,3 +17,11 @@
 ## 第二阶段运行时候选
 
 `runtime.ts` 现在定义 hello/initialize/start/send/ackInbound/quiesce/stop/ping 和 status/inbound/capability-changed 私有 envelope；宿主运行时还未接入正常渠道启动。send 新增必填 connectionEpoch，需由宿主和模块发送边界双重核对。`QQ_RUNTIME_TIMEOUTS` 统一模块 120 秒总发送预算和宿主 130 秒响应等待，不能拿 5 秒控制 RPC 截断正常分片发送。详情、信任局限及测试见 `docs/design/2026-11-11-qq-module-host-runtime.md`。上文“仍待实现”描述的是第一阶段基线，不代表安装、媒体或生产切换现在已经完成。
+
+## 媒体传输候选
+
+`media.ts` 增加四个窄操作 `mediaBeginUpload / mediaWrite / mediaRead / mediaRelease`，不提供任意路径、URL、OneBot action 或文件系统 API。完整 envelope 仍受 256 KiB 限制；单块解码最多 64 KiB、单文件最多 100 MiB。上传 SHA256、严格 base64、偏移、长度、EOF 与句柄绑定由实际 broker/模块重复核对。
+
+`initialize.mediaTransfer = "chunked-v1"` 是可信宿主显式选择，只有注入媒体 broker 才发送。省略时新模块保持文本模式，旧宿主不会突然收到不可读取附件；旧 QFCA 基础候选不接受该新增初始化字段，因此媒体必须与配套候选共同使用。它仍是未发布 API 1.0 的演进，不是已发布版本间兼容承诺。主仓仍未切换 `initializeChannels`，不因为契约存在就启用 QQ 模块。
+
+实现/限制见 `src/main/qq-modules/MEDIA.md` 和 `docs/design/2026-11-11-qq-module-media.md`。媒体已在隔离 fake 后端验证，不意味着安装、迁移、签名或真实 QQ 验收完成。
