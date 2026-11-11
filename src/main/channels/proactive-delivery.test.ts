@@ -42,6 +42,31 @@ describe("proactive channel delivery", () => {
     registry = createProactiveChannelRecipientRegistry();
   });
 
+  it("停用后不复用旧收件人，另一渠道的收件人继续有效", () => {
+    const activity = new AbortController();
+    registry.remember({ ...incoming("wechat", "wx-1"), signal: activity.signal }, "session-wx");
+    registry.remember(incoming("feishu", "fs-1"), "session-fs");
+    activity.abort();
+    expect(registry.get("wechat")).toBeNull();
+    expect(registry.get("feishu")?.targetId).toBe("fs-1");
+  });
+
+  it("分段发送间停用只记录已经实际发送的部分", async () => {
+    const activity = new AbortController();
+    const adapter = fakeAdapter();
+    vi.mocked(adapter.send).mockImplementation(async () => { activity.abort(); return { ok: true }; });
+    registry.remember({ ...incoming("wechat", "wx-1"), signal: activity.signal }, "session-wx");
+    const appendHistory = vi.fn();
+    const result = await sendProactiveChannelMessage({
+      channel: "wechat", text: "第一句。第二句。", mobileMessageSegmentation: "on",
+      manager: { getAdapter: () => adapter }, recipientRegistry: registry,
+      appendHistory, appendLog: vi.fn(),
+    });
+    expect(result).toEqual({ kind: "committed", deliveredParts: 1, totalParts: 2 });
+    expect(appendHistory).toHaveBeenCalledWith("session-wx", "assistant", "第一句。");
+    expect(adapter.send).toHaveBeenCalledOnce();
+  });
+
   it("keeps the latest recipient independently for each channel", () => {
     registry.remember(incoming("wechat", "wx-1"), "session-wx-1");
     registry.remember(incoming("feishu", "fs-1"), "session-fs-1");

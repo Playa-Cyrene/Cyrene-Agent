@@ -13,6 +13,8 @@
 export interface QqBotTokenProviderConfig {
   appId: string;
   clientSecret: string;
+  /** 同一连接共享的取消信号；单条消息不能撤销共享的 token 刷新。 */
+  signal?: AbortSignal;
 }
 
 /** 可注入的 fetch（测试用）。签名与全局 fetch 一致。 */
@@ -30,6 +32,7 @@ export interface QqBotSendTarget {
 }
 
 export interface QqBotSendOptions {
+  signal?: AbortSignal;
   /** 被动回复必须携带的入站消息 id */
   msgId: string;
   /** 同一 msg_id 的第几次回复（1 起，单聊上限 4 / 群上限 5） */
@@ -59,6 +62,7 @@ export class QqBotApiClient {
 
   /** 拿一个有效 token（过期前 5 分钟自动刷新；并发调用共享同一次刷新）。 */
   async getAccessToken(): Promise<string> {
+    this.config.signal?.throwIfAborted();
     const now = Date.now();
     if (this.token && now < this.tokenExpiresAt - TOKEN_REFRESH_MARGIN_MS) {
       return this.token;
@@ -73,6 +77,7 @@ export class QqBotApiClient {
 
   private async refreshToken(): Promise<string> {
     const res = await this.fetchFn(TOKEN_URL, {
+      signal: this.config.signal,
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -84,6 +89,7 @@ export class QqBotApiClient {
       throw new QqBotApiError(`获取 access_token 失败 (HTTP ${res.status})`, res.status);
     }
     const data = (await res.json()) as { access_token?: string; expires_in?: string | number };
+    this.config.signal?.throwIfAborted();
     if (!data.access_token) throw new QqBotApiError("access_token 响应缺少 access_token", 200);
     const expiresInSec = Number(data.expires_in ?? 7200);
     this.token = data.access_token;
@@ -107,6 +113,7 @@ export class QqBotApiClient {
       ? `/v2/groups/${encodeURIComponent(target.openid)}/messages`
       : `/v2/users/${encodeURIComponent(target.openid)}/messages`;
     await this.request(path, {
+      signal: options.signal,
       method: "POST",
       body: JSON.stringify({
         msg_type: 0,
@@ -118,9 +125,15 @@ export class QqBotApiClient {
   }
 
   private async request<T>(path: string, init?: RequestInit): Promise<T> {
+    const signal = this.config.signal && init?.signal
+      ? AbortSignal.any([this.config.signal, init.signal])
+      : this.config.signal ?? init?.signal;
+    signal?.throwIfAborted();
     const token = await this.getAccessToken();
+    signal?.throwIfAborted();
     const res = await this.fetchFn(`${API_BASE}${path}`, {
       ...init,
+      signal,
       headers: {
         "Content-Type": "application/json",
         Authorization: `QQBot ${token}`,
@@ -139,6 +152,7 @@ export class QqBotApiClient {
     }
     // 204 / 空 body 场景
     const text = await res.text();
+    signal?.throwIfAborted();
     return (text ? JSON.parse(text) : {}) as T;
   }
 }

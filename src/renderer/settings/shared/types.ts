@@ -334,7 +334,7 @@ export interface SettingsApi {
   // main → settings：要求切到指定标签（窗口已打开时由 main 发这个事件）
   onSwitchSection?: (callback: (section: string) => void) => (() => void) | void;
   channelsGetConfig: () => Promise<any>;
-  channelsSaveConfig: (patch: unknown) => Promise<any>;
+  channelsSaveConfig: (patch: unknown, connect?: boolean) => Promise<any>;
   channelsRestart: () => Promise<{ ok: boolean }>;
   channelsQqTestConnection: () => Promise<{ ok: boolean; error?: string; detail?: Record<string, unknown> }>;
   /**

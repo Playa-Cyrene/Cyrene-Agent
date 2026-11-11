@@ -159,9 +159,22 @@ function registerChannelsIpc(
   const ipc = ipcOption ?? createIpcScope();
   ipc.handle(IPC.CHANNELS_GET_CONFIG, () => getPublicChannelsSettings());
 
-  ipc.handle(IPC.CHANNELS_SAVE_CONFIG, (_e, patch: unknown) => {
+  ipc.handle(IPC.CHANNELS_SAVE_CONFIG, async (_e, patch: unknown, connect: unknown = false) => {
+    const previous = loadChannelsSettings();
     saveChannelsSettings(patch as Parameters<typeof saveChannelsSettings>[0]);
+    // save 的返回值会将缺省密钥补成空串；两侧必须使用相同的持久化读取形态。
+    const current = loadChannelsSettings();
     reloadDispatcherSettings();
+    // 显式连接也可重试原配置，但仅限本次提交且已启用的内置渠道。
+    const changed = (["wechat", "feishu", "qq", "qqbot"] as const)
+      .filter((id) => JSON.stringify(previous[id]) !== JSON.stringify(current[id])
+        || (connect === true && patch != null && typeof patch === "object"
+          && Object.hasOwn(patch, id) && current[id].enabled));
+    await Promise.all(changed.map(async (id) => {
+      await channelManager.stopOne(id);
+      if (started && loadChannelsSettings()[id].enabled) await channelManager.startOne(id);
+    }));
+    broadcastChannelsStatus();
     return getPublicChannelsSettings();
   });
 
@@ -215,8 +228,8 @@ function registerChannelsIpc(
 	      void (async () => {
 	        try {
 	          const creds = await wxAdapter!.login(qrcode);
-	          await wxAdapter!.stop();
-	          await wxAdapter!.start();
+	          await channelManager.stopOne("wechat");
+	          if (started && loadChannelsSettings().wechat.enabled) await channelManager.startOne("wechat");
 	          win?.webContents.send(IPC.CHANNELS_WECHAT_LOGIN_DONE, { ok: true, botId: creds.ilinkBotId });
 	        } catch (err) {
 	          win?.webContents.send(IPC.CHANNELS_WECHAT_LOGIN_DONE, { ok: false, error: String(err) });
@@ -239,7 +252,8 @@ function registerChannelsIpc(
     return {
       running: status.phase === "starting",
       connected: status.phase === "running",
-      loggedIn: wxAdapter.isLoggedIn,
+      // 本地凭证存在与业务连接运行是两个独立状态；停用不等于注销。
+      loggedIn: Boolean(await loadCredentials()),
     };
   });
 
@@ -252,6 +266,7 @@ function registerChannelsIpc(
 
   ipc.handle(IPC.CHANNELS_WECHAT_LOGOUT, async () => {
     if (!wxAdapter) return { ok: false };
+    await channelManager.stopOne("wechat");
     await wxAdapter.logout();
     return { ok: true };
   });
@@ -265,8 +280,8 @@ function registerChannelsIpc(
 
   ipc.handle(IPC.CHANNELS_WECHAT_INSTALL, async () => {
     if (!wxAdapter) return { ok: false };
-    await wxAdapter.stop();
-    await wxAdapter.start();
+    await channelManager.stopOne("wechat");
+    if (started && loadChannelsSettings().wechat.enabled) await channelManager.startOne("wechat");
     return { ok: true, phase: "ready" };
   });
 
@@ -280,7 +295,8 @@ function registerChannelsIpc(
       return { ok: false, error: "App ID / App Secret 未配置" };
     }
     try {
-      await adapter.rebuild();
+      await channelManager.stopOne("feishu");
+      if (started && loadChannelsSettings().feishu.enabled) await channelManager.startOne("feishu");
       const s = adapter.getStatus();
       if (s.phase === "running") {
         return { ok: true, message: "WSS 长连接已建立" };

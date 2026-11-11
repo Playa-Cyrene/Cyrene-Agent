@@ -2,6 +2,17 @@ import { describe, expect, it, vi } from "vitest";
 import { uploadWechatMedia, MediaType } from "./wechat-media-upload";
 
 describe("uploadWechatMedia", () => {
+  it("获取上传地址期间撤销后，不发送媒体内容到 CDN", async () => {
+    const activity = new AbortController();
+    const fetchImpl = vi.fn();
+    const client = { getUploadUrl: async () => {
+      activity.abort(new Error("channel_stopped"));
+      return { upload_full_url: "https://cdn.example/synthetic", upload_param: "synthetic" };
+    } };
+    await expect(uploadWechatMedia(client, "peer", Buffer.from("synthetic"), MediaType.IMAGE, { signal: activity.signal, fetchImpl }))
+      .rejects.toThrow("channel_stopped");
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
   it("encrypts media, uses upload_full_url, and returns CDN media fields", async () => {
     const getUploadUrl = vi.fn(async () => ({
       upload_param: "fallback-param",

@@ -11,6 +11,7 @@ import { loadChannelsSettings } from "../../settings-store";
 import { OneBotActionClient } from "./onebot-action-client";
 import { OneBotMediaManager, versionAtLeast, ONEBOT_STREAM_MIN_VERSION } from "./onebot-media";
 import { normalizeOneBotMessage } from "./onebot-normalizer";
+import { AdapterActivity } from "../../adapter-activity";
 import { OneBotReverseWsServer, type OneBotListeningInfo } from "./onebot-reverse-ws";
 import {
   isOneBotMessageEvent,
@@ -83,6 +84,8 @@ export class NapCatAdapter implements ChannelAdapter {
   readonly displayName = "QQ（NapCat）";
   readonly capability = CAPABILITY;
   onMessage: MessageHandler | null = null;
+  private activity = new AdapterActivity();
+  private connectionActivity = new AdapterActivity();
 
   private server: OneBotReverseWsServer | null = null;
   private client: OneBotActionClient | null = null;
@@ -105,22 +108,26 @@ export class NapCatAdapter implements ChannelAdapter {
 
   constructor(private readonly onStatusChanged?: () => void) {}
 
-  async start(): Promise<void> {
+  async start(parent?: AbortSignal): Promise<void> {
+    const signal = this.activity.start(parent);
     const config = loadChannelsSettings().qq;
-    if (!config.enabled) {
+    if (!config.enabled || signal.aborted) {
       this.setStatus({ enabled: false, phase: "offline", message: "未启用" });
       return;
     }
     this.setStatus({ enabled: true, phase: "starting", message: "正在启动 OneBot 监听" });
     await this.media.start();
+    if (signal.aborted) return;
     this.server = new OneBotReverseWsServer({
       listenMode: config.listenMode,
       customHost: config.customHost,
       port: config.port,
       accessToken: config.accessToken,
-      onEvent: (event, client) => this.handleEvent(event, client),
-      onClientConnected: (client, info) => this.handleConnected(client, info.headerSelfId),
+      onEvent: (event, client) => signal.aborted ? undefined : this.handleEvent(event, client),
+      onClientConnected: (client, info) => this.handleConnected(client, info.headerSelfId, signal),
       onClientDisconnected: () => {
+        if (signal.aborted) return;
+        this.connectionActivity.stop();
         this.client = null;
         this.selfId = "";
         this.setStatus({
@@ -131,6 +138,7 @@ export class NapCatAdapter implements ChannelAdapter {
         });
       },
       onError: (error) => {
+        if (signal.aborted) return;
         this.setStatus({
           enabled: true,
           phase: "error",
@@ -141,6 +149,7 @@ export class NapCatAdapter implements ChannelAdapter {
     });
     try {
       this.listeningInfo = await this.server.start();
+      if (signal.aborted) return;
       this.setStatus({
         enabled: true,
         phase: "starting",
@@ -157,6 +166,8 @@ export class NapCatAdapter implements ChannelAdapter {
   }
 
   async stop(): Promise<void> {
+    this.activity.stop();
+    this.connectionActivity.stop();
     this.media.stop();
     await this.server?.stop();
     this.server = null;
@@ -191,14 +202,17 @@ export class NapCatAdapter implements ChannelAdapter {
   }
 
   async send(msg: OutgoingMessage): Promise<{ ok: boolean; error?: string }> {
+    const signal = AbortSignal.any([this.activity.signal, this.connectionActivity.signal, ...(msg.signal ? [msg.signal] : [])]);
+    if (signal.aborted) return { ok: false, error: "channel_stopped" };
     const client = this.client;
     if (!client || !this.selfId) return { ok: false, error: "NapCat 未连接" };
     const payloads: OneBotSegment[][] = [];
     let lastError: string | undefined;
 
     for (const part of msg.parts) {
+      if (signal.aborted) return { ok: false, error: "channel_stopped" };
       try {
-        payloads.push(...await this.partToPayloads(part));
+        payloads.push(...await this.partToPayloads(part, signal));
       } catch (error) {
         lastError = error instanceof Error ? error.message : String(error);
       }
@@ -207,6 +221,7 @@ export class NapCatAdapter implements ChannelAdapter {
 
     let sent = 0;
     for (let index = 0; index < payloads.length; index++) {
+      if (signal.aborted) return { ok: false, error: "channel_stopped" };
       const segments = [...payloads[index]];
       if (index === 0 && msg.chatType === "group" && msg.replyContext) {
         const prefix: OneBotSegment[] = [{ type: "reply", data: { id: msg.replyContext.messageId } }];
@@ -236,9 +251,15 @@ export class NapCatAdapter implements ChannelAdapter {
     return sent > 0 ? { ok: true } : { ok: false, error: lastError || "QQ 发送失败" };
   }
 
-  private async handleConnected(client: OneBotActionClient, headerSelfId?: string): Promise<void> {
+  private async handleConnected(client: OneBotActionClient, headerSelfId?: string, parent = this.activity.signal): Promise<void> {
+    if (parent.aborted) return;
+    const signal = this.connectionActivity.start(parent);
+    this.client = null;
+    this.selfId = "";
     const login = await client.call<OneBotLoginInfo>("get_login_info");
+    if (signal.aborted) return;
     const version = await client.call<OneBotVersionInfo>("get_version_info");
+    if (signal.aborted) return;
     const selfId = oneBotId(login.user_id);
     if (!selfId) throw new Error("NapCat get_login_info 未返回 user_id");
     if (headerSelfId && headerSelfId !== selfId) throw new Error("NapCat X-Self-ID 与 get_login_info 不一致");
@@ -256,6 +277,9 @@ export class NapCatAdapter implements ChannelAdapter {
   }
 
   private async handleEvent(event: OneBotEvent, client: OneBotActionClient): Promise<void> {
+    const signal = this.connectionActivity.signal;
+    const onMessage = this.onMessage;
+    if (signal.aborted || this.activity.signal.aborted || client !== this.client) return;
     if (!isOneBotMessageEvent(event) || event.post_type !== "message") return;
     if (!this.selfId || oneBotId(event.self_id) !== this.selfId || oneBotId(event.user_id) === this.selfId) return;
 
@@ -273,18 +297,19 @@ export class NapCatAdapter implements ChannelAdapter {
 
     try {
       const incoming = await normalizeOneBotMessage(event, {
+        signal,
         selfId: this.selfId,
         client,
         media: this.media,
         supportsStream: this.supportsStream,
       });
-      await this.onMessage?.(incoming);
+      if (!signal.aborted) await onMessage?.({ ...incoming, signal });
     } catch (error) {
       console.warn("[NapCatAdapter] QQ 消息处理失败:", error instanceof Error ? error.message : String(error));
     }
   }
 
-  private async partToPayloads(part: OutgoingPart): Promise<OneBotSegment[][]> {
+  private async partToPayloads(part: OutgoingPart, signal: AbortSignal): Promise<OneBotSegment[][]> {
     if (part.kind === "text") {
       return splitQqText(part.text).map((text) => [{ type: "text", data: { text } }]);
     }
@@ -296,24 +321,24 @@ export class NapCatAdapter implements ChannelAdapter {
     }
     if (part.kind === "image") {
       const file = part.filePath
-        ? await this.media.encodeOutbound(part.filePath, "image", this.supportsStream)
+        ? await this.media.encodeOutbound(part.filePath, "image", this.supportsStream, signal)
         : part.url;
       if (!file) throw new Error("QQ 图片缺少 filePath/url");
       return [[{ type: "image", data: { file } }]];
     }
     if (part.kind === "sticker") {
-      const file = await this.media.encodeOutbound(part.imagePath, "image", this.supportsStream);
+      const file = await this.media.encodeOutbound(part.imagePath, "image", this.supportsStream, signal);
       return [[{ type: "image", data: { file } }]];
     }
     if (part.kind === "audio") {
-      const file = await this.media.encodeOutbound(part.filePath, "audio", this.supportsStream);
+      const file = await this.media.encodeOutbound(part.filePath, "audio", this.supportsStream, signal);
       return [[{ type: "record", data: { file } }]];
     }
     if (part.kind === "file") {
-      const file = await this.media.encodeOutbound(part.filePath, "file", this.supportsStream);
+      const file = await this.media.encodeOutbound(part.filePath, "file", this.supportsStream, signal);
       return [[{ type: "file", data: { file, name: part.name } }]];
     }
-    const file = await this.media.encodeOutbound(part.filePath, "video", this.supportsStream);
+    const file = await this.media.encodeOutbound(part.filePath, "video", this.supportsStream, signal);
     return [[{ type: "video", data: { file } }]];
   }
 

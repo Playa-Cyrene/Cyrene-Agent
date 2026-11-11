@@ -26,6 +26,7 @@ import { loadChannelsSettings, type QqBotChannelConfig } from "../../settings-st
 import { QqBotApiClient, QqBotApiError } from "./qqbot-api-client";
 import { QqBotWsClient, type QqBotEventType } from "./qqbot-ws-client";
 import { splitQqText } from "../qq/napcat-adapter";
+import { AdapterActivity } from "../../adapter-activity";
 
 const CAPABILITY: ChannelCapability = {
   text: true,
@@ -135,6 +136,7 @@ export class QqBotAdapter implements ChannelAdapter {
   readonly displayName = "QQ 机器人（官方）";
   readonly capability = CAPABILITY;
   onMessage: MessageHandler | null = null;
+  private activity = new AdapterActivity();
 
   private api: QqBotApiClient | null = null;
   private ws: QqBotWsClient | null = null;
@@ -148,9 +150,10 @@ export class QqBotAdapter implements ChannelAdapter {
 
   constructor(private readonly onStatusChanged?: () => void) {}
 
-  async start(): Promise<void> {
+  async start(parent?: AbortSignal): Promise<void> {
+    const signal = this.activity.start(parent);
     const config = loadChannelsSettings().qqbot;
-    if (!config.enabled) {
+    if (!config.enabled || signal.aborted) {
       this.setStatus({ enabled: false, phase: "offline", message: "未启用" });
       return;
     }
@@ -163,14 +166,18 @@ export class QqBotAdapter implements ChannelAdapter {
       return;
     }
     this.setStatus({ enabled: true, phase: "starting", message: "正在连接 QQ 开放平台网关" });
-    this.api = new QqBotApiClient({ appId: config.appId, clientSecret: config.appSecret });
+    const api = new QqBotApiClient({ appId: config.appId, clientSecret: config.appSecret, signal });
+    this.api = api;
     try {
-      const gatewayUrl = await this.api.getGatewayUrl();
+      const gatewayUrl = await api.getGatewayUrl();
+      if (signal.aborted) return;
       this.ws = new QqBotWsClient({
         gatewayUrl,
-        getAccessToken: () => this.api!.getAccessToken(),
-        onDispatch: (type, data) => this.handleDispatch(type, data),
+        signal,
+        getAccessToken: () => api.getAccessToken(),
+        onDispatch: (type, data) => { if (!signal.aborted) this.handleDispatch(type, data); },
         onReadyChange: (ready) => {
+          if (signal.aborted) return;
           this.wsReady = ready;
           this.setStatus({
             enabled: true,
@@ -180,6 +187,7 @@ export class QqBotAdapter implements ChannelAdapter {
           });
         },
         onError: (error) => {
+          if (signal.aborted) return;
           if (this.status.phase === "running" && !this.wsReady) return; // 重连过程中的已知错误不覆盖状态
           this.setStatus({
             enabled: true,
@@ -198,6 +206,7 @@ export class QqBotAdapter implements ChannelAdapter {
   }
 
   async stop(): Promise<void> {
+    this.activity.stop();
     await this.ws?.stop();
     this.ws = null;
     this.api = null;
@@ -229,6 +238,8 @@ export class QqBotAdapter implements ChannelAdapter {
   }
 
   async send(msg: OutgoingMessage): Promise<{ ok: boolean; error?: string }> {
+    const signal = msg.signal ? AbortSignal.any([msg.signal, this.activity.signal]) : this.activity.signal;
+    if (signal.aborted) return { ok: false, error: "channel_stopped" };
     const api = this.api;
     if (!api || !this.wsReady) return { ok: false, error: "QQ 机器人网关未连接" };
     const chatType = msg.chatType ?? "private";
@@ -256,6 +267,7 @@ export class QqBotAdapter implements ChannelAdapter {
 
     let sent = 0;
     for (const chunk of chunks) {
+      if (signal.aborted) return { ok: false, error: "channel_stopped" };
       if (inbound.seqUsed >= seqLimit) {
         lastError = `回复次数达上限，余下 ${chunks.length - sent} 段未发送`;
         break;
@@ -265,10 +277,11 @@ export class QqBotAdapter implements ChannelAdapter {
         await api.sendText(
           { openid: msg.targetId, chatType },
           chunk,
-          { msgId: inbound.messageId, msgSeq: inbound.seqUsed },
+          { msgId: inbound.messageId, msgSeq: inbound.seqUsed, signal },
         );
         sent++;
       } catch (error) {
+        if (signal.aborted) return { ok: false, error: "channel_stopped" };
         lastError = error instanceof Error ? error.message : String(error);
       }
     }
@@ -283,6 +296,7 @@ export class QqBotAdapter implements ChannelAdapter {
   }
 
   private handleDispatch(type: QqBotEventType, data: Record<string, unknown>): void {
+    if (this.activity.signal.aborted) return;
     if (type === "READY") {
       const user = (data.user ?? {}) as Record<string, unknown>;
       this.botNickname = typeof user.username === "string" ? user.username : "";
@@ -328,9 +342,12 @@ export class QqBotAdapter implements ChannelAdapter {
   }
 
   private async deliverIncoming(incoming: IncomingMessage): Promise<void> {
+    const signal = this.activity.signal;
+    const onMessage = this.onMessage;
+    incoming.signal = signal;
     try {
       await this.downloadAttachments(incoming);
-      await this.onMessage?.(incoming);
+      if (!signal.aborted) await onMessage?.(incoming);
     } catch (error) {
       console.warn("[QqBotAdapter] QQ Bot 消息处理失败:", error instanceof Error ? error.message : String(error));
     }
@@ -353,9 +370,10 @@ export class QqBotAdapter implements ChannelAdapter {
     const dir = path.join(app.getPath("userData"), "channels", "cache", "qqbot");
     fs.mkdirSync(dir, { recursive: true });
     for (const attachment of msg.attachments) {
+      if (msg.signal?.aborted) return;
       if (!attachment.url) continue;
       try {
-        const res = await fetch(attachment.url);
+        const res = await fetch(attachment.url, { signal: msg.signal });
         if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
         const reader = res.body.getReader();
         const chunks: Uint8Array[] = [];
@@ -370,6 +388,7 @@ export class QqBotAdapter implements ChannelAdapter {
           }
           chunks.push(value);
         }
+        msg.signal?.throwIfAborted();
         const ext = attachment.kind === "image"
           ? (attachment.mime?.split("/")[1] ?? "jpg")
           : attachment.kind === "audio" ? "wav" : attachment.kind === "video" ? "mp4" : "bin";

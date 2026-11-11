@@ -32,6 +32,7 @@ export interface QqBotWsEvents {
 }
 
 export interface QqBotWsClientOptions extends QqBotWsEvents {
+  signal?: AbortSignal;
   /** 网关地址（wss://api.sgroup.qq.com/websocket） */
   gatewayUrl: string;
   /** 返回有效 access_token（过期自动刷新由 ApiClient 负责） */
@@ -64,6 +65,7 @@ export class QqBotWsClient {
   private backoffMs = 1_000;
   private heartbeatAcked = true;
   private lastError: Error | null = null;
+  private readonly onAbort = () => { void this.stop(); };
 
   constructor(private readonly options: QqBotWsClientOptions) {}
 
@@ -76,12 +78,15 @@ export class QqBotWsClient {
   }
 
   async start(): Promise<void> {
+    if (this.options.signal?.aborted) return;
     this.stopped = false;
+    this.options.signal?.addEventListener("abort", this.onAbort, { once: true });
     await this.connect(false);
   }
 
   async stop(): Promise<void> {
     this.stopped = true;
+    this.options.signal?.removeEventListener("abort", this.onAbort);
     this.clearTimers();
     const ws = this.ws;
     this.ws = null;
@@ -102,12 +107,14 @@ export class QqBotWsClient {
     try {
       token = await this.options.getAccessToken();
     } catch (error) {
+      if (this.stopped) return;
       const err = error instanceof Error ? error : new Error(String(error));
       this.lastError = err;
       this.options.onError(err);
       this.scheduleReconnect();
       return;
     }
+    if (this.stopped) return;
     const ws = this.options.websocketFactory
       ? this.options.websocketFactory(this.options.gatewayUrl)
       : new WebSocket(this.options.gatewayUrl);

@@ -55,6 +55,7 @@ describe("channels/dispatcher", () => {
   function makeManager(send = vi.fn(async () => ({ ok: true }))) {
     return {
       getAdapter: () => ({
+        getStatus: () => ({ enabled: true, phase: "running" }),
         capability: { text: true, image: true, audio: false, file: false, video: false, markdown: false, card: false, sticker: false, maxTextLength: 4000 },
         send,
       }),
@@ -126,6 +127,45 @@ describe("channels/dispatcher", () => {
       await Promise.resolve();
     }
   }
+
+  it("外部消息队列等待期间撤销后不再执行，其他连接仍可正常回复", async () => {
+    const activity = new AbortController();
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const send = vi.fn(async () => ({ ok: true }));
+    const run = vi.fn(async () => { entered.resolve(); await release.promise; return { text: "reply", sticker: null }; });
+    const dispatcher = makeDispatcher({ manager: makeManager(send), buildAndRunAgent: run });
+    const first = dispatcher.handleIncoming(makeIncoming({ signal: activity.signal }));
+    await entered.promise;
+    const second = dispatcher.handleIncoming(makeIncoming({ signal: activity.signal, messageId: "second" }));
+    activity.abort();
+    release.resolve();
+    expect(await first).toBeNull();
+    expect(await second).toBeNull();
+    expect(run).toHaveBeenCalledOnce();
+    expect(send).not.toHaveBeenCalled();
+    expect(await dispatcher.handleIncoming(makeIncoming({ chatId: "other" }))).not.toBeNull();
+    expect(send).toHaveBeenCalledOnce();
+  });
+
+  it("语音合成期间撤销仍清理临时文件且不发送", async () => {
+    const activity = new AbortController();
+    const cleanup = vi.fn(async () => {});
+    const send = vi.fn(async () => ({ ok: true }));
+    const dispatcher = makeDispatcher({
+      manager: makeManager(send),
+      composer: {
+        compose: async () => {
+          activity.abort();
+          return { message: { channel: "qq", targetId: "chat", parts: [] }, assistantText: "reply", transientFiles: ["synthetic-tts.wav"] };
+        },
+        cleanupTransientFiles: cleanup,
+      },
+    });
+    expect(await dispatcher.handleIncoming(makeIncoming({ signal: activity.signal }))).toBeNull();
+    expect(send).not.toHaveBeenCalled();
+    expect(cleanup).toHaveBeenCalledWith(["synthetic-tts.wav"]);
+  });
 
   it("构造调度器时不读取消息日志", () => {
     vi.mocked(reloadLogFromDisk).mockClear();
@@ -597,7 +637,7 @@ describe("channels/dispatcher", () => {
     expect(journal.buildModelContext).toHaveBeenLastCalledWith(expect.any(String), true);
   });
 
-  it("发送失败写入 failed receipt 且保留已落盘 assistant", async () => {
+  it.each(["offline", "channel_stopped"])("发送失败 %s 写入 failed receipt 且保留已落盘 assistant", async (error) => {
     const appendDeliveryReceipt = vi.fn(async () => undefined);
     const appendAssistant = vi.fn(async () => "assistant-turn-1");
     const journal = {
@@ -615,7 +655,7 @@ describe("channels/dispatcher", () => {
     const dispatcher = makeDispatcher({
       manager: makeManager(),
       journal: journal as never,
-      delivery: { send: vi.fn(async () => ({ ok: false as const, error: "offline" })) },
+      delivery: { send: vi.fn(async () => ({ ok: false as const, error })) },
       buildAndRunAgent: vi.fn(async (_msg: IncomingMessage, input: { transcriptSink: { appendAssistant: (input: unknown) => Promise<string> } }) => {
         await input.transcriptSink.appendAssistant({ message: { role: "assistant", content: "回复" } });
         return { text: "回复", sticker: null };
@@ -628,8 +668,9 @@ describe("channels/dispatcher", () => {
       assistantTurnId: "qq:chat-1:m-1:assistant",
       channel: "qq",
       status: "failed",
-      errorCode: "offline",
+      errorCode: error,
     }));
+    expect(appendDeliveryReceipt).not.toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ status: "delivered" }));
   });
 
   it("预回执写失败时禁止发送", async () => {

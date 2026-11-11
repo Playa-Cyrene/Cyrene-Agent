@@ -18,6 +18,7 @@ export async function buildChannelAttachmentInputs(
   const imageMode = options.imageMode ?? "direct";
 
   for (const item of msg.attachments ?? []) {
+    msg.signal?.throwIfAborted();
     if (!item.filePath) continue;
     const name = item.caption || path.basename(item.filePath);
     if (item.kind === "image") {

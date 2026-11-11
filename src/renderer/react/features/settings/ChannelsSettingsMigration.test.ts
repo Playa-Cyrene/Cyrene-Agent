@@ -116,6 +116,7 @@ describe("external channel settings migration", () => {
 
   it("does not send the saved Feishu secret back when saving the channel without replacing it", async () => {
     const saveConfig = vi.fn().mockResolvedValue({});
+    const restartAll = vi.fn();
     Object.assign(window, {
       settings: {
         getGeneral: async () => ({}),
@@ -124,7 +125,7 @@ describe("external channel settings migration", () => {
         channelsLogGet: async () => [],
         channelsContextBindingsGet: async () => ({ externalChats: [], bindings: [], conversations: [] }),
         channelsSaveConfig: saveConfig,
-        channelsRestart: async () => ({}),
+        channelsRestart: restartAll,
         onChannelsStatusChanged: () => () => {},
         onChannelsWechatQrcode: () => () => {},
         onChannelsWechatLoginDone: () => () => {},
@@ -137,7 +138,40 @@ describe("external channel settings migration", () => {
     const saveButton = Array.from(document.querySelectorAll("button")).find((button) => button.textContent?.trim() === "保存并连接");
     await act(async () => { saveButton!.click(); await new Promise((resolve) => setTimeout(resolve, 0)); });
 
-    expect(saveConfig).toHaveBeenCalledWith({ feishu: { enabled: false, appId: "cli_demo" } });
+    expect(saveConfig).toHaveBeenCalledWith({ feishu: { enabled: false, appId: "cli_demo" } }, true);
+    expect(restartAll).not.toHaveBeenCalled();
     expect(document.body.textContent).not.toContain("must-not-be-echoed");
+  });
+
+  it.each([
+    ["feishu", "飞书", "保存并连接"],
+    ["qq", "QQ（NapCat）", "保存并启动监听"],
+    ["qqbot", "QQ 机器人", "保存并连接"],
+  ])("%s 未修改配置时仍传递显式连接意图，不调用全渠道重启", async (id, label, action) => {
+    const saveConfig = vi.fn().mockResolvedValue({});
+    const restartAll = vi.fn();
+    Object.assign(window, { settings: {
+      getGeneral: async () => ({}),
+      channelsGetConfig: async () => ({ [id]: { enabled: true, appId: "synthetic", port: 6200 } }),
+      channelsGetStatus: async () => ({ [id]: { phase: "error" } }),
+      channelsLogGet: async () => [],
+      channelsContextBindingsGet: async () => ({ externalChats: [], bindings: [], conversations: [] }),
+      channelsQqResolveAuthRequirement: async () => ({ ok: true, requiresAccessToken: false }),
+      channelsSaveConfig: saveConfig,
+      channelsRestart: restartAll,
+      onChannelsStatusChanged: () => () => {},
+      onChannelsWechatQrcode: () => () => {},
+      onChannelsWechatLoginDone: () => () => {},
+    } });
+    const host = await renderSettings();
+    await act(async () => { buttonByText(host, "连接手机")!.click(); });
+    const card = Array.from(host.querySelectorAll(".cy-channels-provider")).find((element) => element.textContent?.includes(label));
+    await act(async () => { (card as HTMLButtonElement).click(); });
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await act(async () => { buttonByText(document, action)!.click(); });
+    }
+    expect(saveConfig).toHaveBeenCalledTimes(2);
+    expect(saveConfig).toHaveBeenLastCalledWith({ [id]: expect.objectContaining({ enabled: true }) }, true);
+    expect(restartAll).not.toHaveBeenCalled();
   });
 });

@@ -7,6 +7,7 @@ vi.mock("electron", () => ({
     getPath: () => "C:/tmp/cyrene-test-user-data",
   },
 }));
+vi.mock("../../settings-store", () => ({ loadChannelsSettings: () => ({ wechat: { enabled: false } }) }));
 
 function message(parts: OutgoingMessage["parts"]): OutgoingMessage {
   return {
@@ -17,6 +18,46 @@ function message(parts: OutgoingMessage["parts"]): OutgoingMessage {
 }
 
 describe("ILinkBotAdapter.send", () => {
+  it("关闭渠道后不发送剩余分段，并清除旧账号的回复及保存状态", async () => {
+    const adapter = new ILinkBotAdapter();
+    const sendText = vi.fn(async () => { await adapter.stop(); return { ok: true }; });
+    (adapter as any).client = { sendText };
+    (adapter as any).replyContextByTarget.set("wx-user-1", "ctx-1");
+    (adapter as any).pendingSaveIntentByTarget.set("wx-user-1", Date.now() + 10000);
+    const result = await adapter.send(message([{ kind: "text", text: "一" }, { kind: "text", text: "二" }]));
+    expect(result).toEqual({ ok: false, error: "channel_stopped" });
+    expect(sendText).toHaveBeenCalledOnce();
+    expect((adapter as any).replyContextByTarget.size).toBe(0);
+    expect((adapter as any).pendingSaveIntentByTarget.size).toBe(0);
+  });
+
+  it("停用配置下即使存在旧连接也不启动微信轮询", async () => {
+    const adapter = new ILinkBotAdapter();
+    await adapter.start();
+    expect(adapter.getStatus()).toMatchObject({ enabled: false, phase: "offline" });
+    expect((adapter as any).pollLoopPromise).toBeNull();
+  });
+
+  it("下载期间停止后，迟到的下载失败不发送提示或提交模型", async () => {
+    const adapter = new ILinkBotAdapter();
+    const download = Promise.withResolvers<never>();
+    const entered = Promise.withResolvers<void>();
+    const sendText = vi.fn();
+    adapter.onMessage = vi.fn(async () => null);
+    (adapter as any).client = { sendText };
+    (adapter as any).downloadMedia = async () => { entered.resolve(); return download.promise; };
+    const running = (adapter as any).dispatchInbound({
+      msgId: "late-media", fromUserId: "wx-user-1", contextToken: "ctx-1", content: "", raw: {},
+      items: [{ type: 2, image_item: { media: { encrypt_query_param: "synthetic", aes_key: "synthetic" } } }],
+    });
+    await entered.promise;
+    await adapter.stop();
+    download.reject(new Error("download failed"));
+    await running;
+    expect(sendText).not.toHaveBeenCalled();
+    expect(adapter.onMessage).not.toHaveBeenCalled();
+  });
+
   it("sends text replies through the protocol client with the cached context token", async () => {
     const adapter = new ILinkBotAdapter();
     const sendText = vi.fn(async () => ({ ok: true }));
@@ -69,8 +110,8 @@ describe("ILinkBotAdapter.send", () => {
     expect(result).toEqual({ ok: true });
     expect(sendText).toHaveBeenCalledWith("wx-user-1", "看图", "ctx-1");
     expect(uploadMedia).toHaveBeenCalledTimes(2);
-    expect(uploadMedia).toHaveBeenNthCalledWith(1, expect.anything(), "wx-user-1", "C:/tmp/pic.png", 1);
-    expect(uploadMedia).toHaveBeenNthCalledWith(2, expect.anything(), "wx-user-1", "C:/tmp/sticker.png", 1);
+    expect(uploadMedia).toHaveBeenNthCalledWith(1, expect.anything(), "wx-user-1", "C:/tmp/pic.png", 1, { signal: expect.any(AbortSignal) });
+    expect(uploadMedia).toHaveBeenNthCalledWith(2, expect.anything(), "wx-user-1", "C:/tmp/sticker.png", 1, { signal: expect.any(AbortSignal) });
     expect(sendMessage).toHaveBeenNthCalledWith(1, "wx-user-1", [
       {
         type: 2,
@@ -115,8 +156,8 @@ describe("ILinkBotAdapter.send", () => {
     ]));
 
     expect(result).toEqual({ ok: true });
-    expect(uploadMedia).toHaveBeenNthCalledWith(1, expect.anything(), "wx-user-1", "C:/tmp/report.pdf", 3);
-    expect(uploadMedia).toHaveBeenNthCalledWith(2, expect.anything(), "wx-user-1", "C:/tmp/demo.mp4", 2);
+    expect(uploadMedia).toHaveBeenNthCalledWith(1, expect.anything(), "wx-user-1", "C:/tmp/report.pdf", 3, { signal: expect.any(AbortSignal) });
+    expect(uploadMedia).toHaveBeenNthCalledWith(2, expect.anything(), "wx-user-1", "C:/tmp/demo.mp4", 2, { signal: expect.any(AbortSignal) });
     expect(sendMessage).toHaveBeenNthCalledWith(1, "wx-user-1", [
       {
         type: 4,
@@ -172,7 +213,7 @@ describe("ILinkBotAdapter.send", () => {
     expect(result).toEqual({ ok: true });
     expect(sendText).toHaveBeenCalledWith("wx-user-1", "语音来了", "ctx-1");
     expect(encodeVoice).toHaveBeenCalledWith(expect.any(Buffer), { format: "wav" });
-    expect(uploadMediaData).toHaveBeenCalledWith(expect.anything(), "wx-user-1", Buffer.from("silk-data"), 4);
+    expect(uploadMediaData).toHaveBeenCalledWith(expect.anything(), "wx-user-1", Buffer.from("silk-data"), 4, { signal: expect.any(AbortSignal) });
     expect(sendMessage).toHaveBeenCalledWith("wx-user-1", [
       {
         type: 3,
@@ -257,6 +298,7 @@ describe("ILinkBotAdapter inbound media", () => {
     expect((adapter as any).downloadMedia).toHaveBeenCalledWith(
       expect.objectContaining({ kind: "image" }),
       "msg-1",
+      expect.any(AbortSignal),
     );
     expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({
       channel: "wechat",
@@ -359,6 +401,7 @@ describe("ILinkBotAdapter inbound media", () => {
     expect((adapter as any).saveInboundMedia).toHaveBeenCalledWith(
       expect.objectContaining({ kind: "file", fileName: "archive.zip" }),
       "msg-file-1",
+      expect.any(AbortSignal),
     );
     expect(sendText).toHaveBeenLastCalledWith(
       "wx-user-1",
@@ -418,6 +461,7 @@ describe("ILinkBotAdapter inbound media", () => {
     expect((adapter as any).saveInboundMedia).toHaveBeenCalledWith(
       expect.objectContaining({ kind: "video", fileName: "movie.mp4" }),
       "msg-video-1",
+      expect.any(AbortSignal),
     );
     expect(sendText).toHaveBeenLastCalledWith(
       "wx-user-1",
@@ -472,6 +516,7 @@ describe("ILinkBotAdapter inbound media", () => {
     expect((adapter as any).saveInboundMedia).toHaveBeenCalledWith(
       expect.objectContaining({ kind: "file", fileName: "report.pdf" }),
       "msg-file-2",
+      expect.any(AbortSignal),
     );
     expect((adapter as any).downloadMedia).not.toHaveBeenCalled();
     expect(onMessage).not.toHaveBeenCalled();
@@ -512,6 +557,7 @@ describe("ILinkBotAdapter inbound media", () => {
     expect((adapter as any).transcribeVoice).toHaveBeenCalledWith(
       expect.objectContaining({ kind: "voice", fileName: "微信语音" }),
       "msg-voice-1",
+      expect.any(AbortSignal),
     );
     expect(sendText).not.toHaveBeenCalled();
     expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({

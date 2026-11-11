@@ -149,12 +149,11 @@ export function ChannelsSettingsPanel() {
     setValues((current) => ({ ...current, [id]: { ...current[id], [key]: value } }));
   };
 
-  const saveChannel = async (id: ChannelId, patch: ChannelConfig, restart = false) => {
+  const saveChannel = async (id: ChannelId, patch: ChannelConfig, connect = false) => {
     if (!api) return false;
     setBusy(id); setFeedback("");
     try {
-      await api.channelsSaveConfig({ [id]: patch });
-      if (restart) await api.channelsRestart();
+      await api.channelsSaveConfig({ [id]: patch }, connect);
       setValues((current) => ({ ...current, [id]: { ...current[id], ...patch } }));
       setFeedback(t("settingsPage.channels.saved"));
       await refreshStatus();

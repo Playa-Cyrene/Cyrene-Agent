@@ -44,6 +44,8 @@ import type {
 import { loadChannelsSettings } from "../../settings-store";
 import { getAudioDurationMs } from "./audio-duration";
 import { logger, LogTag } from "../../../logger";
+import { AdapterActivity } from "../../adapter-activity";
+import { createCancellableLarkHttp } from "./cancellable-http";
 
 export { transcodeAudioFileToFeishuOpus } from "./audio-transcode";
 
@@ -80,7 +82,9 @@ async function downloadLarkResource(
   messageId: string,
   fileKey: string,
   kind: string,
+  signal: AbortSignal,
 ): Promise<string | null> {
+  signal.throwIfAborted();
   const cacheDir = path.join(app.getPath("userData"), "channels", "cache");
   fs.mkdirSync(cacheDir, { recursive: true });
   // 命名: feishu-<messageId>-<fileKey 末 8 位>.<ext>
@@ -98,6 +102,7 @@ async function downloadLarkResource(
       path: { message_id: messageId, file_key: fileKey },
       params: { type: typeParam },
     });
+    signal.throwIfAborted();
     // SDK 返回带 writeFile / getReadableStream / headers；用 writeFile 直接落盘
     if (res && typeof res.writeFile === "function") {
       await res.writeFile(localPath);
@@ -110,6 +115,7 @@ async function downloadLarkResource(
         stream.on("end", () => resolve());
         stream.on("error", (e: Error) => reject(e));
       });
+      signal.throwIfAborted();
       fs.writeFileSync(localPath, Buffer.concat(chunks));
     }
     const stat = fs.statSync(localPath);
@@ -125,6 +131,7 @@ async function downloadLarkResource(
 async function normalizeLarkMessage(
   channel: LarkChannel,
   msg: NormalizedMessage,
+  signal: AbortSignal,
 ): Promise<IncomingMessage> {
   // msg.content 是 JSON 字符串，msg.rawContentType 是消息类型（"text" / "image" / "post" / ...）
   let text = "";
@@ -141,7 +148,7 @@ async function normalizeLarkMessage(
   } else if (rawType === "image" || rawType === "file" || rawType === "audio" || rawType === "video" || rawType === "sticker") {
     // 下载所有 resources 到本地，给 LLM 一个明确的本地路径
     for (const r of msg.resources ?? []) {
-      const localPath = await downloadLarkResource(channel, msg.messageId, r.fileKey, r.type);
+      const localPath = await downloadLarkResource(channel, msg.messageId, r.fileKey, r.type, signal);
       if (localPath) {
         const { mime } = resourceKindToExt(r.type);
         attachments.push({
@@ -162,6 +169,7 @@ async function normalizeLarkMessage(
   }
 
   return {
+    signal,
     channel: "feishu",
     senderId: msg.senderId ?? "",
     senderName: msg.senderName,
@@ -178,7 +186,8 @@ async function normalizeLarkMessage(
 
 /** 把我们 OutgoingMessage.parts 翻译成飞书 SendInput。飞书 send() 一次只发一个 payload，
  *  所以多 parts 时循环调用 send。 */
-async function sendLark(channel: LarkChannel, targetId: string, part: OutgoingPart): Promise<{ messageId: string } | null> {
+async function sendLark(channel: LarkChannel, targetId: string, part: OutgoingPart, signal: AbortSignal): Promise<{ messageId: string } | null> {
+  signal.throwIfAborted();
   let result: { messageId: string } | null = null;
   switch (part.kind) {
     case "text": {
@@ -207,6 +216,7 @@ async function sendLark(channel: LarkChannel, targetId: string, part: OutgoingPa
         break;
       }
       const duration = await getAudioDurationMs(part.filePath);
+      signal.throwIfAborted();
       console.log("[Feishu audio] send file:", part.filePath, "duration:", duration, "mime:", part.mime);
       if (!duration) {
         throw new Error(`无法解析音频时长: ${part.filePath}`);
@@ -259,6 +269,8 @@ export class FeishuAdapter implements ChannelAdapter {
   onMessage: MessageHandler | null = null;
 
   private channel: LarkChannel | null = null;
+  private activity = new AdapterActivity();
+  private parentSignal?: AbortSignal;
   private status: ChannelStatus = { enabled: false, phase: "config_missing" };
   /** connect() 失败后的定时重建句柄；连接成功、停用或手动 rebuild 时清除 */
   private connectRetryTimer: NodeJS.Timeout | null = null;
@@ -269,6 +281,9 @@ export class FeishuAdapter implements ChannelAdapter {
 
   /** 重建 LarkChannel 实例（用户在 UI 里改了 AppID/Secret 后调） */
   private async rebuildChannel(): Promise<LarkChannel | null> {
+    const signal = this.activity.signal;
+    const onMessage = this.onMessage;
+    if (signal.aborted) return null;
     const settings = loadChannelsSettings().feishu;
     if (!settings.enabled) {
       this.status = { enabled: false, phase: "offline", message: "未启用" };
@@ -284,6 +299,7 @@ export class FeishuAdapter implements ChannelAdapter {
     }
 
     const ch = createLarkChannel({
+      httpInstance: createCancellableLarkHttp(signal),
       appId: settings.appId,
       appSecret: settings.appSecret,
       domain: Domain.Feishu,
@@ -297,15 +313,16 @@ export class FeishuAdapter implements ChannelAdapter {
 
     // 绑定入站消息
     ch.on("message" as EventName, async (msg: NormalizedMessage) => {
+      if (signal.aborted) return;
       // 私聊 only（方案决策）
       if (msg.chatType !== "p2p") {
         console.log(LOG, `忽略 ${msg.chatType} 消息 (私聊优先)`);
         return;
       }
       try {
-        const inMsg = await normalizeLarkMessage(ch, msg);
-        if (this.onMessage) {
-          await this.onMessage(inMsg);
+        const inMsg = await normalizeLarkMessage(ch, msg, signal);
+        if (!signal.aborted && onMessage) {
+          await onMessage(inMsg);
         }
       } catch (err) {
         console.error(LOG, "处理入站消息失败:", err);
@@ -314,15 +331,18 @@ export class FeishuAdapter implements ChannelAdapter {
 
     // 错误/重连事件
     ch.on("error" as EventName, (err: unknown) => {
+      if (signal.aborted) return;
       const msg = err instanceof Error ? err.message : String(err);
       console.error(LOG, "channel error:", msg);
       this.status = { enabled: true, phase: "error", message: msg };
     });
     ch.on("reconnecting" as EventName, () => {
+      if (signal.aborted) return;
       console.log(LOG, "reconnecting…");
       this.status = { enabled: true, phase: "starting", message: "重新连接中" };
     });
     ch.on("reconnected" as EventName, () => {
+      if (signal.aborted) return;
       console.log(LOG, "reconnected");
       this.status = { enabled: true, phase: "running", message: "已连接" };
     });
@@ -331,15 +351,19 @@ export class FeishuAdapter implements ChannelAdapter {
     return ch;
   }
 
-  async start(): Promise<void> {
+  async start(parent?: AbortSignal): Promise<void> {
+    this.parentSignal = parent;
+    const signal = this.activity.start(parent);
     const ch = await this.rebuildChannel();
     if (!ch) return;
 
     try {
       await ch.connect();
+      if (signal.aborted) return;
       this.status = { enabled: true, phase: "running", message: "长连接已建立" };
       logger.info(LogTag.Feishu, "WS long connection ready");
     } catch (err) {
+      if (signal.aborted) return;
       const msg = err instanceof Error ? err.message : String(err);
       console.error(LOG, "connect() failed:", msg);
       this.status = { enabled: true, phase: "error", message: msg };
@@ -350,12 +374,13 @@ export class FeishuAdapter implements ChannelAdapter {
   /** 首连失败后定时重建整个 channel。SDK 内部的自动重连只覆盖"连上后断开"，
    *  首连挂死（握手无响应）只能靠新建连接恢复；固定 30 秒重试直到成功或停用。 */
   private scheduleConnectRetry(): void {
+    const signal = this.activity.signal;
     if (this.connectRetryTimer) return;
     console.warn(LOG, "30 秒后自动重建连接");
     this.connectRetryTimer = setTimeout(() => {
       this.connectRetryTimer = null;
       // 到点时用户可能已停用飞书，停用状态下不再重建
-      if (!loadChannelsSettings().feishu.enabled) return;
+      if (signal.aborted || !loadChannelsSettings().feishu.enabled) return;
       void this.rebuild();
     }, 30_000);
   }
@@ -368,14 +393,16 @@ export class FeishuAdapter implements ChannelAdapter {
   }
 
   async stop(): Promise<void> {
+    this.activity.stop();
     this.clearConnectRetryTimer();
-    if (this.channel) {
+    const channel = this.channel;
+    if (channel) {
       try {
-        await this.channel.disconnect();
+        await channel.disconnect();
       } catch (err) {
         console.warn(LOG, "disconnect 失败:", err);
       }
-      this.channel = null;
+      if (this.channel === channel) this.channel = null;
     }
     this.status = { enabled: false, phase: "offline", message: "已停止" };
   }
@@ -392,6 +419,8 @@ export class FeishuAdapter implements ChannelAdapter {
   }
 
   async send(msg: OutgoingMessage): Promise<{ ok: boolean; error?: string }> {
+    const signal = msg.signal ? AbortSignal.any([msg.signal, this.activity.signal]) : this.activity.signal;
+    if (signal.aborted) return { ok: false, error: "channel_stopped" };
     if (!this.channel) {
       console.warn(LOG, "send 失败: 长连接未建立");
       return { ok: false, error: "飞书长连接未建立" };
@@ -403,11 +432,13 @@ export class FeishuAdapter implements ChannelAdapter {
     let lastErr: string | undefined;
     let anyOk = false;
     for (const part of msg.parts) {
+      if (signal.aborted) return { ok: false, error: "channel_stopped" };
       try {
-        const r = await sendLark(this.channel, msg.targetId, part);
+        const r = await sendLark(this.channel, msg.targetId, part, signal);
         console.log(LOG, `send ok: messageId=${r?.messageId ?? "?"}`);
         anyOk = true;
       } catch (err) {
+        if (signal.aborted) return { ok: false, error: "channel_stopped" };
         lastErr = err instanceof Error ? err.message : String(err);
         console.error(LOG, `send part failed: targetId=${msg.targetId} part=${part.kind} err=`, lastErr, err);
       }
@@ -418,15 +449,8 @@ export class FeishuAdapter implements ChannelAdapter {
 
   /** 给外部：触发重建（用户改 AppID/Secret 后调用） */
   public async rebuild(): Promise<void> {
-    this.clearConnectRetryTimer();
-    if (this.channel) {
-      try {
-        await this.channel.disconnect();
-      } catch {
-        /* ignore */
-      }
-      this.channel = null;
-    }
-    await this.start();
+    const parent = this.parentSignal;
+    await this.stop();
+    if (!parent?.aborted) await this.start(parent);
   }
 }

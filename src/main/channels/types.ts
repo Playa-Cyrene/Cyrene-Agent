@@ -60,6 +60,8 @@ export interface ChannelAttachment {
 
 /** 入站消息。adapters → dispatcher。 */
 export interface IncomingMessage {
+  /** 仅进程内使用，由适配器/管理器绑定本次连接，不持久化。 */
+  signal?: AbortSignal;
   channel: ChannelId;
   /** 私聊或群聊。旧渠道未声明时按 private 处理。 */
   chatType?: ChannelChatType;
@@ -100,6 +102,8 @@ export type OutgoingPart =
 
 /** 出站消息。dispatcher → adapters。 */
 export interface OutgoingMessage {
+  /** 回复所属连接的撤销信号；重启不能恢复旧回复的发送权限。 */
+  signal?: AbortSignal;
   channel: ChannelId;
   chatType?: ChannelChatType;
   /** 回复给谁（私聊 = senderId；群聊 = chatId） */

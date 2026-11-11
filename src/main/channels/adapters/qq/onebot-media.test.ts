@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { OneBotActionClient } from "./onebot-action-client";
 import { OneBotActionError } from "./onebot-action-client";
+import { normalizeOneBotMessage } from "./onebot-normalizer";
 import { OneBotMediaManager, versionAtLeast, ONEBOT_BASE64_THRESHOLD_BYTES, ONEBOT_CACHE_TTL_MS, ONEBOT_MAX_FILE_BYTES } from "./onebot-media";
 
 vi.mock("electron", () => ({ app: { getPath: () => os.tmpdir() } }));
@@ -11,11 +12,45 @@ vi.mock("electron", () => ({ app: { getPath: () => os.tmpdir() } }));
 const tempDirs: string[] = [];
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
   for (const dir of tempDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
 });
 
 describe("OneBotMediaManager", () => {
+  it("首附件下载途中撤销后不写缓存，也不开始第二附件", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-qq-cancel-"));
+    tempDirs.push(dir);
+    const activity = new AbortController();
+    const fetch = vi.fn(async () => {
+      activity.abort(new Error("channel_stopped"));
+      return new Response("synthetic");
+    });
+    vi.stubGlobal("fetch", fetch);
+    const media = new OneBotMediaManager(() => null, dir);
+    await expect(normalizeOneBotMessage({
+      message_type: "private", user_id: "peer", message_id: "synthetic",
+      message: [1, 2].map((id) => ({ type: "image", data: { url: `https://example.test/${id}` } })),
+    } as never, { selfId: "bot", client: {} as never, media, supportsStream: false, signal: activity.signal })).rejects.toThrow("channel_stopped");
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(fs.readdirSync(dir)).toEqual([]);
+  });
+
+  it("文件路径解析期间重启不能借用新客户端上传旧文件", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-qq-cancel-"));
+    tempDirs.push(dir);
+    const file = path.join(dir, "synthetic.bin");
+    fs.writeFileSync(file, "synthetic");
+    const activity = new AbortController();
+    const newClient = { call: vi.fn() };
+    vi.spyOn(fs.promises, "realpath").mockImplementationOnce(async () => {
+      activity.abort(new Error("channel_stopped"));
+      return file;
+    });
+    const media = new OneBotMediaManager(() => newClient as never, dir);
+    await expect(media.encodeOutbound(file, "file", true, activity.signal)).rejects.toThrow("channel_stopped");
+    expect(newClient.call).not.toHaveBeenCalled();
+  });
   it("compares NapCat semantic versions", () => {
     expect(versionAtLeast("4.8.115", "4.8.115")).toBe(true);
     expect(versionAtLeast("NapCat 4.18.4", "4.8.115")).toBe(true);
