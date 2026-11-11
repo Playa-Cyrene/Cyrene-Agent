@@ -2,11 +2,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { BrowserPanelController } from "./browser-panel-controller";
 import { registerBrowserPageTools } from "./browser-page-tools";
 import { toolRegistry } from "../orchestrator/tools/registry/tool-registry";
+import type { ToolContext } from "../orchestrator/tools/registry/tool-context";
 
 vi.mock("electron", () => ({ app: {}, session: {}, shell: {}, Menu: {}, WebContentsView: class {} }));
 vi.mock("../protocols/bootstrap", () => ({ getLearnExamPageSession: vi.fn() }));
 
-const owner = { conversationId: "resume-test-conversation", runId: "resume-test-run" };
+const owner: ToolContext = {
+  userQuery: "verify browser resume behavior",
+  conversationId: "resume-test-conversation",
+  runId: "resume-test-run",
+};
 
 function registerTools() {
   const controller = {
