@@ -13,3 +13,7 @@
 仍待实现：版本化进程 envelope/握手、凭据交接、专属管理器运行时、媒体 broker、真正模块、安装/迁移和回滚，以及运行时与 QQ 实测。公共 manifest、hostVersionRange、平台/架构兼容矩阵、发布者信任根、签名和安装信任政策均延期；不能通过 API 协商代替包兼容性或来源验证。当前没有经过验证的 QFCA 安装包或支持宿主版本范围。
 
 验证：`pnpm exec vitest run src/shared/qq-module/contract.test.ts`，然后运行仓库 `pnpm run check:main` 等完整检查。
+
+## 第二阶段运行时候选
+
+`runtime.ts` 现在定义 hello/initialize/start/send/ackInbound/quiesce/stop/ping 和 status/inbound/capability-changed 私有 envelope；宿主运行时还未接入正常渠道启动。send 新增必填 connectionEpoch，需由宿主和模块发送边界双重核对。`QQ_RUNTIME_TIMEOUTS` 统一模块 120 秒总发送预算和宿主 130 秒响应等待，不能拿 5 秒控制 RPC 截断正常分片发送。详情、信任局限及测试见 `docs/design/2026-11-11-qq-module-host-runtime.md`。上文“仍待实现”描述的是第一阶段基线，不代表安装、媒体或生产切换现在已经完成。
