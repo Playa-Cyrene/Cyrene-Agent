@@ -34,7 +34,7 @@ function setup(checkpoint: (record: QqMigrationRecord) => void = () => {}) {
   const candidate = packages.install({ manifest: bytes, files,
     signature: sign(null, Buffer.concat([Buffer.from(QQ_PACKAGE_SIGNATURE_DOMAIN), bytes]), key.privateKey) }, { userConfirmed: true });
   const settings = join(root, "legacy-settings.json"), history = join(root, "legacy-history.jsonl"), binding = join(root, "legacy-bindings.json");
-  writeFileSync(settings, JSON.stringify({ qq: { enabled: true, listenMode: "loopback", port: 6200,
+  writeFileSync(settings, JSON.stringify({ qq: { enabled: true, listenMode: "loopback", port: 6200, accessToken: "plain:test-only-secret",
     allowedPrivateUserIds: ["30000"], allowedGroupIds: ["20000"], groupRequireMention: true,
     groupReplyStyle: "reply-and-mention", groupToolPolicy: "off", groupMemoryPolicy: "shared-personal" } }));
   writeFileSync(history, '{"text":"old history remains"}\n'); writeFileSync(binding, '{"session":"qq:20000"}\n');
@@ -61,7 +61,7 @@ function setup(checkpoint: (record: QqMigrationRecord) => void = () => {}) {
     return manager;
   });
   const options = { store, legacy, verifyCandidate, createModule, readLegacySettings: () => readFileSync(settings), interfaces: {},
-    secureStorage: { isSecureAvailable: () => false, decryptString: () => { throw new Error("fixture has no secret"); } },
+    secureStorage: { isSecureAvailable: () => true, decryptString: () => { throw new Error("fixture has no secret"); } },
     legacyMachine: { userDataPath: root, appName: "Cyrene" }, backendReconnectTimeoutMs: 100 };
   const coordinator = new QqMigrationCoordinator(options);
   const preview = () => coordinator.previewMigration(candidate.packageId);

@@ -7,7 +7,7 @@ import i18next from "i18next";
 import type { QqModuleInstallationStatus } from "../../../../shared/qq-module-installation";
 import { QqModuleInstallationCard } from "./QqModuleInstallationCard";
 
-const status: QqModuleInstallationStatus = { availability: "release-unconfigured", canInstall: false, moduleInstalled: false, currentDriver: "legacy-builtin", listenCompatibility: "loopback" };
+const status: QqModuleInstallationStatus = { availability: "release-unconfigured", canInstall: false, moduleInstalled: false, currentDriver: "legacy-builtin", listenCompatibility: "loopback", tokenCompatibility: "available" };
 let root: Root, host: HTMLDivElement;
 const api = { channelsQqModuleInstallationStatus: vi.fn<() => Promise<QqModuleInstallationStatus>>() };
 beforeEach(async () => {
@@ -78,4 +78,23 @@ it("does not keep a prior loopback success when a reopened query fails", async (
   await click(button("查看模块安装条件"));
   expect(document.querySelector('[role="status"]')?.textContent).toContain("地址无法确定");
   expect(document.body.textContent).not.toContain("当前监听预检：本机回环");
+});
+
+it.each(["required", "unresolved"] as const)("shows saved token %s without enabling install or rewriting credentials", async (tokenCompatibility) => {
+  api.channelsQqModuleInstallationStatus.mockResolvedValueOnce({ ...status, tokenCompatibility });
+  await click(button("查看模块安装条件"));
+  expect(document.body.textContent).toContain("即使仅监听本机回环，也必须配置非空白 Access Token");
+  expect(document.body.textContent).toContain(tokenCompatibility === "required" ? "Token 缺失或仅含空白" : "无法确认已保存的 Token");
+  expect(button("下载并安装").disabled).toBe(true);
+  expect(api.channelsQqModuleInstallationStatus).toHaveBeenCalledExactlyOnceWith({ listenMode: "loopback", customHost: "" });
+});
+it("clears a previous available-token result after a failed reopened query", async () => {
+  await click(button("查看模块安装条件"));
+  expect(document.body.textContent).toContain("已读取到非空白 Token");
+  await click(document.querySelector<HTMLButtonElement>(".ant-modal-footer button")!);
+  api.channelsQqModuleInstallationStatus.mockRejectedValueOnce(new Error("private-token"));
+  await click(button("查看模块安装条件"));
+  expect(document.body.textContent).not.toContain("已读取到非空白 Token");
+  expect(document.body.textContent).not.toContain("private-token");
+  expect(document.body.textContent).toContain("无法确认已保存的 Token");
 });

@@ -6,12 +6,22 @@ import type { QqModuleInstallationStatus, QqModuleListenInput } from "../../shar
 /** No published trust root/format/support matrix is approved yet. This read-only
  * endpoint must never fetch releases, create directories, migrate or start a module.
  * The offline verifier/store are intentionally not imported by production wiring. */
-export function getQqModuleInstallationStatus(input: unknown, interfaces?: Parameters<typeof resolveQqListenAuthRequirement>[1]): QqModuleInstallationStatus {
+export function getQqModuleInstallationStatus(input: unknown, interfaces?: Parameters<typeof resolveQqListenAuthRequirement>[1], readToken?: () => string): QqModuleInstallationStatus {
   const valid = strictObject(input, { listenMode: (v) => ["auto", "loopback", "wsl", "custom"].includes(v as string) },
     { customHost: (v) => typeof v === "string" && v.length <= 253 });
   const resolved = valid ? resolveQqListenAuthRequirement(input as QqModuleListenInput, interfaces) : null;
   // QFCA's first supported policy is loopback-only. A token cannot enable remote
   // listening. Do not silently rewrite auto/WSL/custom settings to loopback.
   const listenCompatibility = !resolved?.ok ? "unresolved" : isQqModuleLoopbackHost(resolved.resolvedHost) ? "loopback" : "unsupported-host";
-  return { availability: "release-unconfigured", canInstall: false, moduleInstalled: false, currentDriver: "legacy-builtin", listenCompatibility };
+  // The trusted host supplies a decoded credential; renderer input never contains it.
+  // Presence is not backend authentication, secure storage approval or install readiness.
+  let tokenCompatibility: QqModuleInstallationStatus["tokenCompatibility"] = "unresolved";
+  if (readToken) {
+    try {
+      const token = readToken();
+      tokenCompatibility = typeof token !== "string" ? "unresolved" : !token.trim() ? "required"
+        : token.length > 4096 || /[\x00-\x1f\x7f]/.test(token) ? "unresolved" : "available";
+    } catch { /* Do not return or log credential/decryption diagnostics. */ }
+  }
+  return { tokenCompatibility, availability: "release-unconfigured", canInstall: false, moduleInstalled: false, currentDriver: "legacy-builtin", listenCompatibility };
 }

@@ -44,7 +44,7 @@ afterEach(async () => {
 
 it("rehearses a confirmed legacy WS migration without changing original data or dispatching quarantined input", async () => {
   fixture.directory = mkdtempSync(join(tmpdir(), "qq-old-migration-e2e-"));
-  fixture.config = { enabled: true, listenMode: "loopback", port: 0,
+  fixture.config = { enabled: true, listenMode: "loopback", port: 0, accessToken: "test-only-secret",
     allowedPrivateUserIds: ["30000"], allowedGroupIds: ["20000"], groupRequireMention: true,
     groupReplyStyle: "reply-and-mention", groupToolPolicy: "off", groupMemoryPolicy: "shared-personal" };
   old = new NapCatAdapter();
@@ -82,7 +82,7 @@ it("rehearses a confirmed legacy WS migration without changing original data or 
   expect(history.entries(conversationId)).toEqual([savedEntry]);
   const order: string[] = [];
   listener.once("close", () => order.push("legacy-listener-closed"));
-  socket = new WebSocket(url, { headers: { "X-Self-ID": "10000" } });
+  socket = new WebSocket(url, { headers: { "X-Self-ID": "10000", Authorization: "Bearer test-only-secret" } });
   socket.on("message", (raw) => {
     const request = JSON.parse(raw.toString());
     socket!.send(JSON.stringify({ status: "ok", retcode: 0, echo: request.echo,
@@ -137,7 +137,7 @@ it("rehearses a confirmed legacy WS migration without changing original data or 
   });
   const coordinator = new QqMigrationCoordinator({ store,
     readLegacySettings: () => readFileSync(join(fixture.directory, "channels-settings.json")), legacy: old,
-    secureStorage: { isSecureAvailable: () => false, decryptString: () => { throw new Error("no credentials in fixture"); } },
+    secureStorage: { isSecureAvailable: () => true, decryptString: () => { throw new Error("no credentials in fixture"); } },
     legacyMachine: { userDataPath: fixture.directory, appName: "Cyrene" }, verifyCandidate: vi.fn(), createModule });
   const preview = coordinator.previewMigration(`pkg-${"a".repeat(64)}`);
   expect(preview).toMatchObject({ channelId: "qq", accountId: "10000", preserved: ["settings", "history", "bindings"] });

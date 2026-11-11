@@ -21,7 +21,7 @@ const peers: FakeTransport[] = [];
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 function setup(extra: Partial<QqMigrationOptions> = {}, fault?: ConstructorParameters<typeof QqMigrationStore>[1]) {
   const root = mkdtempSync(join(tmpdir(), "qq-migration-")); directories.push(root);
-  const path = join(root, "channels-settings.json"); writeFileSync(path, settings());
+  const path = join(root, "channels-settings.json"); writeFileSync(path, settings({ accessToken: "plain:test-only-secret" }));
   const history = join(root, "channels-history.json"); writeFileSync(history, '{"qq:private:30000":["existing-message"]}');
   const binding = join(root, "channel-conversation-bindings.json"); writeFileSync(binding, '{"qq:private:30000":"desktop-original"}');
   const before = [path, history, binding].map((file) => readFileSync(file));
@@ -96,12 +96,37 @@ describe("QQ legacy credential boundary", () => {
     expect(() => readQqMigrationToken(settings({ accessToken: "enc:YWJj" }), storage, legacyMachine)).toThrow("QQ_MIGRATION_credential-unreadable");
     expect(() => readQqMigrationToken(settings({ accessToken: "enc:!!" }), secureStorage(), legacyMachine)).toThrow("credential-unreadable");
     storage.decryptString.mockReturnValue("");
-    expect(() => readQqMigrationToken(settings({ accessToken: "enc:YWJj" }), storage, legacyMachine)).toThrow("credential-unreadable");
-    expect(readQqMigrationToken(settings(), { ...secureStorage(), isSecureAvailable: () => false }, legacyMachine)).toBe("");
+    expect(() => readQqMigrationToken(settings({ accessToken: "enc:YWJj" }), storage, legacyMachine)).toThrow("credential-required");
+    expect(() => readQqMigrationToken(settings(), { ...secureStorage(), isSecureAvailable: () => false }, legacyMachine)).toThrow("credential-required");
   });
 });
 
 describe("QQ migration coordinator and recovery", () => {
+  it.each([undefined, "", "  ", "\t\u00a0", "plain:", "plain:  ", "enc:YWJj", "obf:Iw=="])("rejects absent/decoded blank credentials before stopping or persisting intent: %s", async (accessToken) => {
+    const s = setup();
+    // Obfuscate actual whitespace with the original machine key, not an envelope sentinel.
+    if (accessToken?.startsWith("obf:")) {
+      const key = createHash("sha256").update(`${legacyMachine.userDataPath}::${legacyMachine.appName}::cyrene-bot-secret`).digest();
+      const bytes = Buffer.from("  ");
+      for (let i = 0; i < bytes.length; i++) bytes[i] ^= key[i % 16];
+      accessToken = `obf:${bytes.toString("base64")}`;
+    }
+    s.options.secureStorage.decryptString = () => " \u00a0 ";
+    writeFileSync(s.path, settings({ accessToken }));
+    const before = [s.path, s.history, s.binding].map((file) => readFileSync(file));
+    await expect(s.confirm()).rejects.toThrow("QQ_MIGRATION_credential-required");
+    expect(s.legacy.prepareMigrationStop).not.toHaveBeenCalled();
+    expect(s.options.createModule).not.toHaveBeenCalled();
+    expect(s.store.read()).toBeNull();
+    expect([s.path, s.history, s.binding].map((file) => readFileSync(file))).toEqual(before);
+  });
+  it("preserves surrounding whitespace on a nonblank legacy token without rewriting files", async () => {
+    const s = setup(); writeFileSync(s.path, settings({ accessToken: "plain:  test-only-secret  " }));
+    const before = readFileSync(s.path);
+    expect(await s.confirm()).toMatchObject({ outcome: "committed" });
+    expect(s.peer.messages.find((m) => m.method === "initialize")?.payload).toMatchObject({ credentials: { accessToken: "  test-only-secret  " } });
+    expect(readFileSync(s.path)).toEqual(before);
+  });
   it("preview is read-only and redacts credentials; cancellation makes no changes", () => {
     const s = setup(); writeFileSync(s.path, settings({ accessToken: "plain:test-only-secret" }));
     const before = readFileSync(s.path); const preview = s.preview();

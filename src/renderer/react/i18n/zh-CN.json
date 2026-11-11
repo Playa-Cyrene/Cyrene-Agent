@@ -1054,6 +1054,10 @@
       },
       "feishu": { "description": "在飞书开放平台创建自建应用并启用机器人能力，然后填写 App ID 和 App Secret。支持长连接，无需公网回调。" },
       "qqModule": {
+        "tokenPolicy": "独立 QFCA 模块即使仅监听本机回环，也必须配置非空白 Access Token，并与后端一致。此要求不改变当前内建 QQ 接入；不会自动生成或改写 Token。",
+        "tokenRequired": "当前已保存的 Token 缺失或仅含空白，不能切换到独立模块。请先在原 QQ 设置和后端配置一致的 Token。",
+        "tokenAvailable": "已读取到非空白 Token；这不代表后端认证成功。迁移确认时仍须重新校验凭据和安全存储。",
+        "tokenUnresolved": "无法确认已保存的 Token 是否可用。切换前须检查凭据和安全存储；原配置保持不变。",
         "loopbackPolicy": "首版独立模块仅支持数字 IP 的本机回环监听，不接受 localhost / DNS 名称、带括号 IPv6 或 scope ID。Token 不会开启远程支持；auto 解析为 WSL、显式 WSL 或局域网地址均不能直接切换，也不会自动改写配置。",
         "listenReady": "当前监听预检：本机回环。发行信任与其他安装条件仍未完成。",
         "listenUnsupported": "当前监听预检：地址不受首版独立模块支持（仅允许数字回环 IP）。请在后续切换前明确调整配置。",

@@ -205,7 +205,7 @@ describe("QQ offline package transactions", () => {
   });
   it("cannot turn a production status query into installation", () => {
     const first = getQqModuleInstallationStatus({ listenMode: "loopback" });
-    expect(first).toEqual({ availability: "release-unconfigured", canInstall: false, moduleInstalled: false, currentDriver: "legacy-builtin", listenCompatibility: "loopback" });
+    expect(first).toEqual({ availability: "release-unconfigured", canInstall: false, moduleInstalled: false, currentDriver: "legacy-builtin", listenCompatibility: "loopback", tokenCompatibility: "unresolved" });
     (first as any).canInstall = true;
     expect(getQqModuleInstallationStatus({ listenMode: "loopback" }).canInstall).toBe(false);
   });

@@ -109,7 +109,7 @@ export class QqModuleManager {
     const input = this.options.getConfiguration();
     this.state = { ...this.state, enabled: input !== null };
     if (input === null) { this.setPhase("disabled"); return; }
-    if (!validateRequestPayload("initialize", input) || !isQqModuleLoopbackHost(input.config.listen.host)) { this.setPhase("config-missing"); return; }
+    if (!validateRequestPayload("initialize", input) || !isQqModuleLoopbackHost(input.config.listen.host) || !input.credentials.accessToken.trim()) { this.setPhase("config-missing"); return; }
     if (!this.options.createTransport) { this.setPhase("module-missing"); return; }
     this.state = { enabled: true, phase: "starting", runtimeEpoch: this.state.runtimeEpoch + 1 };
     let gen: Generation | undefined;

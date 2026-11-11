@@ -15,6 +15,7 @@ import { IPC } from "../../shared/ipc-channels";
 import { createIpcScope, type IpcScope } from "../application/ipc-scope";
 import {
   loadChannelsSettings,
+  readQqModulePreflightToken,
   saveChannelsSettings,
 } from "./settings-store";
 import { channelManager } from "./manager";
@@ -169,7 +170,7 @@ function registerChannelsIpc(
   ipc.handle(IPC.CHANNELS_LIST, () => channelManager.listChannels());
 
   ipc.handle(IPC.CHANNELS_GET_STATUS, () => channelManager.getAllStatus());
-  ipc.handle(IPC.CHANNELS_QQ_MODULE_INSTALLATION_STATUS, (_e, input: unknown) => getQqModuleInstallationStatus(input));
+  ipc.handle(IPC.CHANNELS_QQ_MODULE_INSTALLATION_STATUS, (_e, input: unknown) => getQqModuleInstallationStatus(input, undefined, readQqModulePreflightToken));
 
   // QQ 监听鉴权预检：渲染进程看不到网络接口，无法自行判断监听地址是否回环，
   // 因此「是否需要 Access Token」只能由主进程给出（与启动时的硬校验同一实现）。

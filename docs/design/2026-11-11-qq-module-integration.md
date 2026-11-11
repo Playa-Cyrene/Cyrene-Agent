@@ -72,3 +72,9 @@ pnpm test
 生产安装、下载、迁移和启动编排仍关闭，installation-status 仍返回 release-unconfigured / canInstall=false；原 init.ts 继续注册内建 NapCatAdapter。测试每次生成的短期密钥只验证临时惰性包，绝不作为生产信任根。没有伪造正式发行包、发布者、公钥信任或支持矩阵。
 
 仍未完成生产签名/撤钥/下载器、崩溃残留锁与孤儿进程安全恢复、Windows/Electron utilityProcess/ACL/安装包验收、真实 QQ/NapCat 收发、默认包去除旧 QQ 实现。保留旧文件不等于完整备份；同卷 rename/fsync 不构成断电级保证，独立进程不是 OS 沙箱。远端没有本集成分支或对应 CI，本地通过不表示远端 CI 通过。
+
+## QFCA 必需凭据兼容性预检
+
+独立 QFCA 候选即使监听回环地址，也要求非空白后端 Token。宿主安装条件查询只读原 QQ 凭据，仅返回缺失、可读取或无法确认的枚举；不返回 Token，不解密其他渠道凭据，不记录解密异常，也不修改原配置。可读取不代表后端认证成功或安全存储已获批准。
+
+确认迁移时仍从原文件重新解密校验：缺失、空串、明文/enc/obf 解码后的纯空白均以 `QQ_MIGRATION_credential-required` 失败，发生于写入迁移意图、停止旧驱动及创建新模块之前。非空白原始 Token 不被 trim 或改写。候选 manager 也在创建进程前拒绝空白凭据。当前内建 QQ 的回环鉴权规则不变；生产安装和迁移仍关闭。
