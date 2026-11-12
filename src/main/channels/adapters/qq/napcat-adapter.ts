@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+import type { Server as HttpServer } from "node:http";
 import type { ChannelAdapter } from "../base";
 import type {
   ChannelCapability,
@@ -78,6 +80,20 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+export interface NapCatMigrationIdentity {
+  readonly accountId: string;
+  readonly connectionEpoch: number;
+}
+
+export interface NapCatMigrationStopResult {
+  readonly safeToSwitch: boolean;
+  readonly drained: boolean;
+  readonly stopped: boolean;
+  readonly reason?: string;
+}
+
+type ConnectionScope = { client: OneBotActionClient; epoch: number; active: boolean };
+
 export class NapCatAdapter implements ChannelAdapter {
   readonly id = "qq" as const;
   readonly displayName = "QQ（NapCat）";
@@ -86,7 +102,7 @@ export class NapCatAdapter implements ChannelAdapter {
 
   private server: OneBotReverseWsServer | null = null;
   private client: OneBotActionClient | null = null;
-  private media = new OneBotMediaManager(() => this.client, undefined, () => {
+  private media = new OneBotMediaManager(() => this.scopedClient(), undefined, () => {
     this.supportsStream = false;
     this.setStatus({
       enabled: true,
@@ -101,16 +117,34 @@ export class NapCatAdapter implements ChannelAdapter {
   private appVersion = "";
   private supportsStream = false;
   private listeningInfo: OneBotListeningInfo | null = null;
+  private connectionEpoch = 0;
+  private acceptingInbound = false;
+  private quiescing = false;
+  private starting: Promise<void> | null = null;
+  private stopping: Promise<void> | null = null;
+  private migration: Promise<NapCatMigrationStopResult> | null = null;
+  private migrationIdentity: NapCatMigrationIdentity | null = null;
+  private readonly scope = new AsyncLocalStorage<ConnectionScope>();
+  private readonly pending = new Set<Promise<unknown>>();
   private dedupe = new Map<string, number>();
 
   constructor(private readonly onStatusChanged?: () => void) {}
 
-  async start(): Promise<void> {
+  start(): Promise<void> {
+    if (this.quiescing || this.stopping) return Promise.reject(new Error("QQ 正在停收，不能启动"));
+    if (this.starting) return this.starting;
+    if (this.server) return Promise.resolve();
+    this.starting = this.startImpl().finally(() => { this.starting = null; });
+    return this.starting;
+  }
+
+  private async startImpl(): Promise<void> {
     const config = loadChannelsSettings().qq;
     if (!config.enabled) {
       this.setStatus({ enabled: false, phase: "offline", message: "未启用" });
       return;
     }
+    this.acceptingInbound = true;
     this.setStatus({ enabled: true, phase: "starting", message: "正在启动 OneBot 监听" });
     await this.media.start();
     this.server = new OneBotReverseWsServer({
@@ -118,9 +152,10 @@ export class NapCatAdapter implements ChannelAdapter {
       customHost: config.customHost,
       port: config.port,
       accessToken: config.accessToken,
-      onEvent: (event, client) => this.handleEvent(event, client),
+      onEvent: (event, client) => this.acceptEvent(event, client),
       onClientConnected: (client, info) => this.handleConnected(client, info.headerSelfId),
       onClientDisconnected: () => {
+        this.connectionEpoch++;
         this.client = null;
         this.selfId = "";
         this.setStatus({
@@ -156,7 +191,18 @@ export class NapCatAdapter implements ChannelAdapter {
     }
   }
 
-  async stop(): Promise<void> {
+  stop(): Promise<void> {
+    this.acceptingInbound = false;
+    this.connectionEpoch++;
+    this.client = null;
+    this.selfId = "";
+    if (this.stopping) return this.stopping;
+    this.stopping = this.stopImpl().finally(() => { this.stopping = null; });
+    return this.stopping;
+  }
+
+  private async stopImpl(): Promise<void> {
+    await this.starting?.catch(() => undefined);
     this.media.stop();
     await this.server?.stop();
     this.server = null;
@@ -190,8 +236,20 @@ export class NapCatAdapter implements ChannelAdapter {
     }
   }
 
-  async send(msg: OutgoingMessage): Promise<{ ok: boolean; error?: string }> {
-    const client = this.client;
+  send(msg: OutgoingMessage): Promise<{ ok: boolean; error?: string }> {
+    const inherited = this.scope.getStore();
+    const client = this.scopedClient();
+    if (!client || (this.quiescing && !inherited)) {
+      return Promise.resolve({ ok: false, error: "QQ 连接已变化或正在停收" });
+    }
+    const scope = inherited ?? { client, epoch: this.connectionEpoch, active: true };
+    return this.track(this.scope.run(scope, () => this.sendImpl(msg))).finally(() => {
+      if (!inherited) scope.active = false;
+    });
+  }
+
+  private async sendImpl(msg: OutgoingMessage): Promise<{ ok: boolean; error?: string }> {
+    const client = this.scopedClient();
     if (!client || !this.selfId) return { ok: false, error: "NapCat 未连接" };
     const payloads: OneBotSegment[][] = [];
     let lastError: string | undefined;
@@ -219,6 +277,7 @@ export class NapCatAdapter implements ChannelAdapter {
         segments.unshift(...prefix);
       }
       try {
+        if (this.scopedClient() !== client) throw new Error("QQ 连接轮次已变化，拒绝发送");
         if (msg.chatType === "group") {
           await client.call("send_group_msg", { group_id: msg.targetId, message: segments });
         } else {
@@ -237,11 +296,18 @@ export class NapCatAdapter implements ChannelAdapter {
   }
 
   private async handleConnected(client: OneBotActionClient, headerSelfId?: string): Promise<void> {
+    const epoch = ++this.connectionEpoch;
+    this.client = null;
+    this.selfId = "";
+    if (!this.acceptingInbound || this.quiescing) throw new Error("QQ 已停收");
     const login = await client.call<OneBotLoginInfo>("get_login_info");
     const version = await client.call<OneBotVersionInfo>("get_version_info");
     const selfId = oneBotId(login.user_id);
     if (!selfId) throw new Error("NapCat get_login_info 未返回 user_id");
     if (headerSelfId && headerSelfId !== selfId) throw new Error("NapCat X-Self-ID 与 get_login_info 不一致");
+    if (epoch !== this.connectionEpoch || !this.acceptingInbound || this.quiescing) {
+      throw new Error("QQ 握手期间连接已变化或停收");
+    }
     this.client = client;
     this.selfId = selfId;
     this.nickname = login.nickname ?? "";
@@ -253,6 +319,95 @@ export class NapCatAdapter implements ChannelAdapter {
       message: this.supportsStream ? "NapCat 已连接" : `NapCat 已连接；媒体流需要 ${ONEBOT_STREAM_MIN_VERSION}+`,
       detail: this.statusDetail(),
     });
+  }
+
+  private scopedClient(): OneBotActionClient | null {
+    const scope = this.scope.getStore();
+    if (scope && (!scope.active || scope.epoch !== this.connectionEpoch || scope.client !== this.client)) return null;
+    return this.client;
+  }
+
+  private track<T>(promise: Promise<T>): Promise<T> {
+    this.pending.add(promise);
+    void promise.then(() => this.pending.delete(promise), () => this.pending.delete(promise));
+    return promise;
+  }
+
+  private acceptEvent(event: OneBotEvent, client: OneBotActionClient): Promise<void> {
+    if (!this.acceptingInbound || this.quiescing || client !== this.client) return Promise.resolve();
+    const scope = { client, epoch: this.connectionEpoch, active: true };
+    return this.track(this.scope.run(scope, () => this.handleEvent(event, client)))
+      .finally(() => { scope.active = false; });
+  }
+
+  /** 只暴露已完成登录校验的身份，配置值和握手头不能作为账号证明。 */
+  getMigrationIdentity(): Readonly<NapCatMigrationIdentity> | null {
+    return this.client && this.selfId && !this.quiescing
+      ? Object.freeze({ accountId: this.selfId, connectionEpoch: this.connectionEpoch })
+      : null;
+  }
+
+  /** 尚无生产调用点。停收后的失败尝试保持关闭，绝不授权切换；恢复须创建新实例。 */
+  prepareMigrationStop(options: NapCatMigrationIdentity & { timeoutMs?: number }): Promise<NapCatMigrationStopResult> {
+    if (this.migration) {
+      if (this.migrationIdentity?.accountId !== options.accountId
+        || this.migrationIdentity.connectionEpoch !== options.connectionEpoch) {
+        return Promise.resolve({ safeToSwitch: false, drained: false, stopped: false, reason: "identity-changed" });
+      }
+      return this.migration;
+    }
+    const identity = this.getMigrationIdentity();
+    if (!identity || identity.accountId !== options.accountId || identity.connectionEpoch !== options.connectionEpoch) {
+      return Promise.resolve({ safeToSwitch: false, drained: false, stopped: false, reason: "identity-changed" });
+    }
+    const timeoutMs = options.timeoutMs ?? 10_000;
+    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > 120_000) {
+      return Promise.resolve({ safeToSwitch: false, drained: false, stopped: false, reason: "invalid-timeout" });
+    }
+    this.quiescing = true;
+    this.acceptingInbound = false;
+    this.migrationIdentity = identity;
+    this.migration = this.drainAndStop(identity, timeoutMs);
+    return this.migration;
+  }
+
+  private async drainAndStop(identity: NapCatMigrationIdentity, timeoutMs: number): Promise<NapCatMigrationStopResult> {
+    let drained = false;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const work = async (): Promise<NapCatMigrationStopResult> => {
+      while (this.pending.size) await Promise.allSettled([...this.pending]);
+      drained = true;
+      const unchanged = this.connectionEpoch === identity.connectionEpoch && this.selfId === identity.accountId;
+      // 旧 server.stop() 即使尚未关闭也可能在兜底超时后 resolve，必须独立观察 close。
+      // 为保持旧服务器实现不变，此处只读其 listener；结构变化时保守拒绝切换。
+      const httpServer = (this.server as unknown as { httpServer?: HttpServer } | null)?.httpServer;
+      if (!httpServer) {
+        await this.stop();
+        return { safeToSwitch: false, drained, stopped: false, reason: "stop-unverifiable" };
+      }
+      const closed = new Promise<void>((resolve) => httpServer.once("close", resolve));
+      await this.stop();
+      await closed;
+      stopped = true;
+      return { safeToSwitch: unchanged, drained, stopped, ...(unchanged ? {} : { reason: "connection-changed" }) };
+    };
+    try {
+      return await Promise.race([
+        work().catch((error): NapCatMigrationStopResult => ({
+          safeToSwitch: false, drained, stopped, reason: error instanceof Error ? error.message : String(error),
+        })),
+        new Promise<NapCatMigrationStopResult>((resolve) => {
+          timer = setTimeout(() => {
+            // 立即撤销在途连接上下文。清理继续进行，但本次超时结果永远不能升级为成功。
+            void this.stop().catch(() => undefined);
+            resolve({ safeToSwitch: false, drained, stopped, reason: "timeout" });
+          }, timeoutMs);
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   }
 
   private async handleEvent(event: OneBotEvent, client: OneBotActionClient): Promise<void> {
@@ -278,6 +433,7 @@ export class NapCatAdapter implements ChannelAdapter {
         media: this.media,
         supportsStream: this.supportsStream,
       });
+      if (this.scopedClient() !== client) return;
       await this.onMessage?.(incoming);
     } catch (error) {
       console.warn("[NapCatAdapter] QQ 消息处理失败:", error instanceof Error ? error.message : String(error));

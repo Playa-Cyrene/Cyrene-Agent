@@ -69,7 +69,7 @@ function obfuscate(plain: string): string {
 }
 
 /** XOR 解混淆（必须和 obfuscate 用同一台机器 —— key 派生自 userData 路径）。 */
-function deobfuscate(stored: string): string {
+function deobfuscate(stored: string, strict = false): string {
   const key = getMachineKey();
   const b64 = stored.slice(OBF_PREFIX.length);
   const buf = Buffer.from(b64, "base64");
@@ -78,7 +78,7 @@ function deobfuscate(stored: string): string {
     // eslint-disable-next-line no-bitwise
     out[i] = buf[i] ^ key[i % key.length];
   }
-  return out.toString("utf8");
+  return strict ? new TextDecoder("utf-8", { fatal: true }).decode(out) : out.toString("utf8");
 }
 
 /** 加密一个字符串。优先级: safeStorage > 机器指纹混淆 > 明文 */
@@ -96,12 +96,13 @@ function encryptField(plain: string): string {
 }
 
 /** 解密一个字符串。识别 enc:/obf:/plain: 前缀。空字符串返回空。 */
-function decryptField(stored: string): string {
+function decryptField(stored: string, strict = false): string {
   if (!stored) return "";
   if (stored.startsWith(ENC_PREFIX)) {
     if (!isSafeStorageAvailable()) {
       // safeStorage 不可用时 enc: 解不开 —— 这种情况通常意味着首次加密时也没用 safeStorage
       // 兜底：直接 base64 解码（会拿到乱码但不会让用户丢失 secret）
+      if (strict) throw new Error("QQ_CREDENTIAL_UNREADABLE");
       console.warn("[ChannelsSettings] safeStorage 不可用, 无法解密 enc: 字段");
       return "";
     }
@@ -109,14 +110,16 @@ function decryptField(stored: string): string {
       const buf = Buffer.from(stored.slice(ENC_PREFIX.length), "base64");
       return safeStorage.decryptString(buf);
     } catch (err) {
+      if (strict) throw new Error("QQ_CREDENTIAL_UNREADABLE");
       console.warn("[ChannelsSettings] safeStorage.decryptString 失败:", err);
       return "";
     }
   }
   if (stored.startsWith(OBF_PREFIX)) {
     try {
-      return deobfuscate(stored);
+      return deobfuscate(stored, strict);
     } catch (err) {
+      if (strict) throw new Error("QQ_CREDENTIAL_UNREADABLE");
       console.warn("[ChannelsSettings] deobfuscate 失败:", err);
       return "";
     }
@@ -341,6 +344,22 @@ feishu: {
     mirrorToDesktop: safeBool(input?.mirrorToDesktop, true),
     toolSandbox: safeToolSandbox(input?.toolSandbox),
   };
+}
+
+/** Read-only QQ module preflight. No normalization, writes, other-channel decryption
+ * or diagnostic payloads. A failed read must not masquerade as a usable token. */
+export function readQqModulePreflightToken(): string {
+  const p = filePath();
+  if (!fs.existsSync(p)) return "";
+  const raw = JSON.parse(fs.readFileSync(p, "utf8"));
+  const stored: unknown = raw?.qq?.accessToken;
+  if (stored === undefined) return "";
+  if (typeof stored !== "string" || stored.length > 16 * 1024) throw new Error("QQ_CREDENTIAL_UNREADABLE");
+  if (stored.startsWith(ENC_PREFIX) || stored.startsWith(OBF_PREFIX)) {
+    const encoded = stored.slice(4);
+    if (!encoded || Buffer.from(encoded, "base64").toString("base64") !== encoded) throw new Error("QQ_CREDENTIAL_UNREADABLE");
+  }
+  return decryptField(stored, true);
 }
 
 export function loadChannelsSettings(): ChannelsSettings {

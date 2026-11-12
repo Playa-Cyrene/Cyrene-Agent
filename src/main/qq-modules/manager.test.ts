@@ -15,6 +15,13 @@ function setup(options: Partial<ConstructorParameters<typeof QqModuleManager>[0]
 }
 afterEach(async () => { await Promise.all(managers.splice(0).map((m) => m.stop())); });
 describe("QQ host runtime manager", () => {
+  it.each(["", " ", "\t\u00a0"])("rejects blank token before spawning a candidate: %j", async (accessToken) => {
+    const createTransport = vi.fn(() => new FakeTransport());
+    const { manager } = setup({ getConfiguration: () => ({ ...configuration(), credentials: { accessToken } }), createTransport });
+    await manager.start();
+    expect(manager.getState().phase).toBe("config-missing");
+    expect(createTransport).not.toHaveBeenCalled();
+  });
   it("does no work on construction; missing/disabled modules do not start or download", async () => {
     const getConfiguration = vi.fn(configuration); const createTransport = vi.fn(() => new FakeTransport());
     const { manager } = setup({ getConfiguration, createTransport });
@@ -26,7 +33,7 @@ describe("QQ host runtime manager", () => {
     await Promise.all([manager.start(), manager.start()]); expect(createTransport).toHaveBeenCalledOnce();
     expect(manager.getState().phase).toBe("running");
   });
-  it("does not release credentials before compatible hello, and requires pin/non-loopback token", async () => {
+  it("does not release credentials before compatible hello, and requires a pin and numeric loopback host", async () => {
     const { peer, manager } = setup();
     peer.behavior = (req) => peer.reply(req, { moduleId: "qfca", moduleVersion: "0.1.0", apiSupport: { major: 2, minMinor: 0, maxMinor: 0 } });
     await manager.start(); expect(manager.getState().phase).toBe("incompatible");
@@ -36,6 +43,13 @@ describe("QQ host runtime manager", () => {
       const broken = setup({ getConfiguration: () => ({ config, credentials: { accessToken: "" } }) });
       await broken.manager.start(); expect(broken.manager.getState().phase).toBe("config-missing"); expect(broken.peer.messages).toHaveLength(0);
     }
+  });
+  it.each(["0.0.0.0", "172.20.0.1", "192.168.1.2", "localhost", "[::1]", "::127.0.0.1"])("rejects %s before creating transport even with a token", async (host) => {
+    const createTransport = vi.fn(() => new FakeTransport());
+    const { manager } = setup({ getConfiguration: () => ({ ...configuration(), config: { ...configuration().config, listen: { host, port: 30001 } } }), createTransport });
+    await manager.start();
+    expect(manager.getState().phase).toBe("config-missing");
+    expect(createTransport).not.toHaveBeenCalled();
   });
   it("owns channel identity, derives mentions and awaits full dispatch without resending return value", async () => {
     const { peer, manager } = setup(); const adapter = new QqModuleAdapter(manager);
