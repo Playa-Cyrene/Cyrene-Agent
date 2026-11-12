@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { QQ_API_SUPPORT, QQ_CONTRACT_LIMITS, negotiateQqApi, validateInboundMessage, validateSendRequest, validateSendResult, validateCapabilitySnapshot } from "./index";
 import type { QqInboundMessageV1, QqSendRequestV1 } from "./index";
+import { isBoundedJson } from "./validation";
 
 const inbound = (): QqInboundMessageV1 => ({
   eventId: "event-1", backendMessageId: "-124", selfId: "10000", connectionEpoch: 1, configRevision: 2,
@@ -54,6 +55,24 @@ describe("QQ dedicated contract candidate", () => {
     for (const value of [accessor, cyclic, hidden, symbolic, { ...inbound(), timestampMs: new Date() }, { ...inbound(), timestampMs: NaN }, { ...inbound(), timestampMs: Infinity }, { ...inbound(), senderName: undefined }, { ...inbound(), mentions: new Array(1) }, Object.assign(Object.create({ trusted: true }), inbound())]) {
       expect(validateInboundMessage(value)).toBe(false);
     }
+  });
+  it.each(["4294967295", "4294967296", "9007199254740993", "9".repeat(40)])("rejects sparse arrays disguised by numeric property %s", (key) => {
+    const sparse = Object.assign(new Array(1), { [key]: {} });
+    expect(JSON.stringify(sparse)).toBe("[null]");
+    expect(isBoundedJson(sparse)).toBe(false);
+    expect(validateInboundMessage({ ...inbound(), mentions: sparse })).toBe(false);
+    expect(validateInboundMessage({ ...inbound(), attachments: sparse })).toBe(false);
+    expect(validateSendRequest({ ...outbound(), parts: sparse })).toBe(false);
+    expect(validateSendRequest({ ...outbound(), parts: [{ kind: "card", title: "title", fields: sparse }] })).toBe(false);
+    expect(validateSendResult({ operationId: "send-1", outcome: "sent", parts: sparse })).toBe(false);
+  });
+  it("preserves dense arrays, empty optional arrays and traversal bounds", () => {
+    expect(isBoundedJson([null, { nested: [1, true, "ok"] }, []])).toBe(true);
+    expect(validateInboundMessage({ ...inbound(), mentions: [], attachments: [] })).toBe(true);
+    expect(validateSendRequest({ ...outbound(), parts: [{ kind: "card", title: "title", fields: [] }] })).toBe(true);
+    expect(isBoundedJson(Array(9999).fill(null))).toBe(true);
+    expect(isBoundedJson(Array(10000).fill(null))).toBe(false);
+    expect(isBoundedJson(new Array(4294967295))).toBe(false);
   });
   it("enforces bounds including aggregate UTF-8 size", () => {
     expect(validateInboundMessage({ ...inbound(), text: "a".repeat(QQ_CONTRACT_LIMITS.maxTextLength) })).toBe(true);
