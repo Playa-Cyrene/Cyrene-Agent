@@ -61,6 +61,7 @@ export async function startPluginRuntime(deps: PluginRuntimeDeps): Promise<Plugi
     commitBridge: createSpeechInputCommitBridge(deps.ipc),
     callController: createSpeechInputCallController(),
   });
+  const pluginChannels = channelManager.createPluginPort();
   const manager = new PluginManager({
     scanRoots: [
       { path: path.join(__dirname, "..", "plugins"), source: "builtin" },
@@ -78,9 +79,9 @@ export async function startPluginRuntime(deps: PluginRuntimeDeps): Promise<Plugi
       // 宿主渠道管理器端口：同样在宿主侧完成 PluginChannelAdapter → ChannelAdapter 的适配
       channelManager: {
         has: (id) => channelManager.has(id as ChannelId),
-        register: (adapter) => channelManager.register(adapter as unknown as ChannelAdapter),
-        unregister: (id) => channelManager.unregister(id as ChannelId),
-        startOne: (id) => channelManager.startOne(id as ChannelId),
+        register: (adapter) => pluginChannels.register(adapter as unknown as ChannelAdapter),
+        unregister: (id) => pluginChannels.unregister(id as ChannelId),
+        startOne: (id) => pluginChannels.startOne(id as ChannelId),
       },
       registerIpc: (channel, handler) => {
         // 两条调用来源（既有 ipcMain 直达 + 面板转发）共用同一张路由表
