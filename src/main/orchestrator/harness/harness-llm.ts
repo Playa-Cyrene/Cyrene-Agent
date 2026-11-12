@@ -1,3 +1,4 @@
+import { assertTermsExecutionAllowed } from "../../terms/terms-runtime";
 /**
  * Harness LLM 调用层
  *
@@ -91,12 +92,16 @@ export async function callLLM(
     return response;
   };
   const fallbackRequest: ChatRequest = { ...chatRequest, stream: false };
-  const requestNonStreaming = (attemptSignal: AbortSignal): Promise<ChatResponse> => generateChatWithAiSdk({
-    adapter, request: fallbackRequest, config: vendorConfig, timeoutMs: config.totalTimeoutMs, signal: attemptSignal,
-  });
+  const requestNonStreaming = (attemptSignal: AbortSignal): Promise<ChatResponse> => {
+    assertTermsExecutionAllowed();
+    return generateChatWithAiSdk({
+      adapter, request: fallbackRequest, config: vendorConfig, timeoutMs: config.totalTimeoutMs, signal: attemptSignal,
+    });
+  };
 
   let forceNonStreaming = false;
   const response = await runModelRequestWithRetry(async (attempt) => {
+    assertTermsExecutionAllowed();
     if (forceNonStreaming) return requestNonStreaming(attempt.signal);
     let receivedStreamDelta = false;
     try {
@@ -167,6 +172,7 @@ export async function summarizeHistory(
   };
 
   return runModelRequestWithRetry(async ({ signal: attemptSignal }) => {
+    assertTermsExecutionAllowed();
     const response = await generateChatWithAiSdk({ adapter, request: chatRequest, config: vendorConfig,
       timeoutMs: 0, signal: attemptSignal });
     return response.text;

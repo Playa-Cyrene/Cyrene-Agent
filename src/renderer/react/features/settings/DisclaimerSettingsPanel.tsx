@@ -2,6 +2,8 @@ import { useState, type ReactNode } from "react";
 import { useTranslation } from "../../i18n";
 import "./DisclaimerSettingsPanel.css";
 import { Card } from "../../components/ui/Card";
+import type { TermsDocument, TermsLocale, TermsSnapshot } from "../../../../shared/terms-types";
+import { useTermsSnapshot } from "../../hooks/useTermsSnapshot";
 
 type DisclaimerBlock =
   | { kind: "paragraph" | "heading"; text: string }
@@ -35,8 +37,12 @@ function inlineContent(text: string, openEmail: (url: string) => Promise<void>):
 }
 
 /** 首次启动、设置页和权限说明共用一份已本地化的完整条款。 */
-export function DisclaimerSettingsPanel() {
-  const { t } = useTranslation();
+export function DisclaimerSettingsPanel({ snapshot: suppliedSnapshot }: { snapshot?: TermsSnapshot | null } = {}) {
+  const { t, locale } = useTranslation();
+  const { snapshot: liveSnapshot } = useTermsSnapshot(suppliedSnapshot === undefined);
+  const snapshot = suppliedSnapshot === undefined ? liveSnapshot : suppliedSnapshot;
+  const termsLocale: TermsLocale = locale?.startsWith("ja") ? "ja-JP" : locale?.startsWith("en") ? "en" : "zh-CN";
+  const document: TermsDocument | undefined = snapshot?.locales[termsLocale];
   const [linkError, setLinkError] = useState(false);
   async function openEmail(url: string) {
     setLinkError(false);
@@ -49,11 +55,12 @@ export function DisclaimerSettingsPanel() {
       setLinkError(true);
     }
   }
-  const sections = t("settingsPage.disclaimer.sections", { returnObjects: true }) as unknown as DisclaimerSection[];
+  const sections = document?.sections ?? t("settingsPage.disclaimer.sections", { returnObjects: true }) as unknown as DisclaimerSection[];
 
   return (
     <>
-      <h1>{t("settingsPage.disclaimer.heading")}</h1>
+      <h1>{document?.heading ?? t("settingsPage.disclaimer.heading")}</h1>
+      {snapshot && <p className="cy-settings-intro">{t("onboarding.termsVersion", { version: snapshot.consentVersion, revision: snapshot.revision })}</p>}
       {linkError && <p role="alert">{t("ui.reportIssue.openFailed")}</p>}
       <div className="cy-settings-disclaimer">
         {sections.map((section, index) => (

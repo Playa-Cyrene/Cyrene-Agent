@@ -464,3 +464,19 @@ describe("startup disclaimer version gate", () => {
     }));
   });
 });
+
+it.each([true, false])("uses remote terms consent at startup (%s), even when legacy settings disagree", async accepted => {
+  const revealStartupWindows = vi.fn(async () => undefined);
+  const deps = makeCoreDeps([], {
+    revealStartupWindows,
+    loadGeneralSettings: () => ({ petVisible: true, disclaimerAcceptedVersion: accepted ? "old" : CURRENT_DISCLAIMER_VERSION }) as never,
+    hasCurrentDisclaimerConsent: () => accepted,
+  });
+  const onboarding = { isDestroyed: () => false };
+  const createOnboardingWindow = vi.fn().mockResolvedValue(onboarding);
+  Object.assign(deps.shell.windowManager, { createOnboardingWindow });
+  await startCore(deps);
+  expect(createOnboardingWindow).toHaveBeenCalledTimes(accepted ? 0 : 1);
+  expect(deps.shell.windowManager.createPetWindow).toHaveBeenCalledWith(accepted);
+  expect(deps.revealStartupWindows).toHaveBeenCalledWith(expect.objectContaining({ showOnboardingWindow: !accepted }));
+});

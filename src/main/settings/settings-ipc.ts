@@ -45,6 +45,12 @@ export interface SettingsIpcDependencies {
 const VISION_TEST_IMAGE_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAJ0lEQVR42u3NsQkAAAjAsP7/tF7hIASyp6lTCQQCgUAgEAgEgi/BAjLD/C5w/SM9AAAAAElFTkSuQmCC";
 
+/** 条款接受只能经专用 IPC 校验所展示的版本，普通设置不能提升同意状态。 */
+function withoutDisclaimerConsent(settings: Partial<GeneralSettings>): Partial<GeneralSettings> {
+  const { disclaimerAcceptedVersion: _ignored, ...rest } = settings;
+  return rest;
+}
+
 export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
   const ipc = deps.ipc ?? createIpcScope();
   const {
@@ -128,7 +134,7 @@ export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
   ipc.handle(IPC.UI_THEME_RADIUS_GET, () => getGeneralSettings().uiThemeRadius);
 
   ipc.handle(IPC.SETTINGS_SAVE_GENERAL, (_event, settings: Partial<GeneralSettings>) => {
-    const saved = saveGeneralSettings(settings);
+    const saved = saveGeneralSettings(withoutDisclaimerConsent(settings));
     // 浏览器视口模式切换后立即按当前面板宽度重新判断身份，无需拖动面板
     if ("browserViewportMode" in settings) getBrowserPanelController()?.refreshViewportMode();
     if ("proactiveChatMode" in settings || "proactiveDeliveryTarget" in settings) {
@@ -142,7 +148,7 @@ export function registerSettingsIpc(deps: SettingsIpcDependencies): void {
 
   ipc.handle(IPC.TTS_SAVE_SETTINGS, async (_event, tts: Partial<GeneralSettings>) => {
     const before = getGeneralSettings();
-    const saved = saveGeneralSettings({ ...before, ...tts });
+    const saved = saveGeneralSettings({ ...before, ...withoutDisclaimerConsent(tts) });
 
     // 搜索 MCP 自动注册/移除：选 MiniMax+有key→注册，否则→移除
     const searchConfigChanged = "searchMinimaxKey" in tts || "searchEngine" in tts;

@@ -1,3 +1,4 @@
+import { assertTermsExecutionAllowed } from "../terms/terms-runtime";
 import { app } from "electron";
 import path from "node:path";
 import { loadPromptFile } from "../prompts/prompt-loader";
@@ -230,6 +231,7 @@ export function createAgentRuntime(rawDeps: AgentRuntimeDeps): AgentRuntime {
         normalizeChatMessages(raw as any)) as BuildOptionsDeps["normalizeChatMessages"],
       chatRequestTimeoutMs: getTimeoutSettings().chatRequestTimeout,
       captionImageForFallback: async (filePath: string) => {
+        assertTermsExecutionAllowed();
         // 走注入的设置加载（与 buildSchedulerOptions 同策略），保证可测且不绕过依赖装配
         const settings = resolveModelSettingsProfile(rawDeps.loadModelSettings());
         const vision = resolveCaptionVisionConfig(settings);
@@ -303,6 +305,7 @@ export function createAgentRuntime(rawDeps: AgentRuntimeDeps): AgentRuntime {
 
   return {
     buildOptions: async (input) => {
+      assertTermsExecutionAllowed();
       const buildOptionsDeps = buildBuildOptionsDeps();
       const { options, latestUserText } = await buildAgentRunOptions(input, buildOptionsDeps);
       return {
@@ -349,6 +352,7 @@ export function createAgentRuntime(rawDeps: AgentRuntimeDeps): AgentRuntime {
     },
 
     buildSchedulerOptions: async (task) => {
+      assertTermsExecutionAllowed();
       // 与 channel bot / 聊天路径同策略：先展开默认模型档案再取顶层镜像，
       // 否则用户只在档案里配模型时顶层 baseUrl/apiKey 可能为空，定时任务会调不到 LLM。
       const settings = resolveModelSettingsProfile(rawDeps.loadModelSettings());

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import type { TermsSnapshot } from "../../../../shared/terms-types";
 import { useTranslation } from "../../i18n";
 import { Card } from "../../components/ui/Card";
 import { DisclaimerSettingsPanel } from "../settings/DisclaimerSettingsPanel";
@@ -8,6 +9,9 @@ import "./WelcomeGate.css";
 export interface WelcomeGateProps {
   view: "loading" | "welcome" | "disclaimer";
   accepting: boolean;
+  acceptDisabled?: boolean;
+  snapshot?: TermsSnapshot | null;
+  notice?: string;
   error: string;
   onViewDisclaimer: () => void;
   onBack: () => void;
@@ -18,6 +22,9 @@ export interface WelcomeGateProps {
 export function WelcomeGate({
   view,
   accepting,
+  acceptDisabled = false,
+  snapshot,
+  notice,
   error,
   onViewDisclaimer,
   onBack,
@@ -52,9 +59,10 @@ export function WelcomeGate({
           )}
           <div className="cy-onboarding__welcome-copy">
             <p className="cy-onboarding__eyebrow">CYRENE AGENT</p>
-            <h1>{t("onboarding.welcomeTitle")}</h1>
+            <h1>{t(notice ? "onboarding.termsUpdateTitle" : "onboarding.welcomeTitle")}</h1>
             <p className="cy-onboarding__tagline">{t("onboarding.tagline")}</p>
-            <p className="cy-onboarding__notice">{t("onboarding.disclaimerNotice")}</p>
+            <p className="cy-onboarding__notice">{t(notice ?? "onboarding.disclaimerNotice")}</p>
+            {error && <p className="cy-onboarding__error" role="alert">{t(error)}</p>}
             <button className="cy-onboarding__button cy-onboarding__button--primary" type="button" onClick={onViewDisclaimer}>
               {t("onboarding.viewDisclaimer")}
             </button>
@@ -63,7 +71,7 @@ export function WelcomeGate({
       ) : (
         <Card as="section" className="cy-onboarding__terms">
           <div className="cy-onboarding__terms-scroll">
-            <DisclaimerSettingsPanel />
+            <DisclaimerSettingsPanel snapshot={snapshot} />
           </div>
           <footer className="cy-onboarding__terms-footer">
             <button className="cy-onboarding__back" type="button" onClick={onBack} disabled={accepting}>
@@ -74,7 +82,7 @@ export function WelcomeGate({
               <button className="cy-onboarding__button" type="button" onClick={onQuit} disabled={accepting}>
                 {t("onboarding.decline")}
               </button>
-              <button className="cy-onboarding__button cy-onboarding__button--primary" type="button" onClick={onAccept} disabled={accepting}>
+              <button className="cy-onboarding__button cy-onboarding__button--primary" type="button" onClick={onAccept} disabled={accepting || acceptDisabled}>
                 {accepting ? t("onboarding.saving") : t("onboarding.accept")}
               </button>
             </div>

@@ -20,6 +20,8 @@ import { hasCurrentDisclaimerConsent as isCurrentDisclaimerConsent } from "../..
 const PET_WINDOW_RESOURCE_RELEASE_DELAY_MS = 30_000;
 
 export interface WindowManagerOptions {
+  /** 远程条款由主进程服务统一判定；未注入时兼容内置版本。 */
+  hasCurrentDisclaimerConsent?: () => boolean;
   getCurrentAppIconPath: () => string;
   isDev: boolean;
   loadPetWindowSettingsSlice: () => PetWindowSettingsSlice;
@@ -105,6 +107,7 @@ export function createWindowManager(options: WindowManagerOptions): WindowManage
   }
 
   function hasCurrentDisclaimerConsent(): boolean {
+    if (options.hasCurrentDisclaimerConsent) return options.hasCurrentDisclaimerConsent();
     const version = options.loadPetWindowSettingsSlice().disclaimerAcceptedVersion;
     return isCurrentDisclaimerConsent(version);
   }

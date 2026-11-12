@@ -15,6 +15,7 @@ import { hasCurrentDisclaimerConsent } from "../../shared/disclaimer";
 import { getEffectiveUiTheme } from "../system-ui-theme";
 
 export interface GeneralSettingsLifecycleDependencies {
+  hasCurrentDisclaimerConsent?(): boolean;
   get windowManager(): WindowManager | null;
   get tray(): Tray | null;
   get screenshotService(): { replaceHotkey: (hotkey: string) => { ok: boolean } | null } | null;
@@ -34,7 +35,8 @@ export function applyGeneralSettings(
   if (!before || before.petAlwaysOnTop !== settings.petAlwaysOnTop) {
     deps.windowManager?.setPetWindowAlwaysOnTop(settings.petAlwaysOnTop);
   }
-  const disclaimerAccepted = hasCurrentDisclaimerConsent(settings.disclaimerAcceptedVersion);
+  const disclaimerAccepted = deps.hasCurrentDisclaimerConsent?.()
+    ?? hasCurrentDisclaimerConsent(settings.disclaimerAcceptedVersion);
   const disclaimerAcceptanceChanged = before?.disclaimerAcceptedVersion !== settings.disclaimerAcceptedVersion;
   if (!disclaimerAccepted) {
     deps.windowManager?.hidePetWindow();
@@ -42,7 +44,8 @@ export function applyGeneralSettings(
     if (settings.petVisible) deps.windowManager?.showPetWindow();
     else deps.windowManager?.hidePetWindow();
   }
-  const wasDisclaimerAccepted = !before || hasCurrentDisclaimerConsent(before.disclaimerAcceptedVersion);
+  const wasDisclaimerAccepted = deps.hasCurrentDisclaimerConsent ? disclaimerAccepted
+    : !before || hasCurrentDisclaimerConsent(before.disclaimerAcceptedVersion);
   if (!wasDisclaimerAccepted && disclaimerAccepted) {
     setTimeout(() => {
       deps.windowManager?.closeOnboardingWindow?.();

@@ -11,6 +11,11 @@
     "empty": "コンテンツはありません"
   },
   "onboarding": {
+    "termsVersion": "同意バージョン {{version}} · 本文リビジョン {{revision}}",
+    "termsChanged": "閲覧中に規約が更新されました。最新の内容を開き直して確認してから、同意してください。",
+    "termsUnavailable": "確認可能な規約バージョンを取得できません。内蔵の本文は閲覧できますが、同意は保存できません。アプリを開き直して再試行してください。",
+    "termsUpdateTitle": "最新の規約をご確認ください",
+    "termsUpdateNotice": "規約への再同意が必要です。新しい操作は停止し、進行中の安全な処理は完了します。会話と下書きは保持されます。最新の規約をご確認ください。",
     "quit": "Cyrene を終了",
     "posterAlt": "Cyrene ウェルカムポスター",
     "posterUnavailable": "ウェルカムポスターを現在読み込めません",

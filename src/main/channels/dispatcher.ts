@@ -1,3 +1,4 @@
+import { assertTermsExecutionAllowed } from "../terms/terms-runtime";
 // channels/dispatcher —— 入站消息处理核心。
 //
 // 设计原则：
@@ -162,6 +163,7 @@ export class ChannelDispatcher {
     // 读取设置会同步刷新限速器，必须发生在本轮额度消费之前。
     void this.settings;
     return this.deps.queue.run(`external:${sessionId}`, async () => {
+      assertTermsExecutionAllowed();
       if (!this.deps.limiter.tryConsume(msg.channel, msg.senderId)) {
         console.warn(LOG, `限速: ${msg.channel}:${msg.senderId}`);
         return null;
@@ -196,6 +198,7 @@ export class ChannelDispatcher {
     msg: IncomingMessage,
     context: DispatchContext,
   ): Promise<OutgoingMessage | null> {
+    assertTermsExecutionAllowed();
     const journal = this.deps.journal!;
     const target = resolveChannelConversationTarget(context);
     const turnId = makeChannelTurnId(msg, "user");
@@ -269,6 +272,7 @@ export class ChannelDispatcher {
       return null;
     }
 
+    assertTermsExecutionAllowed();
     const prepared = await this.deps.composer.compose({
       incoming: msg,
       replyText: result.text,

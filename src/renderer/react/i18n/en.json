@@ -11,6 +11,11 @@
     "empty": "Nothing here"
   },
   "onboarding": {
+    "termsVersion": "Consent version {{version}} · Content revision {{revision}}",
+    "termsChanged": "The terms changed while you were reading. Open and review the latest text before accepting.",
+    "termsUnavailable": "The current terms version is unavailable. You can read the built-in text, but cannot accept it here. Reopen the app to try again.",
+    "termsUpdateTitle": "Review the updated terms",
+    "termsUpdateNotice": "The terms require your confirmation. New operations are paused while active safe steps finish. Your conversations and drafts are kept. Read the current terms to continue.",
     "quit": "Quit Cyrene",
     "posterAlt": "Cyrene welcome poster",
     "posterUnavailable": "The welcome poster could not be loaded",

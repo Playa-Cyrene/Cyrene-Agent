@@ -136,3 +136,14 @@ describe("current disclaimer lifecycle", () => {
     }
   });
 });
+
+it("uses remote consent without accepting an unrelated legacy settings save", () => {
+  const h = createHarness();
+  applyGeneralSettings(h.settings, { ...h.deps, hasCurrentDisclaimerConsent: () => false });
+  expect(h.isVisible()).toBe(false);
+  expect(h.windowManager.openReactChatWindow).not.toHaveBeenCalled();
+  applyGeneralSettings({ ...h.settings, disclaimerAcceptedVersion: "old" }, {
+    ...h.deps, hasCurrentDisclaimerConsent: () => true,
+  });
+  expect(h.isVisible()).toBe(true);
+});
