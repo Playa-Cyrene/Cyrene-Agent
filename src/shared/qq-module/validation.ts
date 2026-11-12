@@ -50,7 +50,7 @@ export function isBoundedJson(value: unknown): boolean {
       if (Array.isArray(v) && key === "length") continue;
       if (typeof key !== "string") return false;
       if (!Array.isArray(v) && !account(key.length)) return false;
-      if (Array.isArray(v) && !/^(0|[1-9][0-9]*)$/.test(key)) return false;
+      if (Array.isArray(v) && (!/^(0|[1-9][0-9]*)$/.test(key) || Number(key) >= v.length)) return false;
       const descriptor = Object.getOwnPropertyDescriptor(v, key)!;
       if (!descriptor.enumerable || !Object.hasOwn(descriptor, "value") || !visit(descriptor.value, depth + 1)) return false;
     }
