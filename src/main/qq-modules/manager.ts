@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { negotiateQqApi, QQ_API_SUPPORT, QQ_RUNTIME_TIMEOUTS, validateRequestPayload, validateRuntimeConfig, validateSendRequest,
   type QqBackendStatus, type QqCapabilitySnapshot, type QqInboundAck, type QqInboundMessageV1, type QqInitialize,
   type QqRuntimeConfig, type QqSendRequestV1, type QqSendResultV1 } from "../../shared/qq-module";
-import { isLoopbackHost } from "../channels/qq-listen-policy";
+import { isQqModuleLoopbackHost } from "./listen-policy";
 import type { MessageHandler, OutgoingMessage } from "../channels/types";
 import { QqModuleRuntime, QqRuntimeError, type QqProcessTransport } from "./runtime";
 
@@ -69,7 +69,7 @@ export class QqModuleManager {
     const input = this.options.getConfiguration();
     this.state = { ...this.state, enabled: input !== null };
     if (input === null) { this.setPhase("disabled"); return; }
-    if (!validateRequestPayload("initialize", input) || (!isLoopbackHost(input.config.listen.host) && !input.credentials.accessToken.trim())) { this.setPhase("config-missing"); return; }
+    if (!validateRequestPayload("initialize", input) || !isQqModuleLoopbackHost(input.config.listen.host)) { this.setPhase("config-missing"); return; }
     if (!this.options.createTransport) { this.setPhase("module-missing"); return; }
     this.state = { enabled: true, phase: "starting", runtimeEpoch: this.state.runtimeEpoch + 1 };
     let gen: Generation | undefined;

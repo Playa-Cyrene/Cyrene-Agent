@@ -423,6 +423,7 @@ const settingsApi = {
   channelsWechatRuntimeUpdate: () => ipcRenderer.invoke(IPC.CHANNELS_WECHAT_RUNTIME_UPDATE),
   channelsFeishuTestConnection: () => ipcRenderer.invoke(IPC.CHANNELS_FEISHU_TEST_CONNECTION),
   channelsFeishuTestWebhookReachable: () => ipcRenderer.invoke(IPC.CHANNELS_FEISHU_TEST_WEBHOOK_REACHABLE),
+  channelsQqModuleInstallationStatus: (input: import("../shared/qq-module-installation").QqModuleListenInput) => ipcRenderer.invoke(IPC.CHANNELS_QQ_MODULE_INSTALLATION_STATUS, input) as Promise<import("../shared/qq-module-installation").QqModuleInstallationStatus>,
   channelsQqTestConnection: () => ipcRenderer.invoke(IPC.CHANNELS_QQ_TEST_CONNECTION),
   // 权威鉴权预检：监听地址能否解析、是否必须配 token 只有主进程知道
   channelsQqResolveAuthRequirement: (input: { listenMode: string; customHost?: string }) =>

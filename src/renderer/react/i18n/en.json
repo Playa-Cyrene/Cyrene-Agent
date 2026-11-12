@@ -1053,6 +1053,22 @@
         "restarted": "WeChat connection restarted"
       },
       "feishu": { "description": "Create a custom app on the Feishu Open Platform and enable bot capabilities, then enter its App ID and App Secret. Long connections do not require a public callback URL." },
+      "qqModule": {
+        "loopbackPolicy": "The first independent module accepts numeric loopback IPs only, not localhost / DNS names, bracketed IPv6 or scope IDs. A token does not enable remote access. Auto resolving to WSL, explicit WSL and LAN addresses are incompatible and will not be silently rewritten.",
+        "listenReady": "Listen preflight: loopback. Release trust and other installation requirements remain incomplete.",
+        "listenUnsupported": "Listen preflight: unsupported address. The first independent module accepts numeric loopback IPs only. Explicitly update settings before a future switch.",
+        "listenUnresolved": "Listen preflight: address unresolved. Module compatibility cannot be confirmed.",
+        "title": "Optional QQ module",
+        "summary": "The independent QQ module installation entry is being prepared.",
+        "entry": "View installation requirements",
+        "close": "Close",
+        "unavailable": "Release source and signing trust roots are not configured. Download and installation are unavailable.",
+        "failed": "Installation status could not be verified. Installation remains disabled. Close and try again.",
+        "legacy": "This version retains the built-in QQ connection and existing settings below. The independent module is not enabled.",
+        "safety": "Installation requires publisher signature, file integrity, host/API version and platform checks. It will require explicit confirmation and will not automatically download or run an external backend.",
+        "data": "Chat history, QQ settings and conversation bindings stay in the host. Installing a module does not migrate data or switch accounts.",
+        "install": "Download and install (unavailable)"
+      },
       "qq": {
         "description": "Configure a NapCat OneBot 11 reverse WebSocket connection. Group chats only respond to mentions from allowlisted groups; tools are disabled in groups.",
         "listenMode": "Listen mode",
