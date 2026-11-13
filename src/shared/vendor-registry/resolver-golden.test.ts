@@ -116,6 +116,17 @@ describe("resolveReasoningCapability — 行为基准", () => {
     expect(resolveReasoningCapability("unknown-provider", model).defaultEffort).toBe("medium");
   });
 
+  // 预期值按官方模型页与 OpenAI 兼容文档独立填写（核验 2026-11-13）：四档含 xhigh，默认 high。
+  test("gemini + gemini-4-hydrogen → reasoning_effort 四档 low/medium/high/xhigh，默认 high，不可关闭", () => {
+    const cap = resolveReasoningCapability("gemini", "gemini-4-hydrogen");
+    expect(cap.control).toBe("effort");
+    expect(cap.requestStyle).toBe("openai-effort");
+    expect(cap.supportedEfforts).toEqual(["low", "medium", "high", "xhigh"]);
+    expect(cap.defaultEffort).toBe("high");
+    expect(cap.supportsDisable).toBe(false);
+    expect(resolveReasoningCapability("unknown-provider", "gemini-4-hydrogen").defaultEffort).toBe("high");
+  });
+
   test("邻近反例：gemini-3.8-flash 仍走 gemini-3 规则，未核实的 gemini-4-flash 落兜底", () => {
     expect(resolveReasoningCapability("gemini", "gemini-3.8-flash").supportedEfforts).toEqual(["low", "medium", "high"]);
     expect(resolveReasoningCapability("gemini", "gemini-4-flash")).toBe(UNKNOWN_REASONING_CAPABILITY);
