@@ -1,5 +1,5 @@
 import { readdirSync, statSync } from "node:fs";
-import { mkdtemp, readFile, readdir, rm, truncate, utimes, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, realpath, rm, truncate, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, extname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -37,7 +37,7 @@ describe("QQ inbound image content identity", () => {
   it.each([undefined, "fixture.bin", "picture.png", "photo.jpg", "photo.png.exe", "../../escape.png", "C:\\outside\\photo.gif"])("routes actual PNG bytes into production vision options despite filename %s", async (filename) => {
     const { cache, broker, peer, context, media } = await setup();
     const output = await broker.download(context, "event", { ...media, filename, mime: "image/jpeg", caption: "fixture caption" });
-    expect(dirname(output.filePath!)).toBe(cache);
+    expect(dirname(output.filePath!)).toBe(await realpath(cache));
     expect(basename(output.filePath!)).toMatch(/^qq-media-[a-f0-9-]{36}\.png$/);
     expect(output).toMatchObject({ kind: "image", mime: "image/png", caption: "fixture caption" });
     expect(await readFile(output.filePath!)).toEqual(pngFixture);

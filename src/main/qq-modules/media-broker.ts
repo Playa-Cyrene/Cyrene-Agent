@@ -17,6 +17,12 @@ function safeExtension(filename?: string): string {
 function safeFilename(filename: string): string {
   return basename(filename.replaceAll("\\", "/")).replace(/[^\p{L}\p{N}._ -]/gu, "_").slice(-160).replace(/^\.+/, "_") || "attachment";
 }
+interface CachedFile {
+  size: number;
+  created: number;
+  pendingDeletion?: boolean;
+  removing?: Promise<void>;
+}
 export interface QqMediaTransferContext {
   runtime: QqModuleRuntime;
   connectionEpoch: number;
@@ -29,7 +35,7 @@ export interface QqMediaTransferContext {
 export class QqMediaBroker {
   private reserved = 0;
   private initialized?: Promise<void>;
-  private files = new Map<string, { size: number; created: number }>();
+  private files = new Map<string, CachedFile>();
   constructor(private cacheDir: string) {}
   private async initialize(): Promise<void> {
     await mkdir(this.cacheDir, { recursive: true, mode: 0o700 });
@@ -58,19 +64,28 @@ export class QqMediaBroker {
   async cleanup(): Promise<void> {
     await (this.initialized ??= this.initialize());
     for (const [path, info] of this.files) {
-      if (Date.now() - info.created < CACHE_TTL_MS) continue;
-      // Remove accounting before awaiting so concurrent cleanup cannot double release.
-      this.files.delete(path);
-      try { await unlink(path); this.reserved -= info.size; }
-      catch { this.files.set(path, info); }
+      if (!info.pendingDeletion && Date.now() - info.created < CACHE_TTL_MS) continue;
+      await this.removeFile(path, info);
     }
   }
   async discard(attachment: ChannelAttachment): Promise<void> {
     const path = attachment.filePath; if (!path) return;
     const info = this.files.get(path); if (!info) return;
-    this.files.delete(path);
-    try { await unlink(path); this.reserved -= info.size; }
-    catch { this.files.set(path, info); }
+    await this.removeFile(path, info);
+  }
+  private async removeFile(path: string, info: CachedFile): Promise<void> {
+    // Keep both tracking and quota until deletion is confirmed. Failed discards
+    // and incomplete downloads retry on the next cleanup, without waiting a day.
+    info.pendingDeletion = true;
+    if (info.removing) return info.removing;
+    info.removing = (async () => {
+      try { await unlink(path); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") return; }
+      this.files.delete(path);
+      this.reserved -= info.size;
+    })();
+    try { await info.removing; }
+    finally { info.removing = undefined; }
   }
   private reserve(size: number): void {
     if (!Number.isSafeInteger(size) || size <= 0 || size > QQ_MEDIA_LIMITS.maxFileBytes || this.reserved + size > QQ_MEDIA_LIMITS.cacheBytes) throw new Error("QQ_MEDIA_LIMIT");
@@ -162,7 +177,15 @@ export class QqMediaBroker {
       check(); this.files.set(path, { size: media.size, created: Date.now() }); complete = true;
       return { kind: media.kind, filePath: path, ...(mime ? { mime } : {}), ...(media.caption ? { caption: media.caption } : {}) };
     } finally {
-      if (!complete) { this.reserved -= media.size; if (path) await unlink(path).catch(() => {}); }
+      if (!complete) {
+        if (path) {
+          // Conservatively retain the full reservation, including after partial
+          // writes or close errors. Restart reconstructs actual sizes from disk.
+          const info: CachedFile = { size: media.size, created: Date.now() };
+          this.files.set(path, info);
+          await this.removeFile(path, info);
+        } else { this.reserved -= media.size; }
+      }
     }
   }
 }
