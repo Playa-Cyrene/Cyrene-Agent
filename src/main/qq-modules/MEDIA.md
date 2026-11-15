@@ -4,9 +4,9 @@
 
 ## 边界
 
-- `cacheDir` 必须是宿主控制的私有目录，不得来自 renderer 或模块。逐段 lstat 拒绝符号链接目录及 junction，再校验目录身份并使用 realpath 规范路径，允许 Windows 合法盘符/路径大小写规范化。入站文件使用随机名，原始文件名只提供白名单扩展；模块路径和 URL 从不传入文件系统 API。
+- `cacheDir` 必须是宿主控制的私有目录，不得来自 renderer 或模块。逐段 lstat 拒绝符号链接目录及 junction，再校验目录身份并使用 realpath 规范路径，允许 Windows 合法盘符/路径大小写规范化。入站文件使用随机名，image 仅读取最多 64 字节并按实际内容识别 PNG/JPEG/GIF/WebP/BMP 后缀和 MIME，不信任原始文件名或 MIME；其余附件仅保留白名单扩展；模块路径和 URL 从不传入文件系统 API。
 - 出站只读取宿主 `OutgoingMessage.filePath`。拒绝 URL-only、目录、最终符号链接、空文件及超限文件。打开前 lstat 拒绝符号链接，打开后以 bigint dev/ino 核对 fd 与前后路径身份（不依赖 Windows 的 O_NOFOLLOW 支持）。一个打开的 fd 读取有界不可变字节快照，核对 stat 后计算 SHA256，再以 64 KiB base64 块上传。普通文件名清洗后传输，绝不发送宿主路径。
-- 单文件最多 100 MiB，也受模块当前 `maxFileBytes` 限制；缓存与读取中的内存快照合计预算 512 MiB。出站快照会在上传结束释放内存。已交 dispatcher 的入站文件保留至 24 小时，在后续传输或显式 `cleanup()` 时回收；重启会重新统计缓存。
+- 单文件最多 100 MiB，也受模块当前 `maxFileBytes` 限制；缓存与读取中的内存快照合计预算 512 MiB。出站快照会在上传结束释放内存。已交 dispatcher 的入站文件保留至 24 小时，在后续传输或显式 `cleanup()` 时回收；重启会重新统计缓存。失败下载和显式丢弃若未能删除文件，保留追踪及整笔下载预留，在下次 cleanup 时立即重试；仅删除成功或确认 ENOENT 后释放配额，并发删除共用同一操作。
 - 每次传输总限时 120 秒，RPC 接受 AbortSignal。停止、换连接、更新策略立即取消准备中的媒体，异步边界后再次核对实例、连接、策略、有效回合及能力。既有文本回合仍按原来的 bounded draining 规则收尾。
 - 入站句柄只用于当前 event 的 `mediaRead`，不会进入 history。dispatcher 仅收到宿主缓存 `ChannelAttachment.filePath`。普通附件读取失败保留文本并增加安全占位；取消授权不会调用 handler，已准备的缓存也会删除。
 - 带媒体事件在下载完成后 ack，文本事件保持立即 ack；发送完成/失败释放上传句柄，下载结束/失败释放入站句柄。未收到 begin 回复时无法得知句柄，由模块超时或连接撤销清理。已发送请求的 unknown/partial 结果不自动重试。
