@@ -34,7 +34,7 @@ async function setup(bytes = pngFixture, chunkSize = QQ_MEDIA_LIMITS.chunkBytes)
 }
 
 describe("QQ inbound image content identity", () => {
-  it.each([undefined, "fixture.bin", "picture.png", "photo.jpg", "photo.png.exe", "../../escape.png", "C:\\outside\\photo.gif"])("routes actual PNG bytes into production vision options despite filename %s", async (filename) => {
+  it.each([undefined, "image.bin", "image.txt", "fixture.bin", "picture.png", "photo.jpg", "photo.png.exe", "../../escape.png", "C:\\outside\\photo.gif"])("routes actual PNG bytes into production vision options despite filename %s", async (filename) => {
     const { cache, broker, peer, context, media } = await setup();
     const output = await broker.download(context, "event", { ...media, filename, mime: "image/jpeg", caption: "fixture caption" });
     expect(dirname(output.filePath!)).toBe(await realpath(cache));

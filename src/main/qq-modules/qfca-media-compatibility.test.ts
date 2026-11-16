@@ -47,7 +47,7 @@ async function startPair(options: { stream?: boolean; corruptDownload?: boolean;
   cleanups.push(async () => { socket.terminate(); });
   const actions: Action[] = [];
   const uploads = new Map<string, { chunks: Buffer[]; size: number; sha256: string; filename: string }>();
-  const media = new Map<string, Buffer>([["picture.png", pngFixture], ["sound", Buffer.from("audio fixture")], ["document", Buffer.from("file fixture")], ["movie", Buffer.from("video fixture")]]);
+  const media = new Map<string, Buffer>([["picture.png", Buffer.concat([pngFixture, Buffer.alloc(70001 - pngFixture.length, 42)])], ["sound", Buffer.from("audio fixture")], ["document", Buffer.from("file fixture")], ["movie", Buffer.from("video fixture")]]);
   socket.on("message", (raw) => {
     const a: Action = JSON.parse(raw.toString()); actions.push(a);
     const respond = (data: unknown) => socket.send(JSON.stringify({ status: "ok", retcode: 0, echo: a.echo, data }));
@@ -110,8 +110,9 @@ it.skipIf(!candidateEntry)("transfers image/audio/file/video through real child 
   // Host-owned attachment files survive module stop for the existing history path.
   expect(await readFile(p.received[0].attachments![0].filePath!)).toEqual(p.media.get("picture.png"));
 }, 15000);
-it.skipIf(!candidateEntry).each([null, "fixture.bin", "misleading.jpg"])("routes an actual downloaded image with backend filename %s through real IPC into production vision options", async (filename) => {
+it.skipIf(!candidateEntry).each([null, "image.bin", "image.txt", "picture.png", "misleading.jpg"])("routes an actual downloaded image with backend filename %s through real IPC into production vision options", async (filename) => {
   const p = await startPair({ filename });
+  p.media.set("picture.png", pngFixture);
   p.incoming(330, [{ type: "image", data: { file: "picture.png" } }]);
   await vi.waitFor(() => expect(p.received).toHaveLength(1), { timeout: 5000 });
   const attachment = p.received[0].attachments![0];

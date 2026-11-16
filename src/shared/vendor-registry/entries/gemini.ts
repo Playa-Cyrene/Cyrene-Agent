@@ -27,6 +27,14 @@ export const GEMINI_REGISTRY = defineVendor({
   },
   models: [
     {
+      model: "gemini-4-hydrogen",
+      recommendedFor: ["chat"],
+      note: "2026-11-12 正式发布（GA），免费层与付费层均可用；固定型号名，无日期后缀。",
+      unknownCapabilities: [
+        { feature: "sampling", transport: "openai", note: "官方说明 temperature/top_p/top_k 应移除，传入会被忽略；未加采样白名单即不注入采样参数。" },
+      ],
+    },
+    {
       model: "gemini-4-carbon",
       recommendedFor: ["chat"],
       note: "2026-11-10 正式发布（GA）；固定型号名，无日期后缀。",
@@ -84,6 +92,23 @@ export const GEMINI_REGISTRY = defineVendor({
   structuredOutputRules: [
     // 官方模型页列出 Structured outputs 为已支持；OpenAI 兼容层文档以 response_format（parse）示例说明。
     // 只覆盖已核实的完整型号名，其余 Gemini 型号仍走提示词 JSON 回退。
+    {
+      id: "gemini-4-hydrogen-structured-output",
+      transport: "openai",
+      modelPattern: /^gemini-4-hydrogen$/i,
+      tier: "A",
+      mode: "provider_json_schema",
+      verification: "official",
+      metadata: {
+        status: "supported",
+        evidence: {
+          kind: "official",
+          url: "https://ai.google.dev/gemini-api/docs/models/gemini-4-hydrogen",
+          checkedAt: "2026-11-13",
+          transports: ["openai"],
+        },
+      },
+    },
     {
       id: "gemini-4-carbon-structured-output",
       transport: "openai",
@@ -171,6 +196,24 @@ export const GEMINI_REGISTRY = defineVendor({
       control: "effort",
       supportedEfforts: ["low", "medium", "high"],
       defaultEffort: "medium",
+      requestStyle: "openai-effort",
+      supportsDisable: false,
+    } },
+    // Gemini 4 Hydrogen：thinking_level 为 low/medium/high/xhigh 四档，默认 high；兼容层 reasoning_effort
+    // 的 xhigh 只映射到这一款。官方说明它会拒绝 minimal，本项目档位里没有 minimal；
+    // Gemini 4 的思考不能关闭 → supportsDisable=false（核验 2026-11-13）。
+    { modelPattern: /^gemini-4-hydrogen/i, modelInferencePattern: /^gemini-4-hydrogen/i, metadata: {
+      status: "supported",
+      evidence: {
+        kind: "official",
+        url: "https://ai.google.dev/gemini-api/docs/openai",
+        checkedAt: "2026-11-13",
+        transports: ["openai"],
+      },
+    }, capability: {
+      control: "effort",
+      supportedEfforts: ["low", "medium", "high", "xhigh"],
+      defaultEffort: "high",
       requestStyle: "openai-effort",
       supportsDisable: false,
     } },

@@ -55,6 +55,7 @@ const NOTES_EN: Readonly<Record<string, string>> = {
   "官方说明非默认 temperature/top_p/top_k 返回 400；未加采样白名单即不注入采样参数。": "Officially, non-default temperature/top_p/top_k return a 400; with no sampling allowlist, no sampling parameters are sent.",
   "2026-09-30 发布的旗舰推理模型（Stable）；固定型号名，无日期后缀。": "Flagship reasoning model released 2026-09-30 (Stable); a fixed model name with no date suffix.",
   "2026-11-10 正式发布（GA）；固定型号名，无日期后缀。": "Generally available (GA) since 2026-11-10; a fixed model name with no date suffix.",
+  "2026-11-12 正式发布（GA），免费层与付费层均可用；固定型号名，无日期后缀。": "Generally available (GA) since 2026-11-12 on both the free and paid tiers; a fixed model name with no date suffix.",
   "官方说明 temperature/top_p/top_k 应移除，传入会被忽略；未加采样白名单即不注入采样参数。": "Officially, temperature/top_p/top_k should be removed and are ignored if sent; with no sampling allowlist, no sampling parameters are sent.",
   "官方文档未说明 temperature/top_p 取值约束；未加采样白名单即不注入采样参数。": "The official docs do not state temperature/top_p constraints; with no sampling allowlist, no sampling parameters are sent.",
   "预设协议没有专用结构化输出规则，保留提示词 JSON 回退。": "No dedicated structured output rule exists for the preset transport; prompt-based JSON fallback is retained.",
