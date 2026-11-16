@@ -63,7 +63,7 @@ export function validateScreenshotInsert(
   return {
     ...data,
     filePath,
-    previewUrl: pathToFileURL(filePath).toString(),
+    previewUrl: pathToFileURL(filePath, { windows: true }).toString(),
   };
 }
 
@@ -97,7 +97,7 @@ export function createScreenshotService(deps: ScreenshotServiceDeps): Screenshot
         width: result.width,
         height: result.height,
         mime: result.mime,
-        previewUrl: pathToFileURL(result.filePath).toString(),
+        previewUrl: pathToFileURL(result.filePath, { windows: true }).toString(),
         hasAnnotations: result.hasAnnotations,
       });
       return { ok: true };

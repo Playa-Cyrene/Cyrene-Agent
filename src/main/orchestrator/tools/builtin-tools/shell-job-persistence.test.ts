@@ -33,7 +33,10 @@ beforeEach(async () => {
   mocks.root = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-shell-persistence-"));
   fs.mkdirSync(path.join(mocks.root, "shell-jobs"));
   child = Object.assign(new EventEmitter(), { stdout: new PassThrough(), stderr: new PassThrough() });
-  mocks.spawn.mockReset().mockReturnValue(child);
+  mocks.spawn.mockReset().mockImplementation(() => {
+    queueMicrotask(() => child.emit("spawn"));
+    return child;
+  });
   manager = await import("./shell-job-manager");
 });
 afterEach(async () => {
@@ -44,6 +47,31 @@ afterEach(async () => {
 });
 
 describe("shell job SQLite lifecycle (isolated data, mocked processes)", () => {
+  it("does not resolve startup before the child spawn event", async () => {
+    mocks.spawn.mockImplementationOnce(() => child);
+    let resolved = false;
+    const pending = manager.startShellJob(options()).then(result => { resolved = true; return result; });
+    await expect.poll(() => mocks.spawn.mock.calls.length).toBe(1);
+    expect(resolved).toBe(false);
+    child.emit("spawn");
+    await expect(pending).resolves.toHaveProperty("jobId");
+    child.emit("close", 0);
+  });
+
+  it("rejects an asynchronous spawn error and preserves failed status", async () => {
+    const failure = Object.assign(new Error("fixture unavailable"), { code: "ENOENT" });
+    mocks.spawn.mockImplementationOnce(() => {
+      queueMicrotask(() => child.emit("error", failure));
+      return child;
+    });
+    await expect(manager.startShellJob(options())).rejects.toBe(failure);
+    const names = fs.readdirSync(path.join(mocks.root, "shell-jobs"));
+    const jobId = names.find(name => name.endsWith(".log"))!.slice(0, -4);
+    expect(await manager.waitForShellJob(jobId, 0)).toMatchObject({ status: "failed", reason: "spawn_error: fixture unavailable", pid: null });
+    child.emit("close", -1);
+    expect(await manager.waitForShellJob(jobId, 0)).toMatchObject({ status: "failed" });
+  });
+
   it("run_shell forwards the host completion callback and advertises automatic delivery only when supported", async () => {
     const { runShellTool } = await import("./run-shell-tool");
     const onShellJobComplete = vi.fn();
