@@ -1054,6 +1054,10 @@
       },
       "feishu": { "description": "Create a custom app on the Feishu Open Platform and enable bot capabilities, then enter its App ID and App Secret. Long connections do not require a public callback URL." },
       "qqModule": {
+        "tokenPolicy": "The independent QFCA module requires a nonblank Access Token matching the backend, even on loopback. This does not change the built-in QQ driver or generate or rewrite tokens.",
+        "tokenRequired": "The saved token is missing or blank, so switching to the independent module is blocked. Configure the same token in the original QQ settings and backend first.",
+        "tokenAvailable": "A nonblank token was read. This does not prove backend authentication. Credentials and secure storage must be checked again when migration is confirmed.",
+        "tokenUnresolved": "The saved token could not be checked. Check credentials and secure storage before switching; the original configuration is unchanged.",
         "loopbackPolicy": "The first independent module accepts numeric loopback IPs only, not localhost / DNS names, bracketed IPv6 or scope IDs. A token does not enable remote access. Auto resolving to WSL, explicit WSL and LAN addresses are incompatible and will not be silently rewritten.",
         "listenReady": "Listen preflight: loopback. Release trust and other installation requirements remain incomplete.",
         "listenUnsupported": "Listen preflight: unsupported address. The first independent module accepts numeric loopback IPs only. Explicitly update settings before a future switch.",

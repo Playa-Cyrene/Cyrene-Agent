@@ -131,4 +131,40 @@ describe("QQ manager media authorization", () => {
     expect(peer.messages.some((r) => r.method === "mediaBeginUpload")).toBe(false);
   });
 
+  it("releases policy-rejected handles before ACK and never starts a host download", async () => {
+    const { peer, manager } = await setup(); const original = peer.behavior; let release: QqRequest | undefined;
+    peer.behavior = (request) => request.method === "mediaRelease" ? release = request : original(request);
+    manager.updateAccessPolicy({ ...configuration().config, configRevision: 2, allowedGroupIds: [] });
+    peer.event("inbound", { ...inbound("rejected-media"), attachments: [{ kind: "file", mediaId: "unused", size: 5 }] });
+    expect(release).toBeDefined(); expect(peer.messages.some((request) => ["ackInbound", "mediaRead"].includes(request.method))).toBe(false);
+    peer.reply(release!, {});
+    await vi.waitFor(() => expect(peer.messages.find((request) => request.method === "ackInbound")?.payload).toMatchObject({ outcome: "rejected-policy" }));
+  });
+  it("does not release an active duplicate's handles, even after policy changes its rejection reason", async () => {
+    const { peer, manager } = await setup(); const original = peer.behavior; let read: QqRequest | undefined;
+    peer.behavior = (request) => request.method === "mediaRead" ? read = request : original(request);
+    manager.onMessage = async () => null;
+    const event = { ...inbound("same-event"), attachments: [{ kind: "file" as const, mediaId: "still-reading", size: 5 }] };
+    peer.event("inbound", event); await vi.waitFor(() => expect(read).toBeDefined());
+    peer.event("inbound", event);
+    expect(peer.messages.filter((request) => request.method === "mediaRelease")).toHaveLength(0);
+    manager.updateAccessPolicy({ ...configuration().config, configRevision: 2, allowedGroupIds: [] });
+    peer.event("inbound", event); await tick();
+    // Only the original broker may release this handle when its abort settles.
+    await vi.waitFor(() => expect(peer.messages.filter((request) => request.method === "mediaRelease")).toHaveLength(1));
+  });
+  it("releases unstarted later attachments after a preparation-time authorization revocation", async () => {
+    const { peer, manager } = await setup(); const original = peer.behavior;
+    peer.behavior = (request) => {
+      original(request);
+      if (request.method === "mediaRead") manager.updateAccessPolicy({ ...configuration().config, configRevision: 2, allowedGroupIds: [] });
+    };
+    const handler = vi.fn(async () => null); manager.onMessage = handler;
+    peer.event("inbound", { ...inbound("unclaimed-handles"), attachments: ["first", "second", "third"].map((mediaId) => ({ kind: "file", mediaId, size: 5 })) });
+    await vi.waitFor(() => expect(peer.messages.some((request) => request.method === "ackInbound")).toBe(true));
+    expect(peer.messages.filter((request) => request.method === "mediaRelease").map((request) => request.payload.mediaId).sort()).toEqual(["first", "second", "third"]);
+    expect(peer.messages.filter((request) => request.method === "mediaRead")).toHaveLength(1);
+    expect(handler).not.toHaveBeenCalled();
+  });
+
 });

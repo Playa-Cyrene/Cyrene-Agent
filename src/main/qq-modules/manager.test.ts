@@ -15,6 +15,13 @@ function setup(options: Partial<ConstructorParameters<typeof QqModuleManager>[0]
 }
 afterEach(async () => { await Promise.all(managers.splice(0).map((m) => m.stop())); });
 describe("QQ host runtime manager", () => {
+  it.each(["", " ", "\t\u00a0"])("rejects blank token before spawning a candidate: %j", async (accessToken) => {
+    const createTransport = vi.fn(() => new FakeTransport());
+    const { manager } = setup({ getConfiguration: () => ({ ...configuration(), credentials: { accessToken } }), createTransport });
+    await manager.start();
+    expect(manager.getState().phase).toBe("config-missing");
+    expect(createTransport).not.toHaveBeenCalled();
+  });
   it("does no work on construction; missing/disabled modules do not start or download", async () => {
     const getConfiguration = vi.fn(configuration); const createTransport = vi.fn(() => new FakeTransport());
     const { manager } = setup({ getConfiguration, createTransport });

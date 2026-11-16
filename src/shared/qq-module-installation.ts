@@ -7,5 +7,6 @@ export interface QqModuleInstallationStatus {
   canInstall: false;
   moduleInstalled: false;
   currentDriver: "legacy-builtin";
+  tokenCompatibility: "available" | "required" | "unresolved";
   listenCompatibility: QqModuleListenCompatibility;
 }

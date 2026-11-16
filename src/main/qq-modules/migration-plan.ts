@@ -68,7 +68,7 @@ export function buildQqMigrationPlan(bytes: Uint8Array, identity: QqLegacyIdenti
 export function readQqMigrationToken(bytes: Uint8Array, storage: QqMigrationSecretStorage,
   legacyMachine: { userDataPath: string; appName: string }): string {
   const stored = readLegacyConfig(bytes).accessToken ?? "";
-  if (!stored) return "";
+  if (!stored) migrationFail("credential-required");
   if (!storage.isSecureAvailable()) migrationFail("secure-storage-unavailable");
   let token: string;
   try {
@@ -85,6 +85,7 @@ export function readQqMigrationToken(bytes: Uint8Array, storage: QqMigrationSecr
       }
     } else token = stored.startsWith("plain:") ? stored.slice(6) : stored;
   } catch { return migrationFail("credential-unreadable"); }
-  if (!token || token.length > 4096 || /[\x00-\x1f\x7f]/.test(token)) migrationFail("credential-unreadable");
+  if (!token.trim()) migrationFail("credential-required");
+  if (token.length > 4096 || /[\x00-\x1f\x7f]/.test(token)) migrationFail("credential-unreadable");
   return token;
 }

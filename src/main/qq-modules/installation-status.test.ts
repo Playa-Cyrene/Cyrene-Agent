@@ -25,3 +25,17 @@ describe("QQ module loopback-only preflight", () => {
     expect(getQqModuleInstallationStatus({ listenMode: "auto" }, {}).listenCompatibility).toBe("loopback");
   });
 });
+
+it.each(["", " ", "\t\u00a0"])("reports blank decoded token without returning it", (token) => {
+  expect(getQqModuleInstallationStatus({ listenMode: "loopback" }, {}, () => token)).toMatchObject({ tokenCompatibility: "required", canInstall: false });
+});
+it("redacts tokens and errors and does not treat presence as installation readiness", () => {
+  const ready = getQqModuleInstallationStatus({ listenMode: "loopback" }, {}, () => " test-only-secret ");
+  expect(ready).toMatchObject({ tokenCompatibility: "available", canInstall: false, availability: "release-unconfigured" });
+  expect(JSON.stringify(ready)).not.toContain("test-only-secret");
+  expect(getQqModuleInstallationStatus({}, {}, () => { throw new Error("private-secret"); }).tokenCompatibility).toBe("unresolved");
+  expect(getQqModuleInstallationStatus({ listenMode: "loopback" }).tokenCompatibility).toBe("unresolved");
+  for (const token of ["x".repeat(4097), "bad\r\ntoken", "bad\0token"]) {
+    expect(getQqModuleInstallationStatus({ listenMode: "loopback" }, {}, () => token).tokenCompatibility).toBe("unresolved");
+  }
+});

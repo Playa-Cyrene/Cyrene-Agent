@@ -14,6 +14,8 @@ function setup() {
     postMessage: (message) => { child.send(message as object); },
     onMessage: (listener) => { child.on("message", listener); return () => { child.removeListener("message", listener); }; },
     onExit: (listener) => { child.on("exit", listener); return () => { child.removeListener("exit", listener); }; },
+    // Match production fatal-error forwarding, including asynchronous send EPIPE.
+    onError: (listener) => { child.on("error", listener); return () => { child.removeListener("error", listener); }; },
     terminate: async () => { child.kill(); await exited; },
   };
   const manager = new QqModuleManager({ getConfiguration: configuration, createTransport: () => transport, requestTimeoutMs: 1000, drainTimeoutMs: 100 });
@@ -44,6 +46,8 @@ it.skipIf(process.platform === "win32")("does not replace a real child that igno
     postMessage: (message) => { child.send(message as object); },
     onMessage: (listener) => { child.on("message", listener); return () => { child.removeListener("message", listener); }; },
     onExit: (listener) => { child.on("exit", listener); return () => { child.removeListener("exit", listener); }; },
+    // Match production fatal-error forwarding, including asynchronous send EPIPE.
+    onError: (listener) => { child.on("error", listener); return () => { child.removeListener("error", listener); }; },
     terminate: async () => {
       if (didExit) return;
       child.kill(); let timer: ReturnType<typeof setTimeout> | undefined;

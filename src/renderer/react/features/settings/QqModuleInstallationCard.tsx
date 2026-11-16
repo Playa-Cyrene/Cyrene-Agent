@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Alert, Button, Modal, Spin } from "antd";
+import type { QqModuleInstallationStatus } from "../../../../shared/qq-module-installation";
 import type { SettingsApi } from "../../../settings/shared/types";
 import { useTranslation } from "../../i18n";
 
@@ -11,17 +12,21 @@ export function QqModuleInstallationCard({ api, listenMode, customHost }: { api?
   const [open, setOpen] = useState(false);
   const [status, setStatus] = useState<"loading" | "unconfigured" | "error">("loading");
   const [listen, setListen] = useState<"loopback" | "unsupported-host" | "unresolved">("unresolved");
+  const [token, setToken] = useState<QqModuleInstallationStatus["tokenCompatibility"]>("unresolved");
   useEffect(() => {
     if (!open) return;
     let active = true;
     setStatus("loading");
     setListen("unresolved");
+    setToken("unresolved");
     if (!api?.channelsQqModuleInstallationStatus) { setStatus("error"); return; }
     void api.channelsQqModuleInstallationStatus({ listenMode, customHost }).then((result) => {
       if (active) {
         setListen(result?.listenCompatibility ?? "unresolved");
+        setToken(result?.tokenCompatibility ?? "unresolved");
         setStatus(result?.availability === "release-unconfigured" && result.canInstall === false
         && result.moduleInstalled === false && result.currentDriver === "legacy-builtin"
+        && ["available", "required", "unresolved"].includes(result.tokenCompatibility)
         && ["loopback", "unsupported-host", "unresolved"].includes(result.listenCompatibility) ? "unconfigured" : "error");
       }
     }, () => { if (active) setStatus("error"); });
@@ -39,6 +44,8 @@ export function QqModuleInstallationCard({ api, listenMode, customHost }: { api?
       <p>{t(`${key}.safety`)}</p>
       <p>{t(`${key}.loopbackPolicy`)}</p>
       {status !== "loading" && <p role="status">{t(`${key}.${status !== "unconfigured" ? "listenUnresolved" : listen === "loopback" ? "listenReady" : listen === "unsupported-host" ? "listenUnsupported" : "listenUnresolved"}`)}</p>}
+      <p>{t(`${key}.tokenPolicy`)}</p>
+      {status !== "loading" && <p role="status">{t(`${key}.${status !== "unconfigured" || token === "unresolved" ? "tokenUnresolved" : token === "required" ? "tokenRequired" : "tokenAvailable"}`)}</p>}
       <p>{t(`${key}.data`)}</p>
       <Button type="primary" disabled>{t(`${key}.install`)}</Button>
     </Modal>
