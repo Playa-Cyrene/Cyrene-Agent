@@ -4,7 +4,8 @@ import { negotiateQqApi, QQ_API_SUPPORT, QQ_RUNTIME_TIMEOUTS, validateRequestPay
   type QqBackendStatus, type QqCapabilitySnapshot, type QqInboundAck, type QqInboundMessageV1, type QqInitialize,
   type QqRuntimeConfig, type QqSendRequestV1, type QqSendResultV1 } from "../../shared/qq-module";
 import { isQqModuleLoopbackHost } from "./listen-policy";
-import type { MessageHandler, OutgoingMessage } from "../channels/types";
+import type { IncomingMessage, MessageHandler, OutgoingMessage } from "../channels/types";
+import { QqMediaBroker } from "./media-broker";
 import { QqModuleRuntime, QqRuntimeError, type QqProcessTransport } from "./runtime";
 
 export type QqModulePhase = "disabled" | "module-missing" | "config-missing" | "starting" | "waiting-backend" | "running" | "draining" | "stopped" | "incompatible" | "account-mismatch" | "crashed" | "failed";
@@ -19,17 +20,21 @@ interface Generation {
   startComplete: boolean;
   pendingStatus?: QqBackendStatus;
   accepting: boolean;
+  mediaEpoch: number;
+  mediaAbort: AbortController;
   authorized: boolean;
   seen: Set<string>;
   turns: Set<Promise<unknown>>;
   sends: Set<Promise<unknown>>;
 }
-interface TurnLease { generation: Generation; connectionEpoch: number; conversation: QqInboundMessageV1["conversation"] }
+interface TurnLease { active: boolean; generation: Generation; connectionEpoch: number; conversation: QqInboundMessageV1["conversation"] }
 export interface QqModuleManagerOptions {
   /** null means explicitly disabled; no configuration is read during construction. */
   getConfiguration: () => QqInitialize | null;
   /** Supplied only by trusted host composition, never renderer input. Absent = not installed. */
   createTransport?: () => QqProcessTransport;
+  /** Explicit trusted host composition; absence disables every media capability. */
+  mediaBroker?: QqMediaBroker;
   requestTimeoutMs?: number;
   /** Dedicated delivery budget; control RPC timeout must not truncate text chunks. */
   sendTimeoutMs?: number;
@@ -50,8 +55,8 @@ export class QqModuleManager {
   getState(): QqModuleState { return { ...this.state }; }
   getCapabilities(): QqCapabilitySnapshot {
     const cap = this.current?.capabilities ?? NO_CAPABILITIES;
-    // No broker exists in this increment, even if the module advertises media.
-    return { messages: { ...cap.messages, image: false, audio: false, file: false, video: false, sticker: false, maxFileBytes: 0 }, backend: { napcatStream: false } };
+    const media = Boolean(this.options.mediaBroker);
+    return { messages: { ...cap.messages, image: media && cap.messages.image, audio: media && cap.messages.audio, file: media && cap.messages.file, video: media && cap.messages.video, card: false, sticker: false, maxFileBytes: media ? Math.min(cap.messages.maxFileBytes, 100 * 1024 * 1024) : 0 }, backend: { napcatStream: false } };
   }
   private serialize(action: () => Promise<void>): Promise<void> {
     const next = this.sequence.then(action, action);
@@ -111,12 +116,15 @@ export class QqModuleManager {
     try {
       // Snapshot host policy before invoking untrusted/async process work.
       const initialize: QqInitialize = JSON.parse(JSON.stringify(input));
+      // Media is an explicit host capability, never a module/default assumption.
+      if (this.options.mediaBroker) initialize.mediaTransfer = "chunked-v1";
+      else delete initialize.mediaTransfer;
       const runtime = new QqModuleRuntime(this.options.createTransport(), this.state.runtimeEpoch, this.options.requestTimeoutMs);
-      gen = { runtime, config: initialize.config, policy: initialize.config, capabilities: null, highestConnectionEpoch: -1, startComplete: false, accepting: false, authorized: true, seen: new Set(), turns: new Set(), sends: new Set() };
+      gen = { runtime, config: initialize.config, policy: initialize.config, capabilities: null, highestConnectionEpoch: -1, startComplete: false, mediaEpoch: 0, mediaAbort: new AbortController(), accepting: false, authorized: true, seen: new Set(), turns: new Set(), sends: new Set() };
       this.current = gen;
       const instance = gen;
       runtime.onClose(() => {
-        instance.authorized = false; instance.accepting = false;
+        instance.authorized = false; instance.accepting = false; instance.mediaAbort.abort();
         if (this.current === instance && !["draining", "incompatible", "account-mismatch", "failed"].includes(this.state.phase)) this.setPhase("crashed");
       });
       runtime.onEvent((event) => {
@@ -153,10 +161,12 @@ export class QqModuleManager {
       if (status.connectionEpoch < gen.highestConnectionEpoch) return;
       // Reusing a disconnected epoch would reactivate old turn leases.
       if (gen.connectionEpoch === undefined && status.connectionEpoch <= gen.highestConnectionEpoch) { gen.runtime.close("protocol"); return; }
+      if (gen.connectionEpoch !== status.connectionEpoch) { gen.mediaAbort.abort(); gen.mediaAbort = new AbortController(); gen.mediaEpoch++; }
       gen.highestConnectionEpoch = status.connectionEpoch;
       gen.connectionEpoch = status.connectionEpoch;
       if (this.state.phase !== "draining") { gen.accepting = !this.migrationQuarantine; this.setPhase("running"); }
     } else {
+      gen.mediaAbort.abort(); gen.mediaEpoch++;
       gen.connectionEpoch = undefined; gen.accepting = false;
       if (this.state.phase !== "draining") this.setPhase("waiting-backend");
     }
@@ -168,6 +178,7 @@ export class QqModuleManager {
     if (!gen || !validateRuntimeConfig(config) || config.configRevision <= gen.policy.configRevision
       || config.expectedSelfId !== gen.config.expectedSelfId || config.listen.host !== gen.config.listen.host || config.listen.port !== gen.config.listen.port) throw new Error("QQ_MODULE_INVALID_POLICY_UPDATE");
     gen.policy = JSON.parse(JSON.stringify(config));
+    gen.mediaAbort.abort(); gen.mediaAbort = new AbortController(); gen.mediaEpoch++;
   }
   private ack(gen: Generation, eventId: string, outcome: QqInboundAck["outcome"]): void {
     void gen.runtime.request("ackInbound", { eventId, outcome }).catch(() => {});
@@ -180,15 +191,15 @@ export class QqModuleManager {
       : gen.policy.allowedGroupIds.includes(conversation.groupId) && (!gen.policy.groupRequireMention || message.mentions?.some((m) => m.userId === gen.config.expectedSelfId));
     if (!gen.accepting || !gen.authorized || message.selfId !== gen.config.expectedSelfId || message.connectionEpoch !== gen.connectionEpoch || message.configRevision !== gen.config.configRevision) rejection = "stale-instance";
     else if (!allowed || message.senderId === gen.config.expectedSelfId) rejection = "rejected-policy";
-    else if (message.attachments?.length) rejection = "unsupported";
+    else if (message.attachments?.length && !this.options.mediaBroker) rejection = "unsupported";
     else if (gen.seen.has(message.eventId)) rejection = "duplicate";
     else if (!this.onMessage || gen.turns.size >= 16) rejection = "busy";
     if (rejection) { this.ack(gen, message.eventId, rejection); return; }
     gen.seen.add(message.eventId);
     if (gen.seen.size > 1024) gen.seen.delete(gen.seen.values().next().value!);
     const handler = this.onMessage!;
-    const lease = { generation: gen, connectionEpoch: message.connectionEpoch, conversation };
-    const incoming = {
+    const lease = { active: true, generation: gen, connectionEpoch: message.connectionEpoch, conversation };
+    const incoming: IncomingMessage = {
       channel: "qq" as const, chatType: conversation.type, messageId: message.backendMessageId,
       senderId: message.senderId, ...(message.senderName !== undefined ? { senderName: message.senderName } : {}),
       chatId: conversation.type === "private" ? conversation.peerId : conversation.groupId,
@@ -199,42 +210,130 @@ export class QqModuleManager {
     };
     // Track the FULL dispatcher promise, not just receipt of this event. The handler
     // owns delivery; its returned OutgoingMessage must never be sent a second time.
-    const turn = this.context.run(lease, () => Promise.resolve().then(() => handler(incoming))).catch(() => {});
+    const mediaEpoch = gen.mediaEpoch;
+    const check = () => {
+      const allowedNow = conversation.type === "private" ? gen.policy.allowedPrivateUserIds.includes(conversation.peerId)
+        : gen.policy.allowedGroupIds.includes(conversation.groupId) && (!gen.policy.groupRequireMention || message.mentions?.some((m) => m.userId === gen.config.expectedSelfId));
+      if (this.current !== gen || !gen.authorized || gen.connectionEpoch !== message.connectionEpoch || !lease.active || !allowedNow
+        || (message.attachments?.length && mediaEpoch !== gen.mediaEpoch)) throw new Error("QQ_MEDIA_REVOKED");
+    };
+    const turn = this.context.run(lease, async () => {
+      const attachments = [];
+      let dispatched = false;
+      try {
+        for (const media of message.attachments ?? []) {
+          try { check(); attachments.push(await this.options.mediaBroker!.download({ runtime: gen.runtime, connectionEpoch: message.connectionEpoch, signal: gen.mediaAbort.signal, assertAuthorized: check }, message.eventId, media)); }
+          catch { incoming.text += `${incoming.text ? "\n" : ""}[附件加载失败]`; }
+        }
+        check(); if (attachments.length) incoming.attachments = attachments;
+        if (message.attachments?.length) this.ack(gen, message.eventId, "accepted");
+        dispatched = true;
+        return await handler(incoming);
+      } finally {
+        if (!dispatched && message.attachments?.length) {
+          await Promise.all(attachments.map((attachment) => this.options.mediaBroker!.discard(attachment)));
+          this.ack(gen, message.eventId, "stale-instance");
+        }
+      }
+    }).catch(() => {}).finally(() => { lease.active = false; });
     gen.turns.add(turn);
     void turn.finally(() => gen.turns.delete(turn));
-    this.ack(gen, message.eventId, "accepted");
+    if (!message.attachments?.length) this.ack(gen, message.eventId, "accepted");
   }
-  async send(message: OutgoingMessage): Promise<QqSendResultV1> {
+  async send(input: OutgoingMessage): Promise<QqSendResultV1> {
+    const message: OutgoingMessage = structuredClone(input);
     const gen = this.current;
     const lease = this.context.getStore();
     const operationId = randomUUID();
     const failure = (outcome: "failed" | "unknown", errorCode: "rejected" | "unsupported" | "disconnected" | "timeout" | "internal"): QqSendResultV1 => ({ operationId, outcome, parts: message.parts.map((_, partIndex) => ({ partIndex, outcome, errorCode })) });
     if (this.migrationQuarantine || !gen || !gen.authorized || gen.connectionEpoch === undefined || message.channel !== "qq" || !message.chatType
-      || (lease && (lease.generation !== gen || lease.connectionEpoch !== gen.connectionEpoch))
+      || (lease && (!lease.active || lease.generation !== gen || lease.connectionEpoch !== gen.connectionEpoch))
       || (this.state.phase === "draining" && !lease)) return failure("failed", "rejected");
     const conversation = message.chatType === "group" ? { type: "group" as const, groupId: message.targetId } : { type: "private" as const, peerId: message.targetId };
     if (lease && (conversation.type === "private"
       ? lease.conversation.type !== "private" || lease.conversation.peerId !== conversation.peerId
       : lease.conversation.type !== "group" || lease.conversation.groupId !== conversation.groupId)) return failure("failed", "rejected");
     if (conversation.type === "private" ? !gen.policy.allowedPrivateUserIds.includes(conversation.peerId) : !gen.policy.allowedGroupIds.includes(conversation.groupId)) return failure("failed", "rejected");
-    const capabilities = this.getCapabilities().messages;
-    if (message.parts.some((part) => part.kind === "text" ? !capabilities.text || part.text.length > capabilities.maxTextLength : part.kind === "card" ? !capabilities.card : true)
-      || (message.replyContext && (!capabilities.reply || (message.replyContext.mentionUserId && !capabilities.mention)))) return failure("failed", "unsupported");
-    const request: QqSendRequestV1 = { operationId, runtimeEpoch: gen.runtime.runtimeEpoch, connectionEpoch: gen.connectionEpoch, selfId: gen.config.expectedSelfId, conversation,
-      parts: message.parts.filter((part) => part.kind === "text" || part.kind === "card"), ...(message.replyContext ? { replyContext: { ...message.replyContext } } : {}) };
-    if (!validateSendRequest(request)) return failure("failed", "rejected");
-    const operation = gen.runtime.request("send", request, undefined, this.options.sendTimeoutMs ?? QQ_RUNTIME_TIMEOUTS.sendResponseMs);
+    const epoch = gen.connectionEpoch;
+    const mediaEpoch = gen.mediaEpoch;
+    const hasMedia = message.parts.some((part) => !["text", "card", "sticker"].includes(part.kind));
+    const check = () => {
+      if (this.current !== gen || !gen.authorized || gen.connectionEpoch !== epoch || (lease && !lease.active)
+        || (hasMedia && (gen.mediaEpoch !== mediaEpoch || this.state.phase === "draining"))
+        || (conversation.type === "private" ? !gen.policy.allowedPrivateUserIds.includes(conversation.peerId) : !gen.policy.allowedGroupIds.includes(conversation.groupId))) throw new Error("QQ_MEDIA_REVOKED");
+    };
+    const supported = (part: QqSendRequestV1["parts"][number] | OutgoingMessage["parts"][number]): boolean => {
+      const capabilities = this.getCapabilities().messages;
+      return part.kind === "text" ? capabilities.text && part.text.length <= capabilities.maxTextLength
+        : part.kind === "card" || part.kind === "sticker" ? false
+          : capabilities[part.kind] && (!("mediaId" in part) || (part.size ?? Infinity) <= capabilities.maxFileBytes);
+    };
+    const replySupported = () => {
+      const capabilities = this.getCapabilities().messages;
+      return !message.replyContext || capabilities.reply && (!message.replyContext.mentionUserId || capabilities.mention);
+    };
+    try { check(); } catch { return failure("failed", "rejected"); }
+    if (!replySupported()) return failure("failed", "unsupported");
+    const context = { runtime: gen.runtime, connectionEpoch: epoch, signal: gen.mediaAbort.signal, maxFileBytes: this.getCapabilities().messages.maxFileBytes, assertAuthorized: check };
+    const handles: string[] = [];
+    const operation = (async (): Promise<QqSendResultV1> => {
+      const results: QqSendResultV1["parts"] = message.parts.map((_, partIndex) => ({ partIndex, outcome: "failed", errorCode: "rejected" }));
+      const aggregate = (): QqSendResultV1 => ({ operationId, parts: results,
+        outcome: results.some((part) => part.outcome === "unknown") ? "unknown"
+          : results.length > 0 && results.every((part) => part.outcome === "sent") ? "sent"
+            : results.some((part) => part.outcome === "sent") ? "partial" : "failed" });
+      try {
+        const prepared: { part: QqSendRequestV1["parts"][number]; originalIndex: number }[] = [];
+        for (const [originalIndex, part] of message.parts.entries()) {
+          check();
+          if (!supported(part)) { results[originalIndex] = { partIndex: originalIndex, outcome: "failed", errorCode: "unsupported" }; continue; }
+          if (part.kind === "text") prepared.push({ part: { ...part }, originalIndex });
+          else if (part.kind !== "card" && part.kind !== "sticker") {
+            try {
+              const media = await this.options.mediaBroker!.upload(context, operationId, conversation, part);
+              handles.push(media.mediaId); check();
+              prepared.push({ part: media, originalIndex });
+            } catch {
+              // File/transfer failures affect only this part. Authorization failure
+              // must escape to the whole-message rejection before any send occurs.
+              check();
+            }
+          }
+        }
+        check();
+        if (!replySupported()) return failure("failed", "unsupported");
+        const selected = prepared.filter(({ part, originalIndex }) => {
+          if (supported(part)) return true;
+          results[originalIndex] = { partIndex: originalIndex, outcome: "failed", errorCode: "unsupported" }; return false;
+        });
+        if (!selected.length) return aggregate();
+        const request: QqSendRequestV1 = { operationId, runtimeEpoch: gen.runtime.runtimeEpoch, connectionEpoch: epoch, selfId: gen.config.expectedSelfId, conversation,
+          parts: selected.map(({ part }) => part), ...(message.replyContext ? { replyContext: { ...message.replyContext } } : {}) };
+        if (!validateSendRequest(request)) return failure("failed", "rejected");
+        // Only uncertainty of the final send may mean a backend side effect.
+        // Translate compact backend indices back to the original host parts.
+        try {
+          const result = await gen.runtime.request("send", request, undefined, this.options.sendTimeoutMs ?? QQ_RUNTIME_TIMEOUTS.sendResponseMs);
+          for (const part of result.parts) {
+            const originalIndex = selected[part.partIndex].originalIndex;
+            results[originalIndex] = { ...part, partIndex: originalIndex };
+          }
+        } catch (error) {
+          const uncertain = error instanceof QqRuntimeError && error.transmitted;
+          for (const { originalIndex } of selected) results[originalIndex] = { partIndex: originalIndex, outcome: uncertain ? "unknown" : "failed", errorCode: error instanceof QqRuntimeError && error.code === "timeout" ? "timeout" : "disconnected" };
+        }
+        return aggregate();
+      } catch { return failure("failed", "rejected"); }
+      finally { await Promise.all(handles.map((id) => this.options.mediaBroker!.release(context, id))); }
+    })();
     gen.sends.add(operation);
-    try { return await operation; }
-    catch (error) {
-      const uncertain = error instanceof QqRuntimeError && error.transmitted;
-      return failure(uncertain ? "unknown" : "failed", error instanceof QqRuntimeError && error.code === "timeout" ? "timeout" : "disconnected");
-    } finally { gen.sends.delete(operation); }
+    try { return await operation; } finally { gen.sends.delete(operation); }
   }
+
   private async stopInternal(): Promise<void> {
     const gen = this.current;
     if (!gen) { this.state = { ...this.state, enabled: false, phase: "stopped" }; return; }
-    gen.accepting = false;
+    gen.accepting = false; gen.mediaEpoch++; gen.mediaAbort.abort();
     this.setPhase("draining");
     // One overall deadline covers quiesce, active turns/sends and graceful stop.
     let timer: ReturnType<typeof setTimeout> | undefined;

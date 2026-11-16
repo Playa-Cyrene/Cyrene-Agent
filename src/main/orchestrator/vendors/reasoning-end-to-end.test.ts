@@ -353,6 +353,37 @@ describe.each(["gemini-4-argon", "gemini-4-carbon"])("%s 请求体", (model) => 
   });
 });
 
+describe("gemini-4-hydrogen 请求体", () => {
+  const adapter = new OpenAICompatAdapter("gemini", geminiCap);
+  // 官方：thinking_level 为 low/medium/high/xhigh，默认 high；兼容层 reasoning_effort 的 xhigh 只映射到 Hydrogen，
+  // Gemini 4 的思考不能关闭。验证实际请求体按这些档位发送，且不发采样参数。
+  const hydrogenBody = (reasoning?: ReasoningPreference) => {
+    const http = adapter.buildRequest(
+      { model: "gemini-4-hydrogen", messages: [{ role: "user", content: "hi" }] },
+      cfgOf(geminiCap, { model: "gemini-4-hydrogen", ...(reasoning ? { reasoning } : {}) }),
+    );
+    return JSON.parse(http.body) as Record<string, unknown>;
+  };
+
+  test("未设置档位 → reasoning_effort=high，且不发 temperature", () => {
+    const body = hydrogenBody();
+    expect(body.reasoning_effort).toBe("high");
+    expect("temperature" in body).toBe(false);
+  });
+
+  test("所选 xhigh 照常发送", () => {
+    expect(hydrogenBody({ mode: "on", effort: "xhigh" }).reasoning_effort).toBe("xhigh");
+  });
+
+  test("+ off → 不发送 none，回到默认 high", () => {
+    expect(hydrogenBody({ mode: "off" }).reasoning_effort).toBe("high");
+  });
+
+  test("+ 不支持的 max → 收敛到默认 high", () => {
+    expect(hydrogenBody({ mode: "on", effort: "max" }).reasoning_effort).toBe("high");
+  });
+});
+
 describe("G3 reasoning=undefined（使用滑块默认档）", () => {
   test("mimo mimo-v2.5-pro + reasoning=undefined → 开启 thinking", () => {
     const adapter = new OpenAICompatAdapter("mimo", mimoCap);
