@@ -336,6 +336,7 @@ export interface SettingsApi {
   channelsGetConfig: () => Promise<any>;
   channelsSaveConfig: (patch: unknown) => Promise<any>;
   channelsRestart: () => Promise<{ ok: boolean }>;
+  channelsQqModuleInstallationStatus: (input: import("../../../shared/qq-module-installation").QqModuleListenInput) => Promise<import("../../../shared/qq-module-installation").QqModuleInstallationStatus>;
   channelsQqTestConnection: () => Promise<{ ok: boolean; error?: string; detail?: Record<string, unknown> }>;
   /**
    * QQ 监听鉴权预检（renderer → main）：主进程按参数解析真实监听地址并判定是否

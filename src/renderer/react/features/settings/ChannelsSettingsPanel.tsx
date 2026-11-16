@@ -8,6 +8,7 @@ import { BrandIcon } from "../../components/ui/BrandIcon";
 import { SettingsInput, SettingsPasswordInput, SettingsSelect, SettingsSwitch } from "../../components/ui/SettingsControls";
 import { useTranslation } from "../../i18n";
 import "./ChannelsSettingsPanel.css";
+import { QqModuleInstallationCard } from "./QqModuleInstallationCard";
 import { Card } from "../../components/ui/Card";
 
 type ChannelId = "wechat" | "feishu" | "qq" | "qqbot";
@@ -218,6 +219,7 @@ export function ChannelsSettingsPanel() {
           <div className="cy-channels-actions"><Button type="primary" loading={busy === "feishu"} onClick={() => { const patch = { enabled: Boolean(config.enabled), appId: stringValue(config, "appId").trim(), ...(secretDrafts.feishu ? { appSecret: secretDrafts.feishu } : {}) }; void saveChannel(id, patch, true).then((saved) => { if (saved) setSecretDrafts((current) => ({ ...current, feishu: "" })); }); }}>{t("settingsPage.channels.saveAndConnect")}</Button></div>
         </>}
         {id === "qq" && <>
+          <QqModuleInstallationCard api={api} listenMode={String(config.listenMode ?? "auto")} customHost={stringValue(config, "customHost")} />
           <p className="cy-channels-hint">{t("settingsPage.channels.qq.description")}</p>
           <label className="cy-channels-field"><span>{t("settingsPage.channels.qq.listenMode")}</span><SettingsSelect ariaLabel={t("settingsPage.channels.qq.listenMode")} value={String(config.listenMode ?? "auto")} onChange={(value) => updateChannel(id, "listenMode", value)} options={[{ value: "auto", label: t("settingsPage.channels.qq.auto") }, { value: "wsl", label: "WSL" }, { value: "loopback", label: "127.0.0.1" }, { value: "custom", label: t("settingsPage.channels.qq.custom") }]} /></label>
           {config.listenMode === "custom" && <label className="cy-channels-field"><span>{t("settingsPage.channels.qq.customHost")}</span><SettingsInput value={stringValue(config, "customHost")} onChange={(event) => updateChannel(id, "customHost", event.target.value)} /></label>}

@@ -498,6 +498,7 @@ export const IPC = {
   // 飞书专属
   CHANNELS_FEISHU_TEST_CONNECTION: "channels:feishu:test-connection",
   CHANNELS_FEISHU_TEST_WEBHOOK_REACHABLE: "channels:feishu:test-webhook-reachable",
+  CHANNELS_QQ_MODULE_INSTALLATION_STATUS: "channels:qq-module:installation-status",
   CHANNELS_QQ_TEST_CONNECTION: "channels:qq:test-connection",
   /**
    * QQ 监听鉴权预检：主进程按 listenMode/customHost 解析真实监听地址，并判定是否
