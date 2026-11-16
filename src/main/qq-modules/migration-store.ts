@@ -7,14 +7,15 @@ import { migrationFail, isQqLegacyIdentity, type QqMigrationPlan } from "./migra
 
 export interface QqMigrationRecord {
   schemaVersion: 1; transactionId: string; packageId: string; plan: QqMigrationPlan;
-  phase: "prepared" | "legacy-stopped" | "module-staged" | "committed" | "rolled-back";
+  /** selected is a durable choice, not activation proof. committed is legacy/ambiguous. */
+  phase: "prepared" | "legacy-stopped" | "module-staged" | "selected" | "committed" | "rolled-back";
 }
 const hex = (v: unknown): boolean => typeof v === "string" && /^[a-f0-9]{64}$/.test(v);
 const packageId = (v: unknown): boolean => typeof v === "string" && /^pkg-[a-f0-9]{64}$/.test(v);
 export function validateQqMigrationRecord(value: unknown): value is QqMigrationRecord {
   return isBoundedJson(value) && strictObject(value, {
     schemaVersion: (v) => v === 1, transactionId: (v) => typeof v === "string" && /^[a-f0-9-]{36}$/.test(v), packageId,
-    phase: (v) => ["prepared", "legacy-stopped", "module-staged", "committed", "rolled-back"].includes(v as string),
+    phase: (v) => ["prepared", "legacy-stopped", "module-staged", "selected", "committed", "rolled-back"].includes(v as string),
     plan: (v) => strictObject(v, { schemaVersion: (n) => n === 1, channelId: (n) => n === "qq", config: validateRuntimeConfig,
       sourceDigest: hex, identity: isQqLegacyIdentity, credentialKind: (n) => ["none", "encrypted", "obfuscated", "plaintext"].includes(n as string) }),
   }) && (value as QqMigrationRecord).plan.config.expectedSelfId === (value as QqMigrationRecord).plan.identity.selfId;

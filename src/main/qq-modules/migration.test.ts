@@ -128,7 +128,7 @@ describe("QQ migration coordinator and recovery", () => {
     expect(readFileSync(s.path)).toEqual(original); expect(readFileSync(s.history)).toEqual(s.before[1]); expect(readFileSync(s.binding)).toEqual(s.before[2]);
     const state = readFileSync(join(s.root, "migration/state.json"), "utf8");
     expect(state).not.toContain("test-only-secret"); expect(state).not.toContain("YWJj"); expect(state).not.toContain("accessToken");
-    expect(new QqMigrationStore(s.store.root).read()).toMatchObject({ phase: "committed", plan: { config: { expectedSelfId: "10000" } } });
+    expect(new QqMigrationStore(s.store.root).read()).toMatchObject({ phase: "selected", plan: { config: { expectedSelfId: "10000" } } });
   });
   it("holds module inbound and outbound until the durable commit point", async () => {
     let s: ReturnType<typeof setup>;
@@ -154,7 +154,7 @@ describe("QQ migration coordinator and recovery", () => {
     expect(s.options.createModule).not.toHaveBeenCalled(); expect(s.store.read()?.phase).toBe("prepared");
     expect(() => new QqMigrationCoordinator(s.options).previewMigration(packageId)).toThrow("existing-migration-requires-review");
   });
-  it.each(["legacy-stopped", "module-staged", "committed"])("rolls back local selection after a %s write failure, but never restarts old code", async (phase) => {
+  it.each(["legacy-stopped", "module-staged", "selected"])("rolls back local selection after a %s write failure, but never restarts old code", async (phase) => {
     const s = setup({}, (record) => { if (record.phase === phase) throw new Error("injected"); });
     expect(await s.confirm()).toMatchObject({ outcome: "rolled-back", legacyRuntime: "not-restarted" });
     expect(s.store.read()?.phase).toBe("rolled-back");
@@ -199,14 +199,14 @@ describe("QQ migration coordinator and recovery", () => {
   });
   it("handles disconnect at commit without claiming success", async () => {
     let s: ReturnType<typeof setup>;
-    s = setup({}, (record) => { if (record.phase === "committed") s.peer.event("status", { phase: "waiting-backend" }); });
+    s = setup({}, (record) => { if (record.phase === "selected") s.peer.event("status", { phase: "waiting-backend" }); });
     expect(await s.confirm()).toMatchObject({ outcome: "rolled-back", errorCode: "module-disconnected-before-activation" });
   });
   it("requires explicit current process-stop proof for restart rollback, separate from original data preservation", async () => {
     const s = setup(); await s.confirm();
     const restarted = new QqMigrationCoordinator(s.options);
     expect(await restarted.rollbackStoppedMigration(async () => false)).toMatchObject({ outcome: "recovery-required" });
-    expect(s.store.read()?.phase).toBe("committed");
+    expect(s.store.read()?.phase).toBe("selected");
     await s.getManager()!.stop();
     expect(await restarted.rollbackStoppedMigration(async () => true)).toEqual({ outcome: "rolled-back", legacyData: "unchanged", legacyRuntime: "not-restarted" });
     expect(s.store.read()?.phase).toBe("rolled-back");
