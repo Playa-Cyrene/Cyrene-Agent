@@ -9,6 +9,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import * as shellRuntime from "../../shell-runtime";
 
 // electron mock：模块加载期（beforeAll 之前）getPath 抛错 → logger 的 try/catch 静默跳过
 // 落盘，与其它测试文件"app 未定义"的行为对齐；测试开始后返回临时目录，
@@ -135,6 +136,14 @@ describe("clampWaitMs（纯函数）", () => {
 });
 
 describe("shell-job-manager 状态机与护栏（真实进程）", () => {
+  it("rejects an unavailable executable instead of reporting a running job", async () => {
+    await expect(startShellJob({
+      spec: { ...nodeSpec([]), command: path.join(tmpDir, "missing-executable") },
+      command: "missing executable fixture",
+      shell: "cmd",
+    })).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("启动即返回：running + pid + 日志文件已创建", async () => {
     const script = writeScript("sleeper-01.cjs", "setInterval(() => {}, 1000);");
     const { jobId, logFile } = await start(script, { totalMs: 60_000 });
@@ -287,10 +296,21 @@ describe("shell_job 工具协议（注册 + run_shell 后台集成）", () => {
   it("run_shell run_in_background 集成：启动返回 jobId/logFile → status running → stop → 进程真死", async () => {
     const runShell = toolRegistry.getById("run_shell");
     if (!runShell) throw new Error("run_shell 未注册");
-    const raw = JSON.parse(await runShell.execute(
-      { command: 'node -e "setTimeout(()=>{},30000)"', run_in_background: true },
-      { permissionMode: "allow_all" } as never,
-    )) as Record<string, unknown>;
+    // Discovery is Windows-specific; use the host's real Bash for this
+    // cross-platform tool/manager integration, without mocking process spawn.
+    const shellResolver = process.platform === "win32" ? null
+      : vi.spyOn(shellRuntime, "resolveShellExecutable").mockResolvedValue({ kind: "bash", executable: "/bin/bash" });
+    let raw: Record<string, unknown>;
+    try {
+      raw = JSON.parse(await runShell.execute(
+        { command: 'node -e "setTimeout(()=>{},30000)"', run_in_background: true,
+          ...(process.platform === "win32" ? {} : { shell: "bash" }) },
+        { permissionMode: "allow_all" } as never,
+      )) as Record<string, unknown>;
+
+    } finally {
+      shellResolver?.mockRestore();
+    }
     expect(raw.ranInBackground).toBe(true);
     expect(raw.status).toBe("running");
     expect(String(raw.jobId)).toMatch(/^job-/);

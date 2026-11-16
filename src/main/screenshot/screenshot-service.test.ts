@@ -182,6 +182,12 @@ describe("createScreenshotService", () => {
 });
 
 describe("validateScreenshotInsert", () => {
+  it("encodes Windows file names without treating hash and percent as URL syntax", () => {
+    const data = { filePath: "C:\\user-data\\screenshots\\capture #%.png", width: 20, height: 10, mime: "image/png" as const, hasAnnotations: false };
+    const insert = validateScreenshotInsert(data, "C:\\user-data\\screenshots", () => ({ isEmpty: () => false, getSize: () => ({ width: 20, height: 10 }) }));
+    expect(insert?.previewUrl).toBe("file:///C:/user-data/screenshots/capture%20%23%25.png");
+  });
+
   it("accepts only a non-empty PNG inside the fixed screenshot directory", () => {
     const data = {
       filePath: "C:\\user-data\\screenshots\\capture.png",

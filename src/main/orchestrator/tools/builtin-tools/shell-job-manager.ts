@@ -361,6 +361,20 @@ async function startJob(opts: StartShellJobOptions): Promise<{ jobId: string; lo
     settleJob(job, "exited", { exitCode: code });
   });
 
+  // spawn() can return a ChildProcess without a PID, then emit ENOENT/EACCES.
+  // Do not advertise a running job until the OS confirms process creation.
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const onSpawn = () => { child.off("error", onError); resolve(); };
+      const onError = (error: Error) => { child.off("spawn", onSpawn); reject(error); };
+      child.once("spawn", onSpawn);
+      child.once("error", onError);
+    });
+  } catch (error) {
+    await job.persisted;
+    throw error;
+  }
+
   logger.info(LogTag.BuiltinTools, `[shell_job] started ${jobId}: ${opts.command}`);
   return { jobId, logFile };
 }
