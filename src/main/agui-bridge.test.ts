@@ -2374,7 +2374,10 @@ describe("agui-bridge background shell smoke (mock sessions, isolated SQLite)", 
     const { EventEmitter } = await import("node:events");
     const { PassThrough } = await import("node:stream");
     const child = Object.assign(new EventEmitter(), { stdout: new PassThrough(), stderr: new PassThrough() });
-    const spawn = vi.fn(() => child);
+    const spawn = vi.fn(() => {
+      queueMicrotask(() => child.emit("spawn"));
+      return child;
+    });
     vi.doMock("child_process", () => ({ spawn }));
     const manager = await import("./orchestrator/tools/builtin-tools/shell-job-manager");
     try {
