@@ -21,7 +21,7 @@ Refs #327。基于未合并 #342（代码树 e5d59d3e），间接依赖 #339/#33
 3. 排空后检查账号/连接未变化，并等待真实 HTTP listener `close`。现有 server.stop() 的超时 resolve 不当成已关闭证明；无法验证则拒绝切换。
 4. 超时/错误/身份变化返回 `safeToSwitch: false`，同一次尝试结果不升级。失败停收后不自动恢复接收或重启旧实例。
 
-协调器写入 prepared 意图后才停旧驱动，依次记录 legacy-stopped / module-staged / committed。仅旧驱动明确已排空且已停止才允许创建候选进程。候选运行时先通过兼容 hello，再交接 token；`stageForMigration` 全程隔离新收发，并有界等待 backend 异步重连和已验证原账号，默认 30 秒（测试可注入）。只有落盘 committed 且当前仍为正确 running 账号才能激活。
+协调器写入 prepared 意图后才停旧驱动，依次记录 legacy-stopped / module-staged / selected。仅旧驱动明确已排空且已停止才允许创建候选进程。候选运行时先通过兼容 hello，再交接 token；`stageForMigration` 全程隔离新收发，并有界等待 backend 异步重连和已验证原账号，默认 30 秒（测试可注入）。只有落盘 selected 且当前仍为正确 running 账号才能尝试激活；确认实际激活身份后才返回 committed，磁盘标记本身不代表激活成功。
 
 模块阶段失联、错账号、验证/写入失败会先停止候选；退出不确定就保留 recovery-required，不启旧驱动、不启动另一个模块、不重试未知发送。新旧消息的恰好一次交付不在保证范围内；不重放旧队列。
 
