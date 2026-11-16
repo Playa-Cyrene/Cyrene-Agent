@@ -58,3 +58,14 @@ pnpm test
 ```
 
 迁移端到端样例使用临时目录原路径旧配置、真实 LogEntry 日志、BindingStore version 1 绑定与 ConversationDatabase 创建的 SQLite transcript（含 WAL）、真实 localhost fake OneBot WS 和 FakeTransport 模块，不使用用户电脑或真实 QQ。覆盖先排空关闭后启动、错误/延迟账号、隔离收发、重复确认、三阶段写入故障、重启元数据、退出未知、过期锁、配置变化、解密失败与原文件字节一致。全仓已知平台基线失败应分别报告，不把定向通过描述为全仓全绿。
+
+
+## 激活结果与持久选择的分离
+
+迁移 sidecar 的 `selected` 表示已持久选择新模块，必须在解除收发隔离前写入；它不表示已激活。只有 `activateMigration()` 成功且 manager 的实际激活身份与当前模块、runtimeEpoch、connectionEpoch 和账号一致，coordinator 才返回 `committed`。成功重试也必须持有该进程内的同一激活证明，不能从磁盘标记推断。
+
+schemaVersion 继续为 1，新增 `selected` phase；旧 `committed` 记录仍可读取，但视为历史/不确定恢复证据，不自动升级成实时成功。旧版本不认识新 phase 时会失败关闭，而不会误认成功。没有改写或丢弃旧记录。
+
+激活失败、停止失败或停止结果不确定时，保留最后持久证据并返回 `recovery-required`；重复确认不重放停机、启动或激活。重启后的新 coordinator 也不能靠 selected/旧 committed 标记创建预览或宣称激活成功。
+
+显式恢复必须先确认自有模块已停止，再由宿主验证所有旧/新 driver 已停止；证明异常或回滚写入失败均返回 recovery-required，保留原证据。只有成功持久化 rolled-back 后才清除预览；新的迁移还需新的预览、确认和有效旧 driver 身份，不自动重启旧实现。原设置、历史、绑定和凭据均不参与 sidecar 事务。

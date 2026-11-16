@@ -116,7 +116,7 @@ it("rehearses a confirmed legacy WS migration without changing original data or 
   const dispatched: IncomingMessage[] = [];
   const stagedSends: Array<ReturnType<QqModuleManager["send"]>> = [];
   const store = new QqMigrationStore(join(fixture.directory, "migration-sidecar"), (record) => {
-    if (record.phase === "module-staged" || record.phase === "committed") {
+    if (record.phase === "module-staged" || record.phase === "selected") {
       peer.event("inbound", { ...inbound(`quarantine-${record.phase}`), attachments: [{ ...media, mediaId: `${media.mediaId}-${record.phase}` }] });
       stagedSends.push(manager!.send({ channel: "qq", chatType: "group", targetId: "20000", parts: [{ kind: "text", text: "blocked" }, { kind: "file", filePath: source }] }));
       expect(dispatched).toEqual([]);
@@ -150,7 +150,7 @@ it("rehearses a confirmed legacy WS migration without changing original data or 
   release();
   expect(await confirmation).toEqual({ outcome: "committed", legacyData: "unchanged", legacyRuntime: "not-restarted" });
   expect(createTransport).toHaveBeenCalledOnce();
-  expect(store.read()).toMatchObject({ phase: "committed", plan: { channelId: "qq", identity: { selfId: "10000" } } });
+  expect(store.read()).toMatchObject({ phase: "selected", plan: { channelId: "qq", identity: { selfId: "10000" } } });
   expect(stagedSends).toHaveLength(2);
   for (const result of await Promise.all(stagedSends)) expect(result.outcome).toBe("failed");
   expect(dispatched).toEqual([]);

@@ -79,7 +79,7 @@ describe("QQ installation, migration and media integration", () => {
   it("holds text/media before durable activation, then preserves host-owned history attachments", async () => {
     const attempts: Promise<QqSendResultV1>[] = [];
     const s = setup((record) => {
-      if (record.phase === "module-staged" || record.phase === "committed") {
+      if (record.phase === "module-staged" || record.phase === "selected") {
         s.peer.event("inbound", { ...inbound(`quarantine-${record.phase}`), attachments: [attachment] });
         attempts.push(s.manager.send(s.outgoing));
         expect(s.received).toEqual([]);
@@ -97,7 +97,7 @@ describe("QQ installation, migration and media integration", () => {
     const wire = JSON.stringify(s.peer.messages);
     expect(wire).not.toContain(s.root); expect(wire).not.toContain("filePath");
     await s.manager.stop(); expect(readFileSync(cached).toString()).toBe("hello"); s.unchanged();
-    expect(new QqMigrationStore(s.store.root).read()?.phase).toBe("committed");
+    expect(new QqMigrationStore(s.store.root).read()?.phase).toBe("selected");
     expect(new QqPackageStore(join(s.root, "packages"), () => s.context).getSelected()?.packageId).toBe(s.candidate.packageId);
     expect(getQqModuleInstallationStatus({ listenMode: "loopback" })).toMatchObject({ canInstall: false, moduleInstalled: false, currentDriver: "legacy-builtin" });
   });
@@ -110,7 +110,7 @@ describe("QQ installation, migration and media integration", () => {
     expect(s.store.read()?.phase).toBe("prepared"); expect(s.createTransport).not.toHaveBeenCalled();
     release(); expect((await pending).outcome).toBe("committed"); expect(s.createTransport).toHaveBeenCalledOnce(); s.unchanged();
   });
-  it.each(["module-staged", "committed"] as const)("rolls back %s persistence failure without media leakage or restart replay", async (phase) => {
+  it.each(["module-staged", "selected"] as const)("rolls back %s persistence failure without media leakage or restart replay", async (phase) => {
     const attempts: Promise<QqSendResultV1>[] = [];
     const s = setup((record) => {
       if (record.phase !== phase) return;

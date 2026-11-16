@@ -79,6 +79,13 @@ export class QqModuleManager {
     return gen?.authorized && gen.connectionEpoch !== undefined && this.state.phase === "running"
       ? { selfId: gen.config.expectedSelfId, connectionEpoch: gen.connectionEpoch } : null;
   }
+  /** Live proof only: never serialize this as permission to restart a driver. */
+  getActiveMigrationIdentity(): { selfId: string; connectionEpoch: number; runtimeEpoch: number } | null {
+    const identity = this.getMigrationIdentity();
+    const gen = this.current;
+    return gen && !this.migrationQuarantine && gen.accepting && identity
+      ? { ...identity, runtimeEpoch: gen.runtime.runtimeEpoch } : null;
+  }
   /** Reverse-WS backends reconnect asynchronously after the old listener closes. */
   async waitForMigrationIdentity(timeoutMs = 30_000): Promise<{ selfId: string; connectionEpoch: number } | null> {
     if (!Number.isFinite(timeoutMs) || timeoutMs < 1 || timeoutMs > 120_000) return null;

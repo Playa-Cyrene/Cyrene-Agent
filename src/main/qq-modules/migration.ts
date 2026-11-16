@@ -32,6 +32,7 @@ export interface QqMigrationOptions {
   interfaces?: Parameters<typeof buildQqMigrationPlan>[2];
   backendReconnectTimeoutMs?: number;
 }
+/** committed describes an observed live activation, never a disk marker alone. */
 export interface QqMigrationOutcome {
   outcome: "committed" | "rolled-back" | "recovery-required";
   legacyData: "unchanged";
@@ -43,6 +44,11 @@ export interface QqMigrationOutcome {
 export class QqMigrationCoordinator {
   private preview?: { id: string; packageId: string; plan: QqMigrationPlan };
   private module?: QqModuleManager;
+  private activation?: {
+    transactionId: string;
+    module: QqModuleManager;
+    identity: NonNullable<ReturnType<QqModuleManager["getActiveMigrationIdentity"]>>;
+  };
   constructor(private readonly options: QqMigrationOptions) {}
   previewMigration(packageId: string): QqMigrationPreview {
     if (!/^pkg-[a-f0-9]{64}$/.test(packageId)) migrationFail("invalid-candidate");
@@ -67,9 +73,17 @@ export class QqMigrationCoordinator {
     if (!preview || consent.previewId !== preview.id || consent.accountId !== preview.plan.identity.selfId) migrationFail("stale-or-mismatched-confirmation");
     return this.options.store.locked(async (save) => {
       const existing = this.options.store.read();
-      if (existing?.transactionId === preview.id && existing.phase === "committed") return this.outcome("committed");
-      if (existing?.transactionId === preview.id && existing.phase === "rolled-back") return this.outcome("rolled-back");
+      if (existing?.transactionId === preview.id) {
+        if (this.hasLiveActivation(existing)) return this.outcome("committed");
+        this.activation = undefined;
+        if (existing.phase === "rolled-back") return this.outcome("rolled-back");
+        // Includes legacy committed records, incomplete attempts and a lost live
+        // generation. Never replay stop/start/activation from a durable marker.
+        return this.outcome("recovery-required", "existing-migration-requires-review");
+      }
       if (existing && existing.phase !== "rolled-back") migrationFail("existing-migration-requires-review");
+      if (this.module && !this.module.isStoppedForMigration()) return this.outcome("recovery-required", "module-stop-unconfirmed");
+      this.activation = undefined;
       // Re-read every mutable input before touching the live legacy driver.
       const bytes = Buffer.from(this.options.readLegacySettings());
       if (qqMigrationDigest(bytes) !== preview.plan.sourceDigest) migrationFail("settings-changed");
@@ -93,14 +107,22 @@ export class QqMigrationCoordinator {
         this.module = this.options.createModule({ config: structuredClone(record.plan.config), credentials: { accessToken: token } }, record.packageId);
         token = "";
         await this.module.stageForMigration();
+        const runtimeEpoch = this.module.getState().runtimeEpoch;
         const identity = await this.module.waitForMigrationIdentity(this.options.backendReconnectTimeoutMs);
         if (!isQqLegacyIdentity(identity) || identity.selfId !== record.plan.identity.selfId) migrationFail("module-account-unverified");
         record.phase = "module-staged"; save(record);
         if (qqMigrationDigest(this.options.readLegacySettings()) !== record.plan.sourceDigest) migrationFail("settings-changed");
-        record.phase = "committed"; save(record);
+        // Commit the local choice while the module is still quarantined. The
+        // disk cannot prove activation (or a live process after a host restart).
+        record.phase = "selected"; save(record);
         if (!this.module.activateMigration()) migrationFail("module-disconnected-before-activation");
+        const active = this.module.getActiveMigrationIdentity();
+        if (!active || active.selfId !== identity.selfId || active.connectionEpoch !== identity.connectionEpoch
+          || active.runtimeEpoch !== runtimeEpoch) migrationFail("module-account-unverified");
+        this.activation = { transactionId: record.transactionId, module: this.module, identity: active };
         return this.outcome("committed");
       } catch (error) {
+        this.activation = undefined;
         const code = error instanceof QqMigrationError ? error.code : "operation-failed";
         // Never restart old code, even after local rollback. Its availability and
         // account identity require a separate verified host action.
@@ -122,15 +144,29 @@ export class QqMigrationCoordinator {
     return this.options.store.locked(async (save) => {
       const record = this.options.store.read();
       if (!record) migrationFail("no-migration");
-      if (this.module) {
-        await this.module.stop();
-        if (!this.module.isStoppedForMigration()) return this.outcome("recovery-required", "module-stop-unconfirmed");
-      }
-      if (!await verifyAllDriversStopped()) return this.outcome("recovery-required", "driver-stop-unconfirmed");
-      record.phase = "rolled-back"; save(record);
+      this.activation = undefined;
+      try {
+        if (this.module) {
+          await this.module.stop();
+          if (!this.module.isStoppedForMigration()) return this.outcome("recovery-required", "module-stop-unconfirmed");
+        }
+      } catch { return this.outcome("recovery-required", "module-stop-unconfirmed"); }
+      try {
+        if (!await verifyAllDriversStopped()) return this.outcome("recovery-required", "driver-stop-unconfirmed");
+      } catch { return this.outcome("recovery-required", "driver-stop-unconfirmed"); }
+      try { save({ ...record, phase: "rolled-back" }); }
+      catch { return this.outcome("recovery-required", "rollback-persist-failed"); }
       this.preview = undefined;
+      this.module = undefined;
       return this.outcome("rolled-back");
     });
+  }
+  private hasLiveActivation(record: QqMigrationRecord): boolean {
+    const proof = this.activation;
+    if (record.phase !== "selected" || !proof || proof.transactionId !== record.transactionId || proof.module !== this.module) return false;
+    const live = proof.module.getActiveMigrationIdentity();
+    return Boolean(live && live.selfId === proof.identity.selfId && live.connectionEpoch === proof.identity.connectionEpoch
+      && live.runtimeEpoch === proof.identity.runtimeEpoch);
   }
   private outcome(outcome: QqMigrationOutcome["outcome"], errorCode?: string): QqMigrationOutcome {
     return { outcome, legacyData: "unchanged", legacyRuntime: "not-restarted", ...(errorCode ? { errorCode } : {}) };
