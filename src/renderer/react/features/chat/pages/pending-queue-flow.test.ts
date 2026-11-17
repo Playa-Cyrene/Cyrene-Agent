@@ -211,14 +211,17 @@ describe("页面待发队列流程", () => {
     const { flow, store, calls } = createHarness();
     store.pendingEnqueue.mockResolvedValueOnce({ ok: false, error: "write-failed" });
 
-    const first = await flow.enqueue("s1", "chat", { id: "a-1", rawContent: "同文", visibleContent: "同文" });
+    const onCommitted = vi.fn();
+    const first = await flow.enqueue("s1", "chat", { id: "a-1", rawContent: "同文", visibleContent: "同文", onCommitted });
     expect(first).toBe(false);
+    expect(onCommitted).not.toHaveBeenCalled();
     expect(calls.errors).toHaveLength(1);
 
     // 重试：调用方生成新 id，流程必须替换为失败缓存的 a-1（回执丢失靠主进程幂等去重）
     store.pendingEnqueue.mockResolvedValueOnce({ ok: true, queue: [] });
-    const retry = await flow.enqueue("s1", "chat", { id: "b-2", rawContent: "同文", visibleContent: "同文" });
+    const retry = await flow.enqueue("s1", "chat", { id: "b-2", rawContent: "同文", visibleContent: "同文", onCommitted });
     expect(retry).toBe(true);
+    expect(onCommitted).toHaveBeenCalledExactlyOnceWith("a-1");
     expect(store.pendingEnqueue).toHaveBeenLastCalledWith("s1", expect.objectContaining({ id: "a-1" }));
 
     // 成功后缓存清除：再发同内容使用新 id

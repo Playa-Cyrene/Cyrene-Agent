@@ -43,9 +43,22 @@ describe("ChatPage 上下文压缩呼吸条接线", () => {
 });
 
 describe("ChatPage 对话级模型切换接线", () => {
-  it("发送入口先等待模型切换屏障，保证切完立刻发送读到的是新模型", () => {
-    // sendMessage 第一件事即 await barrier()：不等任何 UI 反馈也要保证因果序
-    expect(chatPageSource).toMatch(/async function sendMessage\(content: string\) \{[\s\S]{0,300}?await modelSwitcher\.barrier\(\);/);
+  it("发送先显示等待，模型切换提交后才入队和派发", () => {
+    const send = chatPageSource.slice(chatPageSource.indexOf("async function sendMessage("), chatPageSource.indexOf("async function submitTextToSession("));
+    const steps = [
+      "updateSubmittingDraft(id, submission);",
+      "await enqueueAndConsumeDraft(",
+      "await modelSwitcher.barrier();",
+      "await queueFlow.enqueue(",
+      "if (!enqueued) return;",
+      "await queueFlow.consume(",
+    ];
+    let previous = -1;
+    for (const step of steps) {
+      const index = send.indexOf(step);
+      expect(index, step).toBeGreaterThan(previous);
+      previous = index;
+    }
   });
 
   it("切模型与切档案走同一 operation token 切换器，不各自直连 IPC", () => {

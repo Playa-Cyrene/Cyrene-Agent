@@ -1,4 +1,5 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { startupIpc as ipcRenderer } from "./startup-ipc";
+import { contextBridge } from "electron";
 import { IPC } from "../shared/ipc-channels";
 
 export function exposeMusicApi() {

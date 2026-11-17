@@ -1,4 +1,5 @@
-import { contextBridge, ipcRenderer, webUtils } from "electron";
+import { startupIpc as ipcRenderer } from "./startup-ipc";
+import { contextBridge, webUtils } from "electron";
 import { IPC } from "../shared/ipc-channels";
 import type { ContextCompactionPhaseEvent } from "../shared/context-usage";
 import type { QqListenAuthRequirement } from "../shared/qq-listen";

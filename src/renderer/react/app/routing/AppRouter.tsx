@@ -1,8 +1,11 @@
-import { useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { ChatPage } from "../../features/chat/pages/ChatPage";
-import { AppearanceSettingsPage, type SettingsSection } from "../../features/settings/AppearanceSettingsPage";
+import type { SettingsSection } from "../../features/settings/AppearanceSettingsPage";
 import { resolveSettingsDestination } from "./settingsNavigation";
 import "./AppRouter.css";
+
+const AppearanceSettingsPage = lazy(() => import("../../features/settings/AppearanceSettingsPage")
+  .then((module) => ({ default: module.AppearanceSettingsPage })));
 
 export function AppRouter() {
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -38,12 +41,14 @@ export function AppRouter() {
       </div>
       {settingsOpen && (
         <div className="cy-app-router__view">
-          <AppearanceSettingsPage
-            section={settingsSection}
-            onSelectSection={setSettingsSection}
-            onBackToWorkspace={() => setSettingsOpen(false)}
-            musicSettingsNavigation={musicSettingsNavigation}
-          />
+          <Suspense fallback={null}>
+            <AppearanceSettingsPage
+              section={settingsSection}
+              onSelectSection={setSettingsSection}
+              onBackToWorkspace={() => setSettingsOpen(false)}
+              musicSettingsNavigation={musicSettingsNavigation}
+            />
+          </Suspense>
         </div>
       )}
     </div>

@@ -4,7 +4,7 @@ import { Globe, MessageSquareText } from "lucide-react";
 import { useTranslation } from "../../../i18n";
 import { DownOutlined } from "@ant-design/icons";
 import { Group, Panel, Separator, useDefaultLayout } from "react-resizable-panels";
-import { ChatComposer, parseComposerMessage } from "../components/ChatComposer";
+import { ChatComposer, parseComposerMessage, type ComposerAttachment } from "../components/ChatComposer";
 import { collectNewlyUnreadSessionIds } from "../components/session-unread";
 import { ComposerSlot } from "../components/ComposerSlot";
 import { TodoPanel } from "../components/TodoPanel";
@@ -16,7 +16,7 @@ import {
   shouldDismissAsk,
   type ComposerInteraction,
 } from "../components/run-presentation";
-import { ChatMessageList } from "../components/ChatMessageList";
+import { ChatMessageList, type ChatMessageItem } from "../components/ChatMessageList";
 import { ChatPageNavigation, type ChatPagePanel } from "../components/ChatPageNavigation";
 import {
   FileDropOverlay,
@@ -160,6 +160,13 @@ function applyLiveContextWindow(
 ): ContextUsageSnapshot {
   if (!liveContextWindow || liveContextWindow === snapshot.contextWindowTokens) return snapshot;
   return { ...snapshot, contextWindowTokens: liveContextWindow };
+}
+
+interface SubmittingDraft {
+  scope: string;
+  content: string;
+  attachments: ComposerAttachment[];
+  committedId?: string;
 }
 
 export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onOpenSettings?: () => void; scheduledTasksNavigation?: number } = {}) {
@@ -421,6 +428,9 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
   const cancelRequestedSessionsRef = useRef(new Set<string>());
   // 会话待发队列投影：权威数据是主进程会话文件里的 pendingMessages，
   // 页面只持显示快照，入队/删除/认领/其他窗口变更后按稳定标识（id）对账刷新
+  const submissions = useRef(new Map<string, SubmittingDraft>());
+  const [submittingDrafts, setSubmittingDrafts] = useState<SubmittingDraft[]>([]);
+  const [waitingClaims, setWaitingClaims] = useState<ReadonlySet<string>>(new Set());
   const [pendingQueueBySession, setPendingQueueBySession] = useState<Record<string, PendingChatMessage[]>>({});
   const pendingQueueBySessionRef = useRef(pendingQueueBySession);
   useEffect(() => {
@@ -460,7 +470,6 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
   }, [activeSessionId, mode]);
   const composerInteraction = activeInteraction?.interaction;
   const interactionBusy = activeInteraction?.busy ?? false;
-  const hasMessages = messages.length > 0;
   const {
     attachments,
     attachmentBusy,
@@ -491,6 +500,12 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
   queueFlowHostRef.current = {
     getStore: () => chatStore(),
     isSessionBusy,
+    setClaimWaiting: (id, waiting) => setWaitingClaims((previous) => {
+      const next = new Set(previous);
+      if (waiting) next.add(id);
+      else next.delete(id);
+      return next;
+    }),
     hasRenderedMessage: (sessionId, messageId) =>
       (messagesBySessionRef.current[sessionId] ?? []).some((item) => item.id === messageId),
     replaceProjection: (sessionId, queue) => {
@@ -665,8 +680,7 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
     }).finally(() => {
         // cold-start 全程完成才标记 bootstrap 完成；只有该标志置位后
         // mode 切换 effect 才会触发 refreshSessions
-        setBootstrapCompleted(true);
-        if (!disposed) store.notifyReactReady?.();
+        if (!disposed) setBootstrapCompleted(true);
     });
 
     return () => {
@@ -675,6 +689,10 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (bootstrapCompleted) chatStore()?.notifyReactReady?.();
+  }, [bootstrapCompleted]);
 
   // 外部语音文本提交：主进程经 IPC 要求把文本提交到租约冻结的会话。
   // 页面重新加载后 rendererTargetId 变化，旧目标的迟到请求直接回绝。
@@ -1462,21 +1480,52 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
   }
 
 
+  function updateSubmittingDraft(id: string, value?: SubmittingDraft) {
+    if (value) submissions.current.set(id, value);
+    else submissions.current.delete(id);
+    setSubmittingDrafts([...submissions.current.values()]);
+  }
+
   async function sendMessage(content: string) {
-    // renderer barrier（决策 10）：等待最近一次模型状态变更提交完成再发送，
-    // 保证"选模型 → 立刻 Enter"时请求读到的是新模型（不赌 IPC handler 执行顺序）
-    await modelSwitcher.barrier();
     const parsedMessage = parseComposerMessage(mode, content);
+    if (!parsedMessage.rawContent) return;
+    // 回执前保留草稿；连按 Enter 只提交同一份草稿一次。
+    if ([...submissions.current.values()].some((other) =>
+      !other.committedId && other.scope === scopeKey && other.content === content &&
+      other.attachments.length === attachments.length && other.attachments.every((item, i) => item === attachments[i])
+    )) return;
+    const id = crypto.randomUUID();
+    const submission = { scope: scopeKey, content, attachments };
+    updateSubmittingDraft(id, submission);
+    try {
+      await enqueueAndConsumeDraft(id, submission, parsedMessage);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      feedback.notice({ tone: "error", message: submissions.current.get(id)?.committedId
+        ? detail : t("chatPage.errorEnqueueFailed", { error: detail }) });
+    } finally {
+      updateSubmittingDraft(id);
+    }
+  }
+
+  async function enqueueAndConsumeDraft(
+    userMessageId: string, submission: SubmittingDraft, parsedMessage: ReturnType<typeof parseComposerMessage>,
+  ) {
+    const { content } = submission;
+    // 提前反馈仅用于显示，模型变更、会话准备、入队成功仍是派发前置条件。
+    await modelSwitcher.barrier();
     const message = parsedMessage.rawContent;
-    if (!message) return;
     activeEarlyTtsRef.current?.queue.cancel();
     activeEarlyTtsRef.current = null;
     const userSticker = parsedMessage.userSticker;
     const visibleMessage = parsedMessage.visibleContent;
-    const userMessageId = crypto.randomUUID();
-    const attachmentsForMessage = attachments.map((attachment) => ({ ...attachment }));
+    const attachmentsForMessage = submission.attachments.map((attachment) => ({ ...attachment }));
     const targetMode = mode;
-    const sessionId = await ensureSession(targetMode);
+    const sessionId = activeSessionId ?? await ensureSession(targetMode);
+    if (submission.scope !== sessionId) {
+      submission = { ...submission, scope: sessionId };
+      updateSubmittingDraft(userMessageId, submission);
+    }
 
     // 如果新建任务时已选好工作区但尚未创建 session，在这里一并绑定。
     const pendingWorkspace = pendingWorkspaceByMode[targetMode];
@@ -1538,6 +1587,7 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
       visibleContent: visibleMessage,
       attachments: attachmentsForMessage,
       userSticker,
+      onCommitted: (committedId) => updateSubmittingDraft(userMessageId, { ...submission, committedId }),
     });
     if (!enqueued) return;
     // 请求期间用户继续输入时不清掉新内容：仅当草稿仍是发送时的文本才清空；
@@ -1680,13 +1730,31 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
   }
 
   const isCurrentScopeRunning = Boolean(activeSessionId && activeRunsBySession.current[activeSessionId]);
+  const localDrafts = submittingDrafts.filter((submission) => submission.scope === scopeKey);
+  const head = activeSessionId ? pendingQueueBySession[activeSessionId]?.[0] : undefined;
+  const waitingHead = !isCurrentScopeRunning && activeSessionId && head &&
+    (waitingClaims.has(activeSessionId) || localDrafts.some((item) => item.committedId === head.id)) ? head : undefined;
   const currentPendingQueue = activeSessionId
-    ? (pendingQueueBySession[activeSessionId] ?? []).filter((item) => item.adjustAcceptedAt === undefined).map((item) => ({
+    ? (pendingQueueBySession[activeSessionId] ?? []).filter((item) => item.adjustAcceptedAt === undefined
+      && (item.id !== waitingHead?.id || waitingClaims.has(activeSessionId))).map((item) => ({
       id: item.id,
       content: item.visibleContent || item.rawContent,
       attachmentCount: item.attachments?.length,
     }))
     : [];
+  const showLocalWait = !isCurrentScopeRunning && localDrafts.some((item) => !item.committedId);
+  // 草稿确认前只显示等待动画；用户气泡和队首顺序均来自持久队列。
+  const visibleMessages: ChatMessageItem[] = waitingHead || showLocalWait ? [...messages] : messages;
+  if (waitingHead && !messages.some((item) => item.id === waitingHead.id)) {
+    visibleMessages.push({
+      id: waitingHead.id, role: "user", content: waitingHead.visibleContent, sticker: waitingHead.userSticker,
+      attachments: waitingHead.attachments?.map((attachment) => ({ ...attachment, status: "pending" as const })),
+    });
+  }
+  if (waitingHead || showLocalWait) {
+    visibleMessages.push({ id: `waiting-${scopeKey}`, role: "assistant", content: "", loading: true, waitingForFirstEvent: true });
+  }
+  const hasMessages = visibleMessages.length > 0;
   // 上下文容量圆环：session 级快照优先（手动压缩等不产生新消息的操作也即时刷新），
   // 消息级快照兜底兼容旧数据；无快照不渲染。
   const latestContextUsage = (activeSessionId ? sessionContextUsageBySession[activeSessionId] : undefined)
@@ -2046,7 +2114,7 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
         />
         {hasMessages && (
           <ChatMessageList
-            messages={messages}
+            messages={visibleMessages}
             conversationId={activeSessionId}
             mode={mode}
             preferredAddress={preferredAddress}
@@ -2096,6 +2164,7 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
           )}
           <ComposerSlot
             composer={<ChatComposer
+              restoringSession={!bootstrapCompleted}
             value={draft}
             mode={mode}
             docked={hasMessages}

@@ -82,6 +82,7 @@ import { normalizeMemoryMode } from "../memory/memory-mode";
  *  类型故意用宽签名（unknown / 任意 shape）—— 因为 build-options 是纯消费者，
  *  实际调用时由 index.ts 注入真实的强类型函数。这避免循环类型依赖。 */
 export interface BuildOptionsDeps {
+  waitForStartup(mode: ConversationMode): Promise<void>;
   loadModelSettings: (modelProfileId?: string) => ModelSettingsLite;
   loadGeneralSettings: () => StyleSettingsLite;
   loadUserProfile: () => UserProfileLite;
@@ -606,6 +607,11 @@ export async function buildAgentRunOptions(
   input: BuildOptionsInput,
   deps: BuildOptionsDeps,
 ): Promise<{ options: CyreneRunOptions; latestUserText: string }> {
+  const executionMode = resolveExecutionMode(
+    input.executionMode ?? ((input.style || "").startsWith("talk") ? "chat" : "work"),
+  );
+  const resolvedMode: ConversationMode = input.mode ?? executionMode;
+  await deps.waitForStartup(resolvedMode);
   const channelRun = Boolean(input.channel && input.channel !== "desktop");
   // 会话级模型配置（consumer #4 的 request assembly boundary）：
   // 桌面 bridge 已按会话解析好（含 effective model），直接消费；
@@ -673,9 +679,6 @@ export async function buildAgentRunOptions(
   const slimMessages = messages as unknown as Array<{ role: string; content?: string }>;
   const latestUserText = stripTurnModelContextForSideEffects(
     contentToText(messages.filter((m) => m.role === "user" && m.visibility !== "internal").at(-1)?.content) ?? "",
-  );
-  const executionMode = resolveExecutionMode(
-    input.executionMode ?? ((input.style || "").startsWith("talk") ? "chat" : "work"),
   );
   const isChatMode = executionMode === "chat";
   const conversationId = input.sessionId || "default";
@@ -827,7 +830,7 @@ export async function buildAgentRunOptions(
   }
 
   // 优先使用 AguiBridge 注入的真实会话模式，fallback 到执行模式（兼容旧调用方）。
-  const resolvedMode: ConversationMode = input.mode ?? (isChatMode ? "chat" : "work");
+
   const basePromptMode = resolvedMode;
 
   let pluginPromptContext = "";

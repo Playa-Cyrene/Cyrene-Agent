@@ -17,10 +17,11 @@ interface PromptEntry {
   ownerId: string;
   provider: PluginPromptProvider;
   signal: AbortSignal;
+  isReady?: () => boolean;
 }
 
 export interface PluginPromptRegistry {
-  register(ownerId: string, provider: PluginPromptProvider, signal: AbortSignal): void;
+  register(ownerId: string, provider: PluginPromptProvider, signal: AbortSignal, isReady?: () => boolean): void;
   unregister(ownerId: string, providerId: string): boolean;
   build(input: PluginPromptBuildInput): Promise<string>;
   clear(): void;
@@ -65,7 +66,7 @@ export function createPluginPromptRegistry(): PluginPromptRegistry {
   const entries = new Map<string, PromptEntry>();
 
   return {
-    register(ownerId, provider, signal) {
+    register(ownerId, provider, signal, isReady) {
       if (!provider || typeof provider !== "object") {
         throw new Error("插件提示词 Provider 必须是对象");
       }
@@ -96,7 +97,7 @@ export function createPluginPromptRegistry(): PluginPromptRegistry {
       if (entries.has(fullId)) {
         throw new Error(`插件提示词 Provider 已注册: ${provider.id}`);
       }
-      entries.set(fullId, { ownerId, provider, signal });
+      entries.set(fullId, { ownerId, provider, signal, isReady });
     },
 
     unregister(ownerId, providerId) {
@@ -106,7 +107,7 @@ export function createPluginPromptRegistry(): PluginPromptRegistry {
     async build(input) {
       // 先拍快照再并行执行：结果仍按注册顺序拼接，运行中增删不会改变本轮内容。
       const snapshot = [...entries.values()].filter((entry) => {
-        if (entry.signal.aborted) return false;
+        if (entry.signal.aborted || (entry.isReady && !entry.isReady())) return false;
         // 场景匹配：未声明 sources 的 Provider 只参与既有场景（向后兼容）。
         if (!(entry.provider.sources ?? LEGACY_PROMPT_SOURCES).includes(input.source)) return false;
         // moments-post 没有会话模式：是否生效仅由 sources 决定，绕过 modes 过滤（评审 ①）。

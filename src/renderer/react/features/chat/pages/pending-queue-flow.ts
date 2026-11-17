@@ -26,6 +26,7 @@ export interface PendingQueueFlowHost {
   hasRenderedMessage(sessionId: string, messageId: string): boolean;
   /** 替换该会话的待发队列投影；null 表示会话已删除，移除投影项 */
   replaceProjection(sessionId: string, queue: PendingChatMessage[] | null): void;
+  setClaimWaiting?(sessionId: string, waiting: boolean): void;
   /** 向渲染态追加消息（认领派发时补用户消息与助手占位） */
   appendMessages(sessionId: string, items: ChatMessageItem[]): void;
   /** 与手动发送一致的图片附件预处理（direct/caption 策略） */
@@ -55,6 +56,7 @@ export interface PendingQueueFlow {
       visibleContent: string;
       attachments?: ComposerAttachment[];
       userSticker?: string;
+      onCommitted?: (stableId: string) => void;
     },
     notifyError?: boolean,
   ): Promise<boolean>;
@@ -109,6 +111,8 @@ export function createPendingQueueFlow(getHost: () => PendingQueueFlowHost): Pen
     }
   }
 
+  const pendingClaims = new Map<string, { requestedAgain: boolean }>();
+
   async function enqueue(
     sessionId: string,
     mode: ConversationMode,
@@ -118,6 +122,7 @@ export function createPendingQueueFlow(getHost: () => PendingQueueFlowHost): Pen
       visibleContent: string;
       attachments?: ComposerAttachment[];
       userSticker?: string;
+      onCommitted?: (stableId: string) => void;
     },
     notifyError = true,
   ): Promise<boolean> {
@@ -185,12 +190,11 @@ export function createPendingQueueFlow(getHost: () => PendingQueueFlowHost): Pen
       return false;
     }
     failedEnqueueIds.delete(cacheKey);
-    // 会话忙（消息会留队等待）才立即刷新投影；空闲会话的消息马上会被
-    // consume 认领转正，此刻刷投影会让队列 Dock 闪现几帧。
-    // 认领成功会以权威剩余队列刷新投影，认领失败/异常路径在 consume 里有兜底同步
-    if (host.isSessionBusy(sessionId)) {
+    // 手动发送用回执中的真实队首接替本地动画；忙会话也立即刷新排队列表。
+    if (entry.onCommitted || host.isSessionBusy(sessionId) || pendingClaims.has(sessionId)) {
       host.replaceProjection(sessionId, result.queue.map((item) => ({ ...item })));
     }
+    entry.onCommitted?.(id);
     return true;
   }
 
@@ -216,11 +220,24 @@ export function createPendingQueueFlow(getHost: () => PendingQueueFlowHost): Pen
       host.replaceProjection(sessionId, null);
       return;
     }
+    const existingClaim = pendingClaims.get(sessionId);
+    if (existingClaim) {
+      existingClaim.requestedAgain = true;
+      return;
+    }
     // 残留认领优先恢复：认领的消息尚未确认派发，先处理它再消费下一条
     if (session.pendingDispatch) {
       await resumePendingDispatch(mode, sessionId, session);
       return;
     }
+    const attempt = { requestedAgain: false };
+    pendingClaims.set(sessionId, attempt);
+    let waiting = false;
+    const timer = setTimeout(() => {
+      waiting = true;
+      host.setClaimWaiting?.(sessionId, true);
+      void syncProjection(sessionId);
+    }, 80);
     let claim: PendingClaimResult;
     try {
       claim = await store.pendingClaim(sessionId);
@@ -228,9 +245,14 @@ export function createPendingQueueFlow(getHost: () => PendingQueueFlowHost): Pen
       console.warn("[pending-queue-flow] 认领请求异常，保留队首待下个触发点:", sessionId, error);
       await syncProjection(sessionId);
       return;
+    } finally {
+      clearTimeout(timer);
+      pendingClaims.delete(sessionId);
+      if (waiting) host.setClaimWaiting?.(sessionId, false);
     }
     // 写盘失败保留队首；already-dispatching 说明另一窗口刚认领（它会派发），本窗口退出
     if (!claim.ok || !claim.claimed) {
+      if (claim.ok && attempt.requestedAgain) return consume(mode, sessionId);
       // 消息未被本窗口认领（写盘失败/他窗已认领/队列已空）：
       // 兜底同步投影，保证入队时跳过刷新的队列消息在页面上可见
       await syncProjection(sessionId);

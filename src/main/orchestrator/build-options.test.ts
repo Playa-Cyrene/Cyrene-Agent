@@ -15,6 +15,7 @@ import type { ConversationMode } from "../../shared/chat-types"
 
 function createBuildDeps(): BuildOptionsDeps {
   return {
+    waitForStartup: async () => {},
     loadModelSettings: () => ({ provider: "test", baseUrl: "https://example.test", model: "m", apiKey: "k" }),
     loadGeneralSettings: () => ({
       currentStyleId: "default",
@@ -76,6 +77,18 @@ async function buildAgentRunOptions(
 }
 
 describe("build-options", () => {
+  it("渠道与桌面共用请求前的就绪检查，按旧渠道执行模式解析依赖", async () => {
+    const deps = createBuildDeps()
+    let release!: () => void
+    deps.waitForStartup = vi.fn(() => new Promise<void>(resolve => { release = resolve }))
+    const settings = vi.spyOn(deps, "loadModelSettings")
+    const run = buildAgentRunOptions({ channel: "wechat", executionMode: "soul-only", messages: [{ role: "user", content: "hi" }] }, deps)
+    expect(deps.waitForStartup).toHaveBeenCalledWith("chat")
+    expect(settings).not.toHaveBeenCalled()
+    release()
+    await run
+    expect(settings).toHaveBeenCalled()
+  })
   it("keeps browser history and tools on desktop while a bound channel gets shared text and ordinary tools", async () => {
     const deps = createBuildDeps()
     deps.toolRegistry.getEnabled = () => [{ id: "browser_get_page_elements" }, { id: "read_file" }]

@@ -31,6 +31,7 @@ import { FileIcon, hasFileIconMapping } from "./file-icon";
 import { vscodeIconForFile } from "./vscodeFileIcon";
 
 interface ChatComposerProps {
+  restoringSession?: boolean;
   value: string;
   mode: string;
   docked: boolean;
@@ -293,6 +294,7 @@ function WorkspaceFolderButton({
 }
 
 export function ChatComposer({
+  restoringSession = false,
   value,
   mode,
   docked,
@@ -734,7 +736,7 @@ export function ChatComposer({
         placeholder={modelBusy ? t("composer.placeholderBusy") : placeholder}
         // 忙态使用 Sender 自带的停止按钮；Enter 入队由 onKeyDown 在内建提交前处理。
         loading={modelBusy}
-        disabled={!modelBusy && requiresWorkspace && !workspaceName}
+        disabled={restoringSession || (!modelBusy && requiresWorkspace && !workspaceName)}
         autoSize={{ minRows: 3, maxRows: 7 }}
         onChange={handleComposerValueChange}
         onCancel={onCancel}

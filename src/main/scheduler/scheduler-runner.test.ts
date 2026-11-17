@@ -14,6 +14,7 @@ const runnerMocks = vi.hoisted(() => ({
     reply: "调度回复",
     terminal: undefined as undefined | { status: "success" | "timeout" | "cancelled" | "runtime_error" },
   },
+  getAllTools: vi.fn(() => []),
   agentError: undefined as Error | undefined,
   agentOptions: undefined as Record<string, unknown> | undefined,
 }));
@@ -61,7 +62,7 @@ vi.mock("../orchestrator/cyrene-agent", () => ({
 }));
 
 vi.mock("../orchestrator/tools/registry/tool-registry", () => ({
-  toolRegistry: { getAllTools: () => [] },
+  toolRegistry: { getAllTools: runnerMocks.getAllTools },
 }));
 
 function makeTask(overrides: Partial<ScheduledTask> = {}): ScheduledTask {
@@ -82,6 +83,7 @@ function makeTask(overrides: Partial<ScheduledTask> = {}): ScheduledTask {
 
 function makeRunnerDeps(overrides: Record<string, unknown> = {}) {
   return {
+    waitForTools: vi.fn(async () => {}),
     buildOptions: vi.fn(async () => ({
       messages: [{ role: "user", content: "整理资料" }],
       settings: {
@@ -140,6 +142,16 @@ describe("scheduled Cyrene execution policy", () => {
 });
 
 describe("createSchedulerRunner lifecycle events", () => {
+  it("手动触发在依赖就绪后才读取工具，并保持任务白名单", async () => {
+    let release!: () => void;
+    const deps = makeRunnerDeps({ waitForTools: () => new Promise<void>(resolve => { release = resolve; }) });
+    runnerMocks.getAllTools.mockClear();
+    const run = createSchedulerRunner(deps).runScheduledTask(makeTask({ allowedToolIds: ["probe-ping"] }), new Date(), true);
+    expect(runnerMocks.getAllTools).not.toHaveBeenCalled();
+    runnerMocks.getAllTools.mockReturnValueOnce([{ id: "probe-ping", enabled: true }, { id: "other", enabled: true }] as never);
+    release();
+    expect((await run).effectiveToolIds).toEqual(["probe-ping"]);
+  });
   it.each(["code", "work"] as const)("runs a persisted %s user task in its saved mode and workspace after reload", async (mode) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-scheduler-mode-reload-"));
     try {

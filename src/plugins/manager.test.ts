@@ -98,6 +98,28 @@ describe("PluginManager", () => {
     expect(h.ipc.has("plugin:demo:ping")).toBe(true);
   });
 
+  it("waits only for the selected plugin during startup", async () => {
+    const h = harness();
+    const slow = fixturePlugin("slow");
+    writeFileSync(path.join(slow, "index.cjs"), `module.exports = {
+      register(ctx) { return new Promise((resolve) => ctx.registerIpc("release", resolve)); }
+    };`);
+    const manager = new PluginManager(h.options);
+    let reveal!: () => void;
+    const starting = manager.start(new Promise<void>((resolve) => { reveal = resolve; }));
+    const selectedReady = manager.waitForStartupTools((id) => id === "demo");
+    expect(h.tools).toEqual([]);
+    reveal();
+    await selectedReady;
+    expect(h.tools).toContain("demo_tool");
+    await vi.waitFor(() => expect(h.ipc.has("plugin:slow:release")).toBe(true));
+    expect(manager.isRunning("slow")).toBe(false);
+    h.ipc.get("plugin:slow:release")!();
+    await starting;
+    expect(manager.isRunning("slow")).toBe(true);
+    await manager.stop();
+  });
+
   it("宿主事件可发布给插件，停用后监听器被移除", async () => {
     const h = harness();
     const marker = path.join(tmp, "host-event");

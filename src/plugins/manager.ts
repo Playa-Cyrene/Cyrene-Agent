@@ -104,6 +104,14 @@ export class PluginManager {
   private scanIssues: PluginScanIssue[] = [];
   private enabledMap: Record<string, boolean>;
   private started = false;
+  private startupActivations = new Map<string, Promise<void>>();
+
+  private startupDiscovery: Promise<void> = Promise.resolve();
+
+  async waitForStartupTools(select: (pluginId: string) => boolean): Promise<void> {
+    await this.startupDiscovery;
+    await Promise.all([...this.startupActivations].filter(([id]) => select(id)).map(([, task]) => task));
+  }
   /** 宿主模块订阅的插件运行状态监听器（调度引擎等）。 */
   private runningStateListeners = new Set<(pluginId: string, running: boolean) => void>();
   /** All lifecycle mutations are serialized to prevent enable/disable/rescan races. */
@@ -209,7 +217,9 @@ export class PluginManager {
     }
   }
 
-  start(): Promise<void> {
+  start(activateAfter: Promise<void> = Promise.resolve()): Promise<void> {
+    let discovered!: () => void;
+    this.startupDiscovery = new Promise<void>((resolve) => { discovered = resolve; });
     return this.enqueueOperation(async () => {
       if (this.started) return;
       this.started = true;
@@ -245,12 +255,15 @@ export class PluginManager {
         }
         return this.uninstall(id);
       });
-      await this.doRescan(false);
+      await activateAfter;
+      const activating = this.doRescan(false, true);
+      discovered();
+      await activating;
       await this.publishHostLifecycleBarrier("plugins:ready", {
         pluginIds: this.list().filter((plugin) => plugin.enabled).map((plugin) => plugin.id),
       });
       this.opts.onListChanged?.();
-    });
+    }).finally(discovered);
   }
 
   rescan(): Promise<PluginOverview> {
@@ -575,7 +588,7 @@ export class PluginManager {
     return { records, issues, failedRoots };
   }
 
-  private async doRescan(reloadActive: boolean): Promise<void> {
+  private async doRescan(reloadActive: boolean, startup = false): Promise<void> {
     const scanned = this.scanAll();
     const previousRecords = this.records;
     // A transient root-level read error must not unload already-running plugins.
@@ -619,14 +632,15 @@ export class PluginManager {
         this.errors.delete(id);
         continue;
       }
-      try {
-        await this.activate(id);
-      } catch (error) {
-        const message = errorMessage(error);
-        this.statuses.set(id, "failed");
-        this.errors.set(id, message);
+      const activating = this.activate(id).catch((error) => {
         console.error(`[plugins] 插件 ${id} 启用失败，跳过`, error);
-      }
+      });
+      if (startup) this.startupActivations.set(id, activating);
+      else await activating;
+    }
+    if (startup) {
+      await Promise.all(this.startupActivations.values());
+      this.startupActivations.clear();
     }
   }
 

@@ -34,7 +34,7 @@ export interface BackgroundDependencies {
   readiness: StartupReadiness;
   shutdown: ShutdownCoordinator;
   pruneRemovedMcp(signal: AbortSignal): Promise<void>;
-  syncBuiltInMcp(signal: AbortSignal): Promise<void>;
+  prepareChatCapabilities(signal: AbortSignal): Promise<void>;
   restoreMcp(signal: AbortSignal): Promise<void>;
   reconcileMemory(signal: AbortSignal): Promise<void>;
   initializeReranker(signal: AbortSignal): Promise<void>;
@@ -210,9 +210,8 @@ export function startBackground(deps: BackgroundDependencies): BackgroundHandle 
     dispose: async () => { disposeOptional(updateCheckDisposer); },
   });
 
-  async function groupA(): Promise<void> {
+  async function groupA(producersReady: Promise<unknown>): Promise<void> {
     await runTracked("mcp-prune", "mcp", (signal) => deps.pruneRemovedMcp(signal));
-    await runTracked("mcp-sync-builtin", "mcp", (signal) => deps.syncBuiltInMcp(signal));
 
     // MCP 恢复屏障：等待“恢复尝试已结算”（成功/失败/30s 超时）。
     // 超时不让底层任务失去所有权 —— 恢复任务继续在 runner 内跟踪。
@@ -234,6 +233,7 @@ export function startBackground(deps: BackgroundDependencies): BackgroundHandle 
       });
     }
 
+    await producersReady;
     // MCP 结算后：channels 网络启动 → scheduler 定时器 → 主动触发器
     await runTracked("channels-start", "channels", async (signal) => {
       if (signal.aborted) throw new Error("aborted before channels start");
@@ -271,7 +271,8 @@ export function startBackground(deps: BackgroundDependencies): BackgroundHandle 
   }
 
   const settled = (async () => {
-    await Promise.allSettled([groupA(), groupB(), groupC(), groupD()]);
+    const producersReady = Promise.all([groupB(), runTracked("chat-capabilities", "chat", deps.prepareChatCapabilities)]);
+    await Promise.allSettled([groupA(producersReady), producersReady, groupC(), groupD()]);
     try {
       if (readiness.getPhase() === "background-starting") {
         readiness.transition("ready");

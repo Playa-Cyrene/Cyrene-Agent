@@ -177,7 +177,7 @@ export function createPluginAgentRunner(deps: PluginAgentRunnerDeps): NonNullabl
       promptSource: "plugin-agent",
       promptChannel: "minecraft",
       currentUser: { turnId: `plugin:${runId}`, text: goal, visibleContent: goal },
-    });
+    }, []);
     const toolSystemContent = buildToolSystemPrompt("work", tools);
     const promptLayers = buildHarnessPromptLayers({
       ...built.options,

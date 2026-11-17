@@ -33,7 +33,7 @@ function makeBackgroundDeps(calls: string[], overrides: Partial<BackgroundDepend
     readiness,
     shutdown: createShutdownCoordinator({ readiness, timeoutMs: 1000 }),
     pruneRemovedMcp: vi.fn(async () => { calls.push("prune"); }),
-    syncBuiltInMcp: vi.fn(async () => { calls.push("sync"); }),
+    prepareChatCapabilities: vi.fn(async () => { calls.push("chat-capabilities"); }),
     restoreMcp: vi.fn(async () => { calls.push("mcp"); }),
     reconcileMemory: vi.fn(async () => { calls.push("memory"); }),
     initializeReranker: vi.fn(async () => { calls.push("reranker"); }),

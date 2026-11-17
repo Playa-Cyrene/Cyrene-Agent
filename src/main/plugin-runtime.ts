@@ -48,7 +48,7 @@ export interface PluginRuntimeDeps {
   getPanelHostWebContents?: () => readonly Electron.WebContents[];
 }
 
-export async function startPluginRuntime(deps: PluginRuntimeDeps): Promise<PluginManager> {
+export function createPluginRuntime(deps: PluginRuntimeDeps): PluginManager {
   const userPluginRoot = path.join(app.getPath("userData"), "plugins");
   const pluginDataRoot = path.join(app.getPath("userData"), "plugin-data");
   // 插件 IPC 路由器：面板转发与既有 ipcMain 直达共用一套执行路径
@@ -92,7 +92,10 @@ export async function startPluginRuntime(deps: PluginRuntimeDeps): Promise<Plugi
         router.unregister(channel);
         deps.ipc.removeHandler(channel);
       },
-      promptRegistry: pluginPromptRegistry,
+      promptRegistry: {
+        register: (id, provider, signal) => pluginPromptRegistry.register(id, provider, signal, () => manager.isRunning(id)),
+        unregister: (id, providerId) => pluginPromptRegistry.unregister(id, providerId),
+      },
       // 宿主服务统一从工厂注入：channels、llm、secrets、workspace、
       // conversations 和 scheduler 在 plugin-host/host-services.ts 装配；
       // 后续新服务只扩展装配工厂，不再向 PluginContext 加特例。
@@ -177,7 +180,7 @@ export async function startPluginRuntime(deps: PluginRuntimeDeps): Promise<Plugi
   // pluginId 语法与通道归属由路由器校验，面板无法构造跨插件通道。
   deps.ipc.handle(
     IPC.PLUGINS_PANEL_INVOKE,
-    (event: Electron.IpcMainInvokeEvent, pluginId: unknown, channel: unknown, args: unknown) => {
+    async (event: Electron.IpcMainInvokeEvent, pluginId: unknown, channel: unknown, args: unknown) => {
       if (typeof pluginId !== "string" || typeof channel !== "string" || !Array.isArray(args)) {
         return { ok: false, error: "面板调用参数格式非法" };
       }
@@ -185,11 +188,11 @@ export async function startPluginRuntime(deps: PluginRuntimeDeps): Promise<Plugi
       if (!hosts.includes(event.sender)) {
         return { ok: false, error: "面板调用来源窗口不受信任" };
       }
+      await manager.waitForStartupTools(id => id === pluginId);
       return router.dispatch({ pluginId, channel, args, caller: "panel" });
     },
   );
   // 设置面板静态资源协议：禁用插件立即 404，查询实时反映启停状态
   installPluginPanelProtocol((pluginId) => manager.getSettingsPanelDir(pluginId));
-  await manager.start();
   return manager;
 }

@@ -95,7 +95,7 @@ describe("plugin-agent", () => {
       promptSource: "plugin-agent",
       promptChannel: "minecraft",
       currentUser: expect.objectContaining({ text: "收集十个木头", visibleContent: "收集十个木头" }),
-    }));
+    }), []);
     const input = runHarness.mock.calls[0]?.[0];
     expect(input).toEqual(expect.objectContaining({
       runId: "minecraft-goal-2",
