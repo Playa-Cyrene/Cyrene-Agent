@@ -49,7 +49,7 @@ export class QqModuleRuntime {
   get pendingCount(): number { return this.pending.size; }
   get isClosed(): boolean { return this.closed; }
   get hasExited(): boolean { return this.exited; }
-  request<K extends QqMethod>(method: K, payload: QqRequestPayloads[K], signal?: AbortSignal, timeoutMs = this.timeoutMs): Promise<QqResponsePayloads[K]> {
+  request<K extends QqMethod>(method: K, payload: QqRequestPayloads[K], signal?: AbortSignal, timeoutMs = this.timeoutMs, onResponse?: (payload: QqResponsePayloads[K]) => void): Promise<QqResponsePayloads[K]> {
     if (this.closed) return Promise.reject(new QqRuntimeError("closed", false));
     if (signal?.aborted) return Promise.reject(new QqRuntimeError("cancelled", false));
     if (this.pending.size >= 64) return Promise.reject(new QqRuntimeError("busy", false));
@@ -63,7 +63,13 @@ export class QqModuleRuntime {
     return new Promise<QqResponsePayloads[K]>((resolve, reject) => {
       const cancel = () => this.fail(requestId, "cancelled");
       const timer = setTimeout(() => this.fail(requestId, "timeout"), timeoutMs);
-      const pending: Pending = { method, payload: snapshot, transmitted: false, resolve: (v) => resolve(v as QqResponsePayloads[K]), reject,
+      const pending: Pending = { method, payload: snapshot, transmitted: false, resolve: (v) => {
+        // Apply trusted host state synchronously at the validated response boundary.
+        // Node IPC may deliver the next event before await continuations run.
+        try { onResponse?.(v as QqResponsePayloads[K]); }
+        catch { reject(new QqRuntimeError("protocol", true)); void this.close("protocol"); return; }
+        resolve(v as QqResponsePayloads[K]);
+      }, reject,
         cleanup: () => { clearTimeout(timer); signal?.removeEventListener("abort", cancel); } };
       this.pending.set(requestId, pending);
       signal?.addEventListener("abort", cancel, { once: true });

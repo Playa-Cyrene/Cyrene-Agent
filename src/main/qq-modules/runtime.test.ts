@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { QQ_CONTRACT_LIMITS, validateSendRequest, type QqSendRequestV1 } from "../../shared/qq-module";
 import { QqModuleRuntime } from "./runtime";
 import { FakeTransport } from "../../../scripts/verify/qq-module/fixtures";
@@ -22,6 +22,30 @@ describe("QQ private process RPC", () => {
     await expect(promise).resolves.toEqual({});
     fresh.emit({ ...response, runtimeEpoch: 8 }); expect(next.isClosed).toBe(false);
     await next.close(); expect(fresh.listeners.size).toBe(0); expect(fresh.exits.size).toBe(0);
+  });
+  it("applies a validated response hook before following events and only once", async () => {
+    const peer = new FakeTransport(); peer.behavior = () => {};
+    const runtime = new QqModuleRuntime(peer, 1); const order: string[] = [];
+    runtime.onEvent(() => order.push("event"));
+    const hook = vi.fn(() => { order.push("response"); });
+    const promise = runtime.request("ping", {}, undefined, undefined, hook);
+    const request = peer.messages[0];
+    peer.reply(request, {});
+    peer.event("status", { phase: "waiting-backend" });
+    peer.reply(request, {});
+    expect(order).toEqual(["response", "event"]); expect(hook).toHaveBeenCalledOnce();
+    await promise; await runtime.close();
+  });
+  it("does not call response hooks for malformed replies and contains hook exceptions", async () => {
+    const peer = new FakeTransport(); peer.behavior = () => {};
+    const runtime = new QqModuleRuntime(peer, 1); const hook = vi.fn();
+    const bad = runtime.request("ping", {}, undefined, undefined, hook);
+    peer.reply(peer.messages[0], { unexpected: true });
+    await expect(bad).rejects.toMatchObject({ code: "protocol" }); expect(hook).not.toHaveBeenCalled();
+    const nextPeer = new FakeTransport(); const next = new QqModuleRuntime(nextPeer, 2);
+    await expect(next.request("ping", {}, undefined, undefined, () => { throw new Error("private host detail"); }))
+      .rejects.toMatchObject({ message: "QQ_MODULE_PROTOCOL", code: "protocol" });
+    expect(next.isClosed).toBe(true); await next.close();
   });
   it("settles timeout, cancellation, crash and all pending requests without retries", async () => {
     const peer = new FakeTransport(); peer.behavior = () => {};
