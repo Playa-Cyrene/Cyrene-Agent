@@ -8,6 +8,8 @@ import { createQqUtilityProcess } from "./utility-process";
 
 export interface QqTrustedRuntimeFactoryOptions {
   packages: QqPackageStore;
+  /** Optional MAIN-owned supervisor wrapper, never renderer supplied. */
+  createTransport?: typeof createQqUtilityProcess;
   /** Dedicated host-owned absolute cache. Omit to disable media. Never renderer input. */
   mediaCacheDirectory?: string;
   onMessage?: MessageHandler;
@@ -35,7 +37,7 @@ export function createQqTrustedRuntimeFactory(options: QqTrustedRuntimeFactoryOp
         ...(cache === undefined ? {} : { mediaBroker: new QqMediaBroker(cache) }),
         createTransport: () => {
           const candidate = packages.resolveSelectedRuntime(packageId);
-          return createQqUtilityProcess(candidate.packageDirectory, candidate.entryPath);
+          return (options.createTransport ?? createQqUtilityProcess)(candidate.packageDirectory, candidate.entryPath);
         },
       });
       manager.onMessage = onMessage ?? null;

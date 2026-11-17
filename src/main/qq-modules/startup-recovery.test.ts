@@ -21,7 +21,7 @@ it.each(["prepared", "module-staged", "selected", "rolled-back"] as const)("bloc
   expect(getQqStartupMode(directory)).toBe("blocked");
 });
 it("blocks invalid/unrecognized migration and first-setup directories without repairing them", () => {
-  for (const kind of ["migration", "firstSetup", "recovery"] as const) {
+  for (const kind of ["migration", "firstSetup", "recovery", "driverOwnership"] as const) {
     const directory = root(), paths = qqLifecyclePaths(directory); mkdirSync(paths[kind]);
     writeFileSync(join(paths[kind], "state.json"), "invalid");
     expect(getQqStartupMode(directory)).toBe("blocked");
@@ -51,7 +51,7 @@ it("blocks recovery locks before the first durable state and never deletes them"
   expect(existsSync(join(path, "recovery-lock"))).toBe(true);
 });
 
-it.each(["migration", "firstSetup", "recovery"] as const)("blocks an existing %s directory even when its state was lost", (kind) => {
+it.each(["migration", "firstSetup", "recovery", "driverOwnership"] as const)("blocks an existing %s directory even when its state was lost", (kind) => {
   const directory = root(), path = qqLifecyclePaths(directory)[kind];
   mkdirSync(path);
   expect(getQqStartupMode(directory)).toBe("blocked");

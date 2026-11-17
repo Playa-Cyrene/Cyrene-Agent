@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Alert, Button, Input, Space } from "antd";
 import type { QqModuleActionCommand, QqModuleActionResult } from "../../../../shared/qq-module-actions";
+import { QqModuleConfigurationEditor } from "./QqModuleConfigurationEditor";
 import { useTranslation } from "../../i18n";
 type Preview = Extract<QqModuleActionResult, { preview: unknown }>;
 export function QqModuleActionsPanel({ action, onBusy, onReady }: {
@@ -9,6 +10,7 @@ export function QqModuleActionsPanel({ action, onBusy, onReady }: {
 }) {
   const { t } = useTranslation(); const key = "settingsPage.channels.qqModule.actions";
   const [ready, setReady] = useState(false), [busy, setBusy] = useState(false), [result, setResult] = useState(""), [account, setAccount] = useState("");
+  const [editing, setEditing] = useState(false);
   const [mode, setMode] = useState("ready");
   const [preview, setPreview] = useState<Preview>();
   const alive = useRef(false), pending = useRef<Preview | undefined>(undefined), locked = useRef(false), generation = useRef(0);
@@ -55,16 +57,37 @@ export function QqModuleActionsPanel({ action, onBusy, onReady }: {
     if (preview.state === "preview-install") void run({ action: "confirm-install", operationId, userConfirmed: true });
     else void run({ action: preview.state === "preview-migration" ? "confirm-migration" : preview.state === "preview-recovery" ? "confirm-recovery" : preview.state === "preview-reconfigure" ? "confirm-reconfigure" : "confirm-setup", operationId, accountId: account, userConfirmed: true });
   };
+  const closeEditor = () => {
+    setEditing(false); setReady(false); const gen = generation.current;
+    void action({ action: "status" }).then(r => {
+      if (!alive.current || gen !== generation.current) return;
+      if (r.ok && ["ready", "committed", "recovery-required", "disabled"].includes(r.state)) { setMode(r.state); setReady(true); }
+      else setResult("failed");
+    }, () => { if (alive.current && gen === generation.current) setResult("failed"); });
+  };
+  if (editing) return <QqModuleConfigurationEditor action={action} onBusy={onBusy} onClose={closeEditor} onSaved={() => setResult("configuration-saved")} />;
   return <div aria-label={t(`${key}.title`)}>
     <p>{t(`${key}.separation`)}</p>
-    {result && <Alert role="status" type={result === "committed" || result === "installed" ? "success" : "warning"} title={t(`${key}.${["installed", "committed", "cancelled", "rolled-back", "recovery-required", "disabled"].includes(result) ? result : "failed"}`)} />}
+    {result && <Alert role="status" type={result === "committed" || result === "installed" ? "success" : "warning"} title={t(`${key}.${["installed", "committed", "cancelled", "rolled-back", "recovery-required", "disabled", "configuration-saved"].includes(result) ? result : "failed"}`)} />}
     {preview ? <>
       <p>{t(`${key}.${preview.state}`)} {preview.preview.version ?? ""}</p>
       {preview.state === "preview-reconfigure" && <><p>{t(`${key}.${preview.preview.desiredEnabled ? "willEnable" : "willDisable"}`)}</p><ul>{preview.preview.changes?.map(change => <li key={change}>{t(`${key}.change-${change}`)}</li>)}</ul></>}
+      {preview.preview.configuration && <section aria-label={t(`${key}.configurationSnapshot`)}>
+        <p>{t(`${key}.configurationSnapshot`)}</p>
+        <pre style={{ maxHeight: 240, overflow: "auto", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{JSON.stringify({
+          configRevision: preview.preview.configuration.configRevision,
+          expectedSelfId: preview.preview.configuration.expectedSelfId,
+          listen: { host: preview.preview.configuration.listen.host, port: preview.preview.configuration.listen.port },
+          allowedPrivateUserIds: preview.preview.configuration.allowedPrivateUserIds,
+          allowedGroupIds: preview.preview.configuration.allowedGroupIds,
+          groupRequireMention: preview.preview.configuration.groupRequireMention,
+        }, null, 2)}</pre>
+      </section>}
       {preview.preview.accountId && <><p>{t(`${key}.accountConfirm`)} {preview.preview.accountId}</p><Input aria-label={t(`${key}.accountConfirm`)} value={account} disabled={busy} onChange={e => setAccount(e.target.value)} /></>}
       <Space><Button disabled={busy || (preview.state !== "preview-install" && account !== preview.preview.accountId)} onClick={confirm}>{t(`${key}.confirm`)}</Button>
       <Button disabled={busy} onClick={() => void run({ action: "cancel", operationId: preview.preview.operationId })}>{t(`${key}.cancel`)}</Button></Space>
     </> : ready && <Space orientation="vertical">
+      <Button disabled={busy} onClick={() => setEditing(true)}>{t(`${key}.editConfiguration`)}</Button>
       {mode === "recovery-required" && <Button disabled={busy} onClick={() => void run({ action: "preview-recovery" })}>{t(`${key}.recover`)}</Button>}
       {["committed", "disabled", "recovery-required"].includes(mode) && <Button disabled={busy} onClick={() => void run({ action: "preview-reconfigure" })}>{t(`${key}.reconfigure`)}</Button>}
       {mode === "ready" && <>

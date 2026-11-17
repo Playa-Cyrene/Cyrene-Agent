@@ -12,13 +12,14 @@ let root: Root, host: HTMLDivElement;
 const api = { channelsQqModuleInstallationStatus: vi.fn<() => Promise<QqModuleInstallationStatus>>() };
 beforeEach(async () => {
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   window.matchMedia = vi.fn().mockReturnValue({ matches: false, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {} });
   await i18next.changeLanguage("zh-CN");
   api.channelsQqModuleInstallationStatus.mockReset().mockResolvedValue(status);
   host = document.createElement("div"); document.body.append(host); root = createRoot(host);
   await act(async () => root.render(<ConfigProvider theme={{ token: { motion: false } }}><QqModuleInstallationCard api={api} listenMode="loopback" customHost="" /></ConfigProvider>));
 });
-afterEach(async () => { await act(async () => root.unmount()); document.body.innerHTML = ""; vi.restoreAllMocks(); });
+afterEach(async () => { await act(async () => root.unmount()); document.body.innerHTML = ""; vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 const button = (text: string) => [...document.querySelectorAll<HTMLButtonElement>("button")].find((e) => e.textContent?.replaceAll(" ", "").includes(text))!;
 const click = async (element: HTMLElement) => { await act(async () => element.click()); };
 
@@ -244,4 +245,84 @@ it("does not treat rejected recovery as activation and permits reconfiguration a
   await click(button("查看模块安装条件"));
   expect(button("预览受控配置变更").disabled).toBe(false);
   expect(document.body.textContent).toContain("需要恢复检查");
+});
+
+const configView = (revision = 1) => ({ proposalRevision: revision, config: { configRevision: revision, expectedSelfId: "10000", listen: { host: "127.0.0.1", port: 6200 }, allowedPrivateUserIds: ["30000"], allowedGroupIds: ["20000"], groupRequireMention: true }, enabled: true, credentialAccountId: "10000" });
+it("reads configuration only after explicit edit and saves a nonsecret CAS proposal without activation", async () => {
+  const action = vi.fn().mockResolvedValueOnce({ ok: true, state: "committed" })
+    .mockResolvedValueOnce({ ok: true, state: "configuration", configuration: configView() })
+    .mockResolvedValueOnce({ ok: true, state: "configuration-saved", configuration: { ...configView(2), config: { ...configView(2).config, listen: { host: "127.0.0.1", port: 6300 } } } })
+    .mockResolvedValueOnce({ ok: true, state: "recovery-required" });
+  await configured(action); expect(action).toHaveBeenCalledTimes(1);
+  await click(button("编辑非秘密配置")); expect(action).toHaveBeenLastCalledWith({ action: "read-configuration" });
+  await enter("监听端口", "6300"); await click(button("保存非秘密提案"));
+  expect(action).toHaveBeenLastCalledWith({ action: "propose-configuration", expectedRevision: 1, enabled: true, config: { ...configView(2).config, listen: { host: "127.0.0.1", port: 6300 } } });
+  expect(document.body.textContent).toContain("提案已保存，尚未应用");
+  expect(action.mock.calls.some(([c]) => c.action.startsWith("confirm-") || c.action.startsWith("preview-"))).toBe(false);
+  await click(button("返回操作面板")); expect(action).toHaveBeenLastCalledWith({ action: "status" }); expect(button("预览受控配置变更")).toBeDefined();
+});
+it("blocks stale proposal retries until explicit reload and does not expose backend exceptions", async () => {
+  const action = vi.fn().mockResolvedValueOnce({ ok: true, state: "ready" })
+    .mockResolvedValueOnce({ ok: true, state: "configuration", configuration: configView() })
+    .mockResolvedValueOnce({ ok: false, error: "stale" })
+    .mockResolvedValueOnce({ ok: true, state: "configuration", configuration: configView(3) });
+  await configured(action); await click(button("编辑非秘密配置")); await click(button("保存非秘密提案"));
+  expect(document.body.textContent).toContain("配置版本已变化"); expect(button("保存非秘密提案").disabled).toBe(true);
+  expect(action).toHaveBeenCalledTimes(3); await click(button("重新读取配置")); expect(button("保存非秘密提案").disabled).toBe(false);
+  expect(action).toHaveBeenLastCalledWith({ action: "read-configuration" });
+});
+it("does not invent defaults or credentials for absent configuration and cancels edits without saving", async () => {
+  const action = vi.fn().mockResolvedValueOnce({ ok: true, state: "ready" })
+    .mockResolvedValueOnce({ ok: true, state: "configuration", configuration: { proposalRevision: null, config: null, enabled: false, credentialAccountId: null } })
+    .mockResolvedValueOnce({ ok: true, state: "ready" });
+  await configured(action); await click(button("编辑非秘密配置"));
+  expect(document.body.textContent).toContain("未绑定可用的主机安全凭据入口"); expect(button("保存非秘密提案").disabled).toBe(true);
+  expect(document.querySelector<HTMLInputElement>('input[aria-label="监听端口"]')!.value).toBe("");
+  expect(document.querySelector('input[type="password"]')).toBeNull();
+  await click(button("返回操作面板")); expect(action.mock.calls.some(([c]) => c.action === "propose-configuration")).toBe(false);
+});
+it("prevents double proposal saves and closing while a save is pending", async () => {
+  let finish!: (r: unknown) => void;
+  const action = vi.fn().mockResolvedValueOnce({ ok: true, state: "ready" })
+    .mockResolvedValueOnce({ ok: true, state: "configuration", configuration: configView() })
+    .mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  await configured(action); await click(button("编辑非秘密配置"));
+  await act(async () => { button("保存非秘密提案").click(); button("保存非秘密提案").click(); });
+  expect(action).toHaveBeenCalledTimes(3); expect(document.querySelector<HTMLButtonElement>(".ant-modal-footer button")!.disabled).toBe(true);
+  expect(button("返回操作面板").disabled).toBe(true);
+  await act(async () => finish({ ok: false, error: "operation-failed" })); expect(document.body.textContent).toContain("无法读取或保存提案");
+});
+it("rejects non-loopback editing and mismatched enabled account before any proposal write", async () => {
+  const action = vi.fn().mockResolvedValueOnce({ ok: true, state: "ready" })
+    .mockResolvedValueOnce({ ok: true, state: "configuration", configuration: configView() });
+  await configured(action); await click(button("编辑非秘密配置"));
+  await enter("数字回环地址（127.x.x.x 或 ::1）", "0.0.0.0"); expect(button("保存非秘密提案").disabled).toBe(true);
+  await enter("数字回环地址（127.x.x.x 或 ::1）", "::1");
+  await enter("预期 QQ 账号", "99999"); expect(button("保存非秘密提案").disabled).toBe(true);
+  expect(document.body.textContent).toContain("预期账号与主机凭据账号不一致"); expect(action).toHaveBeenCalledTimes(2);
+});
+it("ignores a late configuration read after the editor is unmounted", async () => {
+  let finish!: (r: unknown) => void;
+  const action = vi.fn().mockResolvedValueOnce({ ok: true, state: "ready" })
+    .mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  await configured(action); await click(button("编辑非秘密配置"));
+  await act(async () => root.render(<div>other page</div>));
+  await act(async () => finish({ ok: true, state: "configuration", configuration: configView() }));
+  expect(document.body.textContent).toBe("other page"); expect(action).toHaveBeenCalledTimes(2);
+});
+it("displays the exact host preview snapshot rather than the editor's earlier saved proposal", async () => {
+  const snapshot = { ...configView(8).config, listen: { host: "::1", port: 7654 }, allowedPrivateUserIds: ["55555"], allowedGroupIds: ["66666"], groupRequireMention: false };
+  const action = vi.fn().mockResolvedValueOnce({ ok: true, state: "committed" })
+    .mockResolvedValueOnce({ ok: true, state: "configuration", configuration: configView() })
+    .mockResolvedValueOnce({ ok: true, state: "configuration-saved", configuration: configView(2) })
+    .mockResolvedValueOnce({ ok: true, state: "committed" })
+    .mockResolvedValueOnce({ ok: true, state: "preview-reconfigure", preview: { operationId: "new-snapshot", packageId, accountId: "10000", desiredEnabled: true, changes: ["listen", "allowlist"], configuration: snapshot } })
+    .mockResolvedValue({ ok: true, state: "cancelled" });
+  await configured(action); await click(button("编辑非秘密配置")); await click(button("保存非秘密提案"));
+  await click(button("返回操作面板")); await click(button("预览受控配置变更"));
+  const display = document.querySelector("pre")!;
+  expect(JSON.parse(display.textContent!)).toEqual(snapshot);
+  expect(display.style.maxHeight).toBe("240px"); expect(display.style.overflow).toBe("auto");
+  expect(display.textContent).not.toContain("6200"); expect(button("明确确认").disabled).toBe(true);
+  expect(action.mock.calls.some(([c]) => c.action.startsWith("confirm-"))).toBe(false);
 });

@@ -1,6 +1,9 @@
+import type { QqRuntimeConfig } from "./qq-module";
 /** Renderer-safe commands. Paths, candidate bytes, keys and credentials are host-owned. */
 export type QqModuleActionCommand =
   | { action: "status" }
+  | { action: "read-configuration" }
+  | { action: "propose-configuration"; expectedRevision: number | null; config: QqRuntimeConfig; enabled: boolean }
   | { action: "preview-install" }
   | { action: "confirm-install"; operationId: string; userConfirmed: true }
   | { action: "preview-migration" }
@@ -19,8 +22,16 @@ export interface QqModuleActionPreview {
   /** Reconfiguration only. Describes host-selected intent, never a credential or config upload. */
   desiredEnabled?: boolean;
   changes?: QqModuleConfigurationChange[];
+  /** Exact nonsecret snapshot for informed runtime confirmation. */
+  configuration?: QqRuntimeConfig;
+}
+/** Nonsecret view. Credential generation, encrypted envelope and token stay in main. */
+export interface QqModuleConfigurationView {
+  proposalRevision: number | null; config: QqRuntimeConfig | null; enabled: boolean;
+  credentialAccountId: string | null;
 }
 export type QqModuleActionResult =
+  | { ok: true; state: "configuration" | "configuration-saved"; configuration: QqModuleConfigurationView }
   | { ok: false; error: QqModuleActionError }
   | { ok: true; state: "ready" | "installed" | "committed" | "rolled-back" | "recovery-required" | "cancelled" | "disabled" }
   | { ok: true; state: "preview-install" | "preview-migration" | "preview-setup" | "preview-recovery" | "preview-reconfigure"; preview: QqModuleActionPreview };

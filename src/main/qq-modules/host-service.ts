@@ -39,6 +39,7 @@ export interface QqModuleHostOptions {
     verifyAllDriversStopped(): Promise<boolean>;
     verifyNoOtherDrivers(): Promise<boolean>;
   };
+  createTransport?: Parameters<typeof createQqTrustedRuntimeFactory>[0]["createTransport"];
   backendReconnectTimeoutMs?: number;
 }
 /** Actual host composition of signed package store, verified runtime factory,
@@ -64,7 +65,7 @@ export class QqModuleHostService {
     this.migrationStore = new QqMigrationStore(paths.migration);
     this.setupStore = new QqFirstSetupStore(paths.firstSetup);
     this.recoveryStore = new QqRecoveryStore(paths.recovery);
-    const runtime = createQqTrustedRuntimeFactory({ packages: this.packages, mediaCacheDirectory: join(options.userDataPath, "qq-module-media") });
+    const runtime = createQqTrustedRuntimeFactory({ createTransport: options.createTransport, packages: this.packages, mediaCacheDirectory: join(options.userDataPath, "qq-module-media") });
     this.factory = {
       verifyCandidate: runtime.verifyCandidate,
       createModule: (input, id) => {
@@ -108,6 +109,7 @@ export class QqModuleHostService {
     this.pending = undefined;
   }
   private async perform(command: QqModuleActionCommand): Promise<QqModuleActionResult> {
+    if (command.action === "read-configuration" || command.action === "propose-configuration") return { ok: false, error: "unconfigured" };
     if (command.action === "status") {
       if (this.options.router.getDriver() === "module" && this.options.router.getStatus().phase === "running") return { ok: true, state: "committed" };
       // A durable disabled choice is not an absence proof or a restart permission.
@@ -125,7 +127,7 @@ export class QqModuleHostService {
       if (this.options.router.getDriver() === "legacy") return { ok: false, error: "recovery-required" };
       const preview = this.recovery.previewRecovery(command.action === "preview-recovery" ? "recover" : "reconfigure");
       this.pending = { kind: command.action === "preview-recovery" ? "recovery" : "reconfigure", id: preview.previewId, accountId: preview.accountId };
-      return { ok: true, state: command.action, preview: { operationId: preview.previewId, packageId: preview.packageId, accountId: preview.accountId,
+      return { ok: true, state: command.action, preview: { operationId: preview.previewId, packageId: preview.packageId, accountId: preview.accountId, configuration: preview.config,
         ...(command.action === "preview-reconfigure" ? { desiredEnabled: preview.desiredEnabled, changes: preview.changes } : {}) } };
     }
     if (command.action === "confirm-recovery" || command.action === "confirm-reconfigure") {
@@ -184,7 +186,7 @@ export class QqModuleHostService {
           backendReconnectTimeoutMs: this.options.backendReconnectTimeoutMs });
         const preview = this.setup.previewSetup(selected.packageId);
         this.pending = { kind: "setup", id: preview.previewId, accountId: preview.accountId };
-        return { ok: true, state: "preview-setup", preview: { operationId: preview.previewId, packageId: preview.packageId, accountId: preview.accountId } };
+        return { ok: true, state: "preview-setup", preview: { operationId: preview.previewId, packageId: preview.packageId, accountId: preview.accountId, configuration: preview.config } };
       }
       case "confirm-setup": {
         if (this.pending?.kind !== "setup" || this.pending.id !== command.operationId || this.pending.accountId !== command.accountId) return { ok: false, error: "stale" };

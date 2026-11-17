@@ -175,3 +175,30 @@ it.each([true, false])("does not misreport the opposite enabled outcome after ex
   s.execute.mockReturnValueOnce({ ok: true, state: desiredEnabled ? "disabled" : "committed" });
   expect(await s.gateway.execute({ action: "confirm-reconfigure", operationId: "intent-1", accountId: "10000", userConfirmed: true }, s.owner)).toEqual({ ok: false, error: "operation-failed" });
 });
+it("accepts only nonsecret bounded configuration proposals and validates returned views", async () => {
+  const { configuration } = await import("../../../scripts/verify/qq-module/fixtures");
+  const input = { action: "propose-configuration", expectedRevision: null, config: configuration().config, enabled: true };
+  const view = { proposalRevision: 1, config: input.config, enabled: true, credentialAccountId: "10000" };
+  const port = { execute: vi.fn(() => ({ ok: true, state: "configuration-saved", configuration: view })) };
+  const gateway = new QqModuleActionGateway(port as any), own = owner();
+  expect(await gateway.execute(input, own)).toEqual({ ok: true, state: "configuration-saved", configuration: view });
+  for (const extra of [{ token: "secret" }, { credentialGeneration: "forged" }, { path: "/tmp/elsewhere" }]) {
+    expect(await gateway.execute({ ...input, ...extra }, own)).toEqual({ ok: false, error: "invalid" });
+  }
+  expect(port.execute).toHaveBeenCalledOnce();
+  port.execute.mockReturnValue({ ok: true, state: "configuration-saved", configuration: { ...view, token: "must-not-leak" } } as any);
+  expect(await gateway.execute(input, own)).toEqual({ ok: false, error: "operation-failed" });
+});
+it("configuration reads preserve preview ownership and configuration writes require cancellation first", async () => {
+  const s = setup(); const p = await preview(s);
+  s.execute.mockImplementationOnce(() => ({ ok: true, state: "configuration", configuration: { proposalRevision: null, config: null, enabled: false, credentialAccountId: null } }));
+  expect((await s.gateway.execute({ action: "read-configuration" }, s.owner)).ok).toBe(true);
+  const { configuration } = await import("../../../scripts/verify/qq-module/fixtures");
+  expect(await s.gateway.execute({ action: "propose-configuration", expectedRevision: null, config: configuration().config, enabled: true }, s.owner)).toEqual({ ok: false, error: "busy" });
+  expect(await s.gateway.execute({ action: "confirm-install", operationId: p.operationId, userConfirmed: true }, s.owner)).toEqual({ ok: true, state: "installed" });
+});
+it("rejects a runtime confirmation snapshot whose displayed account differs from the confirmed account", async () => {
+  const { configuration } = await import("../../../scripts/verify/qq-module/fixtures");
+  const s = setup(); s.execute.mockReturnValue({ ok: true, state: "preview-setup", preview: { operationId: "p", packageId, accountId: "10000", configuration: { ...configuration().config, expectedSelfId: "999" } } });
+  expect(await s.gateway.execute({ action: "preview-setup", accountId: "10000" }, s.owner)).toEqual({ ok: false, error: "operation-failed" });
+});

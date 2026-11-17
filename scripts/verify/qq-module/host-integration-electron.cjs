@@ -1,7 +1,7 @@
 // Offline synthetic integration only. Run with Electron, never the main Cyrene app.
 "use strict";
 const assert = require("node:assert/strict");
-const { createHash,generateKeyPairSync,sign } = require("node:crypto");
+const { createHash,generateKeyPairSync,sign,randomBytes,createCipheriv,createDecipheriv } = require("node:crypto");
 const { mkdtemp, readFile, readdir, rm, writeFile, mkdir } = require("node:fs/promises");
 const { createServer } = require("node:net");
 const { tmpdir } = require("node:os");
@@ -16,7 +16,9 @@ const { WebSocket } = require(hostRoot + "/node_modules/ws");
 const { QqModuleManager } = require(hostRoot + "/dist/main/main/qq-modules/manager.js");
 const { QqMediaBroker } = require(hostRoot + "/dist/main/main/qq-modules/media-broker.js");
 const { createQqUtilityProcess } = require(hostRoot + "/dist/main/main/qq-modules/utility-process.js");
-const {QqModuleHostService}=require(hostRoot+"/dist/main/main/qq-modules/host-service.js");
+const {createQqProductionHost}=require(hostRoot+"/dist/main/main/qq-modules/production-host.js");
+const {QqSecureCredentialStore,qqSecureCredentialDirectory}=require(hostRoot+"/dist/main/main/qq-modules/secure-credential-store.js");
+const {createQqElectronSecureStoragePort}=require(hostRoot+"/dist/main/main/qq-modules/secure-credential-electron.js");
 const {QqRoutingAdapter}=require(hostRoot+"/dist/main/main/channels/adapters/qq-routing-adapter.js");
 const {QqModuleActionGateway}=require(hostRoot+"/dist/main/main/qq-modules/action-gateway.js");
 const {getQqStartupMode}=require(hostRoot+"/dist/main/main/qq-modules/startup-recovery.js");
@@ -52,20 +54,22 @@ async function startPair(options = {}) {
     const candidate={manifest,signature:sign(null,Buffer.concat([Buffer.from(QQ_PACKAGE_SIGNATURE_DOMAIN),manifest]),keys.privateKey),files:new Map(unsigned.files.map(f=>[f.path,Buffer.from(f.data,"base64")]))};
     const context={trustedKeys:new Map([["ephemeral-rehearsal-only",keys.publicKey.export({type:"spki",format:"pem"}).toString()]]),hostVersion:"1.3.7",platform:process.platform,arch:process.arch,now:1500};
     const legacy={id:"qq",displayName:"synthetic absent legacy",onMessage:null,capability:{text:true},start:async()=>{throw Error("legacy must not start")},stop:async()=>{},send:async()=>({ok:false}),getStatus:()=>({enabled:false,phase:"offline"}),getMigrationIdentity:()=>null,prepareMigrationStop:async()=>{throw Error("first setup must not migrate")}};
-    const router=new QqRoutingAdapter(legacy,"blocked");
+    let router=new QqRoutingAdapter(legacy,"blocked");
     router.onMessage=async m=>{received.push(m);return null};
     let manager;
     const attach=router.attachModule.bind(router);
     router.attachModule=m=>{manager=m;attach(m)};
-    let desired={config:structuredClone(config.config),enabled:true,credentialRevision:"synthetic-secure-generation-1"};
-    let allStopProofs=0;
-    // Fixture owns every process in this isolated case. Real deployment must supply
-    // independently reviewed previous-host/process/listener absence evidence.
-    const lifecycle={readDesired:()=>structuredClone(desired),readCredential:()=>config.credentials.accessToken,
-      verifyAllDriversStopped:async()=>{allStopProofs++;return !manager || manager.isStoppedForMigration()},
-      verifyNoOtherDrivers:async()=>true};
-    const service=new QqModuleHostService({lifecycle,userDataPath:directory,router,verificationContext:()=>context,candidate:()=>candidate,readLegacySettings:()=>{throw Error("first setup must not read old settings")},secureStorage:{isSecureAvailable:()=>true,decryptString:()=>{throw Error("not used")}},appName:"isolated synthetic harness",readFirstConfiguration:id=>({...config.config,expectedSelfId:id}),readFirstCredential:()=>config.credentials.accessToken,verifyNoLegacyDriver:async()=>true,backendReconnectTimeoutMs:12000});
-    const gateway=new QqModuleActionGateway(service),owner={key:{},isAuthorized:()=>true};
+    let desired={config:structuredClone(config.config),enabled:true},proposalRevision=null;
+    // Ephemeral AES port is a synthetic OS-storage substitute, not a production keychain.
+    const storageKey=randomBytes(32);
+    const secure={isSecureAvailable:()=>true,encryptString:value=>{const iv=randomBytes(12),c=createCipheriv("aes-256-gcm",storageKey,iv);const data=Buffer.concat([c.update(value,"utf8"),c.final()]);return Buffer.concat([iv,c.getAuthTag(),data])},decryptString:bytes=>{const c=createDecipheriv("aes-256-gcm",storageKey,bytes.subarray(0,12));c.setAuthTag(bytes.subarray(12,28));return Buffer.concat([c.update(bytes.subarray(28)),c.final()]).toString()}};
+    new QqSecureCredentialStore(qqSecureCredentialDirectory(directory),secure).write({accountId:"10000",token:config.credentials.accessToken,expectedGeneration:null,userConfirmed:true});
+    let bootstraps=0;
+    const serviceOptions={userDataPath:directory,router,releasePolicy:{verificationContext:()=>context,candidate:()=>candidate},secureStorage:secure,
+      ownership:{scopeId:"synthetic-isolated-profile",bootstrap:{verifyInitialScope:()=>{bootstraps++;return true}}},backendReconnectTimeoutMs:12000};
+    let service=createQqProductionHost(serviceOptions),gateway=new QqModuleActionGateway(service),owner={key:{},isAuthorized:()=>true};
+    const propose=async value=>{const result=await gateway.execute({action:"propose-configuration",expectedRevision:proposalRevision,config:value.config,enabled:value.enabled},owner);assert.equal(result.state,"configuration-saved");proposalRevision=result.configuration.proposalRevision;desired={config:result.configuration.config,enabled:result.configuration.enabled}};
+    await propose(desired);
     const preview=await gateway.execute({action:"preview-install"},owner);
     assert.equal(preview.state,"preview-install");assert.equal(manager,undefined);
     assert.equal((await gateway.execute({action:"confirm-install",operationId:preview.preview.operationId,userConfirmed:true},owner)).state,"installed");
@@ -141,11 +145,21 @@ async function startPair(options = {}) {
     const incoming = (id, message) => socket.send(JSON.stringify({ self_id: 10000, post_type: "message", message_type: "private", message_id: id, user_id: 30000, time: 1700000000, sender: { nickname: "Isolated fixture" }, message }));
     assert.equal((await activating).state,"committed");
     console.log("PASS signed package install, actual trusted factory, first setup account confirmation, durable recovery gate and single route activation");
-    return { get manager(){return manager}, router, service, gateway, owner, socket, directory, envelopes, actions, uploads, media, received, incoming, config, getDesired:()=>structuredClone(desired),setDesired:value=>{desired=structuredClone(value)},getProofs:()=>allStopProofs };
+    return { get manager(){return manager},get router(){return router},get service(){return service},get gateway(){return gateway},get owner(){return owner},socket,directory,envelopes,actions,uploads,media,received,incoming,config,getDesired:()=>structuredClone(desired),setDesired:propose,getBootstraps:()=>bootstraps,
+      reopen:async()=>{await service.shutdown();router=new QqRoutingAdapter(legacy,"blocked");const attach=router.attachModule.bind(router);router.attachModule=m=>{manager=m;attach(m)};service=createQqProductionHost({...serviceOptions,router,ownership:{scopeId:"synthetic-isolated-profile"}});gateway=new QqModuleActionGateway(service);owner={key:{},isAuthorized:()=>true}}
+    };
 }
 let watchdog = setTimeout(() => { console.error("HARNESS_TIMEOUT"); app.exit(2); }, 45000);
 (async () => {
     await app.whenReady();
+    const osStorage=createQqElectronSecureStoragePort();
+    if(!osStorage.isSecureAvailable()) {
+      assert.throws(()=>osStorage.encryptString("synthetic-only"),/secure-storage-unavailable/);
+      console.log("PASS actual Electron secure storage unavailable: fails closed, no basic_text/plaintext fallback; composition uses explicit synthetic AES fixture");
+    } else {
+      assert.equal(osStorage.decryptString(osStorage.encryptString("synthetic-only")),"synthetic-only");
+      console.log("PASS actual Electron secure storage synthetic roundtrip; composition still uses explicit synthetic AES fixture");
+    }
     const p = await startPair({ filename: "image.txt" });
     await wait(() => !!probeRelease);
     p.incoming(1, [{ type: "text", data: { text: "early" } }, { type: "image", data: { file: "picture.png" } }]);
@@ -213,9 +227,9 @@ let watchdog = setTimeout(() => { console.error("HARNESS_TIMEOUT"); app.exit(2);
     assert.equal((await confirmation).state,"committed");
     assert.equal((await p.manager.send({channel:"qq",chatType:"private",targetId:"30000",parts:[{kind:"text",text:"after-recovery"}]})).outcome,"sent");
     assert.equal(p.actions.filter(a=>JSON.stringify(a.params).includes("unanswered")).length,1);
-    assert.equal(p.getProofs(),1);
+    assert.equal(p.getBootstraps(),1);
     console.log("PASS crash unknown outcome, explicit gateway recovery, new process identity, no automatic replay");
-    const desired=p.getDesired();desired.config.configRevision++;desired.config.allowedPrivateUserIds=["40000"];p.setDesired(desired);
+    const desired=p.getDesired();desired.config.configRevision++;desired.config.allowedPrivateUserIds=["40000"];await p.setDesired(desired);
     const update=await p.gateway.execute({action:"preview-reconfigure"},p.owner);
     assert.equal(update.state,"preview-reconfigure");assert.ok(update.preview.changes.includes("allowlist"));
     const old=p.manager;
@@ -226,7 +240,7 @@ let watchdog = setTimeout(() => { console.error("HARNESS_TIMEOUT"); app.exit(2);
     updated.send(JSON.stringify({self_id:10000,post_type:"message",message_type:"private",message_id:4001,user_id:30000,time:1700000000,sender:{nickname:"revoked"},message:[{type:"text",data:{text:"must-drop"}}]}));
     updated.send(JSON.stringify({self_id:10000,post_type:"message",message_type:"private",message_id:4002,user_id:40000,time:1700000000,sender:{nickname:"allowed"},message:[{type:"text",data:{text:"allowed-new"}}]}));
     await wait(()=>observed.length===1);assert.equal(observed[0].text,"allowed-new");
-    p.setDesired({...p.getDesired(),enabled:false});
+    await p.setDesired({...p.getDesired(),enabled:false});
     const disable=await p.gateway.execute({action:"preview-reconfigure"},p.owner);
     assert.equal(disable.preview.desiredEnabled,false);
     assert.equal((await p.gateway.execute({action:"confirm-reconfigure",operationId:disable.preview.operationId,accountId:"10000",userConfirmed:true},p.owner)).state,"disabled");
@@ -235,6 +249,16 @@ let watchdog = setTimeout(() => { console.error("HARNESS_TIMEOUT"); app.exit(2);
     assert.equal((await p.gateway.execute({action:"preview-recovery"},p.owner)).ok,false);
     assert.equal(getQqStartupMode(p.directory),"blocked");
     console.log("PASS explicit reconfiguration revokes old allowlist, fresh process, confirmed disable and no implicit reenable");
+    await p.reopen();
+    assert.equal((await p.gateway.execute({action:"status"},p.owner)).state,"recovery-required");
+    assert.equal((await p.gateway.execute({action:"preview-recovery"},p.owner)).ok,false);
+    await p.setDesired({...p.getDesired(),enabled:true});
+    const again=await p.gateway.execute({action:"preview-reconfigure"},p.owner);assert.equal(again.state,"preview-reconfigure");
+    const before=p.manager;
+    const reenabled=p.gateway.execute({action:"confirm-reconfigure",operationId:again.preview.operationId,accountId:"10000",userConfirmed:true},p.owner);
+    await wait(()=>p.manager!==before&&p.manager.getState().phase==="waiting-backend");await connect();
+    assert.equal((await reenabled).state,"committed");assert.equal(p.getBootstraps(),1);
+    console.log("PASS clean-retired cross-host ownership inheritance without a new bootstrap, explicit reenable and actual new child identity");
 
 })().then(async () => { for (const f of cleanups.reverse())
     await f(); clearTimeout(watchdog); console.log("ALL_SIGNED_HOST_ELECTRON_PASS"); app.exit(0); }).catch(async (e) => { console.error(e); for (const f of cleanups.reverse()) {
