@@ -32,6 +32,7 @@ export function broadcastChanged(senderWebContents?: WebContents | null): void {
 }
 
 export function registerChatSurfaceIpc(scope: IpcScope) {
+  const withdrawalListeners = new Set<(sessionId: string, messageId: string) => void>();
   const transcriptStore = getConversationTranscriptStore(app.getPath("userData"));
   const conversationJournal = new ConversationJournalService({
     store: transcriptStore,
@@ -141,10 +142,13 @@ export function registerChatSurfaceIpc(scope: IpcScope) {
         console.error("[ChatsIpc] pending withdrawal failed", { sessionId, messageId, error });
         return { ok: false, error: "write-failed" } as const;
       }
-      if (result.ok && result.removed) broadcastChanged(event.sender);
+      if (result.ok && result.removed) {
+        for (const notify of withdrawalListeners) notify(sessionId, messageId);
+        broadcastChanged(event.sender);
+      }
       return result;
     },
   );
 
-  return { initialized, transcriptStore, conversationJournal, sessionMigration, pendingWithdrawalReconciliation };
+  return { withdrawalListeners, initialized, transcriptStore, conversationJournal, sessionMigration, pendingWithdrawalReconciliation };
 }

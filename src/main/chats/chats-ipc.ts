@@ -132,7 +132,7 @@ export async function registerChatsIpc(
   ipcOption?: IpcScope,
   options: {
     surface?: ReturnType<typeof registerChatSurfaceIpc>;
-    beforePendingClaim?: (mode: ConversationMode) => Promise<void>;
+    beforePendingClaim?: (mode: ConversationMode, signal: AbortSignal) => Promise<void>;
     titleService?: ConversationTitleService;
     llmClient?: LlmClient;
     isPrimaryModelBusy?: () => boolean;
@@ -153,7 +153,7 @@ export async function registerChatsIpc(
         onTitleChanged: () => broadcastChanged(),
       })
     : undefined);
-  const { initialized, transcriptStore, conversationJournal, sessionMigration, pendingWithdrawalReconciliation } =
+  const { withdrawalListeners, initialized, transcriptStore, conversationJournal, sessionMigration, pendingWithdrawalReconciliation } =
     options.surface ?? registerChatSurfaceIpc(ipc);
   await initialized;
   const transcriptCompactor = options.transcriptCompactor ?? new ConversationTranscriptCompactor({
@@ -402,14 +402,26 @@ export async function registerChatsIpc(
       return { ok: false, error: "invalid-payload" };
     }
     await pendingWithdrawalReconciliation;
+    let expectedHead: string | undefined;
     if (options.beforePendingClaim) {
       const session = await chatsStore.getSessionRecord(sessionId);
       if (!session) return { ok: false, error: "session-not-found" };
       if (session.pendingDispatch) return { ok: false, error: "already-dispatching" };
       if (!session.pendingMessages?.length) return { ok: true, claimed: false };
-      await options.beforePendingClaim(session.mode ?? (session.purpose === "proactive-chat" ? "chat" : "work"));
+      expectedHead = session.pendingMessages[0].id;
+      const controller = new AbortController();
+      const onWithdraw = (id: string, messageId: string) => {
+        if (id === sessionId && messageId === expectedHead) controller.abort();
+      };
+      withdrawalListeners.add(onWithdraw);
+      try {
+        await options.beforePendingClaim(session.mode ?? (session.purpose === "proactive-chat" ? "chat" : "work"), controller.signal);
+      } catch (error) {
+        if (!controller.signal.aborted) throw error;
+        return { ok: true, claimed: false };
+      } finally { withdrawalListeners.delete(onWithdraw); }
     }
-    const result = await sessionMigration.claimPendingMessage(sessionId);
+    const result = await sessionMigration.claimPendingMessage(sessionId, expectedHead);
     if (result.ok && result.claimed) {
       broadcastChanged(event.sender);
       await titleService?.schedule({

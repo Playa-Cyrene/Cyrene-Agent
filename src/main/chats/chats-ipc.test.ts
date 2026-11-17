@@ -315,7 +315,7 @@ describe("chats IPC mode filtering", () => {
       },
       registries: {
         activeRuns: { current: {} }, checkpointTriggers: { current: {} },
-        cancelRequestedSessions: { current: new Set<string>() }, eventUnsubscribers: { current: new Set<() => void>() },
+        cancelRequestedTurns: { current: new Set<string>() }, eventUnsubscribers: { current: new Set<() => void>() },
       },
       startRun: vi.fn(async () => undefined),
     });
@@ -492,18 +492,18 @@ describe("chats IPC mode filtering", () => {
 
   it("keeps the head withdrawable while its conversation dependencies are starting", async () => {
     const { registerChatsIpc } = await import("./chats-ipc");
-    let ready!: () => void;
-    const beforePendingClaim = vi.fn(() => new Promise<void>((resolve) => { ready = resolve; }));
+    const beforePendingClaim = vi.fn((_mode: string, signal: AbortSignal) => new Promise<void>((_, reject) => {
+      signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+    }));
     await registerChatsIpc(undefined, { beforePendingClaim });
     const event = { sender: {} };
     const session = await mocks.handlers.get(IPC.CHATS_CREATE)!(event, { mode: "chat" }) as { id: string };
     const entry = { id: "q1", rawContent: "hello", visibleContent: "hello", enqueuedAt: 1 };
     await mocks.handlers.get(IPC.CHATS_PENDING_ENQUEUE)!(event, { sessionId: session.id, entry });
     const claiming = mocks.handlers.get(IPC.CHATS_PENDING_CLAIM)!(event, session.id);
-    await vi.waitFor(() => expect(beforePendingClaim).toHaveBeenCalledWith("chat"));
+    await vi.waitFor(() => expect(beforePendingClaim).toHaveBeenCalledWith("chat", expect.any(AbortSignal)));
     expect(await mocks.handlers.get(IPC.CHATS_PENDING_LIST)!(event, session.id)).toMatchObject([{ id: "q1" }]);
     await mocks.handlers.get(IPC.CHATS_PENDING_REMOVE)!(event, { sessionId: session.id, messageId: "q1" });
-    ready();
     await expect(claiming).resolves.toEqual({ ok: true, claimed: false });
   });
 

@@ -167,6 +167,7 @@ interface SubmittingDraft {
   content: string;
   attachments: ComposerAttachment[];
   committedId?: string;
+  stop: { requested: boolean; pendingId?: string; sessionId?: string };
 }
 
 export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onOpenSettings?: () => void; scheduledTasksNavigation?: number } = {}) {
@@ -425,7 +426,7 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
   const modelBusyByModeRef = useRef<Partial<Record<ConversationMode, boolean>>>({});
   const lastTurnRevisionStartingRef = useRef(false);
   const activeAguiOffsRef = useRef(new Set<() => void>());
-  const cancelRequestedSessionsRef = useRef(new Set<string>());
+  const cancelRequestedTurnsRef = useRef(new Set<string>());
   // 会话待发队列投影：权威数据是主进程会话文件里的 pendingMessages，
   // 页面只持显示快照，入队/删除/认领/其他窗口变更后按稳定标识（id）对账刷新
   const submissions = useRef(new Map<string, SubmittingDraft>());
@@ -1090,7 +1091,7 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
       registries: {
         activeRuns: activeRunsBySession,
         checkpointTriggers: runCheckpointBySessionRef,
-        cancelRequestedSessions: cancelRequestedSessionsRef,
+        cancelRequestedTurns: cancelRequestedTurnsRef,
         eventUnsubscribers: activeAguiOffsRef,
       },
       startRun: runModel,
@@ -1226,8 +1227,7 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
   );
 
   async function ensureSession(targetMode: ConversationMode): Promise<string> {
-    const existing = activeSessionIdsRef.current[targetMode];
-    if (existing) return existing;
+    // 已有会话在按 Enter 时冻结，欢迎页提交始终创建自己的会话。
     const store = chatStore();
     if (!store) throw new Error(t("chatPage.errorChatStoreUnavailable"));
     const hasPendingWorkspace = !!pendingWorkspaceByMode[targetMode];
@@ -1259,7 +1259,7 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
       });
     }
     await refreshSessions(targetMode, false);
-    await selectSession(session.id, targetMode);
+    if (activeScopeRef.current === scopeKey) await selectSession(session.id, targetMode);
     return session.id;
   }
 
@@ -1495,7 +1495,7 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
       other.attachments.length === attachments.length && other.attachments.every((item, i) => item === attachments[i])
     )) return;
     const id = crypto.randomUUID();
-    const submission = { scope: scopeKey, content, attachments };
+    const submission: SubmittingDraft = { scope: scopeKey, content, attachments, stop: { requested: false } };
     updateSubmittingDraft(id, submission);
     try {
       await enqueueAndConsumeDraft(id, submission, parsedMessage);
@@ -1514,6 +1514,7 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
     const { content } = submission;
     // 提前反馈仅用于显示，模型变更、会话准备、入队成功仍是派发前置条件。
     await modelSwitcher.barrier();
+    if (submission.stop.requested) return;
     const message = parsedMessage.rawContent;
     activeEarlyTtsRef.current?.queue.cancel();
     activeEarlyTtsRef.current = null;
@@ -1581,15 +1582,21 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
     // 会话忙时留在队列等 run 结束消费；空闲时立即认领派发——
     // 发送瞬间的并发由主进程 claim 原子性与 SESSION_RUN_ACTIVE 守卫兜底。
     // 入队失败/异常时流程内部复用原稳定标识，重试靠主进程幂等去重不产生重复消息。
+    if (submission.stop.requested) return;
     const enqueued = await queueFlow.enqueue(sessionId, targetMode, {
       id: userMessageId,
       rawContent: message,
       visibleContent: visibleMessage,
       attachments: attachmentsForMessage,
       userSticker,
+      onEnqueuing: (id) => { submission.stop.sessionId = sessionId; submission.stop.pendingId = id; },
       onCommitted: (committedId) => updateSubmittingDraft(userMessageId, { ...submission, committedId }),
     });
     if (!enqueued) return;
+    if (submission.stop.requested) {
+      await stopPendingTurn(sessionId, submission.stop.pendingId!);
+      return;
+    }
     // 请求期间用户继续输入时不清掉新内容：仅当草稿仍是发送时的文本才清空；
     // 附件同样只清随消息发送的那些（空快照不清任何附件），期间新加的保留
     setDrafts((current) => (current[scopeKey] === content ? { ...current, [scopeKey]: "" } : current));
@@ -1654,11 +1661,32 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
     if (!result.ok) console.warn("[LearnExam] 批改请求入队失败:", result.error.message);
   }
 
+  async function stopPendingTurn(sessionId: string, messageId: string) {
+    const result = await chatStore()?.pendingRemove(sessionId, messageId);
+    if (!result?.ok) {
+      feedback.notice({ tone: "error", message: t("chatPage.errorQueueRemoveFailed", { error: result?.error ?? t("chatPage.unknownError") }) });
+      return;
+    }
+    if (!result.removed) await aguiApi()?.cancel({ sessionId, messageId });
+    await queueFlow.syncProjection(sessionId);
+    await queueFlow.consume(mode, sessionId);
+  }
+
   async function cancelCurrentRun() {
     const sessionId = activeSessionId;
-    if (!sessionId) return;
-    const activeRun = activeRunsBySession.current[sessionId];
-    if (!activeRun) return;
+    const activeRun = sessionId ? activeRunsBySession.current[sessionId] : undefined;
+    if (!sessionId || !activeRun) {
+      if (sessionId && waitingHead) {
+        await stopPendingTurn(sessionId, waitingHead.id);
+      } else {
+        const draft = localDrafts.find(item => !item.committedId);
+        if (draft) {
+          draft.stop.requested = true;
+          if (draft.stop.sessionId && draft.stop.pendingId) await stopPendingTurn(draft.stop.sessionId, draft.stop.pendingId);
+        }
+      }
+      return;
+    }
     updateMessage(activeRun.mode, activeRun.assistantId, {
       streaming: false,
       loading: false,
@@ -1666,11 +1694,9 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
       responseStarted: false,
     });
     if (!activeRun.runId) {
-      cancelRequestedSessionsRef.current.add(sessionId);
-      // 首次模型请求尚未返回 ack.runId 时，仍要立即通知主进程。
-      // 该窗口内当前窗口只有这一条 active run，桥层会取消它；ack 返回后
-      // 仍保留 cancelRequestedSessionsRef 以处理跨进程投递顺序。
-      await aguiApi()?.cancel();
+      cancelRequestedTurnsRef.current.add(activeRun.assistantId);
+      // ack 前使用已知的助手轮次标识，避免误停其他会话。
+      await aguiApi()?.cancel({ sessionId, assistantTurnId: activeRun.assistantId });
       return;
     }
     await aguiApi()?.cancel(activeRun.runId);
@@ -2174,6 +2200,7 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
             attachments={attachments}
             attachmentBusy={attachmentBusy}
             modelBusy={isCurrentScopeRunning}
+            waitingToSend={Boolean(waitingHead || showLocalWait)}
             onCompactPhaseChange={handleCompactPhaseChange}
             pendingQueue={currentPendingQueue}
             onChange={(value) => setDrafts((current) => ({ ...current, [scopeKey]: value }))}

@@ -56,6 +56,7 @@ export interface PendingQueueFlow {
       visibleContent: string;
       attachments?: ComposerAttachment[];
       userSticker?: string;
+      onEnqueuing?: (stableId: string) => void;
       onCommitted?: (stableId: string) => void;
     },
     notifyError?: boolean,
@@ -122,6 +123,7 @@ export function createPendingQueueFlow(getHost: () => PendingQueueFlowHost): Pen
       visibleContent: string;
       attachments?: ComposerAttachment[];
       userSticker?: string;
+      onEnqueuing?: (stableId: string) => void;
       onCommitted?: (stableId: string) => void;
     },
     notifyError = true,
@@ -167,6 +169,7 @@ export function createPendingQueueFlow(getHost: () => PendingQueueFlowHost): Pen
     });
     let result: Awaited<ReturnType<ChatStoreApi["pendingEnqueue"]>>;
     try {
+      entry.onEnqueuing?.(id);
       result = await store.pendingEnqueue(sessionId, {
         id,
         rawContent: entry.rawContent,

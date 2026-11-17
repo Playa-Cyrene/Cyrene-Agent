@@ -373,9 +373,9 @@ export async function createRuntimeDependencies(
     skillsReady(), waitForMcp(), pluginManager!.waitForStartupTools(() => true),
   ]);
 
-  async function waitForConversation(mode: ConversationMode, toolIds?: readonly string[] | "all"): Promise<void> {
+  async function waitForConversation(mode: ConversationMode, toolIds?: readonly string[] | "all", signal?: AbortSignal): Promise<void> {
     checkStartupActive(shutdown);
-    await readiness.waitFor("core-ready");
+    await readiness.waitFor("core-ready", signal);
     const settings = loadGeneralSettings();
     const chatTools = Object.entries(settings.toolModeOverrides)
       .filter(([id, overrides]) => settings.chatToolsEnabled && overrides.chat && shouldExposeSearchTool(id, settings.searchEngine))
@@ -396,9 +396,13 @@ export async function createRuntimeDependencies(
     }
     if (selected === "all" || selected.length) {
       tasks.push(pluginManager!.waitForStartupTools((id) => usesPrefix(id + "_")));
-      tasks.push(waitForMcp((id) => (toolIds !== undefined || shouldExposeSearchTool(id + "-", settings.searchEngine)) && usesPrefix(id + "-")));
+      tasks.push(waitForMcp((id) => {
+        if (id === PLAYWRIGHT_MCP_ID && !settings.playwrightMcpEnabled) return false;
+        if (id === FILESYSTEM_MCP_ID && !settings.filesystemMcpEnabled) return false;
+        return (toolIds !== undefined || shouldExposeSearchTool(id + "-", settings.searchEngine)) && usesPrefix(id + "-");
+      }));
     }
-    await Promise.all(tasks);
+    await waitForStartupTask(Promise.all(tasks), signal);
     checkStartupActive(shutdown);
   }
 
@@ -713,7 +717,7 @@ export async function createRuntimeDependencies(
         // 聊天会话存储 IPC（chats-store.initialize 建好 cyrene-chats 目录并加载 index）
         await registerChatsIpc(ipc, {
           surface,
-          beforePendingClaim: waitForConversation,
+          beforePendingClaim: (mode, signal) => waitForConversation(mode, undefined, signal),
           llmClient: services.llm,
           isPrimaryModelBusy: hasActiveConversationRun,
           beforeWorkspaceBindingChange: prepareBackgroundSessionMutation,

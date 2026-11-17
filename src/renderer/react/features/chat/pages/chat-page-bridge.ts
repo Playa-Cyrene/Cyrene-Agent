@@ -77,7 +77,7 @@ export interface ChatStoreApi {
     entry: Omit<PendingChatMessage, "enqueuedAt">,
   ) => Promise<{ ok: true; queue: PendingChatMessage[] } | { ok: false; error: string }>;
   pendingList: (id: string) => Promise<PendingChatMessage[] | null>;
-  pendingRemove: (id: string, messageId: string) => Promise<{ ok: boolean; error?: string }>;
+  pendingRemove: (id: string, messageId: string) => Promise<{ ok: boolean; removed?: boolean; error?: string }>;
   // 认领队首（主进程单次写入：待发条目→正式用户消息+派发状态）；run 确认后清除派发状态
   pendingClaim: (id: string) => Promise<PendingClaimResult>;
   pendingCompleteDispatch: (
@@ -182,7 +182,7 @@ export interface AguiApi {
     };
   }) => Promise<import("../../../../../shared/run-terminal").AguiRunAck>;
   onEvent: (callback: (event: AguiEvent) => void) => () => void;
-  cancel: (runId?: string) => Promise<unknown>;
+  cancel: (target?: import("../../../../../shared/run-terminal").AguiCancelTarget) => Promise<unknown>;
   // 落盘确认（单向通知）：终态消息写入会话存储后上报，供插件轮次事件使用
   reportRunPersisted?: (payload: { runId: string; finalMessageId?: string }) => void;
 }

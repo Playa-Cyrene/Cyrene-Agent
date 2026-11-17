@@ -79,7 +79,7 @@ type EnqueueLLMTask = <T>(
 
 export interface AgentRuntimeDeps {
   waitForPromptSkills(signal?: AbortSignal): Promise<void>;
-  waitForStartup(mode: PluginPromptMode, toolIds?: readonly string[]): Promise<void>;
+  waitForStartup(mode: PluginPromptMode, toolIds?: readonly string[], signal?: AbortSignal): Promise<void>;
   runtimeStateService: RuntimeStateService;
   llmClient: LlmClient;
   enqueueLLMTask: EnqueueLLMTask;
@@ -186,7 +186,7 @@ export function createAgentRuntime(rawDeps: AgentRuntimeDeps): AgentRuntime {
   function buildBuildOptionsDeps(toolIds?: readonly string[]): BuildOptionsDeps {
     return {
       waitForPromptSkills: rawDeps.waitForPromptSkills,
-      waitForStartup: (mode) => rawDeps.waitForStartup(mode, toolIds),
+      waitForStartup: (mode, signal) => rawDeps.waitForStartup(mode, toolIds, signal),
       loadModelSettings: (modelProfileId?: string) => resolveModelSettingsProfile(rawDeps.loadModelSettings(), modelProfileId),
       loadGeneralSettings: () => rawDeps.loadGeneralSettings(),
       loadUserProfile: () => rawDeps.loadUserProfile(),

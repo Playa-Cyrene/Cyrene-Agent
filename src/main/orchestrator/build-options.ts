@@ -83,7 +83,7 @@ import { normalizeMemoryMode } from "../memory/memory-mode";
  *  实际调用时由 index.ts 注入真实的强类型函数。这避免循环类型依赖。 */
 export interface BuildOptionsDeps {
   waitForPromptSkills(signal?: AbortSignal): Promise<void>;
-  waitForStartup(mode: ConversationMode): Promise<void>;
+  waitForStartup(mode: ConversationMode, signal?: AbortSignal): Promise<void>;
   loadModelSettings: (modelProfileId?: string) => ModelSettingsLite;
   loadGeneralSettings: () => StyleSettingsLite;
   loadUserProfile: () => UserProfileLite;
@@ -612,7 +612,8 @@ export async function buildAgentRunOptions(
     input.executionMode ?? ((input.style || "").startsWith("talk") ? "chat" : "work"),
   );
   const resolvedMode: ConversationMode = input.mode ?? executionMode;
-  await deps.waitForStartup(resolvedMode);
+  await deps.waitForStartup(resolvedMode, input.signal);
+  input.signal?.throwIfAborted();
   const channelRun = Boolean(input.channel && input.channel !== "desktop");
   // 会话级模型配置（consumer #4 的 request assembly boundary）：
   // 桌面 bridge 已按会话解析好（含 effective model），直接消费；

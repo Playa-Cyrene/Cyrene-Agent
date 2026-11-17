@@ -92,7 +92,7 @@ function createRegistries(): AgentRunRegistries {
   return {
     activeRuns: { current: {} },
     checkpointTriggers: { current: {} },
-    cancelRequestedSessions: { current: new Set<string>() },
+    cancelRequestedTurns: { current: new Set<string>() },
     eventUnsubscribers: { current: new Set<() => void>() },
   };
 }
@@ -1223,12 +1223,12 @@ describe("AgentRunController", () => {
     );
   });
 
-  it("ack 前已请求取消的会话：ack 返回后立即对新 runId 发起 cancel", async () => {
+  it("派发前取消的轮次不会调用模型或影响同会话的下一轮", async () => {
     const api = createFakeApi({ success: true, runId: "run-1" });
     const store = createFakeStore();
     const { host } = createRecordingHost();
     const registries = createRegistries();
-    registries.cancelRequestedSessions.current.add("session-1");
+    registries.cancelRequestedTurns.current.add("assistant-1");
     const input = createInput();
     const { promise } = launch(input, { api, store, host, registries });
     await flush();
@@ -1236,8 +1236,8 @@ describe("AgentRunController", () => {
     api.emit({ type: "RUN_FINISHED", runId: "run-1", result: { status: "success" } });
     await promise;
 
-    expect(api.cancel).toHaveBeenCalledWith("run-1");
-    expect(registries.cancelRequestedSessions.current.has("session-1")).toBe(false);
+    expect(api.run).not.toHaveBeenCalled();
+    expect(registries.cancelRequestedTurns.current.has("assistant-1")).toBe(false);
   });
 
   it("cancelled 终态：不提交正式回答，早播队列取消而非收尾", async () => {

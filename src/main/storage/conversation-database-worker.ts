@@ -266,7 +266,7 @@ async function execute(method: string, args: any[]): Promise<unknown> {
           if (pending) {
             chats.completePendingDispatch(id, pending.messageId);
           }
-          const result = chats.claimPendingMessage(id);
+          const result = chats.claimPendingMessage(id, args[1]);
           if (result.ok && result.claimed && result.userMessage) {
             reconcilePending(id);
             const request = database.db.prepare('SELECT run_id,status FROM conversation_requests WHERE conversation_id=? AND request_id=?').get(id, result.userMessage.id);

@@ -84,7 +84,7 @@ describe("build-options", () => {
     deps.waitForStartup = vi.fn(() => new Promise<void>(resolve => { release = resolve }))
     const settings = vi.spyOn(deps, "loadModelSettings")
     const run = buildAgentRunOptions({ channel: "wechat", executionMode: "soul-only", messages: [{ role: "user", content: "hi" }] }, deps)
-    expect(deps.waitForStartup).toHaveBeenCalledWith("chat")
+    expect(deps.waitForStartup).toHaveBeenCalledWith("chat", undefined)
     expect(settings).not.toHaveBeenCalled()
     release()
     await run
