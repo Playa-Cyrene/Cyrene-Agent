@@ -384,6 +384,49 @@ describe("gemini-4-hydrogen 请求体", () => {
   });
 });
 
+describe("qwen4-max 请求体", () => {
+  const qwenCap: ProviderCapability = {
+    id: "qwen",
+    displayName: "Qwen（通义千问）",
+    transport: "openai",
+    baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    authStyle: "bearer",
+    defaultModel: "qwen-max",
+    supportsTools: true,
+    supportsThinking: true,
+    thinkingField: "reasoning_content",
+    cacheStrategy: "auto",
+    testStrategy: "text",
+  };
+  const adapter = new OpenAICompatAdapter("qwen", qwenCap);
+  // 官方：reasoning_effort 支持 low/high/xhigh（默认 high），"none" 关闭思考；不再走 qwen3 的 enable_thinking 开关。
+  const qwenBody = (reasoning?: ReasoningPreference) => {
+    const http = adapter.buildRequest(
+      { model: "qwen4-max", messages: [{ role: "user", content: "hi" }] },
+      cfgOf(qwenCap, { model: "qwen4-max", ...(reasoning ? { reasoning } : {}) }),
+    );
+    return JSON.parse(http.body) as Record<string, unknown>;
+  };
+
+  test("未设置档位 → reasoning_effort=high，且不发 enable_thinking", () => {
+    const body = qwenBody();
+    expect(body.reasoning_effort).toBe("high");
+    expect("enable_thinking" in body).toBe(false);
+  });
+
+  test("所选 xhigh 照常发送", () => {
+    expect(qwenBody({ mode: "on", effort: "xhigh" }).reasoning_effort).toBe("xhigh");
+  });
+
+  test("+ off → reasoning_effort=none 关闭思考", () => {
+    expect(qwenBody({ mode: "off" }).reasoning_effort).toBe("none");
+  });
+
+  test("+ 不支持的 medium → 收敛到默认 high", () => {
+    expect(qwenBody({ mode: "on", effort: "medium" }).reasoning_effort).toBe("high");
+  });
+});
+
 describe("G3 reasoning=undefined（使用滑块默认档）", () => {
   test("mimo mimo-v2.5-pro + reasoning=undefined → 开启 thinking", () => {
     const adapter = new OpenAICompatAdapter("mimo", mimoCap);
