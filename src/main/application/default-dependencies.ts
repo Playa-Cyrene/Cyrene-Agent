@@ -138,7 +138,7 @@ import { MailAttachmentStore } from "../email/mail-attachment-store";
 
 import { configureNodeRequestProxy } from "../network/node-request-proxy";
 import { startCore } from "./core-bootstrap";
-import { startBackground } from "./background";
+import { createSharedStartupTasks, startBackground } from "./background";
 import { installUpdateShutdownFallback, type UpdateLifecycleLike } from "./electron-lifecycle";
 import type { ConversationMode } from "../../shared/chat-types";
 import { shouldExposeSearchTool } from "../orchestrator/search-backend-filter";
@@ -165,7 +165,7 @@ function configureProxyForNodeRequests(): Promise<void> {
   });
 }
 
-async function reconcileUserMemoryIndex(): Promise<void> {
+async function reconcileUserMemoryIndex(signal?: AbortSignal): Promise<void> {
   if (!isMemoryEnabled()) return;
   if (!isUserMemoryVectorStoreReady()) {
     console.warn("[Memory/RAG] reconciliation skipped: vector store is not writable");
@@ -175,12 +175,12 @@ async function reconcileUserMemoryIndex(): Promise<void> {
     getMemories: () => memoryStore.getAllL2(),
     getVectors: () => getEntriesBySource("user_memory"),
     backup: async () => backupMemoryRagFiles(app.getPath("userData")),
-    addVector: addL2MemoryVector,
+    addVector: (text, id, metadata) => addL2MemoryVector(text, id, metadata, signal),
     markSynced: (l2Id, ragId) => memoryStore.markL2SyncStatus(l2Id, "synced", ragId),
     markSyncFailed: (l2Id, error) => memoryStore.markL2SyncStatus(l2Id, "sync_failed", undefined, error),
     deleteVectors: (ids) => deleteUserMemoryVectors(ids),
     warn: (message, error) => console.warn(`[Memory/RAG] ${message}:`, error),
-  });
+  }, signal);
   logger.info(LogTag.RAG, "reconciliation:", report);
 }
 
@@ -280,23 +280,10 @@ export async function createRuntimeDependencies(
   shutdown.register({ id: "shell-completion-dispatch", phase: "quiesce", dispose: disposeShellCompletionDispatch });
   shutdown.register({ id: "shell-jobs", phase: "stopLocalResources", dispose: disposeAllShellJobs });
 
-  // Each dependency is initialized once. The background runner and first send share the same work.
-  function startupTask(name: string, run: () => void | Promise<void>) {
-    let task: Promise<void> | undefined;
-    return () => {
-      if (task) return task;
-      checkStartupActive(shutdown);
-      const unregister = shutdown.register({ id: "startup-" + name, phase: "quiesce", dispose: () => task });
-      task = Promise.resolve().then(run).catch((error) => {
-        console.warn(`[Startup] ${name} failed:`, error);
-        readiness.markDegraded({ capability: name, message: String(error), at: Date.now(), error });
-      }).finally(unregister);
-      return task;
-    };
-  }
+  const startupTask = createSharedStartupTasks(shutdown, readiness);
   const skillsReady = startupTask("skills", initSkills);
   const sandboxReady = startupTask("sandbox", () => initSandbox());
-  const memoryReady = startupTask("rag", async () => {
+  const memoryReady = startupTask("rag", async (signal) => {
     const modelSettings = loadModelSettings();
     const knowledgeBase = initializeKnowledgeBase(app.getPath("userData"));
     setMemoryMode(modelSettings.memoryMode);
@@ -316,13 +303,6 @@ export async function createRuntimeDependencies(
       }),
       onError: (conversationId, error) => logger.warn(LogTag.RAG, "wiki memory update failed:", conversationId, error),
     });
-    await enableWikiMemoryScheduler(modelSettings.memoryMode === "wiki");
-    await initWorldbook();
-    if (isMemoryEnabled()) {
-      await initVectorMemory("auto", undefined, undefined, modelSettings.embeddingModel, modelSettings.embeddingDimensions);
-    } else {
-      logger.info(LogTag.RAG, "vector memory disabled by settings");
-    }
     // 注册 RAG 落盘：受控退出在 flushPersistence 阶段刷盘；
     // Windows 会话结束（断电/强制关机）走同步紧急落盘兜底
     shutdown.register({
@@ -346,15 +326,29 @@ export async function createRuntimeDependencies(
       phase: "flushPersistence",
       dispose: async () => { await knowledgeBase.close(); },
     });
+    await enableWikiMemoryScheduler(modelSettings.memoryMode === "wiki");
+    signal.throwIfAborted();
+    await initWorldbook();
+    signal.throwIfAborted();
+    if (isMemoryEnabled()) {
+      await initVectorMemory("auto", undefined, undefined, modelSettings.embeddingModel, modelSettings.embeddingDimensions);
+      if (signal.aborted) await disposeVectorMemory();
+    } else {
+      logger.info(LogTag.RAG, "vector memory disabled by settings");
+    }
+    signal.throwIfAborted();
     logger.info(LogTag.RAG, "RAG initialized OK");
   });
-  const vectorReady = startupTask("vector-memory", async () => {
+  const vectorReady = startupTask("vector-memory", async (signal) => {
     await memoryReady();
     if (!isMemoryEnabled() || shutdown.isStopping()) return;
     try {
-      await reconcileUserMemoryIndex();
+      await reconcileUserMemoryIndex(signal);
     } finally {
-      if (!shutdown.isStopping() && isMemoryEnabled()) await initReranker(loadModelSettings().rerankerMode);
+      if (!signal.aborted && isMemoryEnabled()) {
+        await initReranker(loadModelSettings().rerankerMode);
+        if (signal.aborted) resetReranker();
+      }
     }
   });
   let momentsReady: Promise<void> = Promise.resolve();

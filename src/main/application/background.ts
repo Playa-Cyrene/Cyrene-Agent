@@ -11,6 +11,7 @@
  * 全部组结算后推进 ready；失败进入 degradedReasons，不阻塞聊天。
  */
 
+import { checkStartupActive } from "./startup-cancellation";
 import type { StartupReadiness } from "./readiness";
 import type { ShutdownCoordinator } from "./shutdown";
 import type { CoreResult } from "./core-bootstrap";
@@ -122,6 +123,30 @@ export function createBackgroundTaskRunner(): BackgroundTaskRunner {
       }
       await Promise.race(waiters);
     },
+  };
+}
+
+/** 首条消息和后台预热共享同一次初始化。 */
+export function createSharedStartupTasks(shutdown: ShutdownCoordinator, readiness: StartupReadiness) {
+  const runner = createBackgroundTaskRunner();
+  shutdown.register({ id: "shared-startup-tasks", phase: "quiesce", dispose: (signal) => runner.stop(signal) });
+  return function startupTask(name: string, run: (signal: AbortSignal) => void | Promise<void>) {
+    let task: Promise<void> | undefined;
+    return () => {
+      checkStartupActive(shutdown);
+      return task ??= runner.run(name, async (signal) => {
+        await Promise.resolve();
+        signal.throwIfAborted();
+        try {
+          await run(signal);
+        } catch (error) {
+          signal.throwIfAborted();
+          console.warn(`[Startup] ${name} failed:`, error);
+          readiness.markDegraded({ capability: name, message: String(error), at: Date.now(), error });
+        }
+        signal.throwIfAborted();
+      });
+    };
   };
 }
 
