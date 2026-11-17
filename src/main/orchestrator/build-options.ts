@@ -82,6 +82,7 @@ import { normalizeMemoryMode } from "../memory/memory-mode";
  *  类型故意用宽签名（unknown / 任意 shape）—— 因为 build-options 是纯消费者，
  *  实际调用时由 index.ts 注入真实的强类型函数。这避免循环类型依赖。 */
 export interface BuildOptionsDeps {
+  waitForPromptSkills(signal?: AbortSignal): Promise<void>;
   waitForStartup(mode: ConversationMode): Promise<void>;
   loadModelSettings: (modelProfileId?: string) => ModelSettingsLite;
   loadGeneralSettings: () => StyleSettingsLite;
@@ -861,6 +862,11 @@ export async function buildAgentRunOptions(
       customStyle: styleSettings.customStyle as CustomStyleConfig,
     })
     : undefined;
+  const lastUserContent = slimMessages.filter((message) => message.role === "user").at(-1)?.content;
+  if (resolvedMode === "chat" && (isPlanReadOnly(conversationId)
+    || (typeof lastUserContent === "string" && lastUserContent.trimStart().startsWith("/")))) {
+    await deps.waitForPromptSkills(input.signal);
+  }
   const modeEnabledTools = deps.toolRegistry.getEnabledToolsForMode(resolvedMode, styleSettings.toolModeOverrides);
   // 计划模式只读强制（第一层，权限层）：PLAN_DISCUSSING/PLAN_REVIEW 期间
   // 工具列表在 run 组装时就收敛到 read-only 策略允许的风险级。

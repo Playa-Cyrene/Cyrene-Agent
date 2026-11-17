@@ -142,7 +142,7 @@ import { startBackground } from "./background";
 import { installUpdateShutdownFallback, type UpdateLifecycleLike } from "./electron-lifecycle";
 import type { ConversationMode } from "../../shared/chat-types";
 import { shouldExposeSearchTool } from "../orchestrator/search-backend-filter";
-import { checkStartupActive } from "./startup-cancellation";
+import { waitForStartupTask, checkStartupActive } from "./startup-cancellation";
 import type { ApplicationDependencies } from "./application";
 
 function broadcastToAuxWindows(channel: string, payload: unknown): void {
@@ -461,6 +461,9 @@ export async function createRuntimeDependencies(
 
         // 内置工具配置 getter
         bootstrapConfigGetters({
+          waitForCallContext: (signal) => waitForStartupTask(Promise.all([
+            skillsReady(), loadModelSettings().memoryMode === "vector" ? vectorReady() : memoryReady(),
+          ]), signal),
           loadGeneralSettings,
         });
 
@@ -573,6 +576,7 @@ export async function createRuntimeDependencies(
       createRuntime: (services) => {
         const transcriptCompactor = getTranscriptCompactor();
         return createAgentRuntime({
+          waitForPromptSkills: (signal) => waitForStartupTask(skillsReady(), signal),
           waitForStartup: waitForConversation,
           runtimeStateService: services.runtimeState,
           llmClient: services.llm,
