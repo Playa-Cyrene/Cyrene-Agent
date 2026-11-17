@@ -1,8 +1,5 @@
 import { lstatSync } from "node:fs";
 import { join } from "node:path";
-import { QqMigrationStore } from "./migration-store";
-import { QqRecoveryStore } from "./recovery-store";
-import { QqFirstSetupStore } from "./first-setup-store";
 
 /** Fixed host-owned locations, never renderer input. Reading never creates a store. */
 export function qqLifecyclePaths(userDataPath: string): { migration: string; firstSetup: string; recovery: string } {
@@ -16,15 +13,13 @@ export function qqLifecyclePaths(userDataPath: string): { migration: string; fir
 export function getQqStartupMode(userDataPath: string): "legacy" | "blocked" {
   try {
     const paths = qqLifecyclePaths(userDataPath);
-    for (const [root, lock] of [[paths.migration, "migration-lock"], [paths.firstSetup, "setup-lock"], [paths.recovery, "recovery-lock"]]) {
-      try {
-        const stat = lstatSync(root);
-        if (stat.isSymbolicLink() || !stat.isDirectory()) return "blocked";
-      } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") return "blocked"; }
-      try { lstatSync(join(root, lock)); return "blocked"; }
+    for (const root of Object.values(paths)) {
+      // Even an empty/valid-marked directory is an ambiguous durable artifact:
+      // a selected state may have been lost. Never infer "never configured" from
+      // a missing state file and restart legacy. Read-only; do not repair/delete.
+      try { lstatSync(root); return "blocked"; }
       catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") return "blocked"; }
     }
-    if (new QqMigrationStore(paths.migration).read() || new QqFirstSetupStore(paths.firstSetup).read() || new QqRecoveryStore(paths.recovery).read()) return "blocked";
     return "legacy";
   } catch { return "blocked"; }
 }

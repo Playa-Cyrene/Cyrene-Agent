@@ -50,3 +50,10 @@ it("blocks recovery locks before the first durable state and never deletes them"
   expect(getQqStartupMode(directory)).toBe("blocked");
   expect(existsSync(join(path, "recovery-lock"))).toBe(true);
 });
+
+it.each(["migration", "firstSetup", "recovery"] as const)("blocks an existing %s directory even when its state was lost", (kind) => {
+  const directory = root(), path = qqLifecyclePaths(directory)[kind];
+  mkdirSync(path);
+  expect(getQqStartupMode(directory)).toBe("blocked");
+  expect(existsSync(path)).toBe(true);
+});
