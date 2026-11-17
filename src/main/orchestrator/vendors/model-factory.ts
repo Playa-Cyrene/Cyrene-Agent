@@ -5,6 +5,7 @@ import { jsonSchema, tool, type ModelMessage, type ToolSet } from "ai";
 import { AgentRuntimeError } from "../agent-runtime-error";
 import { modelMessageOrigin, projectModelHistory, type HistoryProjectionDiagnostic } from "./model-history";
 import { dumpRequest } from "./prompt-dump";
+import { resolveToolResultImage } from "../tool-result-images";
 import { createStreamActivityFetch } from "./sdk-stream/stream-activity-fetch";
 import type { ChatRequest, ChatVendorAdapter, VendorConfig } from "./types";
 
@@ -41,6 +42,8 @@ export function prepareModelCall(input: {
   const policy = JSON.parse(policyHttp.body) as Record<string, unknown>;
   const controls = Object.fromEntries(Object.entries(policy).filter(([key]) => !STRUCTURAL_FIELDS.has(key)));
   const delegate = input.onStreamActivity ? createStreamActivityFetch(input.onStreamActivity, fetch) : fetch;
+  // 投影时读出的工具截图数据；请求 dump 落盘前据此替换掉。
+  const toolImageData = new Set<string>();
   const compatibilityFetch: typeof fetch = async (url, init) => {
     const original = new Request(url, init);
     const body = JSON.parse(await original.text()) as Record<string, unknown>;
@@ -58,7 +61,8 @@ export function prepareModelCall(input: {
       name === "send_email" || name === "email_create_draft" || name.startsWith("gmail_"));
     // Requests and responses in a run with email tools can contain private mail data.
     // Do not write either side of that exchange to the optional prompt dump.
-    input.onRequest?.(hasEmailTools ? "" : dumpRequest({ transport: adapter.transport, endpoint: policyHttp.url, body }));
+    input.onRequest?.(hasEmailTools ? "" : dumpRequest({ transport: adapter.transport, endpoint: policyHttp.url, body,
+      redactedImageData: toolImageData }));
     const headers = new Headers(original.headers);
     for (const [name, value] of Object.entries(policyHttp.headers)) headers.set(name, value);
     const response = await delegate(policyHttp.url, { method: "POST", headers, body: JSON.stringify(body), signal: original.signal });
@@ -67,7 +71,11 @@ export function prepareModelCall(input: {
   };
   const baseURL = new URL(policyHttp.url).origin;
   const origin = modelMessageOrigin(adapter, { ...config, model: request.model });
-  const messages = projectModelHistory(request.messages, origin, input.onHistoryDiagnostic);
+  const messages = projectModelHistory(request.messages, origin, input.onHistoryDiagnostic, (image) => {
+    const loaded = resolveToolResultImage(image);
+    if (loaded) toolImageData.add(loaded.data);
+    return loaded;
+  });
   applyAnthropicCache(messages, adapter, request.model);
   const openai = adapter.transport === "responses"
     ? createOpenAI({ baseURL, apiKey: config.apiKey, fetch: compatibilityFetch })

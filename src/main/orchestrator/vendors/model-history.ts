@@ -3,6 +3,10 @@ import { modelMessageSchema, type AssistantContent, type ModelMessage } from "ai
 import type { ChatMessage, ChatMessageContent, ChatVendorAdapter, ModelMessageOrigin, ToolCall, VendorConfig } from "./types";
 import { AgentRuntimeError } from "../agent-runtime-error";
 import { resolveApiEndpoint } from "../../../shared/api-endpoint";
+import type { LoadedToolResultImage, ToolResultImageResolver } from "../tool-result-images";
+
+/** 随请求发送的工具图片上限，其余以文字说明代替。 */
+export const MAX_LIVE_TOOL_IMAGES = 3;
 
 export interface HistoryProjectionDiagnostic {
   code: "HISTORY_PORTABLE_PROJECTION";
@@ -96,7 +100,25 @@ type AssistantPart = Exclude<AssistantContent, string>[number];
 export function projectModelHistory(
   history: ChatMessage[], target: ModelMessageOrigin | undefined,
   onDiagnostic?: (diagnostic: HistoryProjectionDiagnostic) => void,
+  resolveToolImage?: ToolResultImageResolver,
 ): ModelMessage[] {
+  // 只有最近几张工具图片随请求发送：连续操作会产生大量截图，全部重发会迅速占满上下文，
+  // 而较早的截图反映的界面早已过期。
+  const liveToolImages = new Set(history.flatMap(message => message.role === "tool" ? message.toolImages ?? [] : [])
+    .slice(-MAX_LIVE_TOOL_IMAGES));
+  // Chat Completions 的 tool 消息只能是文本，图片改由紧随其后的 user 消息携带；
+  // 必须等同一轮的 tool 消息全部结束后再插入，否则会破坏 tool_calls 与结果的配对。
+  let deferredToolImages: Array<{ toolName: string; image: LoadedToolResultImage }> = [];
+  const flushDeferredToolImages = (): void => {
+    if (deferredToolImages.length === 0) return;
+    const names = [...new Set(deferredToolImages.map(entry => entry.toolName))].join("、");
+    result.push({ role: "user", content: [
+      { type: "text", text: `[以下是工具 ${names} 返回的图片，属于工具结果，不是用户的新消息]` },
+      ...deferredToolImages.map(({ image }) => ({ type: "file" as const, mediaType: image.mediaType,
+        data: { type: "data" as const, data: image.data } })),
+    ] });
+    deferredToolImages = [];
+  };
   const diagnostic: HistoryProjectionDiagnostic = { code: "HISTORY_PORTABLE_PROJECTION", transport: target?.transport ?? "openai",
     nativeMessages: 0, portableMessages: 0, omittedPrivateParts: 0, legacyMessages: 0 };
   const result: ModelMessage[] = [];
@@ -115,6 +137,7 @@ export function projectModelHistory(
   };
   for (const original of history) {
     const message = recoverPortableMessage(original);
+    if (message.role !== "tool") flushDeferredToolImages();
     if (message.role === "system") {
       result.push({ role: "system", content: contentText(message.content) });
     } else if (message.role === "user") {
@@ -131,8 +154,28 @@ export function projectModelHistory(
       const id = message.toolCallId;
       const name = id ? callNames.get(id) : undefined;
       if (!id || !name) throw new AgentRuntimeError("E_MODEL_RESPONSE_PARSE_FAILED", "历史工具结果缺少配对的调用");
+      const notes: string[] = [];
+      const loaded: LoadedToolResultImage[] = [];
+      for (const image of message.toolImages ?? []) {
+        if (!liveToolImages.has(image)) {
+          notes.push("[较早的截图已从上下文移除；需要查看当前界面请重新截图]");
+          continue;
+        }
+        const data = target ? resolveToolImage?.(image) : undefined;
+        if (data) loaded.push(data);
+        else notes.push("[截图文件不可用；需要查看当前界面请重新截图]");
+      }
+      const nativeImages = target?.transport === "anthropic" || target?.transport === "responses";
+      if (loaded.length > 0 && !nativeImages) {
+        notes.push("[图片见紧随其后的消息]");
+        deferredToolImages.push(...loaded.map(image => ({ toolName: name, image })));
+      }
+      const text = [contentText(message.content), ...notes].join("\n");
       result.push({ role: "tool", content: [{ type: "tool-result", toolCallId: wireId(id), toolName: name,
-        output: { type: "text", value: contentText(message.content) } }] });
+        output: loaded.length > 0 && nativeImages
+          ? { type: "content", value: [{ type: "text", text }, ...loaded.map(image => ({ type: "file" as const,
+            mediaType: image.mediaType, data: { type: "data" as const, data: image.data } }))] }
+          : { type: "text", value: text } }] });
     } else {
       const calls = message.toolCalls ?? [];
       const portable: AssistantPart[] = [];
@@ -189,6 +232,7 @@ export function projectModelHistory(
       if (portable.length && content.length) result.push({ role: "assistant", content });
     }
   }
+  flushDeferredToolImages();
   onDiagnostic?.(diagnostic);
   return result;
 }
