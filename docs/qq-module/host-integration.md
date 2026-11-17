@@ -41,3 +41,5 @@ ALL-driver证明必须覆盖旧模块、legacy监听和前一主机残留进程�
 验收链：gateway预览/确认 → 安装真实完整依赖闭包 → resolver重验 → 实际utilityProcess → 首次配置实际账号验证 → 持久选择 → 路由入站。随后测试早到PNG探测等待与文本顺序/去重、1MiB文件、重连旧任务拒发、崩溃未知发送、gateway显式恢复与新进程账号重验、不重放、受控白名单变更后撤销旧用户、确认禁用和拒绝隐式重新启用。
 
 最新脚本的凭据加密使用明确的临时 AES fixture，真实 safeStorage 不可用时验证失败关闭；全停机由真实 utilityProcess 退出追踪，首次历史边界仅使用隔离 fixture 的明确 bootstrap。**这不验证真实Windows密钥环/ACL、真实NapCat或安装器/升级流程**。真实桌面截图交互与签名发行政策仍需验收。满足这些条件前保持草稿分支，不合并或发布。
+
+完整真实 current-host legacy listener → 新 QFCA utilityProcess 升级及失败/关闭场景见 [upgrade-integration.md](./upgrade-integration.md)。这是合成数据的独立 Electron 验收，不代表 Windows 旧安装器升级已通过。
