@@ -189,6 +189,24 @@ describe("G1 OpenAI chatgpt + reasoning 透传", () => {
     expect(JSON.parse(http.body).reasoning_effort).toBe("medium");
   });
 
+  // 官方推理指南：GPT-6.2 Astra / Sol 收到 effort=none 会拒绝请求。
+  test.each(["gpt-6.2-astra", "gpt-6.2-sol"])("%s + off → 不发送 none，回到默认 medium", (model) => {
+    const http = adapter.buildRequest(
+      { model, messages: [{ role: "user", content: "hi" }] },
+      cfgOf(chatgptCap, { model, reasoning: { mode: "off" } }),
+    );
+    expect(JSON.parse(http.body).reasoning_effort).toBe("medium");
+  });
+
+  test("gpt-6.2-sol 经 Responses + pro mode → reasoning:{effort, mode:'pro'}", () => {
+    const responses = new ResponsesAdapter("chatgpt", chatgptCap);
+    const http = responses.buildRequest(
+      { model: "gpt-6.2-sol", messages: [{ role: "user", content: "hi" }] },
+      cfgOf(chatgptCap, { model: "gpt-6.2-sol", reasoning: { mode: "on", effort: "high", proMode: true } }),
+    );
+    expect(JSON.parse(http.body).reasoning).toEqual({ effort: "high", mode: "pro" });
+  });
+
   test("gpt-4o + reasoning=auto → body 中无 reasoning_effort（非推理模型）", () => {
     const http = adapter.buildRequest(
       { model: "gpt-4o", messages: [{ role: "user", content: "hi" }] },

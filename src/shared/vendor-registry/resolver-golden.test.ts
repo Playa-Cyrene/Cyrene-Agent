@@ -172,6 +172,18 @@ describe("resolveReasoningCapability — 行为基准", () => {
     expect(row("kimi-k3")).toContain("历史未核验");
   });
 
+  // 预期值按官方推理指南与 GPT-6.2 迁移指南独立填写（核验 2026-11-18），不从注册表复制。
+  test.each(["gpt-6.2-astra", "gpt-6.2-sol"])("chatgpt + %s → 五档 effort，默认 medium，拒绝 none 不可关闭，支持 pro mode", (model) => {
+    const cap = resolveReasoningCapability("chatgpt", model);
+    expect(cap.control).toBe("effort");
+    expect(cap.requestStyle).toBe("openai-effort");
+    expect(cap.supportedEfforts).toEqual(["low", "medium", "high", "xhigh", "max"]);
+    expect(cap.defaultEffort).toBe("medium");
+    expect(cap.supportsDisable).toBe(false);
+    expect(cap.supportsProMode).toBe(true);
+    expect(resolveReasoningCapability("unknown-provider", model).supportsDisable).toBe(false);
+  });
+
   // 预期值按官方文档独立填写（GPT-6.1 Terra / Sol 模型页与最新模型指南，核验 2026-10-28），不从注册表复制。
   test("chatgpt + gpt-6.1-terra → 五档 effort，默认 medium，可关闭（none），未写明 pro mode", () => {
     const cap = resolveReasoningCapability("chatgpt", "gpt-6.1-terra");

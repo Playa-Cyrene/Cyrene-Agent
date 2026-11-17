@@ -47,6 +47,8 @@ const NOTES_EN: Readonly<Record<string, string>> = {
   "历史清单保留名称；不改写用户请求。": "Legacy catalog entry; the model name is sent as provided.",
   "现有采样白名单未覆盖该型号。": "The existing sampling allowlist does not cover this model.",
   "2026-10 发布的快速款；Chat Completions 下不支持工具调用，需走 Responses（预设默认）。": "Fast model released 2026-10; tool calling is unavailable over Chat Completions and requires Responses (the preset default).",
+  "2026-11 发布的旗舰款；Chat Completions 下不支持工具调用，需走 Responses（预设默认）。": "Flagship model released 2026-11; tool calling is unavailable over Chat Completions and requires Responses (the preset default).",
+  "2026-11 发布的日常工作款；Chat Completions 下不支持工具调用，需走 Responses（预设默认）。": "Everyday-work model released 2026-11; tool calling is unavailable over Chat Completions and requires Responses (the preset default).",
   "K3 的后训练版本（2026-10 发布）；1M 上下文，原生视觉理解。": "A post-trained version of K3 (released 2026-10); 1M context with native vision understanding.",
   "K3.1 Pro 的高速版，约 2～3 倍输出速度。": "The high-speed variant of K3.1 Pro, with roughly 2–3× the output speed.",
   "官方说明 temperature/top_p 为固定值、建议不显式传入；未加采样白名单即不注入采样参数。": "Officially, temperature/top_p are fixed and should not be passed; with no sampling allowlist, no sampling parameters are sent.",
