@@ -187,3 +187,61 @@ it("shows already committed activation on reopening without legacy or install cl
   expect(document.body.textContent).toContain("当前运行实例已激活");
   expect(action).toHaveBeenCalledTimes(2);
 });
+it("requires preview and typed account before recovery reactivation, without automatic replay", async () => {
+  const action = vi.fn().mockResolvedValueOnce({ ok: true, state: "recovery-required" })
+    .mockResolvedValueOnce({ ok: true, state: "preview-recovery", preview: { operationId: "r1", packageId, accountId: "10000" } })
+    .mockResolvedValueOnce({ ok: true, state: "committed" });
+  await configured(action); expect(action).toHaveBeenCalledTimes(1); expect(button("预览安装候选")).toBeUndefined();
+  await click(button("预览恢复并重新激活")); expect(button("明确确认").disabled).toBe(true);
+  expect(document.body.textContent).toContain("不会重放旧消息");
+  await enter("请输入所显示的账号确认：", "10000"); await click(button("明确确认"));
+  expect(action).toHaveBeenLastCalledWith({ action: "confirm-recovery", operationId: "r1", accountId: "10000", userConfirmed: true });
+  expect(document.body.textContent).toContain("当前运行实例已激活");
+});
+it("shows host-owned disable plan and only sends one-shot reconfiguration consent", async () => {
+  const action = vi.fn().mockResolvedValueOnce({ ok: true, state: "committed" })
+    .mockResolvedValueOnce({ ok: true, state: "preview-reconfigure", preview: { operationId: "c1", packageId, accountId: "10000", desiredEnabled: false, changes: ["enabled", "credential"] } })
+    .mockResolvedValueOnce({ ok: true, state: "disabled" });
+  await configured(action); await click(button("预览受控配置变更"));
+  expect(document.body.textContent).toContain("安全停止所有 QQ 驱动并保持停用");
+  expect(document.body.textContent).toContain("主机保存的凭据变更（不显示凭据）");
+  await enter("请输入所显示的账号确认：", "10000"); await click(button("明确确认"));
+  expect(action).toHaveBeenLastCalledWith({ action: "confirm-reconfigure", operationId: "c1", accountId: "10000", userConfirmed: true });
+  expect(document.body.textContent).toContain("QQ 模块已安全停用"); expect(button("预览恢复并重新激活")).toBeUndefined();
+});
+it("keeps disabled state explicit on reopening and cancels a reconfigure preview without applying it", async () => {
+  const action = vi.fn().mockResolvedValueOnce({ ok: true, state: "disabled" })
+    .mockResolvedValueOnce({ ok: true, state: "preview-reconfigure", preview: { operationId: "c2", packageId, accountId: "10000", desiredEnabled: true, changes: ["enabled", "allowlist"] } })
+    .mockResolvedValueOnce({ ok: true, state: "cancelled" });
+  await configured(action); expect(document.body.textContent).not.toContain("当前版本仍保留原内建 QQ 接入");
+  await click(button("预览受控配置变更")); expect(document.body.textContent).toContain("白名单变更");
+  await click(button("取消预览")); expect(action).toHaveBeenLastCalledWith({ action: "cancel", operationId: "c2" });
+  expect(action.mock.calls.some(([c]) => c.action === "confirm-reconfigure")).toBe(false);
+});
+
+it("offers controlled reconfiguration from a new-host recovery-required status without assuming disabled proof", async () => {
+  const action = vi.fn().mockResolvedValueOnce({ ok: true, state: "recovery-required" })
+    .mockResolvedValueOnce({ ok: true, state: "preview-reconfigure", preview: { operationId: "new-host", packageId, accountId: "10000", desiredEnabled: true, changes: ["enabled", "credential"] } })
+    .mockResolvedValueOnce({ ok: true, state: "committed" });
+  await configured(action);
+  expect(document.body.textContent).toContain("需要恢复检查");
+  expect(document.body.textContent).not.toContain("QQ 模块已安全停用");
+  expect(action).toHaveBeenCalledTimes(1);
+  await click(button("预览受控配置变更")); expect(button("明确确认").disabled).toBe(true);
+  expect(action).toHaveBeenLastCalledWith({ action: "preview-reconfigure" });
+  await enter("请输入所显示的账号确认：", "10000"); await click(button("明确确认"));
+  expect(action).toHaveBeenLastCalledWith({ action: "confirm-reconfigure", operationId: "new-host", accountId: "10000", userConfirmed: true });
+  expect(document.body.textContent).toContain("当前运行实例已激活");
+});
+it("does not treat rejected recovery as activation and permits reconfiguration after a fresh status check", async () => {
+  const action = vi.fn().mockResolvedValueOnce({ ok: true, state: "recovery-required" })
+    .mockResolvedValueOnce({ ok: false, error: "recovery-required" })
+    .mockResolvedValueOnce({ ok: true, state: "recovery-required" });
+  await configured(action); await click(button("预览恢复并重新激活"));
+  expect(document.body.textContent).not.toContain("当前运行实例已激活");
+  expect(action.mock.calls.some(([c]) => c.action.startsWith("confirm-"))).toBe(false);
+  await click(document.querySelector<HTMLButtonElement>(".ant-modal-footer button")!);
+  await click(button("查看模块安装条件"));
+  expect(button("预览受控配置变更").disabled).toBe(false);
+  expect(document.body.textContent).toContain("需要恢复检查");
+});

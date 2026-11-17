@@ -57,7 +57,14 @@ async function startPair(options = {}) {
     let manager;
     const attach=router.attachModule.bind(router);
     router.attachModule=m=>{manager=m;attach(m)};
-    const service=new QqModuleHostService({userDataPath:directory,router,verificationContext:()=>context,candidate:()=>candidate,readLegacySettings:()=>{throw Error("first setup must not read old settings")},secureStorage:{isSecureAvailable:()=>true,decryptString:()=>{throw Error("not used")}},appName:"isolated synthetic harness",readFirstConfiguration:id=>({...config.config,expectedSelfId:id}),readFirstCredential:()=>config.credentials.accessToken,verifyNoLegacyDriver:async()=>true,backendReconnectTimeoutMs:12000});
+    let desired={config:structuredClone(config.config),enabled:true,credentialRevision:"synthetic-secure-generation-1"};
+    let allStopProofs=0;
+    // Fixture owns every process in this isolated case. Real deployment must supply
+    // independently reviewed previous-host/process/listener absence evidence.
+    const lifecycle={readDesired:()=>structuredClone(desired),readCredential:()=>config.credentials.accessToken,
+      verifyAllDriversStopped:async()=>{allStopProofs++;return !manager || manager.isStoppedForMigration()},
+      verifyNoOtherDrivers:async()=>true};
+    const service=new QqModuleHostService({lifecycle,userDataPath:directory,router,verificationContext:()=>context,candidate:()=>candidate,readLegacySettings:()=>{throw Error("first setup must not read old settings")},secureStorage:{isSecureAvailable:()=>true,decryptString:()=>{throw Error("not used")}},appName:"isolated synthetic harness",readFirstConfiguration:id=>({...config.config,expectedSelfId:id}),readFirstCredential:()=>config.credentials.accessToken,verifyNoLegacyDriver:async()=>true,backendReconnectTimeoutMs:12000});
     const gateway=new QqModuleActionGateway(service),owner={key:{},isAuthorized:()=>true};
     const preview=await gateway.execute({action:"preview-install"},owner);
     assert.equal(preview.state,"preview-install");assert.equal(manager,undefined);
@@ -134,7 +141,7 @@ async function startPair(options = {}) {
     const incoming = (id, message) => socket.send(JSON.stringify({ self_id: 10000, post_type: "message", message_type: "private", message_id: id, user_id: 30000, time: 1700000000, sender: { nickname: "Isolated fixture" }, message }));
     assert.equal((await activating).state,"committed");
     console.log("PASS signed package install, actual trusted factory, first setup account confirmation, durable recovery gate and single route activation");
-    return { manager, router, service, socket, directory, envelopes, actions, uploads, media, received, incoming, config };
+    return { get manager(){return manager}, router, service, gateway, owner, socket, directory, envelopes, actions, uploads, media, received, incoming, config, getDesired:()=>structuredClone(desired),setDesired:value=>{desired=structuredClone(value)},getProofs:()=>allStopProofs };
 }
 let watchdog = setTimeout(() => { console.error("HARNESS_TIMEOUT"); app.exit(2); }, 45000);
 (async () => {
@@ -190,16 +197,45 @@ let watchdog = setTimeout(() => { console.error("HARNESS_TIMEOUT"); app.exit(2);
     assert.equal((await pending).outcome, "unknown");
     assert.equal(p.manager.getState().phase, "crashed");
     reconnect.terminate();
-    await p.manager.restart();
-    const restarted = new WebSocket(`ws://127.0.0.1:${p.config.config.listen.port}/onebot/v11/ws`, { headers: { Authorization: "Bearer " + p.config.credentials.accessToken, "X-Self-ID": "10000" } });
-    cleanups.push(async () => restarted.terminate());
-    restarted.on("message", raw => { let a = JSON.parse(raw); p.actions.push(a); restarted.send(JSON.stringify({ status: "ok", retcode: 0, echo: a.echo, data: a.action === "get_login_info" ? { user_id: "10000" } : { message_id: 1000 } })); });
-    await wait(() => p.manager.getState().phase === "running");
-    assert.equal((await p.manager.send({ channel: "qq", chatType: "private", targetId: "30000", parts: [{ kind: "text", text: "after-restart" }] })).outcome, "sent");
-    assert.equal(p.actions.filter(a => JSON.stringify(a.params).includes("unanswered")).length, 1);
-    await p.manager.stop();
-    assert.equal(p.manager.getState().phase, "stopped");
-    console.log("PASS crash unknown outcome, explicit restart send, no automatic replay, confirmed stop");
+    const recovering=await p.gateway.execute({action:"preview-recovery"},p.owner);
+    assert.equal(recovering.state,"preview-recovery");
+    const previousManager=p.manager;
+    const confirmation=p.gateway.execute({action:"confirm-recovery",operationId:recovering.preview.operationId,accountId:"10000",userConfirmed:true},p.owner);
+    await wait(()=>p.manager!==previousManager&&p.manager.getState().phase==="waiting-backend");
+    const connect=async()=>{
+      const socket=new WebSocket(`ws://127.0.0.1:${p.config.config.listen.port}/onebot/v11/ws`,{headers:{Authorization:"Bearer "+p.config.credentials.accessToken,"X-Self-ID":"10000"}});
+      cleanups.push(async()=>socket.terminate());
+      socket.on("message",raw=>{const a=JSON.parse(raw);p.actions.push(a);socket.send(JSON.stringify({status:"ok",retcode:0,echo:a.echo,data:a.action==="get_login_info"?{user_id:"10000"}:{message_id:1000}}))});
+      await new Promise((resolve,reject)=>{socket.once("open",resolve);socket.once("error",reject)});
+      return socket;
+    };
+    const restarted=await connect();
+    assert.equal((await confirmation).state,"committed");
+    assert.equal((await p.manager.send({channel:"qq",chatType:"private",targetId:"30000",parts:[{kind:"text",text:"after-recovery"}]})).outcome,"sent");
+    assert.equal(p.actions.filter(a=>JSON.stringify(a.params).includes("unanswered")).length,1);
+    assert.equal(p.getProofs(),1);
+    console.log("PASS crash unknown outcome, explicit gateway recovery, new process identity, no automatic replay");
+    const desired=p.getDesired();desired.config.configRevision++;desired.config.allowedPrivateUserIds=["40000"];p.setDesired(desired);
+    const update=await p.gateway.execute({action:"preview-reconfigure"},p.owner);
+    assert.equal(update.state,"preview-reconfigure");assert.ok(update.preview.changes.includes("allowlist"));
+    const old=p.manager;
+    const updating=p.gateway.execute({action:"confirm-reconfigure",operationId:update.preview.operationId,accountId:"10000",userConfirmed:true},p.owner);
+    await wait(()=>p.manager!==old&&p.manager.getState().phase==="waiting-backend");restarted.terminate();
+    const updated=await connect();assert.equal((await updating).state,"committed");
+    const observed=[];p.router.onMessage=async m=>{observed.push(m);return null};
+    updated.send(JSON.stringify({self_id:10000,post_type:"message",message_type:"private",message_id:4001,user_id:30000,time:1700000000,sender:{nickname:"revoked"},message:[{type:"text",data:{text:"must-drop"}}]}));
+    updated.send(JSON.stringify({self_id:10000,post_type:"message",message_type:"private",message_id:4002,user_id:40000,time:1700000000,sender:{nickname:"allowed"},message:[{type:"text",data:{text:"allowed-new"}}]}));
+    await wait(()=>observed.length===1);assert.equal(observed[0].text,"allowed-new");
+    p.setDesired({...p.getDesired(),enabled:false});
+    const disable=await p.gateway.execute({action:"preview-reconfigure"},p.owner);
+    assert.equal(disable.preview.desiredEnabled,false);
+    assert.equal((await p.gateway.execute({action:"confirm-reconfigure",operationId:disable.preview.operationId,accountId:"10000",userConfirmed:true},p.owner)).state,"disabled");
+    assert.equal(p.manager.getState().phase,"stopped");assert.equal(p.router.getDriver(),"blocked");
+    assert.equal((await p.gateway.execute({action:"status"},p.owner)).state,"disabled");
+    assert.equal((await p.gateway.execute({action:"preview-recovery"},p.owner)).ok,false);
+    assert.equal(getQqStartupMode(p.directory),"blocked");
+    console.log("PASS explicit reconfiguration revokes old allowlist, fresh process, confirmed disable and no implicit reenable");
+
 })().then(async () => { for (const f of cleanups.reverse())
     await f(); clearTimeout(watchdog); console.log("ALL_SIGNED_HOST_ELECTRON_PASS"); app.exit(0); }).catch(async (e) => { console.error(e); for (const f of cleanups.reverse()) {
     try {

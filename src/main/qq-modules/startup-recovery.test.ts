@@ -21,7 +21,7 @@ it.each(["prepared", "module-staged", "selected", "rolled-back"] as const)("bloc
   expect(getQqStartupMode(directory)).toBe("blocked");
 });
 it("blocks invalid/unrecognized migration and first-setup directories without repairing them", () => {
-  for (const kind of ["migration", "firstSetup"] as const) {
+  for (const kind of ["migration", "firstSetup", "recovery"] as const) {
     const directory = root(), paths = qqLifecyclePaths(directory); mkdirSync(paths[kind]);
     writeFileSync(join(paths[kind], "state.json"), "invalid");
     expect(getQqStartupMode(directory)).toBe("blocked");
@@ -39,7 +39,14 @@ it("blocks an interrupted transaction lock even before its first state write", a
 });
 
 it.skipIf(process.platform === "win32")("blocks a dangling sidecar symlink instead of treating it as absent", () => {
-  const directory = root(), path = qqLifecyclePaths(directory).firstSetup;
+  const directory = root(), path = qqLifecyclePaths(directory).recovery;
   symlinkSync(join(directory, "missing"), path);
   expect(getQqStartupMode(directory)).toBe("blocked");
+});
+
+it("blocks recovery locks before the first durable state and never deletes them", () => {
+  const directory = root(), path = qqLifecyclePaths(directory).recovery;
+  mkdirSync(path); writeFileSync(join(path, "recovery-lock"), "");
+  expect(getQqStartupMode(directory)).toBe("blocked");
+  expect(existsSync(join(path, "recovery-lock"))).toBe(true);
 });

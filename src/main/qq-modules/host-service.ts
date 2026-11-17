@@ -10,6 +10,8 @@ import type { QqMigrationSecretStorage } from "./migration-plan";
 import { QqMigrationStore } from "./migration-store";
 import { QqFirstSetupCoordinator } from "./first-setup";
 import { QqFirstSetupStore } from "./first-setup-store";
+import { QqRecoveryStore } from "./recovery-store";
+import { QqRecoveryCoordinator, readQqRecoveryOrigin, type QqRecoveryBaseline, type QqRecoveryDesired } from "./recovery";
 import { getQqStartupMode, qqLifecyclePaths } from "./startup-recovery";
 import { createQqTrustedRuntimeFactory } from "./trusted-runtime-factory";
 
@@ -27,6 +29,16 @@ export interface QqModuleHostOptions {
   /** Must read a secure host credential; no plaintext/obfuscation fallback. */
   readFirstCredential(): string;
   verifyNoLegacyDriver(): Promise<boolean>;
+  /** Optional reviewed MAIN-only lifecycle binding. Legacy-absence proof is not
+   * sufficient: these must cover every old QQ process, including a prior host.
+   * No defaults, renderer config, key, credential or process-absence assumptions. */
+  lifecycle?: {
+    /** credentialRevision is a nonsecret secure-storage generation, never a token/hash. */
+    readDesired(baseline: QqRecoveryBaseline): QqRecoveryDesired;
+    readCredential(snapshot: QqRecoveryDesired): string;
+    verifyAllDriversStopped(): Promise<boolean>;
+    verifyNoOtherDrivers(): Promise<boolean>;
+  };
   backendReconnectTimeoutMs?: number;
 }
 /** Actual host composition of signed package store, verified runtime factory,
@@ -40,14 +52,18 @@ export class QqModuleHostService {
   private readonly installation: QqInstallationController;
   private readonly factory: ReturnType<typeof createQqTrustedRuntimeFactory>;
   private setup?: QqFirstSetupCoordinator;
-  private pending?: { kind: "install" | "migration" | "setup"; id: string; accountId?: string };
+  private readonly recovery?: QqRecoveryCoordinator;
+  private readonly recoveryStore: QqRecoveryStore;
+  private pending?: { kind: "install" | "migration" | "setup" | "recovery" | "reconfigure"; id: string; accountId?: string };
   private operation?: Promise<QqModuleActionResult>;
   private closing = false;
+  private disabledThisSession = false;
   constructor(private readonly options: QqModuleHostOptions) {
     const paths = qqLifecyclePaths(options.userDataPath);
     this.packages = new QqPackageStore(join(options.userDataPath, "qq-module-packages"), options.verificationContext);
     this.migrationStore = new QqMigrationStore(paths.migration);
     this.setupStore = new QqFirstSetupStore(paths.firstSetup);
+    this.recoveryStore = new QqRecoveryStore(paths.recovery);
     const runtime = createQqTrustedRuntimeFactory({ packages: this.packages, mediaCacheDirectory: join(options.userDataPath, "qq-module-media") });
     this.factory = {
       verifyCandidate: runtime.verifyCandidate,
@@ -58,6 +74,16 @@ export class QqModuleHostService {
         return manager;
       },
     };
+    if (options.lifecycle) {
+      const lifecycle = options.lifecycle;
+      this.recovery = new QqRecoveryCoordinator({ store: this.recoveryStore,
+        readSource: () => readQqRecoveryOrigin(this.setupStore, this.migrationStore),
+        readConfiguration: lifecycle.readDesired, readCredential: lifecycle.readCredential,
+        secureStorage: options.secureStorage, verifyCandidate: this.factory.verifyCandidate,
+        prepareAllDriversStopped: (snapshot) => options.router.prepareReactivation(lifecycle.verifyAllDriversStopped, { allowAttach: snapshot.enabled }),
+        verifyNoOtherDrivers: lifecycle.verifyNoOtherDrivers, createModule: this.factory.createModule,
+        backendReconnectTimeoutMs: options.backendReconnectTimeoutMs });
+    }
     const migration = new QqMigrationCoordinator({ store: this.migrationStore, readLegacySettings: options.readLegacySettings,
       legacy: options.router, secureStorage: options.secureStorage,
       legacyMachine: { userDataPath: options.userDataPath, appName: options.appName },
@@ -77,17 +103,39 @@ export class QqModuleHostService {
   private cancelPending(): void {
     if (!this.pending) return;
     if (this.pending.kind === "setup") this.setup!.cancel({ previewId: this.pending.id });
+    else if (this.pending.kind === "recovery" || this.pending.kind === "reconfigure") this.recovery!.cancel({ previewId: this.pending.id });
     else this.installation.cancel({ operationId: this.pending.id });
     this.pending = undefined;
   }
   private async perform(command: QqModuleActionCommand): Promise<QqModuleActionResult> {
     if (command.action === "status") {
       if (this.options.router.getDriver() === "module" && this.options.router.getStatus().phase === "running") return { ok: true, state: "committed" };
+      // A durable disabled choice is not an absence proof or a restart permission.
+      // Only report disabled for this session's successfully stopped operation.
+      if (this.disabledThisSession) return { ok: true, state: "disabled" };
       return { ok: true, state: this.recoveryRequired() ? "recovery-required" : "ready" };
     }
     if (command.action === "cancel") {
       if (this.pending?.id !== command.operationId) return { ok: false, error: "stale" };
       this.cancelPending(); return { ok: true, state: "cancelled" };
+    }
+    if (command.action === "preview-recovery" || command.action === "preview-reconfigure") {
+      this.cancelPending();
+      if (!this.recovery) return { ok: false, error: "unconfigured" };
+      if (this.options.router.getDriver() === "legacy") return { ok: false, error: "recovery-required" };
+      const preview = this.recovery.previewRecovery(command.action === "preview-recovery" ? "recover" : "reconfigure");
+      this.pending = { kind: command.action === "preview-recovery" ? "recovery" : "reconfigure", id: preview.previewId, accountId: preview.accountId };
+      return { ok: true, state: command.action, preview: { operationId: preview.previewId, packageId: preview.packageId, accountId: preview.accountId,
+        ...(command.action === "preview-reconfigure" ? { desiredEnabled: preview.desiredEnabled, changes: preview.changes } : {}) } };
+    }
+    if (command.action === "confirm-recovery" || command.action === "confirm-reconfigure") {
+      const kind = command.action === "confirm-recovery" ? "recovery" : "reconfigure";
+      if (!this.recovery || this.pending?.kind !== kind || this.pending.id !== command.operationId || this.pending.accountId !== command.accountId) return { ok: false, error: "stale" };
+      this.pending = undefined;
+      this.disabledThisSession = false;
+      const result = await this.recovery.confirmRecovery({ previewId: command.operationId, accountId: command.accountId, userConfirmed: command.userConfirmed });
+      this.disabledThisSession = result.outcome === "disabled";
+      return { ok: true, state: result.outcome };
     }
     // Installation and first setup can never supersede an existing durable lifecycle
     // or a possibly live driver. Recovery is a separate explicit host operation.
@@ -154,6 +202,6 @@ export class QqModuleHostService {
     this.closing = true;
     await this.operation?.catch(() => {});
     this.cancelPending();
-    await this.options.router.stop();
+    await this.options.router.shutdown();
   }
 }

@@ -91,3 +91,59 @@ it("waits for migration draining before shutdown and never permits its late atta
   const stopped = s.router.stop(); expect(s.legacy.stop).not.toHaveBeenCalled(); release(); await draining; await stopped;
   expect(s.legacy.stop).toHaveBeenCalledOnce(); expect(() => s.router.attachModule(s.manager)).toThrow("SWITCH_UNCONFIRMED");
 });
+async function activate(s: ReturnType<typeof setup>) {
+  await s.router.prepareFirstSetup(async () => true); s.router.attachModule(s.manager);
+  await s.manager.stageForMigration(); expect(s.manager.activateMigration()).toBe(true);
+}
+it("drains a module turn before proving all drivers stopped and attaching a replacement", async () => {
+  const s = setup("blocked"); await activate(s); let release!: () => void; let sent: unknown;
+  s.router.onMessage = async () => { await new Promise<void>(r => { release = r; }); sent = await s.router.send(outgoing); return null; };
+  s.peer.event("inbound", inbound("old-turn"));
+  const saved = s.manager.onMessage!;
+  const proof = vi.fn(async () => { expect(s.manager.isStoppedForMigration()).toBe(true); return true; });
+  const switching = s.router.prepareReactivation(proof); await Promise.resolve();
+  expect((await s.router.send(outgoing)).ok).toBe(false); expect(proof).not.toHaveBeenCalled();
+  release(); expect(await switching).toBe(true); expect(sent).toMatchObject({ ok: true });
+  const next = setup("blocked"); s.router.attachModule(next.manager); await next.manager.stageForMigration(); next.manager.activateMigration();
+  const handler = vi.fn(async () => null); s.router.onMessage = handler;
+  await saved(incoming); expect(handler).not.toHaveBeenCalled(); next.peer.event("inbound", inbound("new-turn")); expect(handler).toHaveBeenCalledOnce();
+  expect(s.legacy.start).not.toHaveBeenCalled();
+});
+it("keeps blocked when all-driver proof fails and never lets disabled preparation attach", async () => {
+  const s = setup("blocked"); await activate(s);
+  expect(await s.router.prepareReactivation(async () => false)).toBe(false);
+  const next = setup("blocked"); expect(() => s.router.attachModule(next.manager)).toThrow("SWITCH_UNCONFIRMED");
+  await expect(s.router.start()).rejects.toThrow("EXPLICIT_ACTIVATION_REQUIRED");
+  expect(await s.router.prepareReactivation(async () => true, { allowAttach: false })).toBe(true);
+  expect(() => s.router.attachModule(next.manager)).toThrow("SWITCH_UNCONFIRMED");
+});
+it("does not run external stop proof if the owned module cannot confirm exit", async () => {
+  const s = setup("blocked"); await activate(s);
+  const stop = vi.spyOn(s.manager, "stop").mockResolvedValue(); const proof = vi.fn(async () => true);
+  expect(await s.router.prepareReactivation(proof)).toBe(false); expect(proof).not.toHaveBeenCalled();
+  expect(s.router.getDriver()).toBe("blocked"); stop.mockRestore(); await s.router.stop(); expect(s.manager.isStoppedForMigration()).toBe(true);
+});
+it("shutdown waits for reactivation proof and revokes the late replacement grant", async () => {
+  const s = setup("blocked"); await activate(s); let release!: () => void;
+  const switchPromise = s.router.prepareReactivation(() => new Promise(resolve => { release = () => resolve(true); }));
+  await vi.waitFor(() => expect(release).toBeTypeOf("function")); const shutdown = s.router.stop();
+  release(); expect(await switchPromise).toBe(false); await shutdown;
+  expect(() => s.router.attachModule(setup("blocked").manager)).toThrow("SWITCH_UNCONFIRMED");
+});
+
+it("permits explicit reactivation after ordinary stop but never after terminal shutdown", async () => {
+  const s = setup("blocked"); await activate(s); await s.router.stop();
+  await expect(s.router.start()).rejects.toThrow("EXPLICIT_ACTIVATION_REQUIRED");
+  const proof = vi.fn(async () => true);
+  expect(await s.router.prepareReactivation(proof)).toBe(true);
+  const next = setup("blocked"); s.router.attachModule(next.manager); await next.manager.stageForMigration(); next.manager.activateMigration();
+  await s.router.shutdown(); await expect(s.router.prepareReactivation(proof)).rejects.toThrow("BUSY");
+  expect(proof).toHaveBeenCalledOnce(); expect(next.manager.isStoppedForMigration()).toBe(true);
+});
+it("terminal shutdown during recovery revokes proof and all later recovery attempts", async () => {
+  const s = setup("blocked"); let release!: () => void;
+  const preparing = s.router.prepareReactivation(() => new Promise(resolve => { release = () => resolve(true); }));
+  await Promise.resolve(); const shutdown = s.router.shutdown(); release(); expect(await preparing).toBe(false); await shutdown;
+  await expect(s.router.prepareReactivation(async () => true)).rejects.toThrow("BUSY");
+  expect(() => s.router.attachModule(s.manager)).toThrow("SWITCH_UNCONFIRMED");
+});

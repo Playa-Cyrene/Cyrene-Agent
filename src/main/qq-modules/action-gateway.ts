@@ -8,6 +8,7 @@ export interface QqModuleActionPort { execute(command: QqModuleActionCommand): Q
 export interface QqModuleActionOwner { key: object; isAuthorized(): boolean }
 const id = (v: unknown) => typeof v === "string" && /^[a-zA-Z0-9_-]{1,128}$/.test(v);
 const account = (v: unknown) => typeof v === "string" && /^\d{1,128}$/.test(v);
+const configurationChanges = ["allowlist", "enabled", "account", "credential", "listen", "configuration"] as const;
 const actionErrors: readonly QqModuleActionError[] = ["unconfigured", "unauthorized", "busy", "invalid", "stale", "operation-failed", "recovery-required"];
 const failure = (error: QqModuleActionError): QqModuleActionResult => ({ ok: false, error });
 function command(value: unknown): QqModuleActionCommand | null {
@@ -15,10 +16,10 @@ function command(value: unknown): QqModuleActionCommand | null {
   const action = (value as { action?: unknown }).action;
   const base = { action: (v: unknown) => v === action };
   const confirmed = { ...base, operationId: id, userConfirmed: (v: unknown) => v === true };
-  const valid = action === "status" || action === "preview-install" || action === "preview-migration" ? strictObject(value, base)
+  const valid = action === "status" || action === "preview-install" || action === "preview-migration" || action === "preview-recovery" || action === "preview-reconfigure" ? strictObject(value, base)
     : action === "preview-setup" ? strictObject(value, { ...base, accountId: account })
       : action === "confirm-install" ? strictObject(value, confirmed)
-        : action === "confirm-migration" || action === "confirm-setup" ? strictObject(value, { ...confirmed, accountId: account })
+        : action === "confirm-migration" || action === "confirm-setup" || action === "confirm-recovery" || action === "confirm-reconfigure" ? strictObject(value, { ...confirmed, accountId: account })
           : action === "cancel" && strictObject(value, { ...base, operationId: id });
   return valid ? { ...value } as QqModuleActionCommand : null;
 }
@@ -28,19 +29,22 @@ function result(value: unknown, request: QqModuleActionCommand): QqModuleActionR
   if (strictObject(value, { ok: (v) => v === false, error: (v) => actionErrors.includes(v as QqModuleActionError) })) {
     return { ok: false, error: (value as { error: QqModuleActionError }).error };
   }
-  const expected = request.action === "status" ? ["ready", "committed", "recovery-required"]
+  const expected = request.action === "status" ? ["ready", "committed", "recovery-required", "disabled"]
     : request.action.startsWith("preview-") ? [request.action]
       : request.action === "confirm-install" ? ["installed"]
-        : request.action === "cancel" ? ["cancelled"] : ["committed", "rolled-back", "recovery-required"];
+        : request.action === "cancel" ? ["cancelled"] : request.action === "confirm-reconfigure" ? ["committed", "disabled", "rolled-back", "recovery-required"] : ["committed", "rolled-back", "recovery-required"];
   const preview = request.action.startsWith("preview-");
   if (!strictObject(value, { ok: (v) => v === true, state: (v) => expected.includes(v as string), ...(preview ? {
     preview: (v: unknown) => strictObject(v, { operationId: id, packageId: (p) => typeof p === "string" && /^pkg-[a-f0-9]{64}$/.test(p),
-      ...(request.action !== "preview-install" ? { accountId: account } : {}) },
+      ...(request.action !== "preview-install" ? { accountId: account } : {}),
+      ...(request.action === "preview-reconfigure" ? { desiredEnabled: (v: unknown) => typeof v === "boolean",
+        changes: (v: unknown) => Array.isArray(v) && v.length <= configurationChanges.length && new Set(v).size === v.length
+          && v.every((change) => configurationChanges.includes(change as typeof configurationChanges[number])) } : {}) },
     { ...(request.action === "preview-install" ? { accountId: account } : {}), version: (v) => typeof v === "string" && v.length <= 128 && /^\d{1,8}\.\d{1,8}\.\d{1,8}(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(v) }),
   } : {}) })) return failure("operation-failed");
   return structuredClone(value) as QqModuleActionResult;
 }
-interface BoundPreview { owner: object; kind: "preview-install" | "preview-migration" | "preview-setup"; preview: QqModuleActionPreview }
+interface BoundPreview { owner: object; kind: "preview-install" | "preview-migration" | "preview-setup" | "preview-recovery" | "preview-reconfigure"; preview: QqModuleActionPreview }
 /** One host-session gateway for all QQ operation IPC. No port = zero side effects.
  * Preview authority belongs to its originating live owner; a second window may query
  * status but cannot replace, confirm or cancel that preview. Never expose the port.
@@ -70,10 +74,15 @@ export class QqModuleActionGateway {
       if (request.action !== "cancel" && (`confirm-${pending.kind.slice(8)}` !== request.action
         || ("accountId" in consent && consent.accountId !== pending.preview.accountId))) return failure("stale");
     }
+    const desiredEnabled = this.pending?.kind === "preview-reconfigure" ? this.pending.preview.desiredEnabled : undefined;
     this.busy = true;
     if (request.action !== "status") this.pending = undefined; // Consume before calling a reentrant/asynchronous port.
     try {
       const response = result(await this.port.execute(request), request);
+      // A disable confirmation must not be presented as successful reactivation (or
+      // vice versa). The host still owns execution and durable recovery after failure.
+      if (request.action === "confirm-reconfigure" && response.ok
+        && ((response.state === "committed" && desiredEnabled !== true) || (response.state === "disabled" && desiredEnabled !== false))) return failure("operation-failed");
       if (request.action === "cancel" && (!response.ok || response.state !== "cancelled")) this.cleanupFailed = true;
       if (response.ok && "preview" in response) {
         if (request.action === "preview-setup" && response.preview.accountId !== request.accountId) {
@@ -82,7 +91,7 @@ export class QqModuleActionGateway {
         if (!this.authorized(owner)) {
           await this.cancelPreview(response.preview.operationId); return failure("unauthorized");
         }
-        this.pending = { owner: owner.key, kind: response.state, preview: { ...response.preview } };
+        this.pending = { owner: owner.key, kind: response.state, preview: structuredClone(response.preview) };
       }
       // A confirmed operation may already have taken effect. Never report it cancelled
       // just because the window disappeared; the host must inspect durable/live state.

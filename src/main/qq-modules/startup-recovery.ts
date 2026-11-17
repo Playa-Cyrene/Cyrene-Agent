@@ -1,11 +1,12 @@
 import { lstatSync } from "node:fs";
 import { join } from "node:path";
 import { QqMigrationStore } from "./migration-store";
+import { QqRecoveryStore } from "./recovery-store";
 import { QqFirstSetupStore } from "./first-setup-store";
 
 /** Fixed host-owned locations, never renderer input. Reading never creates a store. */
-export function qqLifecyclePaths(userDataPath: string): { migration: string; firstSetup: string } {
-  return { migration: join(userDataPath, "qq-module-migration"), firstSetup: join(userDataPath, "qq-module-first-setup") };
+export function qqLifecyclePaths(userDataPath: string): { migration: string; firstSetup: string; recovery: string } {
+  return { recovery: join(userDataPath, "qq-module-recovery"), migration: join(userDataPath, "qq-module-migration"), firstSetup: join(userDataPath, "qq-module-first-setup") };
 }
 
 /** A durable choice is not proof that the previous process stopped or that either
@@ -15,7 +16,7 @@ export function qqLifecyclePaths(userDataPath: string): { migration: string; fir
 export function getQqStartupMode(userDataPath: string): "legacy" | "blocked" {
   try {
     const paths = qqLifecyclePaths(userDataPath);
-    for (const [root, lock] of [[paths.migration, "migration-lock"], [paths.firstSetup, "setup-lock"]]) {
+    for (const [root, lock] of [[paths.migration, "migration-lock"], [paths.firstSetup, "setup-lock"], [paths.recovery, "recovery-lock"]]) {
       try {
         const stat = lstatSync(root);
         if (stat.isSymbolicLink() || !stat.isDirectory()) return "blocked";
@@ -23,7 +24,7 @@ export function getQqStartupMode(userDataPath: string): "legacy" | "blocked" {
       try { lstatSync(join(root, lock)); return "blocked"; }
       catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") return "blocked"; }
     }
-    if (new QqMigrationStore(paths.migration).read() || new QqFirstSetupStore(paths.firstSetup).read()) return "blocked";
+    if (new QqMigrationStore(paths.migration).read() || new QqFirstSetupStore(paths.firstSetup).read() || new QqRecoveryStore(paths.recovery).read()) return "blocked";
     return "legacy";
   } catch { return "blocked"; }
 }

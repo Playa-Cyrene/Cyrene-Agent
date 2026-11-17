@@ -32,7 +32,7 @@ afterEach(async () => {
   transportState.creates = 0;
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
-function setup(enabled = false) {
+function setup(enabled = false, lifecycleEnabled = false) {
   const root = mkdtempSync(join(tmpdir(), "qq-host-service-")); roots.push(root);
   const key = generateKeyPairSync("ed25519");
   const context: QqPackageVerificationContext = { trustedKeys: new Map([["fixture", key.publicKey.export({ type: "spki", format: "pem" }).toString()]]),
@@ -58,7 +58,11 @@ function setup(enabled = false) {
     readLegacySettings: () => readFileSync(settings), secureStorage: { isSecureAvailable: vi.fn(() => true), decryptString: vi.fn(() => "synthetic-secure-token") },
     appName: "test", readFirstConfiguration: (accountId: string) => ({ ...config, expectedSelfId: accountId }),
     readFirstCredential: vi.fn(() => "synthetic-secure-token"), verifyNoLegacyDriver: vi.fn(async () => !enabled), backendReconnectTimeoutMs: 50 };
-  const service = new QqModuleHostService(options); services.push(service);
+  let desired = { config: structuredClone(config), enabled: true, credentialRevision: "secure-generation-1" };
+  const lifecycle = { readDesired: vi.fn(() => structuredClone(desired)),
+    readCredential: vi.fn(() => "synthetic-secure-token"),
+    verifyAllDriversStopped: vi.fn(async () => true), verifyNoOtherDrivers: vi.fn(async () => true) };
+  const service = new QqModuleHostService({ ...options, ...(lifecycleEnabled ? { lifecycle } : {}) }); services.push(service);
   const extract = (result: QqModuleActionResult) => { if (!result.ok || !("preview" in result)) throw Error("expected preview"); return result.preview; };
   const install = async () => {
     const preview = extract(await service.execute({ action: "preview-install" }));
@@ -67,7 +71,9 @@ function setup(enabled = false) {
   };
   const first = async () => extract(await service.execute({ action: "preview-setup", accountId: "10000" }));
   const confirmFirst = (preview: Awaited<ReturnType<typeof first>>) => service.execute({ action: "confirm-setup", operationId: preview.operationId, accountId: preview.accountId!, userConfirmed: true });
-  return { root, router, legacy, options, service, context, candidate, settings, original, extract, install, first, confirmFirst,
+  return { root, router, legacy, options, service, context, candidate, settings, original, extract, install, first, confirmFirst, lifecycle,
+    setDesired: (next: typeof desired) => { desired = structuredClone(next); },
+    getDesired: () => structuredClone(desired),
     changeConfig: () => { config = { ...config, configRevision: 2 }; } };
 }
 it("constructs without store creation; installation is verified but never starts QQ", async () => {
@@ -165,4 +171,93 @@ it("rejects mismatched legacy migration consent before quiescing its route", asy
   const p = s.extract(await s.service.execute({ action: "preview-migration" }));
   await expect(s.service.execute({ action: "confirm-migration", operationId: p.operationId, accountId: "999", userConfirmed: true })).rejects.toThrow("stale");
   expect(s.router.getDriver()).toBe("legacy"); expect(s.legacy.prepareMigrationStop).not.toHaveBeenCalled(); expect(transportState.creates).toBe(0);
+});
+
+it("keeps recovery and reconfiguration unavailable without separate ALL-driver proof binding", async () => {
+  const s = setup(); await s.install(); await s.confirmFirst(await s.first());
+  expect(await s.service.execute({ action: "preview-recovery" })).toEqual({ ok: false, error: "unconfigured" });
+  expect(await s.service.execute({ action: "preview-reconfigure" })).toEqual({ ok: false, error: "unconfigured" });
+  expect(s.router.getDriver()).toBe("module"); expect(transportState.creates).toBe(1);
+});
+it("explicitly recovers through trusted proof, new process and durable identity without replay", async () => {
+  const s = setup(false, true); await s.install(); await s.confirmFirst(await s.first());
+  transportState.peers[0].crash();
+  const preview = s.extract(await s.service.execute({ action: "preview-recovery" }));
+  expect(s.lifecycle.readCredential).not.toHaveBeenCalled(); expect(s.lifecycle.verifyAllDriversStopped).not.toHaveBeenCalled();
+  expect(await s.service.execute({ action: "confirm-recovery", operationId: preview.operationId, accountId: "999", userConfirmed: true })).toEqual({ ok: false, error: "stale" });
+  expect(await s.service.execute({ action: "confirm-recovery", operationId: preview.operationId, accountId: preview.accountId!, userConfirmed: true })).toEqual({ ok: true, state: "committed" });
+  expect(s.lifecycle.verifyAllDriversStopped).toHaveBeenCalledOnce(); expect(s.lifecycle.verifyNoOtherDrivers).toHaveBeenCalled();
+  expect(transportState.creates).toBe(2); expect(s.router.getStatus().phase).toBe("running");
+  expect(await s.service.execute({ action: "confirm-recovery", operationId: preview.operationId, accountId: preview.accountId!, userConfirmed: true })).toEqual({ ok: false, error: "stale" });
+  expect(getQqStartupMode(s.root)).toBe("blocked"); expect(readFileSync(s.settings)).toEqual(s.original);
+});
+it("reconfigures allowlist via a fresh verified process, disables without reading credentials and explicitly reenables", async () => {
+  const s = setup(false, true); await s.install(); await s.confirmFirst(await s.first());
+  const config = s.getDesired(); config.config.configRevision++; config.config.allowedPrivateUserIds = ["40000"]; s.setDesired(config);
+  const p = s.extract(await s.service.execute({ action: "preview-reconfigure" }));
+  expect(p.changes).toContain("allowlist");
+  expect(await s.service.execute({ action: "confirm-reconfigure", operationId: p.operationId, accountId: p.accountId!, userConfirmed: true })).toEqual({ ok: true, state: "committed" });
+  expect(transportState.creates).toBe(2);
+  const listener = vi.fn(async () => null); s.router.onMessage = listener;
+  transportState.peers[1].event("inbound", inbound()); await new Promise(r => setImmediate(r));
+  expect(listener).not.toHaveBeenCalled();
+  const disabled = { ...s.getDesired(), enabled: false }; s.setDesired(disabled);
+  const q = s.extract(await s.service.execute({ action: "preview-reconfigure" })); const reads = s.lifecycle.readCredential.mock.calls.length;
+  expect(q.desiredEnabled).toBe(false);
+  expect(await s.service.execute({ action: "confirm-reconfigure", operationId: q.operationId, accountId: q.accountId!, userConfirmed: true })).toEqual({ ok: true, state: "disabled" });
+  expect(s.lifecycle.readCredential).toHaveBeenCalledTimes(reads); expect(transportState.creates).toBe(2);
+  expect(s.router.getDriver()).toBe("blocked"); expect(await s.service.execute({ action: "status" })).toEqual({ ok: true, state: "disabled" });
+  await expect(s.service.execute({ action: "preview-recovery" })).rejects.toThrow();
+  s.setDesired({ ...disabled, enabled: true });
+  const r = s.extract(await s.service.execute({ action: "preview-reconfigure" }));
+  expect(await s.service.execute({ action: "confirm-reconfigure", operationId: r.operationId, accountId: r.accountId!, userConfirmed: true })).toEqual({ ok: true, state: "committed" });
+  expect(transportState.creates).toBe(3);
+});
+it("failed ALL-driver proof blocks routing and never reads a credential or creates a process", async () => {
+  const s = setup(false, true); await s.install(); await s.confirmFirst(await s.first());
+  s.lifecycle.verifyAllDriversStopped.mockResolvedValue(false);
+  const p = s.extract(await s.service.execute({ action: "preview-recovery" }));
+  const result = await s.service.execute({ action: "confirm-recovery", operationId: p.operationId, accountId: p.accountId!, userConfirmed: true });
+  expect(result.ok && ["rolled-back", "recovery-required"].includes(result.state)).toBe(true);
+  expect(s.router.getDriver()).toBe("blocked"); expect(s.lifecycle.readCredential).not.toHaveBeenCalled(); expect(transportState.creates).toBe(1);
+  expect(getQqStartupMode(s.root)).toBe("blocked");
+});
+it("binds configuration and secure credential generation to preview and cancels without stopping", async () => {
+  const s = setup(false, true); await s.install(); await s.confirmFirst(await s.first());
+  const p = s.extract(await s.service.execute({ action: "preview-reconfigure" }));
+  expect(await s.service.execute({ action: "cancel", operationId: p.operationId })).toEqual({ ok: true, state: "cancelled" });
+  expect(s.lifecycle.verifyAllDriversStopped).not.toHaveBeenCalled(); expect(s.router.getStatus().phase).toBe("running");
+  const q = s.extract(await s.service.execute({ action: "preview-reconfigure" }));
+  s.setDesired({ ...s.getDesired(), credentialRevision: "secure-generation-2" });
+  await expect(s.service.execute({ action: "confirm-reconfigure", operationId: q.operationId, accountId: q.accountId!, userConfirmed: true })).rejects.toThrow();
+  expect(s.lifecycle.verifyAllDriversStopped).not.toHaveBeenCalled(); expect(s.lifecycle.readCredential).not.toHaveBeenCalled();
+});
+it("requires explicit recovery after host reconstruction and preserves the reconfigured canonical selection", async () => {
+  const s = setup(false, true); await s.install(); await s.confirmFirst(await s.first());
+  const desired = s.getDesired(); desired.config.configRevision++; desired.config.allowedPrivateUserIds = ["40000"]; s.setDesired(desired);
+  const p = s.extract(await s.service.execute({ action: "preview-reconfigure" }));
+  expect(await s.service.execute({ action: "confirm-reconfigure", operationId: p.operationId, accountId: p.accountId!, userConfirmed: true })).toEqual({ ok: true, state: "committed" });
+  await s.service.shutdown();
+  const router = new QqRoutingAdapter(s.legacy, getQqStartupMode(s.root));
+  const service = new QqModuleHostService({ ...s.options, router, lifecycle: s.lifecycle }); services.push(service);
+  expect(await service.execute({ action: "status" })).toEqual({ ok: true, state: "recovery-required" });
+  expect(transportState.creates).toBe(2); await expect(router.start()).rejects.toThrow();
+  const q = s.extract(await service.execute({ action: "preview-recovery" }));
+  expect(await service.execute({ action: "confirm-recovery", operationId: q.operationId, accountId: q.accountId!, userConfirmed: true })).toEqual({ ok: true, state: "committed" });
+  expect(transportState.creates).toBe(3);
+  const handler = vi.fn(async () => null); router.onMessage = handler;
+  transportState.peers[2].event("inbound", inbound()); await new Promise(r => setImmediate(r)); expect(handler).not.toHaveBeenCalled();
+});
+it("shutdown during ALL-driver proof prevents any later factory creation or routing activation", async () => {
+  const s = setup(false, true); await s.install(); await s.confirmFirst(await s.first());
+  let release!: () => void;
+  s.lifecycle.verifyAllDriversStopped.mockImplementationOnce(() => new Promise<boolean>(resolve => { release = () => resolve(true); }));
+  const p = s.extract(await s.service.execute({ action: "preview-recovery" }));
+  const recovering = s.service.execute({ action: "confirm-recovery", operationId: p.operationId, accountId: p.accountId!, userConfirmed: true });
+  await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+  const shutdown = s.service.shutdown(); release();
+  const result = await recovering; await shutdown;
+  expect(result.ok && result.state).not.toBe("committed"); expect(transportState.creates).toBe(1);
+  expect(await s.service.execute({ action: "preview-recovery" })).toEqual({ ok: false, error: "recovery-required" });
+  await expect(s.router.prepareReactivation(async () => true)).rejects.toThrow();
 });
