@@ -1,4 +1,6 @@
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
+import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "path";
 import { installSkillsSnapshot, SNAPSHOT_SENTINEL, snapshotSentinelPath } from "./snapshot-install";
 
@@ -9,6 +11,19 @@ function makeFs(initial: Record<string, string> = {}) {
     files,
     existsSync: (p: string) => files.has(path.normalize(p)),
     mkdirSync: vi.fn((_p: string) => undefined),
+    mkdtempSync: (prefix: string) => `${prefix}fixture`,
+    rmdirSync: vi.fn((_p: string) => undefined),
+    renameSync: (from: string, to: string) => {
+      for (const [name, value] of [...files]) {
+        if (name.startsWith(`${from}${path.sep}`)) {
+          files.set(to + name.slice(from.length), value);
+          files.delete(name);
+        }
+      }
+    },
+    rmSync: (dir: string) => {
+      for (const name of files.keys()) if (name.startsWith(`${dir}${path.sep}`)) files.delete(name);
+    },
     writeFileSync: vi.fn((p: string, c: string) => {
       files.set(path.normalize(p), c);
     }),
@@ -40,6 +55,10 @@ describe("installSkillsSnapshot", () => {
       mkdirSync: fsMock.mkdirSync,
       writeFileSync: fsMock.writeFileSync,
       readdirSync: fsMock.readdirSync,
+      mkdtempSync: fsMock.mkdtempSync,
+      rmdirSync: fsMock.rmdirSync,
+      renameSync: fsMock.renameSync,
+      rmSync: fsMock.rmSync,
     });
     expect(status).toBe("no_archive");
     expect(fsMock.mkdirSync).not.toHaveBeenCalled();
@@ -54,6 +73,10 @@ describe("installSkillsSnapshot", () => {
       mkdirSync: fsMock.mkdirSync,
       writeFileSync: fsMock.writeFileSync,
       readdirSync: fsMock.readdirSync,
+      mkdtempSync: fsMock.mkdtempSync,
+      rmdirSync: fsMock.rmdirSync,
+      renameSync: fsMock.renameSync,
+      rmSync: fsMock.rmSync,
     });
     expect(status).toBe("no_archive");
   });
@@ -68,6 +91,10 @@ describe("installSkillsSnapshot", () => {
       mkdirSync: fsMock.mkdirSync,
       writeFileSync: fsMock.writeFileSync,
       readdirSync: fsMock.readdirSync,
+      mkdtempSync: fsMock.mkdtempSync,
+      rmdirSync: fsMock.rmdirSync,
+      renameSync: fsMock.renameSync,
+      rmSync: fsMock.rmSync,
       extract,
     });
     expect(status).toBe("skipped_sentinel");
@@ -84,6 +111,10 @@ describe("installSkillsSnapshot", () => {
       mkdirSync: fsMock.mkdirSync,
       writeFileSync: fsMock.writeFileSync,
       readdirSync: fsMock.readdirSync,
+      mkdtempSync: fsMock.mkdtempSync,
+      rmdirSync: fsMock.rmdirSync,
+      renameSync: fsMock.renameSync,
+      rmSync: fsMock.rmSync,
       extract,
     });
     expect(status).toBe("skipped_existing");
@@ -101,10 +132,15 @@ describe("installSkillsSnapshot", () => {
       mkdirSync: fsMock.mkdirSync,
       writeFileSync: fsMock.writeFileSync,
       readdirSync: fsMock.readdirSync,
+      mkdtempSync: fsMock.mkdtempSync,
+      rmdirSync: fsMock.rmdirSync,
+      renameSync: fsMock.renameSync,
+      rmSync: fsMock.rmSync,
       extract,
     });
     expect(status).toBe("installed");
-    expect(extract).toHaveBeenCalledWith(archive, { dir: userDir });
+    expect(extract).toHaveBeenCalledWith(archive, { dir: expect.any(String) });
+    expect(extract).not.toHaveBeenCalledWith(archive, { dir: userDir });
     expect(fsMock.files.has(snapshotSentinelPath(userDir))).toBe(true);
   });
 
@@ -120,6 +156,10 @@ describe("installSkillsSnapshot", () => {
       mkdirSync: fsMock.mkdirSync,
       writeFileSync: fsMock.writeFileSync,
       readdirSync: fsMock.readdirSync,
+      mkdtempSync: fsMock.mkdtempSync,
+      rmdirSync: fsMock.rmdirSync,
+      renameSync: fsMock.renameSync,
+      rmSync: fsMock.rmSync,
       extract,
     });
     expect(status).toBe("failed");
@@ -128,5 +168,74 @@ describe("installSkillsSnapshot", () => {
 
   it("哨兵文件名常量暴露给调用方", () => {
     expect(SNAPSHOT_SENTINEL).toBe(".snapshot-installed");
+  });
+});
+
+describe("快照安装失败后的真实文件系统恢复", () => {
+  const roots: string[] = [];
+  afterEach(() => { for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true }); });
+  function fixture() {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "snapshot-recovery-"));
+    roots.push(root);
+    const archivePath = path.join(root, "snapshot.zip");
+    const userSkillsDir = path.join(root, "skills");
+    fs.writeFileSync(archivePath, "fixture");
+    return { root, archivePath, userSkillsDir };
+  }
+  const writeSkill = (dir: string, name: string, value = name) => {
+    fs.mkdirSync(path.join(dir, name), { recursive: true });
+    fs.writeFileSync(path.join(dir, name, "SKILL.md"), value);
+  };
+
+  it("部分解压失败不会污染目标目录，下次启动可以完整安装", async () => {
+    const input = fixture();
+    expect(await installSkillsSnapshot({ ...input, extract: async (_, { dir }) => {
+      writeSkill(dir, "partial");
+      throw new Error("I/O after first entry");
+    } })).toBe("failed");
+    const retry = vi.fn(async (_: string, { dir }: { dir: string }) => writeSkill(dir, "complete"));
+    expect(await installSkillsSnapshot({ ...input, extract: retry })).toBe("installed");
+    expect(retry).toHaveBeenCalledOnce();
+    expect(fs.existsSync(path.join(input.userSkillsDir, "partial"))).toBe(false);
+    expect(fs.readFileSync(path.join(input.userSkillsDir, "complete", "SKILL.md"), "utf8")).toBe("complete");
+    expect(await installSkillsSnapshot({ ...input, extract: retry })).toBe("skipped_sentinel");
+  });
+
+  it("完成哨兵写入失败后仍可重试，不发布未完成的目标目录", async () => {
+    const input = fixture();
+    const extract = vi.fn(async (_: string, { dir }: { dir: string }) => writeSkill(dir, "complete"));
+    expect(await installSkillsSnapshot({ ...input, extract, writeFileSync: () => { throw new Error("disk full"); } })).toBe("failed");
+    expect(await installSkillsSnapshot({ ...input, extract })).toBe("installed");
+    expect(extract).toHaveBeenCalledTimes(2);
+  });
+
+  it("解压期间新出现的用户内容不可被覆盖", async () => {
+    const input = fixture();
+    await installSkillsSnapshot({ ...input, extract: async (_, { dir }) => {
+      writeSkill(input.userSkillsDir, "custom", "USER CONTENT");
+      writeSkill(dir, "custom", "ARCHIVE CONTENT");
+    } });
+    expect(fs.readFileSync(path.join(input.userSkillsDir, "custom", "SKILL.md"), "utf8")).toBe("USER CONTENT");
+  });
+
+  it("未完成暂存残留不阻止下次安装，也不被当作用户技能", async () => {
+    const input = fixture();
+    let abandoned = "";
+    expect(await installSkillsSnapshot({ ...input, extract: async (_, { dir }) => {
+      abandoned = dir;
+      writeSkill(dir, "partial");
+      throw new Error("interrupted extraction");
+    }, rmSync: () => { throw new Error("cleanup unavailable"); } })).toBe("failed");
+    expect(fs.existsSync(path.join(abandoned, "partial", "SKILL.md"))).toBe(true);
+    expect(await installSkillsSnapshot({ ...input, extract: async (_, { dir }) => writeSkill(dir, "complete") })).toBe("installed");
+    expect(fs.readdirSync(input.userSkillsDir).sort()).toEqual([SNAPSHOT_SENTINEL, "complete"]);
+  });
+
+  it("启动阶段已创建的空用户目录可以原子替换为完整快照", async () => {
+    const input = fixture();
+    fs.mkdirSync(input.userSkillsDir);
+    expect(await installSkillsSnapshot({ ...input, extract: async (_, { dir }) => writeSkill(dir, "complete") })).toBe("installed");
+    expect(fs.readFileSync(path.join(input.userSkillsDir, "complete", "SKILL.md"), "utf8")).toBe("complete");
+    expect(fs.existsSync(snapshotSentinelPath(input.userSkillsDir))).toBe(true);
   });
 });
