@@ -27,6 +27,21 @@ describe("resolveReasoningCapability — 行为基准", () => {
     expect(cap.autoEffort).toBe("high");
   });
 
+  // 预期值按官方 Qwen4-Max 模型页与 Chat Completions 文档独立填写（核验 2026-11-17）。
+  test("qwen + qwen4-max → reasoning_effort 三档 low/high/xhigh，默认 high，可关闭", () => {
+    const cap = resolveReasoningCapability("qwen", "qwen4-max");
+    expect(cap.control).toBe("toggle-effort");
+    expect(cap.requestStyle).toBe("openai-effort");
+    expect(cap.supportedEfforts).toEqual(["low", "high", "xhigh"]);
+    expect(cap.defaultEffort).toBe("high");
+    expect(cap.supportsDisable).toBe(true);
+    expect(resolveReasoningCapability("unknown-provider", "qwen4-max").defaultEffort).toBe("high");
+  });
+
+  test("邻近反例：仅 Token Plan 可用的 qwen4-max-preview 不套用正式版规则", () => {
+    expect(resolveReasoningCapability("qwen", "qwen4-max-preview")).toBe(UNKNOWN_REASONING_CAPABILITY);
+  });
+
   test("厂商内排序敏感：qwen + qwen3-thinking → /-thinking$/ 先于 /^qwen3/ 命中 fixed-on", () => {
     const cap = resolveReasoningCapability("qwen", "qwen3-thinking");
     expect(cap.control).toBe("fixed-on");

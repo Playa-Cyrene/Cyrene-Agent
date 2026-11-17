@@ -19,6 +19,7 @@ describe("resolveStructuredOutputProfile", () => {
     ["claude", "claude-opus-5", "anthropic", "provider_json_schema"],
     ["claude", "claude-sonnet-5-5", "anthropic", "provider_json_schema"],
     ["gemini", "gemini-4-hydrogen", "openai", "provider_json_schema"],
+    ["qwen", "qwen4-max", "openai", "provider_json_schema"],
     ["gemini", "gemini-4-carbon", "openai", "provider_json_schema"],
     ["gemini", "gemini-4-argon", "openai", "provider_json_schema"],
     ["kimi", "kimi-k3", "openai", "provider_json_schema"],
