@@ -161,6 +161,46 @@ describe("createAppUpdateService", () => {
     expect(service.canInstall()).toBe(true);
   });
 
+  it.each([false, true])("安装启动失败仍报告错误（异步事件：%s）", async (deferred) => {
+    const updater = new FakeUpdater();
+    updater.quitAndInstall.mockImplementation(() => {
+      const fail = () => updater.emit("error", new Error("installer launch failed"));
+      if (deferred) queueMicrotask(fail);
+      else fail();
+    });
+    const service = createAppUpdateService({ updater, currentVersion: "1.1.7", isPackaged: true });
+    updater.emit("update-downloaded", { version: "1.2.0" });
+
+    service.install();
+    await Promise.resolve();
+
+    expect(updater.quitAndInstall).toHaveBeenCalledOnce();
+    expect(service.getState()).toMatchObject({ phase: "error", error: "check_failed" });
+    expect(service.canInstall()).toBe(false);
+  });
+
+  it("安装失败后重新下载会恢复检查错误保护和下载错误归类", async () => {
+    const updater = new FakeUpdater();
+    updater.quitAndInstall.mockImplementation(() => updater.emit("error", new Error("installer launch failed")));
+    const service = createAppUpdateService({ updater, currentVersion: "1.1.7", isPackaged: true });
+    updater.emit("update-downloaded", { version: "1.2.0" });
+    service.install();
+
+    updater.downloadUpdate.mockRejectedValueOnce(new Error("download retry failed"));
+    await service.download();
+    expect(updater.downloadUpdate).toHaveBeenCalledOnce();
+    expect(service.getState()).toMatchObject({ phase: "error", error: "download_failed" });
+
+    updater.downloadUpdate.mockImplementation(async () => {
+      updater.emit("update-downloaded", { version: "1.2.0" });
+      return [];
+    });
+    await service.download();
+    updater.emit("error", new Error("late check error"));
+    expect(service.getState()).toMatchObject({ phase: "downloaded", availableVersion: "1.2.0" });
+    expect(service.canInstall()).toBe(true);
+  });
+
   it("检查结束后才开始下载，检查失败不会被误报为下载失败", async () => {
     const updater = new FakeUpdater();
     let reject!: (error: Error) => void;

@@ -41,6 +41,7 @@ export function createAppUpdateService(options: CreateAppUpdateServiceOptions): 
   let state: AppUpdateState = { phase: "idle", currentVersion };
   let checkPromise: Promise<unknown> | null = null;
   let downloadPromise: Promise<unknown> | null = null;
+  let installRequested = false;
   const listeners = new Set<(state: AppUpdateState) => void>();
 
   updater.autoDownload = false;
@@ -88,8 +89,10 @@ export function createAppUpdateService(options: CreateAppUpdateServiceOptions): 
   }));
   // 错误只带错误码，用户可读文案由渲染层按码翻译；下载中报错按下载失败归档
   updater.on("error", () => {
-    if (state.phase === "downloaded") return;
-    publish({ phase: "error", error: hasDownload() ? "download_failed" : "check_failed" });
+    // 安装器启动也会派发 error；请求安装后不能再当作迟到的检查错误忽略。
+    if (state.phase === "downloaded" && !installRequested) return;
+    const downloading = Boolean(downloadPromise) || state.phase === "downloading";
+    publish({ phase: "error", error: downloading ? "download_failed" : "check_failed" });
   });
 
   return {
@@ -116,6 +119,7 @@ export function createAppUpdateService(options: CreateAppUpdateServiceOptions): 
       // updater 的 error 事件不带操作标识，检查先结束再下载，避免错误归因交叉。
       if (checkPromise) await checkPromise;
       if (!downloadPromise && state.phase !== "downloaded") {
+        installRequested = false;
         publish({ phase: "downloading", percent: state.percent ?? 0 });
         downloadPromise = updater.downloadUpdate().catch(() => {
           if (state.phase !== "downloaded") publish({ phase: "error", error: "download_failed" });
@@ -134,6 +138,7 @@ export function createAppUpdateService(options: CreateAppUpdateServiceOptions): 
       // 静默安装：跳过 NSIS 完整向导，不再让用户选"为所有人/仅为我"，
       // 避免 perMachine 切换导致安装目录漂移（旧目录被卸载器清空、新目录落到 C 盘）。
       // 升级时安装目录里的用户内容由 NSIS 脚本（installer.nsh）暂存保护。
+      installRequested = true;
       updater.quitAndInstall(true, true);
       return true;
     },
