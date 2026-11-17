@@ -7,7 +7,7 @@ import type { HarnessInput, HarnessResult } from "./harness/types";
 import { getHarnessRunStore } from "./harness/run-store";
 import { getConversationTranscriptStore } from "./conversation-transcript-store";
 import { createTranscriptSink } from "./transcript-sink";
-import { projectTaskTodoItems, projectTaskTranscriptMessages } from "./task-transcript-projection";
+import { buildFullModelContext } from "./conversation-transcript-projection";
 import { resolveEffectKind, type ToolDefinition } from "./tools/registry/tool-registry";
 import type { VendorConfig, ChatMessage } from "./vendors/types";
 import type { ToolContext } from "./tools/registry/tool-context";
@@ -196,9 +196,8 @@ export function createTaskExecutor(input: {
         runs: getHarnessRunStore(input.parent.transcriptRoot),
       }
     : undefined;
-  let transcriptHistory: ReturnType<typeof projectTaskTranscriptMessages> | undefined;
-  let transcriptTodoItems: ReturnType<typeof projectTaskTodoItems> | undefined;
   return async (request) => {
+    let transcriptContext: ReturnType<typeof buildFullModelContext> | undefined;
     const profile = getTaskAgentProfile(request.subagentType);
     const lease = characterPool.acquire(input.parent.parentConversationId, request.companionId);
     let session: TaskSession;
@@ -241,8 +240,7 @@ export function createTaskExecutor(input: {
         // 对话历史以 transcript 为唯一来源：checkpoint 全量快照退役后，
         // resume 的 harness 输入靠重投影（含当前 prompt，它刚追加为最后一个 user 条目）。
         const snapshot = await transcript.store.read(session.id);
-        transcriptHistory = projectTaskTranscriptMessages(snapshot.entries);
-        transcriptTodoItems = projectTaskTodoItems(snapshot.entries);
+        transcriptContext = buildFullModelContext(snapshot.entries, transcript.runs);
       }
     } catch (error) {
       lease.release();
@@ -325,7 +323,7 @@ export function createTaskExecutor(input: {
         assistantTurnId: `${session.childRunId}:assistant`,
         systemPrompt: promptLayers.stablePrefix,
         promptLayers,
-        messages: (transcriptHistory ?? session.messages) as ChatMessage[],
+        messages: (transcriptContext?.messages ?? session.messages) as ChatMessage[],
         tools: taskTools,
         vendorConfig: taskModel.vendorConfig,
         config: {
@@ -334,8 +332,8 @@ export function createTaskExecutor(input: {
           ...(taskModel.contextWindowTokens ? { contextWindowTokens: taskModel.contextWindowTokens } : {}),
         },
         initialState: {
-          todoItems: transcriptTodoItems ?? session.todoItems,
-          uncertainEffects: [],
+          todoItems: transcriptContext ? (transcriptContext.todoItems ?? []) : session.todoItems,
+          uncertainEffects: transcriptContext?.uncertainEffects ?? [],
         },
         ...(transcriptSink ? { transcriptSink } : {}),
         signal: input.parent.signal,
