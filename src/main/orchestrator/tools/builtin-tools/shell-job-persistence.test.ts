@@ -48,14 +48,27 @@ afterEach(async () => {
 
 describe("shell job SQLite lifecycle (isolated data, mocked processes)", () => {
   it("does not resolve startup before the child spawn event", async () => {
-    mocks.spawn.mockImplementationOnce(() => child);
+    let enteredSpawn!: () => void;
+    const entered = new Promise<void>(resolve => { enteredSpawn = resolve; });
+    mocks.spawn.mockImplementationOnce(() => { enteredSpawn(); return child; });
     let resolved = false;
     const pending = manager.startShellJob(options()).then(result => { resolved = true; return result; });
-    await expect.poll(() => mocks.spawn.mock.calls.length).toBe(1);
-    expect(resolved).toBe(false);
-    child.emit("spawn");
-    await expect(pending).resolves.toHaveProperty("jobId");
-    child.emit("close", 0);
+    // Cold SQLite recovery/cleanup precedes spawn and is not the behavior under
+    // test. Wait for the fixture boundary, not expect.poll's unrelated 1s budget.
+    // Observe rejection immediately so failure/teardown cannot leak a second error.
+    void pending.catch(() => {});
+    try {
+      expect(await Promise.race([entered.then(() => "entered"), pending.then(() => "settled")])).toBe("entered");
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(mocks.spawn).toHaveBeenCalledOnce();
+      expect(resolved).toBe(false);
+      child.emit("spawn");
+      await expect(pending).resolves.toHaveProperty("jobId");
+    } finally {
+      child.emit("spawn");
+      await pending.catch(() => {});
+      child.emit("close", 0);
+    }
   });
 
   it("rejects an asynchronous spawn error and preserves failed status", async () => {
