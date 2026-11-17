@@ -131,6 +131,10 @@ export interface GeneralSettings {
   amapKey: string;
   /** 🚗出行工具是否启用 */
   travelEnabled: boolean;
+  /** 内置 computer use（桌面截图 + 鼠标键盘控制）是否启用。默认 false：它能操作整个桌面，必须由用户主动开启。 */
+  computerUseEnabled: boolean;
+  /** 桌面截图交给谁看：direct = 直发主模型；relay = 视觉模型转述成文字。主模型只支持文本时总是转述。 */
+  computerUseImageMode: "direct" | "relay";
   /** 🖥️ 浏览器自动化（Playwright MCP）是否启用。默认 false，需用户手动开启。 */
   playwrightMcpEnabled: boolean;
   /** 📁 文件系统 MCP（官方 server-filesystem，允许目录为下载文件夹）是否启用。默认 false。 */

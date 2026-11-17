@@ -54,6 +54,8 @@ export interface WindowManager {
   applyPetWindowZoom(zoom: number): void;
   capturePetWindowFrame(): Promise<string | null>;
   capturePetWindow(): Promise<Electron.NativeImage | null>;
+  /** 桌宠窗口（不存在或已销毁时为 null）；computer use 截图和点击期间需要临时隐藏它。 */
+  getPetWindow(): BrowserWindow | null;
   getCursorScreenPosition(): { x: number; y: number };
   setIconForAllWindows(icon: NativeImage): void;
   sendToPetWindow(channel: string, payload?: unknown): void;
@@ -338,6 +340,9 @@ export function createWindowManager(options: WindowManagerOptions): WindowManage
     async capturePetWindowFrame(): Promise<string | null> {
       const image = await this.capturePetWindow();
       return image ? image.toDataURL() : null;
+    },
+    getPetWindow(): BrowserWindow | null {
+      return getUsablePetWindow();
     },
     async capturePetWindow(): Promise<Electron.NativeImage | null> {
       const win = getUsablePetWindow();

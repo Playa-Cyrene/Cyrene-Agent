@@ -96,6 +96,8 @@ const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
   weatherEnabled: false,
   amapKey: "",
   travelEnabled: false,
+  computerUseEnabled: false,
+  computerUseImageMode: "direct",
   playwrightMcpEnabled: false,
   filesystemMcpEnabled: false,
   searchEngine: "off",
@@ -281,6 +283,9 @@ export function normalizeGeneralSettings(
     weatherEnabled: Boolean(input?.weatherEnabled),
     amapKey: typeof input?.amapKey === "string" ? input.amapKey : "",
     travelEnabled: Boolean(input?.travelEnabled),
+    // 只接受显式的 true：损坏或被篡改的设置文件不能把桌面控制悄悄打开。
+    computerUseEnabled: input?.computerUseEnabled === true,
+    computerUseImageMode: input?.computerUseImageMode === "relay" ? "relay" : "direct",
     playwrightMcpEnabled: Boolean(input?.playwrightMcpEnabled),
     filesystemMcpEnabled: Boolean(input?.filesystemMcpEnabled),
     searchEngine: ["off", "bocha", "tavily", "minimax", "anySearch"].includes(String(input?.searchEngine))
