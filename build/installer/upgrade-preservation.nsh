@@ -17,6 +17,9 @@ Var CyreneTargetRoot
 Var CyreneOldUninstallProtected
 Var CyreneFullPathValue
 Var CyreneFullPathLength
+Var CyrenePathSuffix
+Var CyrenePathComponent
+Var CyrenePathError
 
 ; NSIS 的 GetFullPathName 会查询磁盘，父目录尚不存在时可能置 Errors。
 ; Win32 API 只规范化字符串；检查返回值及缓冲区长度，不能把截断/失败当作有效路径。
@@ -52,6 +55,56 @@ Var CyreneFullPathLength
       ${ExitDo}
     ${EndIf}
     StrCpy ${OUTPUT} "${OUTPUT}" -1
+  ${Loop}
+
+  ; GetFullPathName 不展开 8.3 别名，直接比较会漏掉真实嵌套目录。
+  ; 新目标可能尚不存在，只展开已存在的祖先，再接回未经创建的后缀。
+  StrCpy $CyrenePathCheck ${OUTPUT}
+  StrCpy $CyrenePathSuffix ""
+  ${Do}
+    Push $0
+    Push $1
+    System::Call 'kernel32::GetLongPathNameW(w "$CyrenePathCheck", w .r0, i ${NSIS_MAX_STRLEN}) i.r1 ?e'
+    Pop $CyrenePathError
+    StrCpy $CyreneFullPathValue $0
+    StrCpy $CyreneFullPathLength $1
+    Pop $1
+    Pop $0
+    ${If} $CyreneFullPathLength > 0
+      ${If} $CyreneFullPathLength >= ${NSIS_MAX_STRLEN}
+        !insertmacro CyreneContentFailure "展开长路径后超出长度限制：${OUTPUT}"
+      ${EndIf}
+      ; 根祖先自带尾斜杠，后缀已有前导斜杠，不能拼成两个分隔符。
+      StrCpy $CyrenePathComponent $CyreneFullPathValue 1 -1
+      ${If} $CyrenePathComponent == "\"
+      ${AndIf} $CyrenePathSuffix != ""
+        StrCpy $CyreneFullPathValue $CyreneFullPathValue -1
+        IntOp $CyreneFullPathLength $CyreneFullPathLength - 1
+      ${EndIf}
+      StrLen $CyreneCompareLength $CyrenePathSuffix
+      IntOp $CyreneCompareLength $CyreneCompareLength + $CyreneFullPathLength
+      ${If} $CyreneCompareLength >= ${NSIS_MAX_STRLEN}
+        !insertmacro CyreneContentFailure "展开长路径后超出长度限制：${OUTPUT}"
+      ${EndIf}
+      StrCpy ${OUTPUT} "$CyreneFullPathValue$CyrenePathSuffix"
+      ${ExitDo}
+    ${EndIf}
+    ; 只有文件/父目录不存在才可回退祖先；权限或其他错误不能当成可新建目录。
+    ${If} $CyrenePathError != 2
+    ${AndIf} $CyrenePathError != 3
+      !insertmacro CyreneContentFailure "无法确认路径的长文件名：${OUTPUT}（$CyrenePathError）"
+    ${EndIf}
+    ${GetParent} "$CyrenePathCheck" $CyrenePathParent
+    ${If} $CyrenePathParent == ${ROOT}
+      StrCpy $CyrenePathParent "$CyrenePathParent\"
+    ${EndIf}
+    ${If} $CyrenePathParent == ""
+    ${OrIf} $CyrenePathParent == $CyrenePathCheck
+      !insertmacro CyreneContentFailure "无法找到有效的已存在父目录：${OUTPUT}"
+    ${EndIf}
+    ${GetFileName} "$CyrenePathCheck" $CyrenePathComponent
+    StrCpy $CyrenePathSuffix "\$CyrenePathComponent$CyrenePathSuffix"
+    StrCpy $CyrenePathCheck $CyrenePathParent
   ${Loop}
 !macroend
 
