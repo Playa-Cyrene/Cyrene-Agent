@@ -1,3 +1,4 @@
+import { readQqLifecycleDiagnostics } from "./lifecycle-diagnostics";
 import { join } from "node:path";
 import type { QqRuntimeConfig } from "../../shared/qq-module";
 import type { QqModuleActionCommand, QqModuleActionResult } from "../../shared/qq-module-actions";
@@ -5,7 +6,7 @@ import type { QqRoutingAdapter } from "../channels/adapters/qq-routing-adapter";
 import { QqInstallationController } from "./installation-controller";
 import { QqPackageStore } from "./package-store";
 import type { QqPackageVerificationContext, QqSignedPackage } from "./package-verifier";
-import { QqMigrationCoordinator } from "./migration";
+import { QqMigrationCoordinator, type QqMigrationLegacyPort } from "./migration";
 import type { QqMigrationSecretStorage } from "./migration-plan";
 import { QqMigrationStore } from "./migration-store";
 import { QqFirstSetupCoordinator } from "./first-setup";
@@ -23,6 +24,8 @@ export interface QqModuleHostOptions {
   verificationContext(): QqPackageVerificationContext;
   candidate(): QqSignedPackage;
   readLegacySettings(): Uint8Array;
+  /** Optional reviewed production adoption wrapper around this same router. */
+  migrationLegacy?: QqMigrationLegacyPort;
   secureStorage: QqMigrationSecretStorage;
   appName: string;
   readFirstConfiguration(accountId: string): QqRuntimeConfig;
@@ -86,7 +89,7 @@ export class QqModuleHostService {
         backendReconnectTimeoutMs: options.backendReconnectTimeoutMs });
     }
     const migration = new QqMigrationCoordinator({ store: this.migrationStore, readLegacySettings: options.readLegacySettings,
-      legacy: options.router, secureStorage: options.secureStorage,
+      legacy: options.migrationLegacy ?? options.router, secureStorage: options.secureStorage,
       legacyMachine: { userDataPath: options.userDataPath, appName: options.appName },
       ...this.factory, backendReconnectTimeoutMs: options.backendReconnectTimeoutMs });
     this.installation = new QqInstallationController({ packages: this.packages, verificationContext: options.verificationContext, migration });
@@ -109,6 +112,7 @@ export class QqModuleHostService {
     this.pending = undefined;
   }
   private async perform(command: QqModuleActionCommand): Promise<QqModuleActionResult> {
+    if (command.action === "read-diagnostics") return { ok: true, state: "diagnostics", diagnostics: readQqLifecycleDiagnostics(this.options.userDataPath) };
     if (command.action === "read-configuration" || command.action === "propose-configuration") return { ok: false, error: "unconfigured" };
     if (command.action === "status") {
       if (this.options.router.getDriver() === "module" && this.options.router.getStatus().phase === "running") return { ok: true, state: "committed" };

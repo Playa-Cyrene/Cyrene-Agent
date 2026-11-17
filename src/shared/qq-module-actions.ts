@@ -1,7 +1,9 @@
+import type { QqLifecycleDiagnostics } from "./qq-module-diagnostics";
 import type { QqRuntimeConfig } from "./qq-module";
 /** Renderer-safe commands. Paths, candidate bytes, keys and credentials are host-owned. */
 export type QqModuleActionCommand =
   | { action: "status" }
+  | { action: "read-diagnostics" }
   | { action: "read-configuration" }
   | { action: "propose-configuration"; expectedRevision: number | null; config: QqRuntimeConfig; enabled: boolean }
   | { action: "preview-install" }
@@ -31,6 +33,7 @@ export interface QqModuleConfigurationView {
   credentialAccountId: string | null;
 }
 export type QqModuleActionResult =
+  | { ok: true; state: "diagnostics"; diagnostics: QqLifecycleDiagnostics }
   | { ok: true; state: "configuration" | "configuration-saved"; configuration: QqModuleConfigurationView }
   | { ok: false; error: QqModuleActionError }
   | { ok: true; state: "ready" | "installed" | "committed" | "rolled-back" | "recovery-required" | "cancelled" | "disabled" }

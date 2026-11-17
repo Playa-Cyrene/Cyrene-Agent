@@ -1,3 +1,4 @@
+import { QqModuleDiagnosticsPanel } from "./QqModuleDiagnosticsPanel";
 import { useEffect, useRef, useState } from "react";
 import { Alert, Button, Input, Space } from "antd";
 import type { QqModuleActionCommand, QqModuleActionResult } from "../../../../shared/qq-module-actions";
@@ -69,6 +70,7 @@ export function QqModuleActionsPanel({ action, onBusy, onReady }: {
   return <div aria-label={t(`${key}.title`)}>
     <p>{t(`${key}.separation`)}</p>
     {result && <Alert role="status" type={result === "committed" || result === "installed" ? "success" : "warning"} title={t(`${key}.${["installed", "committed", "cancelled", "rolled-back", "recovery-required", "disabled", "configuration-saved"].includes(result) ? result : "failed"}`)} />}
+    <QqModuleDiagnosticsPanel action={action} disabled={busy} onBusy={value => { locked.current = value; setBusy(value); onBusy(value); }} />
     {preview ? <>
       <p>{t(`${key}.${preview.state}`)} {preview.preview.version ?? ""}</p>
       {preview.state === "preview-reconfigure" && <><p>{t(`${key}.${preview.preview.desiredEnabled ? "willEnable" : "willDisable"}`)}</p><ul>{preview.preview.changes?.map(change => <li key={change}>{t(`${key}.change-${change}`)}</li>)}</ul></>}

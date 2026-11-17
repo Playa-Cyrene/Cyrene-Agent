@@ -1078,6 +1078,26 @@
         "description": "Feishu オープンプラットフォームでカスタムアプリを作成して Bot 機能を有効にし、App ID と App Secret を入力してください。長時間接続に対応しており、公開コールバックは不要です。"
       },
       "qqModule": {
+        "diagnostics": {
+          "title": "QQ 読み取り専用診断",
+          "read": "復旧診断を表示",
+          "failed": "診断を取得できません。ロックや記録を削除せず状態を保持してください。",
+          "notice": "ディスク記録の読み取り専用スナップショットです。停止の証明や再有効化の許可ではありません。",
+          "manual": "異常終了後は有効化を中止し、記録を保持して保守担当者に確認してください。ロック削除やフォルダ初期化、結果不明メッセージの再送はしないでください。",
+          "store-migration": "migration",
+          "store-firstSetup": "firstSetup",
+          "store-recovery": "recovery",
+          "store-driverOwnership": "driverOwnership",
+          "store-adoption": "adoption",
+          "status-absent": "absent",
+          "status-locked": "locked",
+          "status-incomplete": "incomplete",
+          "status-corrupt": "corrupt",
+          "status-unavailable": "unavailable",
+          "status-dirty": "dirty",
+          "status-clean-retired": "clean-retired",
+          "status-recorded": "recorded"
+        },
         "configuration": {
           "title": "独立 QQ 設定の提案",
           "notice": "非秘密設定のみ編集します。保存だけでは起動、停止、アカウント切替は行いません。別途プレビューと明示的な適用確認が必要です。",

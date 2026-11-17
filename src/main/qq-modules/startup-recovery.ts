@@ -2,8 +2,8 @@ import { lstatSync } from "node:fs";
 import { join } from "node:path";
 
 /** Fixed host-owned locations, never renderer input. Reading never creates a store. */
-export function qqLifecyclePaths(userDataPath: string): { migration: string; firstSetup: string; recovery: string; driverOwnership: string } {
-  return { driverOwnership: join(userDataPath, "qq-module-driver-ownership"), recovery: join(userDataPath, "qq-module-recovery"), migration: join(userDataPath, "qq-module-migration"), firstSetup: join(userDataPath, "qq-module-first-setup") };
+export function qqLifecyclePaths(userDataPath: string): { migration: string; firstSetup: string; recovery: string; driverOwnership: string; adoption: string } {
+  return { adoption: join(userDataPath, "qq-module-adoption"), driverOwnership: join(userDataPath, "qq-module-driver-ownership"), recovery: join(userDataPath, "qq-module-recovery"), migration: join(userDataPath, "qq-module-migration"), firstSetup: join(userDataPath, "qq-module-first-setup") };
 }
 
 /** A durable choice is not proof that the previous process stopped or that either

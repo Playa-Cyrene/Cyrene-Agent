@@ -1,3 +1,4 @@
+import { validateQqLifecycleDiagnostics } from "../../shared/qq-module-diagnostics";
 import { validateRuntimeConfig } from "../../shared/qq-module";
 import { isQqModuleLoopbackHost } from "./listen-policy";
 import { strictObject } from "../../shared/qq-module/validation";
@@ -21,7 +22,7 @@ function command(value: unknown): QqModuleActionCommand | null {
   const action = (value as { action?: unknown }).action;
   const base = { action: (v: unknown) => v === action };
   const confirmed = { ...base, operationId: id, userConfirmed: (v: unknown) => v === true };
-  const valid = action === "status" || action === "read-configuration" || action === "preview-install" || action === "preview-migration" || action === "preview-recovery" || action === "preview-reconfigure" ? strictObject(value, base)
+  const valid = action === "status" || action === "read-diagnostics" || action === "read-configuration" || action === "preview-install" || action === "preview-migration" || action === "preview-recovery" || action === "preview-reconfigure" ? strictObject(value, base)
     : action === "propose-configuration" ? strictObject(value, { ...base, expectedRevision: revision, config: configuration, enabled: (v) => typeof v === "boolean" })
     : action === "preview-setup" ? strictObject(value, { ...base, accountId: account })
       : action === "confirm-install" ? strictObject(value, confirmed)
@@ -34,6 +35,10 @@ function command(value: unknown): QqModuleActionCommand | null {
 function result(value: unknown, request: QqModuleActionCommand): QqModuleActionResult {
   if (strictObject(value, { ok: (v) => v === false, error: (v) => actionErrors.includes(v as QqModuleActionError) })) {
     return { ok: false, error: (value as { error: QqModuleActionError }).error };
+  }
+  if (request.action === "read-diagnostics") {
+    return strictObject(value, { ok: v => v === true, state: v => v === "diagnostics", diagnostics: validateQqLifecycleDiagnostics })
+      ? structuredClone(value) as QqModuleActionResult : failure("operation-failed");
   }
   if (request.action === "read-configuration" || request.action === "propose-configuration") {
     return strictObject(value, { ok: v => v === true, state: v => v === (request.action === "read-configuration" ? "configuration" : "configuration-saved"),
@@ -78,9 +83,9 @@ export class QqModuleActionGateway {
     let request: QqModuleActionCommand | null;
     try { request = command(input); } catch { return failure("invalid"); }
     if (!request) return failure("invalid");
-    if (this.cleanupFailed) return failure("recovery-required");
+    if (this.cleanupFailed && request.action !== "read-diagnostics") return failure("recovery-required");
     if (this.busy) return failure("busy");
-    if (this.pending && this.pending.owner !== owner.key && request.action !== "status" && request.action !== "read-configuration") return failure("unauthorized");
+    if (this.pending && this.pending.owner !== owner.key && request.action !== "status" && request.action !== "read-diagnostics" && request.action !== "read-configuration") return failure("unauthorized");
     if (this.pending && request.action === "propose-configuration") return failure("busy");
     if (request.action.startsWith("confirm-") || request.action === "cancel") {
       const consent = request as Extract<QqModuleActionCommand, { operationId: string }>;
@@ -91,7 +96,7 @@ export class QqModuleActionGateway {
     }
     const desiredEnabled = this.pending?.kind === "preview-reconfigure" ? this.pending.preview.desiredEnabled : undefined;
     this.busy = true;
-    if (request.action !== "status" && request.action !== "read-configuration") this.pending = undefined; // Consume before calling a reentrant/asynchronous port.
+    if (request.action !== "status" && request.action !== "read-diagnostics" && request.action !== "read-configuration") this.pending = undefined; // Consume before calling a reentrant/asynchronous port.
     try {
       const response = result(await this.port.execute(request), request);
       // A disable confirmation must not be presented as successful reactivation (or

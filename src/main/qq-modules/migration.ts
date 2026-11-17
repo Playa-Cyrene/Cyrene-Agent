@@ -112,6 +112,9 @@ export class QqMigrationCoordinator {
         if (!isQqLegacyIdentity(identity) || identity.selfId !== record.plan.identity.selfId) migrationFail("module-account-unverified");
         record.phase = "module-staged"; save(record);
         if (qqMigrationDigest(this.options.readLegacySettings()) !== record.plan.sourceDigest) migrationFail("settings-changed");
+        // Staging is asynchronous: revalidate installed bytes, expiry and current
+        // trust immediately before persisting/activating the selected candidate.
+        this.options.verifyCandidate(preview.packageId);
         // Commit the local choice while the module is still quarantined. The
         // disk cannot prove activation (or a live process after a host restart).
         record.phase = "selected"; save(record);

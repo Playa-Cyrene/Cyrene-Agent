@@ -1054,6 +1054,26 @@
       },
       "feishu": { "description": "在飞书开放平台创建自建应用并启用机器人能力，然后填写 App ID 和 App Secret。支持长连接，无需公网回调。" },
       "qqModule": {
+        "diagnostics": {
+          "title": "QQ 只读诊断",
+          "read": "查看恢复诊断",
+          "failed": "诊断暂不可用；保持当前状态，不要删除锁或记录。",
+          "notice": "这是磁盘记录的只读快照，不证明进程已停止，也不是重新启用许可。",
+          "manual": "异常退出时请停止尝试激活，保留原始记录并联系维护者核查；不要删除锁、清空目录或自动重发未知结果消息。",
+          "store-migration": "旧驱动迁移",
+          "store-firstSetup": "首次配置",
+          "store-recovery": "显式恢复",
+          "store-driverOwnership": "驱动所有权",
+          "store-adoption": "首次纳管",
+          "status-absent": "未观察到记录",
+          "status-locked": "锁存在，需要核查",
+          "status-incomplete": "未完成记录",
+          "status-corrupt": "记录格式异常",
+          "status-unavailable": "无法安全读取",
+          "status-dirty": "未正常交接",
+          "status-clean-retired": "正常退出记录（非实时证明）",
+          "status-recorded": "已记录状态"
+        },
         "configuration": {
           "title": "独立 QQ 配置提案",
           "notice": "这里只编辑非秘密配置。保存提案不会启动、停止或切换账号，保存后仍须预览并明确确认应用。",

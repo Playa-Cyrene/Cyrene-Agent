@@ -326,3 +326,18 @@ it("displays the exact host preview snapshot rather than the editor's earlier sa
   expect(display.textContent).not.toContain("6200"); expect(button("明确确认").disabled).toBe(true);
   expect(action.mock.calls.some(([c]) => c.action.startsWith("confirm-"))).toBe(false);
 });
+it("holds preview consent and blocks confirm/cancel/close during read-only diagnostics", async () => {
+ let finish!: (r: unknown) => void;
+ const action = vi.fn().mockResolvedValueOnce({ ok: true, state: "ready" })
+   .mockResolvedValueOnce({ ok: true, state: "preview-install", preview: { operationId: "diagnostics-preview", packageId } })
+   .mockImplementationOnce(() => new Promise(r => { finish = r; }))
+   .mockResolvedValueOnce({ ok: true, state: "installed" });
+ await configured(action); await click(button("预览安装候选"));
+ await act(async () => { button("查看恢复诊断").click(); button("明确确认").click(); });
+ expect(action).toHaveBeenCalledTimes(3); expect(action).toHaveBeenLastCalledWith({ action: "read-diagnostics" });
+ expect(button("明确确认").disabled).toBe(true); expect(document.querySelector<HTMLButtonElement>(".ant-modal-footer button")!.disabled).toBe(true);
+ await act(async () => finish({ ok: false, error: "operation-failed" }));
+ expect(button("明确确认").disabled).toBe(false);
+ await click(button("明确确认"));
+ expect(action).toHaveBeenLastCalledWith({ action: "confirm-install", operationId: "diagnostics-preview", userConfirmed: true });
+});

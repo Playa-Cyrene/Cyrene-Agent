@@ -1054,6 +1054,26 @@
       },
       "feishu": { "description": "Create a custom app on the Feishu Open Platform and enable bot capabilities, then enter its App ID and App Secret. Long connections do not require a public callback URL." },
       "qqModule": {
+        "diagnostics": {
+          "title": "QQ read-only diagnostics",
+          "read": "View recovery diagnostics",
+          "failed": "Diagnostics unavailable. Preserve state; do not delete locks or records.",
+          "notice": "Read-only disk snapshot, not proof of stopped processes or permission to reactivate.",
+          "manual": "After an abnormal exit, stop activation attempts and preserve records for maintainer review. Do not delete locks, empty folders, or replay messages with unknown outcomes.",
+          "store-migration": "migration",
+          "store-firstSetup": "firstSetup",
+          "store-recovery": "recovery",
+          "store-driverOwnership": "driverOwnership",
+          "store-adoption": "adoption",
+          "status-absent": "absent",
+          "status-locked": "locked",
+          "status-incomplete": "incomplete",
+          "status-corrupt": "corrupt",
+          "status-unavailable": "unavailable",
+          "status-dirty": "dirty",
+          "status-clean-retired": "clean-retired",
+          "status-recorded": "recorded"
+        },
         "configuration": {
           "title": "Independent QQ configuration proposal",
           "notice": "Edit non-secret configuration only. Saving never starts, stops, or switches accounts. Preview and explicitly confirm application afterward.",

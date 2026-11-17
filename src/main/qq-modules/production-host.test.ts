@@ -1,3 +1,7 @@
+import { QqDriverOwnershipSupervisor } from "./driver-ownership";
+import { QqAdoptionProofCoordinator } from "./adoption-proof";
+import { QqAdoptionIntentStore } from "./adoption-intent";
+import type { QqProductionHostOptions } from "./production-host";
 import { generateKeyPairSync, sign, randomBytes, createCipheriv, createDecipheriv } from "node:crypto";
 import { mkdtempSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -13,7 +17,7 @@ import { QQ_PACKAGE_SIGNATURE_DOMAIN, qqPackageDigest, type QqPackageManifest } 
 import type { QqModuleActionResult } from "../../shared/qq-module-actions";
 const roots: string[] = [], services: QqProductionHost[] = [];
 afterEach(async () => { for (const s of services.splice(0)) await s.shutdown().catch(() => {}); for (const r of roots.splice(0)) rmSync(r, { recursive: true, force: true }); });
-function fixture() {
+function fixture(configure?: (options: QqProductionHostOptions) => QqProductionHostOptions) {
   const root = mkdtempSync(join(tmpdir(), "qq-production-host-")); roots.push(root);
   // Synthetic AES port exercises envelope persistence; it is NOT OS safeStorage.
   const aes = randomBytes(32);
@@ -33,7 +37,7 @@ function fixture() {
   const peers: FakeTransport[] = [];
   const createTransport = vi.fn(() => { const peer = new FakeTransport(); peer.terminate = async () => { peer.killed = true; peer.crash(); }; peers.push(peer); return peer; });
   const options = { userDataPath: root, router: new QqRoutingAdapter(legacy as any, "blocked"), secureStorage: secure, releasePolicy, ownership: { scopeId: "synthetic-owned-profile", bootstrap: { verifyInitialScope: vi.fn(() => true) } }, createTransport, backendReconnectTimeoutMs: 50 };
-  const service = createQqProductionHost(options)!; services.push(service);
+  const service = createQqProductionHost(configure ? configure(options) : options)!; services.push(service);
   const gateway = new QqModuleActionGateway(service), owner = { key: {}, isAuthorized: () => true };
   const credentials = new QqSecureCredentialStore(qqSecureCredentialDirectory(root), secure);
   const proposals = new QqConfigurationProposalStore(qqConfigurationProposalDirectory(root));
@@ -139,4 +143,52 @@ it("shutdown waits for a confirmed staged operation then retires ownership witho
   expect(s.peers.every(peer => peer.killed)).toBe(true);
   expect(JSON.parse(readFileSync(join(s.root, "qq-module-driver-ownership/ownership.json"), "utf8")).phase).toBe("clean-retired");
   expect(await s.service.execute({ action: "preview-recovery" })).toEqual({ ok: false, error: "recovery-required" });
+});
+
+it("persists confirmed adoption before freezing and retains dirty ownership if its live proof is lost", async () => {
+  let held = true; const freeze = vi.fn();
+  const s = fixture(options => {
+    const store = new QqAdoptionIntentStore(options.userDataPath);
+    const adoption = new QqAdoptionProofCoordinator({
+      readContext: () => ({ platform: "win32", scopeId: options.ownership.scopeId, sessionEpoch: "isolated-fixture", mode: "new-install", previousHostSha256: null, hostSha256: "a".repeat(64), moduleSha256: "b".repeat(64) }),
+      persistIntent: context => store.persistIntent(context), reviewedPolicy: { approve: () => true },
+      exclusiveScope: { freezeAndProve: async () => { expect(store.read()?.phase).toBe("prepared"); freeze(); return { isHeld: () => held, release: vi.fn() }; } },
+    });
+    return { ...options, ownership: { scopeId: options.ownership.scopeId }, adoption };
+  });
+  expect(freeze).not.toHaveBeenCalled();
+  await s.activate(); expect(freeze).toHaveBeenCalledOnce();
+  const report = await s.gateway.execute({ action: "read-diagnostics" }, s.owner);
+  expect(report.ok && report.state === "diagnostics" && report.diagnostics.stores.adoption.status).toBe("recorded");
+  held = false;
+  await expect(s.service.shutdown()).rejects.toThrow("ADOPTION_LOST");
+  expect(s.peers[0].killed).toBe(true);
+  expect(JSON.parse(readFileSync(join(s.root, "qq-module-driver-ownership/ownership.json"), "utf8")).phase).toBe("dirty");
+  expect(existsSync(join(s.root, "qq-module-driver-ownership/owner.lock"))).toBe(true);
+});
+it("does not call a new adoption authority to override dirty ownership", async () => {
+  const s = fixture(); await s.activate(); const prepare = vi.fn();
+  const next = createQqProductionHost({ ...s.options, router: new QqRoutingAdapter(s.legacy as any, "blocked"), ownership: { scopeId: s.options.ownership.scopeId }, adoption: { prepare } })!; services.push(next);
+  const p = s.extract(await next.execute({ action: "preview-recovery" }));
+  const r = await next.execute({ action: "confirm-recovery", operationId: p.operationId, accountId: "10000", userConfirmed: true });
+  expect(r.ok && r.state).toBe("recovery-required"); expect(prepare).not.toHaveBeenCalled();
+});
+
+it("does not certify disabled after adoption proof is lost across the activation await", async () => {
+  let held = true;
+  const s = fixture(options => ({ ...options, ownership: { scopeId: options.ownership.scopeId }, adoption: {
+    prepare: async () => ({ scopeId: options.ownership.scopeId, bootstrap: { verifyInitialScope: () => true }, isHeld: () => held, cancel: () => {} }),
+  } }));
+  await s.activate();
+  await s.gateway.execute({ action: "propose-configuration", expectedRevision: 1, config: configuration().config, enabled: false }, s.owner);
+  const p = s.extract(await s.gateway.execute({ action: "preview-reconfigure" }, s.owner));
+  const original = QqDriverOwnershipSupervisor.prototype.beginActivation;
+  const spy = vi.spyOn(QqDriverOwnershipSupervisor.prototype, "beginActivation").mockImplementation(async function (this: QqDriverOwnershipSupervisor) {
+    const result = await original.call(this); held = false; return result;
+  });
+  try {
+    const r = await s.gateway.execute({ action: "confirm-reconfigure", operationId: p.operationId, accountId: "10000", userConfirmed: true }, s.owner);
+    expect(r.ok && r.state).toBe("recovery-required"); expect(s.peers).toHaveLength(1);
+    expect(s.peers[0].killed).toBe(true);
+  } finally { spy.mockRestore(); }
 });

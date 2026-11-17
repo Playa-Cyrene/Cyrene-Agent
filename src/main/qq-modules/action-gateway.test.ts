@@ -202,3 +202,16 @@ it("rejects a runtime confirmation snapshot whose displayed account differs from
   const s = setup(); s.execute.mockReturnValue({ ok: true, state: "preview-setup", preview: { operationId: "p", packageId, accountId: "10000", configuration: { ...configuration().config, expectedSelfId: "999" } } });
   expect(await s.gateway.execute({ action: "preview-setup", accountId: "10000" }, s.owner)).toEqual({ ok: false, error: "operation-failed" });
 });
+
+it("diagnostics reject paths and redact unexpected host fields while preserving preview consent", async () => {
+ const s = setup(); const p = await preview(s);
+ const absent = { status: "absent" };
+ const diagnostics = { schemaVersion: 1, startupMode: "legacy", manualReviewRequired: false,
+   stores: { migration: absent, firstSetup: absent, recovery: absent, driverOwnership: absent, adoption: absent } };
+ expect(await s.gateway.execute({ action: "read-diagnostics", path: "/private" }, s.owner)).toEqual({ ok: false, error: "invalid" });
+ s.execute.mockResolvedValueOnce({ ok: true, state: "diagnostics", diagnostics } as any);
+ expect(await s.gateway.execute({ action: "read-diagnostics" }, owner())).toEqual({ ok: true, state: "diagnostics", diagnostics });
+ s.execute.mockResolvedValueOnce({ ok: true, state: "diagnostics", diagnostics: { ...diagnostics, token: "secret" } } as any);
+ expect(await s.gateway.execute({ action: "read-diagnostics" }, s.owner)).toEqual({ ok: false, error: "operation-failed" });
+ expect(await s.gateway.execute({ action: "confirm-install", operationId: p.operationId, userConfirmed: true }, s.owner)).toEqual({ ok: true, state: "installed" });
+});
