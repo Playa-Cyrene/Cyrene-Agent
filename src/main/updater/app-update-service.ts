@@ -60,13 +60,19 @@ export function createAppUpdateService(options: CreateAppUpdateServiceOptions): 
     for (const listener of listeners) listener({ ...state });
   };
 
-  updater.on("checking-for-update", () => publish({ phase: "checking" }));
-  updater.on("update-available", (info) => publish({
+  const hasDownload = () => Boolean(downloadPromise) || state.phase === "downloading" || state.phase === "downloaded";
+  // 周期检查和迟到的检查事件都不能撤销正在下载或已经可安装的版本。
+  const publishCheck = (patch: Partial<AppUpdateState> & Pick<AppUpdateState, "phase">): void => {
+    if (!hasDownload()) publish(patch);
+  };
+
+  updater.on("checking-for-update", () => publishCheck({ phase: "checking" }));
+  updater.on("update-available", (info) => publishCheck({
     phase: "available",
     availableVersion: typeof info?.version === "string" ? info.version : undefined,
     releaseNotesHtml: normalizeReleaseNotes(info?.releaseNotes),
   }));
-  updater.on("update-not-available", () => publish({ phase: "not_available" }));
+  updater.on("update-not-available", () => publishCheck({ phase: "not_available" }));
   updater.on("download-progress", (progress) => publish({
     phase: "downloading",
     percent: finiteNumber(progress?.percent),
@@ -81,14 +87,15 @@ export function createAppUpdateService(options: CreateAppUpdateServiceOptions): 
     percent: 100,
   }));
   // 错误只带错误码，用户可读文案由渲染层按码翻译；下载中报错按下载失败归档
-  updater.on("error", () => publish({
-    phase: "error",
-    error: downloadPromise ? "download_failed" : "check_failed",
-  }));
+  updater.on("error", () => {
+    if (state.phase === "downloaded") return;
+    publish({ phase: "error", error: hasDownload() ? "download_failed" : "check_failed" });
+  });
 
   return {
     getState: () => ({ ...state }),
     async check() {
+      if (hasDownload()) return { ...state };
       if (!isPackaged) {
         publish({ phase: "not_available" });
         return { ...state };
@@ -96,7 +103,7 @@ export function createAppUpdateService(options: CreateAppUpdateServiceOptions): 
       if (!checkPromise) {
         publish({ phase: "checking" });
         checkPromise = updater.checkForUpdates().catch(() => {
-          publish({ phase: "error", error: "check_failed" });
+          publishCheck({ phase: "error", error: "check_failed" });
         }).finally(() => {
           checkPromise = null;
         });
@@ -106,10 +113,12 @@ export function createAppUpdateService(options: CreateAppUpdateServiceOptions): 
     },
     async download() {
       if (!isPackaged) return { ...state };
+      // updater 的 error 事件不带操作标识，检查先结束再下载，避免错误归因交叉。
+      if (checkPromise) await checkPromise;
       if (!downloadPromise && state.phase !== "downloaded") {
         publish({ phase: "downloading", percent: state.percent ?? 0 });
         downloadPromise = updater.downloadUpdate().catch(() => {
-          publish({ phase: "error", error: "download_failed" });
+          if (state.phase !== "downloaded") publish({ phase: "error", error: "download_failed" });
         }).finally(() => {
           downloadPromise = null;
         });
