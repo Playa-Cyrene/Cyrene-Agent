@@ -2,13 +2,16 @@ import { useEffect, useState } from "react";
 import { Alert, Button, Modal, Spin } from "antd";
 import type { QqModuleInstallationStatus } from "../../../../shared/qq-module-installation";
 import type { SettingsApi } from "../../../settings/shared/types";
+import { QqModuleActionsPanel } from "./QqModuleActionsPanel";
 import { useTranslation } from "../../i18n";
 
-type StatusReader = Pick<SettingsApi, "channelsQqModuleInstallationStatus">;
+type StatusReader = Pick<SettingsApi, "channelsQqModuleInstallationStatus" | "channelsQqModuleAction">;
 
-/** Read-only entry at the original QQ settings location. No install IPC exists yet. */
+/** Default read-only gate; actions require an independently configured trusted host. */
 export function QqModuleInstallationCard({ api, listenMode, customHost }: { api?: StatusReader; listenMode: string; customHost: string }) {
   const { t } = useTranslation();
+  const [actionBusy, setActionBusy] = useState(false);
+  const [operational, setOperational] = useState(false);
   const [open, setOpen] = useState(false);
   const [status, setStatus] = useState<"loading" | "unconfigured" | "error">("loading");
   const [listen, setListen] = useState<"loopback" | "unsupported-host" | "unresolved">("unresolved");
@@ -36,9 +39,9 @@ export function QqModuleInstallationCard({ api, listenMode, customHost }: { api?
   return <section aria-label={t(`${key}.title`)}>
     <p className="cy-channels-hint">{t(`${key}.summary`)}</p>
     <Button onClick={() => setOpen(true)}>{t(`${key}.entry`)}</Button>
-    <Modal open={open} title={t(`${key}.title`)} onCancel={() => setOpen(false)}
-      footer={<Button onClick={() => setOpen(false)}>{t(`${key}.close`)}</Button>} destroyOnHidden>
-      {status === "loading" ? <Spin /> : <Alert type="warning" showIcon
+    <Modal open={open} title={t(`${key}.title`)} onCancel={() => { if (!actionBusy) setOpen(false); }} closable={!actionBusy} maskClosable={!actionBusy} keyboard={!actionBusy}
+      footer={<Button disabled={actionBusy} onClick={() => setOpen(false)}>{t(`${key}.close`)}</Button>} destroyOnHidden>
+      {!operational && <>{status === "loading" ? <Spin /> : <Alert type="warning" showIcon
         title={t(`${key}.${status === "error" ? "failed" : "unavailable"}`)} />}
       <p>{t(`${key}.legacy`)}</p>
       <p>{t(`${key}.safety`)}</p>
@@ -47,7 +50,8 @@ export function QqModuleInstallationCard({ api, listenMode, customHost }: { api?
       <p>{t(`${key}.tokenPolicy`)}</p>
       {status !== "loading" && <p role="status">{t(`${key}.${status !== "unconfigured" || token === "unresolved" ? "tokenUnresolved" : token === "required" ? "tokenRequired" : "tokenAvailable"}`)}</p>}
       <p>{t(`${key}.data`)}</p>
-      <Button type="primary" disabled>{t(`${key}.install`)}</Button>
+      <Button type="primary" disabled>{t(`${key}.install`)}</Button></>}
+      {open && api?.channelsQqModuleAction && <QqModuleActionsPanel key={`${listenMode}:${customHost}`} action={api.channelsQqModuleAction} onBusy={setActionBusy} onReady={setOperational} />}
     </Modal>
   </section>;
 }

@@ -10,6 +10,8 @@
 //
 // 注意：startChannels 必须晚于 initRAG / initMcpManager / loadModelSettings。
 import { app, BrowserWindow } from "electron";
+import { getQqStartupMode } from "../qq-modules/startup-recovery";
+import { registerQqModuleActionIpc, type QqModuleActionBinding } from "../qq-modules/action-ipc";
 import { getQqModuleInstallationStatus } from "../qq-modules/installation-status";
 import { IPC } from "../../shared/ipc-channels";
 import { createIpcScope, type IpcScope } from "../application/ipc-scope";
@@ -30,6 +32,7 @@ import {
 import { startInboundServer, stopInboundServer } from "./inbound-server";
 import { FeishuAdapter } from "./adapters/feishu";
 import { ILinkBotAdapter, loadCredentials } from "./adapters/wechat/ilink-bot-adapter";
+import { QqRoutingAdapter } from "./adapters/qq-routing-adapter";
 import { NapCatAdapter } from "./adapters/qq/napcat-adapter";
 import { resolveQqListenAuthRequirement } from "./qq-listen-policy";
 import { QqBotAdapter } from "./adapters/qqbot/qqbot-adapter";
@@ -52,10 +55,16 @@ export function setChannelsConversationLifecycle(lifecycle: typeof conversationL
 /** 微信 adapter 全局引用（UI 登录按钮需要） */
 let wxAdapter: ILinkBotAdapter | null = null;
 let qqAdapter: NapCatAdapter | null = null;
+let qqRouting: QqRoutingAdapter | null = null;
+let qqModuleActions: QqModuleActionBinding | undefined;
 let qqBotAdapter: QqBotAdapter | null = null;
 
 export interface InitializeChannelsOptions {
   ipc?: IpcScope;
+  /** Host-only recovery decision. Unknown/incomplete module state must block QQ startup. */
+  qqStartupMode?: "legacy" | "blocked";
+  /** Trusted composition only; never renderer input. Called before registration/start. */
+  configureQqRouting?: (router: QqRoutingAdapter) => QqModuleActionBinding | void;
   handleIncoming: MessageHandler;
   reloadDispatcherSettings: () => void;
 }
@@ -94,7 +103,7 @@ export function initializeChannels(options: InitializeChannelsOptions): void {
   });
 
   // 注册 adapter（不启动，startChannels 时统一 startAll）
-  registerAdapters();
+  registerAdapters(options);
 
   // 注册全局 IPC
   registerChannelsIpc(options.ipc, options.reloadDispatcherSettings);
@@ -103,7 +112,7 @@ export function initializeChannels(options: InitializeChannelsOptions): void {
 }
 
 /** 注册各渠道 adapter。adapter 构造不产生网络副作用，真正的连接在 startChannels。 */
-function registerAdapters(): void {
+function registerAdapters(options: InitializeChannelsOptions): void {
   const feishuAdapter = new FeishuAdapter();
   channelManager.register(feishuAdapter);
 
@@ -113,7 +122,9 @@ function registerAdapters(): void {
   channelManager.register(wxAdapter);
 
   qqAdapter = new NapCatAdapter(broadcastChannelsStatus);
-  channelManager.register(qqAdapter);
+  qqRouting = new QqRoutingAdapter(qqAdapter, options.qqStartupMode === "blocked" ? "blocked" : getQqStartupMode(app.getPath("userData")));
+  qqModuleActions = options.configureQqRouting?.(qqRouting) || undefined;
+  channelManager.register(qqRouting);
 
   qqBotAdapter = new QqBotAdapter(broadcastChannelsStatus);
   channelManager.register(qqBotAdapter);
@@ -147,10 +158,16 @@ export async function startChannels(signal?: AbortSignal): Promise<void> {
 
 /** app.on('before-quit') 调 */
 export async function shutdownChannels(): Promise<void> {
-  await channelManager.stopAll();
-  await stopInboundServer();
-  initialized = false;
-  started = false;
+  // Confirmed lifecycle work must settle before channel teardown can finish.
+  // The trusted binding prevents a late candidate start after shutdown.
+  try { await qqModuleActions?.shutdown(); }
+  finally {
+    await channelManager.stopAll();
+    await stopInboundServer();
+    qqModuleActions = undefined;
+    initialized = false;
+    started = false;
+  }
 }
 
 /** 注册进程间通信处理器。 */
@@ -159,9 +176,16 @@ function registerChannelsIpc(
   reloadDispatcherSettings: () => void,
 ): void {
   const ipc = ipcOption ?? createIpcScope();
+  registerQqModuleActionIpc(ipc, qqModuleActions);
   ipc.handle(IPC.CHANNELS_GET_CONFIG, () => getPublicChannelsSettings());
 
   ipc.handle(IPC.CHANNELS_SAVE_CONFIG, (_e, patch: unknown) => {
+    // The module runs a confirmed configuration snapshot. Do not report legacy
+    // setting edits as effective permission revocation while it still uses that snapshot.
+    if (qqRouting?.isLegacyBlocked() && patch && typeof patch === "object"
+      && Object.prototype.hasOwnProperty.call(patch, "qq")) {
+      throw new Error("QQ_MODULE_SETTINGS_REQUIRE_EXPLICIT_RECONFIGURATION");
+    }
     saveChannelsSettings(patch as Parameters<typeof saveChannelsSettings>[0]);
     reloadDispatcherSettings();
     return getPublicChannelsSettings();
@@ -304,6 +328,7 @@ function registerChannelsIpc(
 
   ipc.handle(IPC.CHANNELS_QQ_TEST_CONNECTION, async () => {
     if (!qqAdapter) return { ok: false, error: "QQ adapter 未初始化" };
+    if (qqRouting?.getDriver() !== "legacy") return { ok: false, error: "QQ_ROUTING_EXPLICIT_ACTIVATION_REQUIRED" };
     return await qqAdapter.testConnection();
   });
 

@@ -34,14 +34,10 @@ pnpm exec vitest run src/main/qq-modules/installation-controller.test.ts src/mai
 pnpm run check:main
 ```
 
-## 尚未完成、禁止据此开放生产的部分
+## 后续集成与仍然关闭的生产门槛
 
-- 正式发行信任根、受审查的支持矩阵、候选取得方式与发布流程。
-- package store 校验后解析执行入口的 host-only 接口；当前 controller 不执行已安装包。
-- QQ channel adapter/dispatcher 唯一驱动所有权；现在 `channels/init.ts` 仍默认注册旧 NapCat adapter。
-- 应用重启时读取迁移标记后的恢复门控。`selected` 不是活进程证明，不能自动启动两个驱动或重放操作。
-- 新用户首次配置路径。现有迁移只适用于旧 QQ 已启用且有已确认在线身份的用户；无历史数据不应被迫伪造旧账号。
-- 产品 IPC、UI 状态机及关闭/重开/乱序响应的真实 UI 验收。
-- Windows 密钥环、安装器/文件锁/替换/重启行为和真实 NapCat 联调。Linux mock 测试通过不能代替这些验收。
+同一分支已增加受信运行候选解析/真实工厂、单一QQ路由、持久恢复门控、独立首次配置、窗口绑定的操作IPC及确认UI。主机服务将这些组件实际组合，见 [host-integration.md](host-integration.md)。首次配置不再要求旧QQ数据；迁移仍只处理有已确认身份的旧驱动。
 
-这些缺口尚存时，本编排层只能作为分支中的离线演练基础，不应打开生产安装按钮或声称整条安装/迁移链已完成。
+默认生产未注入发行信任策略或授权操作binding，操作网关仍返回unconfigured，不会下载或执行包。尚未完成的验收包括正式发行信任根与支持矩阵、可信候选取得/发布流程、真实Windows密钥环/ACL/安装器升级、真实NapCat，以及真实桌面界面交互。模拟/离线验收通过不解除这些门槛。
+
+保持草稿分支，不能把“机制已集成”写成“已开放生产安装”或“全部验收完成”。
