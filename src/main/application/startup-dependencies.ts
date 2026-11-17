@@ -124,10 +124,15 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
             if (!showingChat || shell.chat.window.isDestroyed()) return;
             const contents = shell.chat.window.webContents;
             if (!contents.isDestroyed() && !contents.isCrashed()) {
-              // A closed/crashed renderer must not strand channel and scheduler startup.
+              // 页面仍存活却没有回报首屏时，后台渠道和调度器也要能启动。
+              const timer = setTimeout(() => {
+                console.warn("[Startup] 聊天首屏 5 秒内未报告就绪，继续启动运行时");
+                chatHydrated();
+              }, 5_000);
               contents.once("destroyed", chatHydrated);
               contents.once("render-process-gone", chatHydrated);
               try { await hydrated; } finally {
+                clearTimeout(timer);
                 contents.removeListener("destroyed", chatHydrated);
                 contents.removeListener("render-process-gone", chatHydrated);
               }

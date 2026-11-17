@@ -8,7 +8,25 @@ const electron = vi.hoisted(() => ({
 }));
 vi.mock("electron", () => electron);
 
+it("retries a failed handshake on the next call without replaying failed operations", async () => {
+  vi.resetModules();
+  const { invoke, send } = electron.ipcRenderer;
+  invoke.mockReset().mockRejectedValueOnce(new Error("not registered")).mockResolvedValue("ok");
+  const { startupIpc } = await import("../../preload/startup-ipc");
+  const claim = startupIpc.invoke(IPC.CHATS_PENDING_CLAIM, "s");
+  const run = startupIpc.invoke(IPC.AGUI_RUN, {});
+  await Promise.all([expect(claim).rejects.toThrow("not registered"), expect(run).rejects.toThrow("not registered")]);
+  await expect(startupIpc.invoke(IPC.CHATS_PENDING_LIST, "s")).resolves.toBe("ok");
+  await expect(startupIpc.invoke(IPC.CHATS_PENDING_CLAIM, "s")).resolves.toBe("ok");
+  expect(invoke.mock.calls.map(([key]) => key)).toEqual([
+    IPC.APP_RUNTIME_IPC_READY, IPC.CHATS_PENDING_LIST, IPC.APP_RUNTIME_IPC_READY, IPC.CHATS_PENDING_CLAIM,
+  ]);
+  expect(send).not.toHaveBeenCalled();
+});
+
 it("allows durable enqueue while claim and model dispatch wait for the runtime", async () => {
+  vi.resetModules();
+  electron.ipcRenderer.invoke.mockClear();
   let release!: () => void;
   const ready = new Promise<void>((resolve) => { release = resolve; });
   const { invoke } = electron.ipcRenderer;

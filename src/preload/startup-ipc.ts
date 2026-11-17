@@ -35,7 +35,10 @@ const surfaceChannels = new Set<string>([
 let ready = false;
 let pending: Promise<void> | undefined;
 function waitForRuntime(): Promise<void> {
-  return pending ??= ipcRenderer.invoke(IPC.APP_RUNTIME_IPC_READY).then(() => { ready = true; });
+  return pending ??= ipcRenderer.invoke(IPC.APP_RUNTIME_IPC_READY).then(
+    () => { ready = true; },
+    (error) => { pending = undefined; throw error; },
+  );
 }
 
 export const startupIpc = {
