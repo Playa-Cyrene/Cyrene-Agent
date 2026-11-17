@@ -376,7 +376,6 @@ export async function createRuntimeDependencies(
   async function waitForConversation(mode: ConversationMode, toolIds?: readonly string[] | "all"): Promise<void> {
     checkStartupActive(shutdown);
     await readiness.waitFor("core-ready");
-    if (readiness.getPhase() === "ready" && !mcpTasks.size) return;
     const settings = loadGeneralSettings();
     const chatTools = Object.entries(settings.toolModeOverrides)
       .filter(([id, overrides]) => settings.chatToolsEnabled && overrides.chat && shouldExposeSearchTool(id, settings.searchEngine))
