@@ -5,6 +5,7 @@ import { buildAgentRunOptions, type BuildOptionsDeps } from "../../../src/main/o
 export async function buildImageOptions(attachment: ChannelAttachment) {
   const empty = () => "";
   const deps: BuildOptionsDeps = {
+    waitForStartup: async () => {},
     loadModelSettings: () => ({ provider: "fixture", baseUrl: "https://example.invalid", model: "fixture", apiKey: "unused" }),
     loadGeneralSettings: () => ({ currentStyleId: "default", chatSocialContextEnabled: false }),
     loadUserProfile: () => ({}),
