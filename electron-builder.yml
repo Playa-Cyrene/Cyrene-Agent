@@ -50,6 +50,8 @@ extraFiles:
 extraResources:
   - from: resources/bin/cyrene-screenshot.exe
     to: bin/cyrene-screenshot.exe
+  - from: resources/bin/cyrene-computer.exe
+    to: bin/cyrene-computer.exe
   - from: resources/bin/mpv
     to: bin/mpv
   - from: resources/mingit
