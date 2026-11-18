@@ -189,11 +189,35 @@ describe("G1 OpenAI chatgpt + reasoning 透传", () => {
     expect(JSON.parse(http.body).reasoning_effort).toBe("medium");
   });
 
-  // 官方推理指南：GPT-6.2 Astra / Sol 收到 effort=none 会拒绝请求。
-  test.each(["gpt-6.2-astra", "gpt-6.2-sol"])("%s + off → 不发送 none，回到默认 medium", (model) => {
+  // 官方推理指南：GPT-6.2 Astra / Sol 收到 effort=none 会拒绝请求；迁移指南要求 none / minimal 改用 low。
+  // 同一档案从别的模型切过来时，已保存的「关闭 / 最低」只降到 low，不升到默认 medium。
+  test.each([
+    ["gpt-6.2-astra", { mode: "off" }, "low"],
+    ["gpt-6.2-sol", { mode: "off" }, "low"],
+    ["gpt-6.2-sol", { mode: "on", effort: "minimal" }, "low"],
+    ["gpt-6.2-sol", { mode: "auto" }, "medium"],
+    ["gpt-6.2-sol", undefined, "medium"],
+  ] as const)("%s + %j → reasoning_effort=%s（不发送 none）", (model, reasoning, expected) => {
     const http = adapter.buildRequest(
       { model, messages: [{ role: "user", content: "hi" }] },
-      cfgOf(chatgptCap, { model, reasoning: { mode: "off" } }),
+      cfgOf(chatgptCap, { model, ...(reasoning ? { reasoning } : {}) }),
+    );
+    expect(JSON.parse(http.body).reasoning_effort).toBe(expected);
+  });
+
+  test("gpt-6.2-sol 经 Responses + 已保存的 off → reasoning.effort=low", () => {
+    const responses = new ResponsesAdapter("chatgpt", chatgptCap);
+    const http = responses.buildRequest(
+      { model: "gpt-6.2-sol", messages: [{ role: "user", content: "hi" }] },
+      cfgOf(chatgptCap, { model: "gpt-6.2-sol", reasoning: { mode: "off" } }),
+    );
+    expect(JSON.parse(http.body).reasoning).toEqual({ effort: "low" });
+  });
+
+  test("邻近反例：未声明低档回退的 gpt-6.1-sol 收到 minimal 仍回到默认 medium", () => {
+    const http = adapter.buildRequest(
+      { model: "gpt-6.1-sol", messages: [{ role: "user", content: "hi" }] },
+      cfgOf(chatgptCap, { model: "gpt-6.1-sol", reasoning: { mode: "on", effort: "minimal" } }),
     );
     expect(JSON.parse(http.body).reasoning_effort).toBe("medium");
   });

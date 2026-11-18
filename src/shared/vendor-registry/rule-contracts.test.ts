@@ -21,7 +21,8 @@ const claude = (efforts: ReasoningEffort[] = five) => effort(efforts, {
 const CASES: readonly [string, readonly string[], ReasoningCapability][] = [
   ["chatgpt", ["gpt-6.1-terra"], effort(five)],
   ["chatgpt", ["gpt-6-sol", "gpt-6-luna", "gpt-5.6", "gpt-5.6-terra"], effort(five, { supportsProMode: true })],
-  ["chatgpt", ["gpt-6.2-astra", "gpt-6.2-sol", "gpt-6.1-sol", "gpt-6-astra"], effort(five, { supportsDisable: false, supportsProMode: true })],
+  ["chatgpt", ["gpt-6.2-astra", "gpt-6.2-sol"], effort(five, { supportsDisable: false, supportsProMode: true, lowEffortFallback: "low" })],
+  ["chatgpt", ["gpt-6.1-sol", "gpt-6-astra"], effort(five, { supportsDisable: false, supportsProMode: true })],
   ["chatgpt", ["gpt-5", "gpt-5-mini"], effort(["minimal", "low", "medium", "high"])],
   ["chatgpt", ["o1-preview", "o3-mini"], effort(three)],
   ["chatgpt", ["o4-mini"], effort(["medium", "high"])],

@@ -195,7 +195,8 @@ export const CHATGPT_REGISTRY = defineVendor({
     // GPT-6.1 系按完整型号名拆分，都必须排在 /^gpt-6/（Astra 兜底，禁关思考）之前：
     // /^gpt-6-/ 匹配不到 "gpt-6.1-"，不前置会被 Astra 规则误吞。
     // GPT-6.2 Astra / Sol（2026-11 发布）：推理指南写明两者都拒绝 effort=none → 不可关闭；
-    // 迁移指南要求把 none / minimal 改为 low，即档位为 low/medium/high/xhigh/max。
+    // 迁移指南要求把 none / minimal 改为 low，即档位为 low/medium/high/xhigh/max；
+    // 因此已保存「关闭 / 最低」的档案映射到 low，不直接升到默认 medium。
     // 指南写明 GPT-6 系支持 pro mode，示例即用 gpt-6.2-sol。
     { modelPattern: /^gpt-6\.2-(?:astra|sol)$/i, modelInferencePattern: /^gpt-6\.2-(?:astra|sol)$/i, metadata: {
       status: "supported",
@@ -212,6 +213,7 @@ export const CHATGPT_REGISTRY = defineVendor({
       requestStyle: "openai-effort",
       supportsDisable: false,
       supportsProMode: true,
+      lowEffortFallback: "low",
     } },
     // GPT-6.1 Terra（2026-10 发布）：快速款。官方模型页 reasoning.effort 支持
     // none/low/medium(默认)/high/xhigh/max → 可关闭（off → "none"）。

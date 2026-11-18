@@ -181,6 +181,8 @@ describe("resolveReasoningCapability — 行为基准", () => {
     expect(cap.defaultEffort).toBe("medium");
     expect(cap.supportsDisable).toBe(false);
     expect(cap.supportsProMode).toBe(true);
+    // 迁移指南：none / minimal 改用 low。
+    expect(cap.lowEffortFallback).toBe("low");
     expect(resolveReasoningCapability("unknown-provider", model).supportsDisable).toBe(false);
   });
 
