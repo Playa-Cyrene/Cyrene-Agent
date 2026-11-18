@@ -4,7 +4,7 @@
  * 退出时 abort 并等待/放弃，迟到完成的任务立即执行其返回的 dispose。
  *
  * 依赖组（A–D 并发；组内箭头为严格顺序）：
- *   A: MCP 清理 → 内置同步 → MCP 恢复（30s 屏障）→ channels 启动 → scheduler 启动 → 主动触发器 → 动态反应队列扫描器
+ *   A: MCP 清理 → MCP 恢复（30s 屏障）→ channels 启动 → scheduler 启动 → 等待记忆与聊天能力 → 主动触发器 → 动态反应队列扫描器
  *   B: 记忆协调 → 重排序器预热
  *   C: 截图预热
  *   D: 更新检查
@@ -258,8 +258,7 @@ export function startBackground(deps: BackgroundDependencies): BackgroundHandle 
       });
     }
 
-    await producersReady;
-    // MCP 结算后：channels 网络启动 → scheduler 定时器 → 主动触发器
+    // MCP 结算后即可连接渠道并启动调度计时器；实际请求由各入口等待所需依赖。
     await runTracked("channels-start", "channels", async (signal) => {
       if (signal.aborted) throw new Error("aborted before channels start");
       await channels.start(signal);
@@ -269,6 +268,7 @@ export function startBackground(deps: BackgroundDependencies): BackgroundHandle 
       scheduler.start();
       return Promise.resolve();
     });
+    await producersReady;
     await runTracked("proactive-trigger", "proactive", async (signal) => {
       if (signal.aborted) throw new Error("aborted before proactive trigger start");
       proactiveTriggerDisposer = await deps.startProactiveTrigger(signal);

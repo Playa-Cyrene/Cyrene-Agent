@@ -1702,19 +1702,6 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
     await aguiApi()?.cancel(activeRun.runId);
   }
 
-  /** 撤回排队消息：主进程按稳定标识删除（已被认领/移除时幂等成功），失败提示且投影不动。 */
-  async function removeQueuedMessage(sessionId: string, id: string) {
-    const store = chatStore();
-    if (!store) return;
-    const result = await store.pendingRemove(sessionId, id);
-    if (!result.ok) {
-      // 简短失败反馈：非阻塞错误轻提示
-      feedback.notice({ tone: "error", message: t("chatPage.errorQueueRemoveFailed", { error: result.error ?? t("chatPage.unknownError") }) });
-      return;
-    }
-    await queueFlow.syncProjection(sessionId);
-  }
-
   /** 修改待发文字：保留原条目的附件快照，只更新解析后的正文与表情标记。 */
   async function editQueuedMessage(
     sessionId: string,
@@ -2207,7 +2194,7 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
             onSubmit={(value) => void sendMessage(value)}
             onCancel={() => void cancelCurrentRun()}
             onQueueMessage={(value) => void queueCurrentDraft(value)}
-            onRemoveQueuedMessage={(id) => activeSessionId && void removeQueuedMessage(activeSessionId, id)}
+            onRemoveQueuedMessage={(id) => activeSessionId && void queueFlow.removeMessage(mode, activeSessionId, id)}
             onEditQueuedMessage={(id, content) => activeSessionId
               ? editQueuedMessage(activeSessionId, mode, id, content)
               : Promise.resolve(false)}

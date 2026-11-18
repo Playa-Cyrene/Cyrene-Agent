@@ -1,3 +1,8 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { SchedulerEngine } from "../scheduler/scheduler-engine";
+import { createSchedulerStore } from "../scheduler/scheduler-store";
 import { describe, expect, it, vi } from "vitest";
 import { createShutdownCoordinator } from "./shutdown";
 import { createStartupReadiness } from "./readiness";
@@ -68,6 +73,60 @@ describe("createBackgroundTaskRunner", () => {
 });
 
 describe("startBackground", () => {
+  it.each(["memory", "reranker"] as const)("starts channels and keeps a once task due during slow %s initialization", async (slowStage) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-11-18T00:00:00Z"));
+    const dir = mkdtempSync(join(tmpdir(), "cyrene-startup-scheduler-"));
+    let release!: () => void;
+    const ready = new Promise<void>((resolve) => { release = resolve; });
+    const store = createSchedulerStore({
+      tasksFile: join(dir, "tasks.json"), historyFile: join(dir, "history.jsonl"),
+      now: () => new Date(), id: () => "once-task",
+    });
+    store.load();
+    const task = store.addTask({
+      title: "once during warmup", prompt: "run", enabled: true,
+      workspaceBinding: { workspaceRoot: dir, displayName: "test", boundAt: Date.now() },
+      schedule: { kind: "once", runAt: new Date(Date.now() + 5000).toISOString() },
+      toolMode: "allow-list", allowedToolIds: [],
+    });
+    const request = vi.fn();
+    const runTask = vi.fn(async () => {
+      await ready;
+      request();
+      return { ok: true, historyId: "run", effectiveToolIds: [] };
+    });
+    const engine = new SchedulerEngine({ store, runTask });
+    const deps = makeBackgroundDeps([], {
+      ...(slowStage === "memory" ? { reconcileMemory: () => ready } : { initializeReranker: () => ready }),
+    });
+    deps.scheduler.start.mockImplementation(() => engine.start());
+    deps.scheduler.stop.mockImplementation(() => engine.stop());
+    const background = startBackground(deps);
+    try {
+      await vi.advanceTimersByTimeAsync(6000);
+      expect(deps.channels.start).toHaveBeenCalledOnce();
+      expect(deps.scheduler.start).toHaveBeenCalledOnce();
+      expect(runTask).toHaveBeenCalledOnce();
+      expect(request).not.toHaveBeenCalled();
+      expect(store.getHistory(task.id).some((entry) => entry.reason === "missed while app was closed")).toBe(false);
+      expect(deps.startProactiveTrigger).not.toHaveBeenCalled();
+      expect(deps.startMomentsReactionScanner).not.toHaveBeenCalled();
+      release();
+      await background.settled;
+      await vi.advanceTimersByTimeAsync(0);
+      expect(request).toHaveBeenCalledOnce();
+      expect(deps.startProactiveTrigger).toHaveBeenCalledOnce();
+      expect(deps.startMomentsReactionScanner).toHaveBeenCalledOnce();
+    } finally {
+      release();
+      await background.settled;
+      engine.stop();
+      rmSync(dir, { recursive: true, force: true });
+      vi.useRealTimers();
+    }
+  });
+
   it("starts channels and scheduler after MCP settles", async () => {
     const calls: string[] = [];
     const background = startBackground(makeBackgroundDeps(calls));

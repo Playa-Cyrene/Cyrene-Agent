@@ -133,6 +133,46 @@ async function flushAsync(): Promise<void> {
 }
 
 describe("页面待发队列流程", () => {
+  it.each(["before", "after"] as const)("continues with B when withdrawal finishes %s A's pending claim", async (order) => {
+    const { flow, store, calls } = createHarness();
+    let queue = [makeQueueEntry("A"), makeQueueEntry("B")];
+    store.get.mockImplementation(async () => makeSession({ pendingMessages: queue }));
+    store.pendingList.mockImplementation(async () => queue);
+    let releaseClaim!: () => void;
+    store.pendingClaim.mockImplementationOnce(() => new Promise<PendingClaimResult>((resolve) => {
+      releaseClaim = () => resolve({ ok: true, claimed: false });
+    })).mockImplementationOnce(async () => makeClaimed({
+      userMessage: { id: "B", role: "user", content: "B", at: 1 },
+      remainingQueue: [],
+    }));
+    store.pendingRemove.mockImplementation(async () => {
+      queue = queue.filter((entry) => entry.id !== "A");
+      if (order === "after") {
+        releaseClaim();
+        await flushAsync();
+      }
+      return { ok: true, removed: true };
+    });
+    const consuming = flow.consume("chat", "s1");
+    await flushAsync();
+    expect(store.pendingClaim).toHaveBeenCalledOnce();
+    await flow.removeMessage("chat", "s1", "A");
+    releaseClaim();
+    await consuming;
+    expect(store.pendingRemove).toHaveBeenCalledWith("s1", "A");
+    expect(store.pendingClaim).toHaveBeenCalledTimes(2);
+    expect(calls.runs.map((run) => run.userMessageId)).toEqual(["B"]);
+  });
+
+  it("preserves the queue and reports failed withdrawal without consuming", async () => {
+    const { flow, store, calls } = createHarness();
+    store.pendingRemove.mockResolvedValue({ ok: false, error: "write-failed" });
+    expect(await flow.removeMessage("chat", "s1", "A")).toBe(false);
+    expect(calls.errors).toHaveLength(1);
+    expect(calls.projectionReplaces).toHaveLength(0);
+    expect(store.pendingClaim).not.toHaveBeenCalled();
+  });
+
   it("入队成功刷新投影；认领派发补占位并启动带 claimedPendingMessageId 的 run", async () => {
     const { flow, store, calls } = createHarness();
     store.pendingEnqueue.mockResolvedValue({

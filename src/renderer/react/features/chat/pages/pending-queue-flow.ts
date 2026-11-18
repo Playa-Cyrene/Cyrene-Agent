@@ -63,6 +63,8 @@ export interface PendingQueueFlow {
   ): Promise<boolean>;
   /** 消费会话待发队列：先恢复残留认领（刷新/进程退出/启动失败），再认领队首并派发 */
   consume(mode: ConversationMode, sessionId: string): Promise<void>;
+  /** 撤回未认领条目，并继续消费该会话。 */
+  removeMessage(mode: ConversationMode, sessionId: string, messageId: string): Promise<boolean>;
   /** 修改未认领条目文字（调用方已按现有解析规则产出原文/展示文字/表情标记） */
   editMessage(
     sessionId: string,
@@ -360,6 +362,22 @@ export function createPendingQueueFlow(getHost: () => PendingQueueFlowHost): Pen
     });
   }
 
+  /** 列表撤回后推进队列，涵盖撤回回执先于或晚于认领取消的两种顺序。 */
+  async function removeMessage(mode: ConversationMode, sessionId: string, messageId: string): Promise<boolean> {
+    const host = getHost();
+    const store = host.getStore();
+    if (!store) return false;
+    const result = await store.pendingRemove(sessionId, messageId);
+    if (!result.ok) {
+      host.reportError(t("chatPage.errorQueueRemoveFailed", { error: result.error ?? t("chatPage.unknownError") }));
+      return false;
+    }
+    await syncProjection(sessionId);
+    // 若认领仍在等待，consume 会记录 requestedAgain；若已结束，则立即尝试下一条。
+    await consume(mode, sessionId);
+    return true;
+  }
+
   /**
    * 修改未认领条目文字：成功时用主进程返回的权威队列刷新投影；
    * 失败/冲突时若返回了最新队列也刷新投影（不覆盖新状态），并按错误提示。
@@ -456,5 +474,5 @@ export function createPendingQueueFlow(getHost: () => PendingQueueFlowHost): Pen
     void consume(input.mode, input.sessionId);
   }
 
-  return { enqueue, consume, editMessage, adjustMessage, syncProjection, handleRunFinished };
+  return { enqueue, consume, removeMessage, editMessage, adjustMessage, syncProjection, handleRunFinished };
 }

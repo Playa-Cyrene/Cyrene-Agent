@@ -5,6 +5,10 @@ import { describe, expect, it } from "vitest";
 const chatPageSource = fs.readFileSync(fileURLToPath(new URL("./ChatPage.tsx", import.meta.url)), "utf8");
 const runControllerSource = fs.readFileSync(fileURLToPath(new URL("./run/AgentRunController.ts", import.meta.url)), "utf8");
 
+it("列表撤回连接到会继续消费队列的流程入口", () => {
+  expect(chatPageSource).toContain("onRemoveQueuedMessage={(id) => activeSessionId && void queueFlow.removeMessage(mode, activeSessionId, id)}");
+});
+
 describe("ChatPage feedback", () => {
   it("统一反馈入口承接错误上报与确认流程，不残留浏览器默认弹窗", () => {
     expect(chatPageSource).toContain("useFeedback");

@@ -142,11 +142,11 @@ describe("scheduled Cyrene execution policy", () => {
 });
 
 describe("createSchedulerRunner lifecycle events", () => {
-  it("手动触发在依赖就绪后才读取工具，并保持任务白名单", async () => {
+  it.each([true, false])("触发任务（manual=%s）在依赖就绪后才读取工具，并保持任务白名单", async (manual) => {
     let release!: () => void;
     const deps = makeRunnerDeps({ waitForTools: () => new Promise<void>(resolve => { release = resolve; }) });
     runnerMocks.getAllTools.mockClear();
-    const run = createSchedulerRunner(deps).runScheduledTask(makeTask({ allowedToolIds: ["probe-ping"] }), new Date(), true);
+    const run = createSchedulerRunner(deps).runScheduledTask(makeTask({ allowedToolIds: ["probe-ping"] }), new Date(), manual);
     expect(runnerMocks.getAllTools).not.toHaveBeenCalled();
     runnerMocks.getAllTools.mockReturnValueOnce([{ id: "probe-ping", enabled: true }, { id: "other", enabled: true }] as never);
     release();
