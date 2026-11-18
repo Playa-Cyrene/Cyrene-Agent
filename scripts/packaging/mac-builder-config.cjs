@@ -22,6 +22,10 @@ function buildMacConfig(base) {
   delete config.nsis;
   delete config.publish;
 
+  // Electron 44 lazy-installs its npm binary. Use the builder download path,
+  // which also removes Electron's placeholder default_app.asar.
+  delete config.electronDist;
+
   config.asarUnpack = (config.asarUnpack ?? []).filter((pattern) => !pattern.includes(WINDOWS_ONLY_VENDOR));
   config.files = (config.files ?? [])
     .filter((pattern) => pattern !== ONNX_DARWIN_EXCLUDE && !pattern.includes("onnxruntime-node/bin/napi-v3/win32/"))

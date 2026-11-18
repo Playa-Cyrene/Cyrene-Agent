@@ -123,6 +123,11 @@ describe("macOS packaging config", () => {
     expect(config.mac.electronLanguages).toEqual(base.win.electronLanguages);
   });
 
+  it("uses the builder Electron distribution instead of the optional npm download", () => {
+    const config = buildMacConfig({ electronDist: "node_modules/electron/dist" });
+    expect(config).not.toHaveProperty("electronDist");
+  });
+
   it("inherits the main config's unpack rules and file filters, adjusted for macOS", () => {
     expect(config.asarUnpack).toEqual(base.asarUnpack.filter((pattern) => !pattern.includes("vendor/srt-win")));
     expect(config.files).toContain("!vendor/srt-win/**/*");
