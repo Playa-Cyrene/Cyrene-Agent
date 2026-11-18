@@ -385,6 +385,7 @@ function buildStylePromptBlock(markdown: string): string {
 export async function buildAgentRunOptions(
   input: AguiRunInput,
   deps: BuildOptionsDeps,
+  includePrivateDiscordContext = false,
 ): Promise<{ options: CyreneRunOptions; latestUserText: string }> {
   const settings = deps.loadModelSettings(input.modelProfileId);
   const styleSettings = deps.loadGeneralSettings();
@@ -398,14 +399,15 @@ export async function buildAgentRunOptions(
   // slim view for downstream helpers that only need { role, content }
   const slimMessages = messages as unknown as Array<{ role: string; content?: string }>;
   const latestUserText = contentToText(messages.filter((m) => m.role === "user").at(-1)?.content) ?? "";
-  const executionMode = resolveExecutionMode(
-    input.executionMode ?? ((input.style || "").startsWith("talk") ? "chat" : "work"),
-  );
+  const privateContextAllowed = input.channel !== "discord" || includePrivateDiscordContext;
+  const executionMode = privateContextAllowed
+    ? resolveExecutionMode(input.executionMode ?? ((input.style || "").startsWith("talk") ? "chat" : "work"))
+    : "chat";
   const isChatMode = executionMode === "chat";
   const conversationId = input.sessionId || "default";
 
   // 读取可信工作区绑定（来自 Conversation Workspace Binding）
-  const workspaceBinding = conversationId
+  const workspaceBinding = privateContextAllowed && conversationId
     ? deps.getWorkspaceBinding?.(conversationId)
     : undefined;
   const resolvedWorkspaceRoot = workspaceBinding?.workspaceRoot;
@@ -416,49 +418,51 @@ export async function buildAgentRunOptions(
     );
   }
 
-  const socialContextEnabled = isChatMode
+  const socialContextEnabled = privateContextAllowed && isChatMode
     && styleSettings.chatSocialContextEnabled === true
     && Boolean(deps.buildChatSocialContext);
   const messagesForSoul = socialContextEnabled ? messages.slice(-12) : messages;
-  const profile = deps.loadUserProfile();
+  const profile = privateContextAllowed ? deps.loadUserProfile() : {};
   const { cleanMessages: cleanLlm, timestampedMessages: llmMessages, timeContext: conversationTimeContext } = buildConversationTimeContext(
     messagesForSoul as unknown as ChatContextMessage[],
-    resolveChatContextTimezone(profile.timezone),
+    privateContextAllowed ? resolveChatContextTimezone(profile.timezone) : "UTC",
   );
   const slimLlmMessages = llmMessages as Array<{ role: string; content?: string }>;
 
   let alwaysOnContext = "";
-  try {
-    alwaysOnContext = await perf.track("build_always_on_context", () => deps.buildAlwaysOnContext(latestUserText, slimMessages));
-  } catch (err) {
-    console.warn("[Cyrene] always-on context build failed:", err);
-  }
-
   let relationshipContext = "";
-  try {
-    relationshipContext = await perf.track("build_relationship_context", () => deps.buildRelationshipContext());
-  } catch (err) {
-    console.warn("[Cyrene] relationship context build failed:", err);
-  }
-
   let environmentContext = "";
-  const envTimer = perf.begin("build_environment_context");
-  try {
-    environmentContext = deps.buildEnvironmentContext(
-      { provider: settings.provider, model: settings.model },
-      {
-        nickname: profile.nickname,
-        callPreference: profile.callPreference,
-        birthday: profile.birthday,
-        defaultCity: profile.defaultCity,
-        timezone: profile.timezone,
-        gender: profile.gender,
-      },
-    );
-  } catch (err) {
-    console.warn("[Cyrene] environment context build failed:", err);
+  if (privateContextAllowed) {
+    try {
+      alwaysOnContext = await perf.track("build_always_on_context", () => deps.buildAlwaysOnContext(latestUserText, slimMessages));
+    } catch (err) {
+      console.warn("[Cyrene] always-on context build failed:", err);
+    }
+
+    try {
+      relationshipContext = await perf.track("build_relationship_context", () => deps.buildRelationshipContext());
+    } catch (err) {
+      console.warn("[Cyrene] relationship context build failed:", err);
+    }
+
+    const envTimer = perf.begin("build_environment_context");
+    try {
+      environmentContext = deps.buildEnvironmentContext(
+        { provider: settings.provider, model: settings.model },
+        {
+          nickname: profile.nickname,
+          callPreference: profile.callPreference,
+          birthday: profile.birthday,
+          defaultCity: profile.defaultCity,
+          timezone: profile.timezone,
+          gender: profile.gender,
+        },
+      );
+    } catch (err) {
+      console.warn("[Cyrene] environment context build failed:", err);
+    }
+    envTimer.end();
   }
-  envTimer.end();
 
   const channelSystem = buildChannelSystem(input.channel);
 
@@ -519,7 +523,7 @@ export async function buildAgentRunOptions(
   }
 
   let toneInjection = "";
-  if (deps.sceneEmbeddingIndex) {
+  if (privateContextAllowed && deps.sceneEmbeddingIndex) {
     try {
       toneInjection = await perf.track("build_tone_injection", () => deps.buildToneInjection(
         latestUserText,
@@ -539,7 +543,7 @@ export async function buildAgentRunOptions(
     attachmentContext = `\n\n【本轮附件内容】\n${parts.join("\n\n")}`;
   }
 
-  const styleId = resolveRunStyleId(input, styleSettings);
+  const styleId = privateContextAllowed ? resolveRunStyleId(input, styleSettings) : "default";
   const stylePromptBlock = buildStylePromptBlock(deps.readStylePrompt(styleId));
   const soulSampling = deps.resolveSoulSampling({
     styleId,
@@ -548,34 +552,22 @@ export async function buildAgentRunOptions(
   });
   // 运行模式只决定基础 system；表达 style 始终单独注入 Soul。
   // 优先使用 AguiBridge 注入的真实会话模式，fallback 到执行模式（兼容旧调用方）。
-  const resolvedMode: ConversationMode = input.mode ?? (isChatMode ? "chat" : "work");
+  const resolvedMode: ConversationMode = privateContextAllowed ? (input.mode ?? (isChatMode ? "chat" : "work")) : "chat";
   const basePromptMode = resolvedMode;
   const enabledTools = deps.toolRegistry.getEnabledToolsForMode(resolvedMode, styleSettings.toolModeOverrides);
 
   // 三模适配层：skill 按 resolvedMode 过滤，chat 模式不暴露 skill。
-  let enabledSkills = resolvedMode === "chat"
+  const enabledSkills = resolvedMode === "chat"
     ? []
     : deps.skillRegistry.getEnabledForMode(resolvedMode, styleSettings.skillModeOverrides);
-  let skillCatalog = deps.buildSkillCatalog(enabledSkills);
-  let autoInjectedSkillContext = deps.buildAutoInjectedSkillContext(enabledSkills);
-  let autoInjectedSoulContext = deps.buildAutoInjectedSoulContext?.(enabledSkills) ?? "";
-
-  // Task Router 可用 Skill 列表（Router 判断 direct/plan 和 Skill 加载用）
-  let availableSkills: SkillRouteInfo[] = (enabledSkills as Array<Record<string, unknown>>).map((s) => ({
-    id: String(s.id ?? ""),
-    description: String(s.description ?? ""),
-    ...((s.manifest as Record<string, unknown>)?.defaultExecutionMode
-      ? { defaultExecutionMode: (s.manifest as Record<string, unknown>).defaultExecutionMode as "direct" | "plan" }
-      : {}),
-  })).filter((s) => s.id);
 
   // 三模适配层：slash 命令激活也按 resolvedMode 过滤。
   const slashMode = resolvedMode === "chat" ? undefined : resolvedMode;
-  const skillActivation = deps.resolveSlashActivation(
+  const skillActivation = privateContextAllowed ? deps.resolveSlashActivation(
     slimMessages,
     slashMode,
     styleSettings.skillModeOverrides,
-  );
+  ) : "";
 
   // 搜索后端互斥过滤：每轮只暴露当前后端对应的搜索工具
   const generalSettings = deps.loadGeneralSettings();
@@ -592,21 +584,20 @@ export async function buildAgentRunOptions(
     skills: enabledSkills as never[],
     skillIds: new Set((enabledSkills as Array<{ id?: unknown }>).map((skill) => String(skill.id ?? "")).filter(Boolean)),
   };
-  const capabilities = deps.resolveRunCapabilities?.({
+  const capabilities = (privateContextAllowed ? deps.resolveRunCapabilities?.({
     mode: resolvedMode,
     activeSearchBackend,
     toolModeOverrides: styleSettings.toolModeOverrides,
     skillModeOverrides: styleSettings.skillModeOverrides,
-  }) ?? fallbackCapabilities;
-  enabledSkills = capabilities.skills;
-  skillCatalog = deps.buildSkillCatalog(enabledSkills);
-  autoInjectedSkillContext = deps.buildAutoInjectedSkillContext(enabledSkills);
-  autoInjectedSoulContext = deps.buildAutoInjectedSoulContext?.(enabledSkills) ?? "";
-  availableSkills = (enabledSkills as Array<Record<string, unknown>>).map((s) => ({
+  }) : undefined) ?? fallbackCapabilities;
+  const skillCatalog = privateContextAllowed ? deps.buildSkillCatalog(capabilities.skills) : "";
+  const autoInjectedSkillContext = privateContextAllowed ? deps.buildAutoInjectedSkillContext(capabilities.skills) : "";
+  const autoInjectedSoulContext = privateContextAllowed ? (deps.buildAutoInjectedSoulContext?.(capabilities.skills) ?? "") : "";
+  const availableSkills: SkillRouteInfo[] = capabilities.skills.map((s) => ({
     id: String(s.id ?? ""),
     description: String(s.description ?? ""),
-    ...((s.manifest as Record<string, unknown>)?.defaultExecutionMode
-      ? { defaultExecutionMode: (s.manifest as Record<string, unknown>).defaultExecutionMode as "direct" | "plan" }
+    ...(s.manifest?.defaultExecutionMode
+      ? { defaultExecutionMode: s.manifest.defaultExecutionMode }
       : {}),
   })).filter((s) => s.id);
   const runTools = capabilities.tools;

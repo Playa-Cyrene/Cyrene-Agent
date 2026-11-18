@@ -13,7 +13,7 @@
 // - 错误用 observer.error() 抛，桥层捕获。
 import { AbstractAgent, type RunAgentInput } from "@ag-ui/client";
 import { EventType, type BaseEvent } from "@ag-ui/core";
-import { AgentRuntimeError } from "./agent-runtime-error";
+import { AgentRuntimeError, classifyModelRetry, RetryableModelRunError } from "./agent-runtime-error";
 import { AgentExecutionError, type RunPhase } from "./run-execution-status";
 import { Observable } from "rxjs";
 import { toolRegistry, type ToolDefinition } from "./tool-registry";
@@ -541,7 +541,10 @@ export class CyreneAgent extends AbstractAgent {
             subscriber.complete();
             return;
           }
-          const safeErr = new Error(classification.userMessage);
+          const retryReason = abortSource ? undefined : classifyModelRetry(err);
+          const safeErr = retryReason
+            ? new RetryableModelRunError(classification.userMessage, retryReason)
+            : new Error(classification.userMessage);
           finished = true;
           detachExternalAbort();
           subscriber.error(safeErr);

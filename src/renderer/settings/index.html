@@ -1108,6 +1108,18 @@
                 </div>
               </div>
 
+
+              <div class="form-row">
+                <label class="form-label" for="channels-discord-fallback-model">聊天备用模型</label>
+                <select id="channels-discord-fallback-model" class="form-input form-input--wide" disabled>
+                  <option value="">关闭</option>
+                </select>
+              </div>
+              <div class="form-row">
+                <label class="form-label" for="channels-discord-fallback-users">允许使用备用模型的用户</label>
+                <input type="text" id="channels-discord-fallback-users" class="form-input form-input--wide" placeholder="Discord 用户 ID，用逗号分隔" />
+              </div>
+              <p class="channels-card__hint">应用所有者默认可用。开启后，临时故障会重试一次，额度用尽时会切换到备用模型。</p>
               <div class="channels-card__actions">
                 <button type="button" class="btn-secondary" id="channels-discord-save">保存并连接</button>
               </div>

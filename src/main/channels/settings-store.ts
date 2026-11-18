@@ -165,6 +165,9 @@ export interface DiscordChannelConfig extends ChannelRuntimeConfig {
   workSessionId?: string;
   /** chat 模式（toolSandbox=off）的對話 session id。供對應/定位用。 */
   chatSessionId?: string;
+  mode?: "work" | "chat";
+  fallbackModelProfileId?: string;
+  fallbackUserIds?: string[];
 }
 
 export type ChannelToolSandbox = "off" | "all";
@@ -260,6 +263,11 @@ feishu: {
       boundChannelName: typeof d?.boundChannelName === "string" ? d?.boundChannelName : undefined,
       workSessionId: typeof d?.workSessionId === "string" ? d?.workSessionId : undefined,
       chatSessionId: typeof d?.chatSessionId === "string" ? d?.chatSessionId : undefined,
+      mode: d?.mode === "work" || d?.mode === "chat" ? d.mode : undefined,
+      fallbackModelProfileId: safeStr(d?.fallbackModelProfileId).trim() || undefined,
+      fallbackUserIds: Array.isArray(d?.fallbackUserIds)
+        ? [...new Set(d.fallbackUserIds.filter((id) => typeof id === "string" && /^\d{17,20}$/.test(id)))].slice(0, 100)
+        : [],
     },
     inboundPort: safeNum(input?.inboundPort, 0, 0, 65535),
     sharedSecret: typeof input?.sharedSecret === "string" ? input.sharedSecret : "",

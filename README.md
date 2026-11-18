@@ -497,8 +497,12 @@ Cyrene 内置和扩展的工具较多，主要覆盖以下类别：
 
 - **飞书 Lark** — 通过官方 SDK 和 WebSocket 长连接接入，无需公网服务器或内网穿透。
 - **微信 iLink** — 支持长轮询消息接收、文本发送和部分媒体处理。
+- **Discord** — 通过 Gateway 接收私信和绑定频道中的提及。应用所有者可以使用 `/startagent`、`/status` 和 `/mode`，工具仅在所有者的 Work 私信中可用。可在渠道设置中选择聊天备用模型并指定允许使用的 Discord 用户 ID。
+  回复同一对话中的消息或粘贴其 Discord 消息链接，Bot 会参考原文。启用渠道语音并配置 TTS 后，发送 `语音：要朗读的文字` 可让 Bot 朗读指定内容。
 - **多渠道统一人格** — 桌面端、飞书与微信共享角色设定、记忆和会话能力。
 - **渠道独立风格** — 可针对手机聊天与桌面聊天使用不同表达方式。
+
+可选的 `/spotify` 指令由 Discord 应用所有者操作。以启动进程的环境变量提供 `CYRENE_SPOTIFY_CLIENT_ID`、`CYRENE_SPOTIFY_CLIENT_SECRET` 和 `CYRENE_SPOTIFY_REFRESH_TOKEN`。授权时选用 `user-read-playback-state`、`user-modify-playback-state` 和 `user-library-modify`。指令可在当前 Spotify Connect 设备上播放、暂停、继续、切歌或收藏当前歌曲。播放控制需要 Spotify Premium。 [Spotify 授权说明](https://developer.spotify.com/documentation/web-api/tutorials/code-flow)
 
 #### ✨ Skill 系统
 

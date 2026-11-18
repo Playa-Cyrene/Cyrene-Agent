@@ -12,6 +12,7 @@ import {
   channelsFeishuSaveBtn, channelsFeishuFeedbackEl,
   channelsDiscordTokenEl, channelsDiscordTokenRevealBtn, channelsDiscordSaveBtn, channelsDiscordFeedbackEl,
   channelsDiscordBoundEl,
+  channelsDiscordFallbackModelEl, channelsDiscordFallbackUsersEl,
   channelsWechatStatusEl, channelsFeishuStatusEl, channelsDiscordStatusEl,
   channelsWechatLoginBtn, channelsWechatRestartBtn, channelsWechatFeedbackEl,
   channelsLogListEl, channelsLogRefreshBtn, channelsLogClearBtn,
@@ -150,6 +151,24 @@ export async function loadChannelsPanel(): Promise<void> {
         : "点击保存配置时保存";
     }
     renderDiscordBoundChannel(cfg.discord);
+    if (channelsDiscordFallbackUsersEl) {
+      channelsDiscordFallbackUsersEl.value = cfg.discord.fallbackUserIds?.join(", ") ?? "";
+    }
+    if (channelsDiscordFallbackModelEl && window.settings.listModelProfiles) {
+      const select = channelsDiscordFallbackModelEl;
+      try {
+        const { profiles, defaultModelProfileId } = await window.settings.listModelProfiles();
+        for (const profile of profiles) {
+          if (profile.id === defaultModelProfileId) continue;
+          select.add(new Option(profile.displayName || `${profile.provider} / ${profile.model}`, profile.id));
+        }
+        select.value = cfg.discord.fallbackModelProfileId ?? "";
+        if (select.selectedIndex < 0) select.selectedIndex = 0;
+        select.disabled = false;
+      } catch (err) {
+        console.warn("[Channels] 无法读取备用模型列表:", err);
+      }
+    }
 
     // 拉一次渠道状态
     const status = (await window.settings.channelsGetStatus()) as Record<string, { phase: string; message?: string }>;
@@ -267,10 +286,19 @@ export async function loadChannelsPanel(): Promise<void> {
 
   // 保存配置（token 用 safeStorage 加密后落盘 + 触发 adapter 重建）
   channelsDiscordSaveBtn?.addEventListener("click", async () => {
+    const fallbackUserIds = channelsDiscordFallbackUsersEl?.value.split(/[\s,，]+/).filter(Boolean) ?? [];
+    if (fallbackUserIds.length > 100 || fallbackUserIds.some((id) => !/^\d{17,20}$/.test(id))) {
+      setDiscordFeedback("err", "请输入有效的 Discord 用户 ID，最多 100 个。");
+      return;
+    }
     setDiscordFeedback("info", "保存并连接中...");
     const patch: Record<string, unknown> = {
       discord: {
         enabled: channelsDiscordEnabledEl?.checked ?? false,
+        ...(channelsDiscordFallbackModelEl && !channelsDiscordFallbackModelEl.disabled
+          ? { fallbackModelProfileId: channelsDiscordFallbackModelEl.value }
+          : {}),
+        ...(channelsDiscordFallbackUsersEl ? { fallbackUserIds } : {}),
       },
     };
     // 仅在用户输入了新值时才覆盖 token（避免误清空）

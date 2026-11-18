@@ -504,8 +504,12 @@ Cyrene includes many built-in and extensible tools, primarily covering the follo
 
 - **Feishu / Lark** — Connects through the official SDK and WebSocket long connection without requiring a public server or tunneling.
 - **WeChat iLink** — Supports long-poll message receiving, text sending, and partial media processing.
+- **Discord** — Receives direct messages and mentions in the bound channel through the Gateway. The application owner can use `/startagent`, `/status`, and `/mode`. Tools are available only in the owner's Work DMs. Channel settings let you select a backup chat model and specify which Discord user IDs may use it.
+  Reply to a message or paste its Discord link in the same conversation to give the bot context. With channel audio enabled and TTS configured, send `voice: text to read` to have the bot read that text aloud.
 - **Unified Character Across Channels** — Desktop, Feishu, and WeChat share the same character design, memory, and conversation capabilities.
 - **Channel-Specific Style** — Mobile and desktop chat can use different expression styles.
+
+The optional `/spotify` command is available to the Discord application owner. Set `CYRENE_SPOTIFY_CLIENT_ID`, `CYRENE_SPOTIFY_CLIENT_SECRET`, and `CYRENE_SPOTIFY_REFRESH_TOKEN` in the application's launch environment. Authorize `user-read-playback-state`, `user-modify-playback-state`, and `user-library-modify`. The command can play, pause, resume, skip, or save the current track on your active Spotify Connect device. Playback controls require Spotify Premium. [Spotify authorization guide](https://developer.spotify.com/documentation/web-api/tutorials/code-flow)
 
 #### ✨ Skill System
 

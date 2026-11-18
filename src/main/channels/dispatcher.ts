@@ -12,7 +12,7 @@
 //
 // capability 降级：
 //   把 OutgoingMessage 按目标渠道的 cap 翻译 —— image→text 描述 / card→markdown / sticker 跳过。
-import { createHash } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import * as fs from "fs";
 import * as path from "path";
 import { app } from "electron";
@@ -37,6 +37,7 @@ import {
   type MobileMessageSegmentationMode,
 } from "../../shared/preferences";
 import { rememberProactiveChannelRecipient } from "./proactive-delivery";
+import { getDiscordMessageAccess, isDiscordOwnerDm } from "./adapters/discord/access";
 
 /** Phase A：用于拼接历史对话的轻量 ChatMessage 形状（与 orchestrator ChatMessage 兼容）。 */
 interface ChatMessage {
@@ -101,12 +102,17 @@ class RateLimiter {
   }
 }
 
-/** 计算一个稳定、匿名的 sessionId。
- *  Discord 額外納入 mode（work/chat），讓 work 與 chat 的對話歷史各自獨立。 */
-export function makeSessionId(channel: ChannelId, senderId: string, mode?: "work" | "chat"): string {
+/** 计算一个稳定、匿名的 sessionId。Discord 按发送者、对话和执行模式隔离历史。 */
+export function makeSessionId(
+  channel: ChannelId,
+  senderId: string,
+  mode?: "work" | "chat",
+  chatId?: string,
+): string {
   const label = (channel === "discord" && mode) ? `:${mode}` : "";
+  const scope = channel === "discord" && chatId !== undefined ? `:${chatId === senderId ? "dm" : "guild"}:${chatId}` : "";
   const hash = createHash("sha256")
-    .update(`${channel}:${senderId}${label}`)
+    .update(`${channel}:${senderId}${label}${scope}`)
     .digest("hex")
     .slice(0, 16);
   return `channel:${channel}${label}:${hash}`;
@@ -241,12 +247,13 @@ export class ChannelDispatcher {
       return null;
     }
 
-    // Discord 依目前執行模式拆分 sessionId，使 work/chat 對話歷史分開。
-    const sessionId = msg.channel === "discord"
-      ? makeSessionId(msg.channel, msg.senderId, this.settings.toolSandbox === "all" ? "work" : "chat")
+    // 使用收到消息时的模式。会话范围防止把私信和服务器频道历史混在一起。
+    const discordAccess = msg.channel === "discord" ? getDiscordMessageAccess(msg) : undefined;
+    const sessionId = discordAccess
+      ? makeSessionId(msg.channel, msg.senderId, discordAccess.mode, msg.chatId)
       : makeSessionId(msg.channel, msg.senderId);
     recordSession(msg.channel, msg.senderId, sessionId);
-    rememberProactiveChannelRecipient(msg, sessionId);
+    if (!discordAccess || isDiscordOwnerDm(msg)) rememberProactiveChannelRecipient(msg, sessionId);
 
     // Phase 3：入站消息广播到桌面端 chatWindow（让用户看到 bot 在和谁聊天）
     if (this.settings.mirrorToDesktop) {
@@ -280,7 +287,17 @@ export class ChannelDispatcher {
       console.warn(LOG, "appendLog (incoming) 失败:", err);
     }
 
-    // Phase A2：入站消息落对话历史（下一步 LLM 取的滑窗数据源）
+    const voiceReplyText = discordAccess?.isGatewayMessage ? msg.voiceReplyText : undefined;
+    let priorMessages: ChatMessage[] | undefined;
+    if (!voiceReplyText && this.deps.buildAndRunAgent && this.deps.loadRecentChannelHistory) {
+      try {
+        priorMessages = await this.deps.loadRecentChannelHistory(sessionId, 16);
+      } catch (err) {
+        console.warn(LOG, "loadRecentChannelHistory 失败 (继续不带历史):", err);
+      }
+    }
+
+    // 先读取历史再追加本轮，避免把当前消息发送给模型两次。
     try {
       appendChannelHistory(sessionId, "user", msg.text);
     } catch (err) {
@@ -290,34 +307,23 @@ export class ChannelDispatcher {
     // Phase 1 实装的 agent 调用；Phase 0 没有 → echo
     let replyText: string;
     let sticker: string | null = null;
-    if (this.deps.buildAndRunAgent) {
-      // Phase A：拼接最近 16 条历史 (同桌面端 buildModelMessages 行为).
-      // 加载失败/未注入 → 不拼历史 (兼容旧实现).
-      let priorMessages: ChatMessage[] | undefined;
-      if (this.deps.loadRecentChannelHistory) {
-        try {
-          priorMessages = await this.deps.loadRecentChannelHistory(sessionId, 16);
-        } catch (err) {
-          console.warn(LOG, "loadRecentChannelHistory 失败 (继续不带历史):", err);
-          priorMessages = undefined;
-        }
-      }
+    if (voiceReplyText) {
+      replyText = voiceReplyText;
+    } else if (this.deps.buildAndRunAgent) {
       try {
         const result = await this.deps.buildAndRunAgent(msg, sessionId, priorMessages);
         replyText = result.text;
         sticker = result.sticker;
       } catch (err) {
-        // agent 調用失敗：不再靜默無回覆，把具體錯誤訊息回給用戶，方便在 Discord 上直接看到。
-        // 詳細錯誤名稱/代碼已由 bootstrap 透過 recordChannelError 記錄（可用 /status 查）。
         console.error(LOG, "agent 调用失败:", err instanceof Error ? err.message : err);
-        const detail =
-          (err && typeof err === "object" && "code" in err && typeof (err as { code?: unknown }).code === "string"
-            ? (err as { code?: unknown }).code
-            : undefined);
-        replyText = `⚠️ Agent 處理失敗${detail ? `（${detail}）` : ""}：` +
-          (err instanceof Error ? err.message : String(err)) +
-          "\n你可以輸入 `/status` 查看目前模型/API 設定與詳細錯誤。";
-        sticker = null;
+        if (msg.channel === "discord") {
+          replyText = "我處理你的訊息時出了點問題，請稍後重試。";
+        } else {
+          const detail = (err as { code?: unknown } | null)?.code;
+          replyText = `⚠️ Agent 處理失敗${typeof detail === "string" && detail ? `（${detail}）` : ""}：` +
+            (err instanceof Error ? err.message : String(err)) +
+            "\n你可以輸入 `/status` 查看目前模型/API 設定與詳細錯誤。";
+        }
       }
     } else {
       replyText = `[echo][${msg.channel}][${msg.senderId}] ${msg.text}`;
@@ -343,7 +349,7 @@ export class ChannelDispatcher {
             // 写到 userData/channels/audio/<messageId>.<ext> 缓存
             const audioDir = path.join(app.getPath("userData"), "channels", "audio");
             fs.mkdirSync(audioDir, { recursive: true });
-            const audioPath = path.join(audioDir, `${msg.channel}-${Date.now()}${audioResult.extension}`);
+            const audioPath = path.join(audioDir, `${msg.channel}-${randomUUID()}${audioResult.extension}`);
             fs.writeFileSync(audioPath, audioResult.audio);
             console.log(LOG, `TTS verify: written path=${audioPath} ext=${audioResult.extension} mime=${audioResult.mime}`);
             parts.push({ kind: "audio", filePath: audioPath, mime: audioResult.mime });

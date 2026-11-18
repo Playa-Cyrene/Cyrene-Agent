@@ -110,6 +110,42 @@ describe("build-options", () => {
     }).runtimeEnvironmentContext).toBe("ENV")
   })
 
+  it("keeps private desktop context out of Discord guest and guild prompts", async () => {
+    const deps = createBuildDeps();
+    const loadSettings = deps.loadGeneralSettings;
+    deps.loadGeneralSettings = () => ({ ...loadSettings(), chatSocialContextEnabled: true });
+    deps.loadUserProfile = vi.fn(() => ({ nickname: "Private owner", timezone: "Asia/Taipei" }));
+    deps.buildAlwaysOnContext = vi.fn(async () => "PRIVATE_MEMORY");
+    deps.buildRelationshipContext = vi.fn(async () => "PRIVATE_RELATIONSHIP");
+    deps.buildEnvironmentContext = vi.fn(() => "PRIVATE_ENVIRONMENT");
+    deps.buildAutoInjectedSoulContext = vi.fn(() => "PRIVATE_SKILL");
+    deps.resolveSlashActivation = vi.fn(() => "PRIVATE_ACTIVATION");
+    deps.buildChatSocialContext = vi.fn(async () => ({ contextBlock: "PRIVATE_SOCIAL", retrievedAtoms: [] }));
+    deps.getWorkspaceBinding = vi.fn(() => ({ workspaceRoot: "/private", displayName: "Private", boundAt: 0 }));
+    const messages = [{ role: "assistant", content: "Scoped prior turn" }, { role: "user", content: "Latest turn" }];
+
+    const { options } = await buildAgentRunOptions({
+      channel: "discord", mode: "work", executionMode: "work", sessionId: "discord-guild",
+      userTurnId: "user", assistantTurnId: "assistant", messages,
+    }, deps);
+    expect(options.executionMode).toBe("chat");
+    expect(options.cleanMessages).toEqual(messages);
+    expect(options.soulSystemBaseContent).toContain("SOUL_SYSTEM_BASE");
+    expect(options.soulSystemBaseContent).not.toContain("PRIVATE_");
+    expect(options.runtimeEnvironmentContext).toBe("");
+    expect(options.resolvedWorkspaceRoot).toBeUndefined();
+    expect(options.trustedAskUserProfile).toEqual({ gender: "unknown" });
+    expect(options.socialContext).toBeUndefined();
+    expect(deps.loadUserProfile).not.toHaveBeenCalled();
+    expect(deps.getWorkspaceBinding).not.toHaveBeenCalled();
+    expect(deps.buildChatSocialContext).not.toHaveBeenCalled();
+
+    const owner = await buildAgentRunOptions({ channel: "discord", executionMode: "chat", messages }, deps, true);
+    expect(owner.options.soulSystemBaseContent).toContain("PRIVATE_MEMORY");
+    expect(owner.options.soulSystemBaseContent).toContain("PRIVATE_RELATIONSHIP");
+    expect(owner.options.soulSystemBaseContent).toContain("PRIVATE_SOCIAL");
+  });
+
   it("passes the saved reasoning preference into the Agent Runtime", async () => {
     const deps = createBuildDeps()
     deps.loadModelSettings = () => ({

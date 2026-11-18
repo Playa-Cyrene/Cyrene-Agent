@@ -56,6 +56,10 @@ export interface IncomingMessage {
   threadId?: string;
   text: string;
   attachments?: ChannelAttachment[];
+  /** Text quoted from the same conversation by the current message. */
+  referencedMessages?: Array<{ url: string; senderName: string; text: string }>;
+  /** Explicit text to read aloud using the existing channel TTS configuration. */
+  voiceReplyText?: string;
   at: Date;
   /** 原始 payload，调试用，不序列化。 */
   _raw?: unknown;

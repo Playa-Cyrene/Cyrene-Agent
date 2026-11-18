@@ -82,7 +82,7 @@ export interface AgentRuntimeDeps {
 type SchedulerRunOptions = Omit<CyreneRunOptions, "toolSystemContent" | "soulSystemBaseContent">;
 
 export interface AgentRuntime {
-  buildOptions(input: AguiRunInput): Promise<{ options: CyreneRunOptions; latestUserText: string }>;
+  buildOptions(input: AguiRunInput, includePrivateDiscordContext?: boolean): Promise<{ options: CyreneRunOptions; latestUserText: string }>;
   onRunFinished(result: CyreneRunResult, latestUserText: string, channel?: "wechat" | "feishu" | "discord", conversationId?: string): Promise<{ sticker: string | null }>;
   buildSchedulerOptions(task: ScheduledTask): Promise<SchedulerRunOptions>;
 }
@@ -248,9 +248,9 @@ export function createAgentRuntime(rawDeps: AgentRuntimeDeps): AgentRuntime {
   }
 
   return {
-    buildOptions: async (input) => {
+    buildOptions: async (input, includePrivateDiscordContext) => {
       const buildOptionsDeps = buildBuildOptionsDeps();
-      return buildAgentRunOptions(input, buildOptionsDeps);
+      return buildAgentRunOptions(input, buildOptionsDeps, includePrivateDiscordContext);
     },
 
     onRunFinished: async (result, latestUserText, channel, conversationId) => {

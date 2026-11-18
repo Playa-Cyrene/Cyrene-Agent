@@ -37,6 +37,7 @@ import {
   EmbedBuilder,
   Events,
   GatewayIntentBits,
+  MessageFlags,
   Partials,
   type BaseGuildTextChannel,
   type ChatInputCommandInteraction,
@@ -57,21 +58,26 @@ import {
   ensureDiscordSessionAndOpen,
   appendDiscordUserMessage,
   appendDiscordReply,
-  getLastChannelError,
+  currentDiscordMode,
+  getLastDiscordErrorAt,
   getDiscordSessionWorkspace,
   recordCurrentDiscordSessionId,
 } from "./discord-session";
-import { loadModelSettings } from "../../../settings/model-settings";
+import { getDiscordMessageAccess, recordDiscordMessageAccess } from "./access";
+import { DiscordSpotifyPlayer, spotifyCommand } from "./spotify-command";
+import { getDiscordVoiceReplyText, resolveDiscordMessageContext } from "./message-context";
+import { getDefaultModelProfile, loadModelSettings } from "../../../settings/model-settings";
 import { getCurrentLevel, ACCESS_LEVEL_LABEL } from "../../../permission";
 import { logger, LogTag } from "../../../logger";
 
 const LOG = "[DiscordAdapter]";
+const OWNER_LOOKUP_TTL_MS = 60_000;
 
 /** 頻道綁定的正式 slash command 名稱。 */
 const SLASH_STARTAGENT = "startagent";
 const SLASH_STARTAGENT_DESC = "把本頻道設為 Cyrene 的對話頻道（之後在本頻道 @我 就能對話）";
 const SLASH_STATUS = "status";
-const SLASH_STATUS_DESC = "顯示目前使用的模型/API 設定與最近一次的錯誤訊息";
+const SLASH_STATUS_DESC = "顯示目前的執行模式、模型及最近一次失敗時間";
 const SLASH_MODE = "mode";
 const SLASH_MODE_DESC = "切換執行模式：/mode work = 可呼叫工具，/mode chat = 純聊天";
 
@@ -222,6 +228,8 @@ export class DiscordAdapter implements ChannelAdapter {
   private client: Client | null = null;
   private status: ChannelStatus = { enabled: false, phase: "config_missing" };
   private started = false;
+  private readonly spotify = DiscordSpotifyPlayer.fromEnvironment();
+  private ownerLookup?: { client: Client; expiresAt: number; result: Promise<string | null> };
   #seenMessageIds = new Set<string>();
 
   constructor() {}
@@ -286,6 +294,7 @@ export class DiscordAdapter implements ChannelAdapter {
           },
         ],
       },
+      ...(this.spotify ? [spotifyCommand] : []),
     ];
     try {
       const app = client.application;
@@ -310,27 +319,35 @@ export class DiscordAdapter implements ChannelAdapter {
   private async handleInteraction(interaction: unknown): Promise<void> {
     if (!(interaction as { isChatInputCommand?: () => boolean }).isChatInputCommand?.()) return;
     const cmd = interaction as ChatInputCommandInteraction;
+    const command = cmd.commandName;
+    if (command !== SLASH_STATUS && command !== SLASH_MODE && command !== SLASH_STARTAGENT
+      && !(this.spotify && command === spotifyCommand.name)) return;
+
+    try {
+      await cmd.deferReply({ flags: MessageFlags.Ephemeral });
+    } catch (err) {
+      console.warn(LOG, `/${command} deferReply 失敗:`, err instanceof Error ? err.message : err);
+      return;
+    }
+    if (cmd.client !== this.client || !await this.isApplicationOwner(cmd.user.id)) {
+      await cmd.editReply("只有 Discord 應用程式擁有者可以使用此指令。").catch(() => {});
+      return;
+    }
+    if (this.spotify && command === spotifyCommand.name) {
+      await this.spotify.handleCommand(cmd).catch(() => {});
+      return;
+    }
 
     // /status：回報模型/API 設定與最近一次錯誤（可在任意頻道或私訊使用）
-    if (cmd.commandName === SLASH_STATUS) {
+    if (command === SLASH_STATUS) {
       await this.handleStatusCommand(cmd);
       return;
     }
     // /mode：切換執行模式（work=可呼叫工具 / chat=純聊天）
-    if (cmd.commandName === SLASH_MODE) {
+    if (command === SLASH_MODE) {
       await this.handleModeCommand(cmd);
       return;
     }
-    if (cmd.commandName !== SLASH_STARTAGENT) return;
-
-    // 先 defer，避免後續 fetch / 綁定超過 3 秒的互動時限
-    try {
-      await cmd.deferReply({ ephemeral: false });
-    } catch (err) {
-      console.warn(LOG, `/${SLASH_STARTAGENT} deferReply 失敗:`, err instanceof Error ? err.message : err);
-      return;
-    }
-
     // 只在伺服器文字頻道中使用
     if (!cmd.inGuild() || !cmd.channelId) {
       await cmd.editReply("請在伺服器的文字頻道中使用 /startagent。").catch(() => {});
@@ -340,6 +357,7 @@ export class DiscordAdapter implements ChannelAdapter {
     try {
       // fetch 真實頻道，避免對 partial channel 呼叫 isTextBased() 而 crash
       const fetched = await cmd.channel?.fetch();
+      if (cmd.client !== this.client) return;
       if (!fetched || fetched.type !== ChannelType.GuildText) {
         await cmd.editReply("請在一般文字頻道中使用 /startagent。").catch(() => {});
         return;
@@ -372,30 +390,42 @@ export class DiscordAdapter implements ChannelAdapter {
     }
   }
 
+  private async isApplicationOwner(userId: string): Promise<boolean> {
+    const client = this.client;
+    const application = client?.application;
+    if (!client || !application) return false;
+    if (this.ownerLookup?.client !== client || this.ownerLookup.expiresAt <= Date.now()) {
+      const result = application.fetch().then(({ owner }) => {
+        if (!owner) return null;
+        return "ownerId" in owner ? owner.ownerId : owner.id;
+      }).catch(() => {
+        console.warn(LOG, "無法確認 Discord 應用程式擁有者。");
+        return null;
+      });
+      this.ownerLookup = { client, expiresAt: Date.now() + OWNER_LOOKUP_TTL_MS, result };
+    }
+    const ownerId = await this.ownerLookup.result;
+    return this.client === client && ownerId === userId;
+  }
+
   /** 處理 /status：回報目前模型/API 設定與最近一次錯誤（供除錯，無需綁定頻道）。 */
   private async handleStatusCommand(cmd: ChatInputCommandInteraction): Promise<void> {
-    try {
-      await cmd.deferReply({ ephemeral: false });
-    } catch (err) {
-      console.warn(LOG, `/status deferReply 失敗:`, err instanceof Error ? err.message : err);
-      return;
-    }
-
     const lines: string[] = [];
     const dsc = loadChannelsSettings().discord;
+    const mode = currentDiscordMode();
     lines.push("**📊 Cyrene Agent 狀態**");
     lines.push(`- 綁定頻道：${dsc.boundChannelName ? `#${dsc.boundChannelName}` : "尚未綁定（請用 /startagent）"}`);
-    const modeLabel = (loadChannelsSettings().toolSandbox === "all") ? "**Work**（可呼叫工具）" : "**Chat**（純聊天，不呼叫工具）";
-    const modeConv = (loadChannelsSettings().toolSandbox === "all") ? "Discord 對話 (Work)" : "Discord 對話 (Chat)";
+    const modeLabel = mode === "work" ? "**Work**（依桌面端權限使用工具）" : "**Chat**（純聊天，不呼叫工具）";
+    const modeConv = mode === "work" ? "Discord 對話 (Work)" : "Discord 對話 (Chat)";
     lines.push(`- 執行模式：${modeLabel}`);
     lines.push(`- 對話：${modeConv}`);
 
     // 工作目錄（與桌面端「指定資料夾」對齊）+ 權限
     lines.push("");
     lines.push("**📁 工作目錄 / 權限**");
-    const ws = getDiscordSessionWorkspace();
+    const ws = getDiscordSessionWorkspace(mode);
     if (ws?.workspaceRoot) {
-      lines.push(`- 工作目錄：\`${ws.workspaceRoot}\``);
+      lines.push("- 已綁定工作目錄");
     } else {
       lines.push("- 工作目錄：未綁定（可在桌面端對話設定「指定資料夾」）");
     }
@@ -404,34 +434,26 @@ export class DiscordAdapter implements ChannelAdapter {
 
     // 模型/API 設定
     try {
-      const ms = loadModelSettings();
+      const settings = loadModelSettings();
+      const ms = getDefaultModelProfile(settings) ?? settings;
       lines.push("");
       lines.push("**🤖 模型 / API**");
       lines.push(`- provider：${ms.provider || "(空)"}`);
       lines.push(`- model：${ms.model || "(空)"}`);
-      lines.push(`- baseUrl：${ms.baseUrl || "(空)"}`);
-      lines.push(`- API Key：${ms.apiKey ? `已填（${maskKey(ms.apiKey)}）` : "❌ 未填"}`);
+      lines.push(`- API Key：${ms.apiKey ? "已填" : "❌ 未填"}`);
       lines.push(`- transport：${ms.explicitTransport ?? "auto"}`);
-      if (ms.modelProfiles?.length) {
-        lines.push(`- 已存模型設定檔：${ms.modelProfiles.map((p) => p.model ?? p.provider).join("、")}`);
-      }
-    } catch (err) {
-      lines.push("", "- 讀取模型設定失敗：" + (err instanceof Error ? err.message : String(err)));
+    } catch {
+      lines.push("", "- 讀取模型設定失敗，請查看桌面端日誌。");
     }
 
     // 最近一次錯誤
-    const last = getLastChannelError();
+    const last = getLastDiscordErrorAt();
     lines.push("");
     lines.push("**⚠️ 最近一次錯誤**");
     if (!last) {
       lines.push("- 尚無錯誤紀錄。");
     } else {
-      const t = new Date(last.at);
-      lines.push(`- 時間：${t.toLocaleString()}`);
-      if (last.channel) lines.push(`- 來源 session：\`${last.channel}\``);
-      if (last.errorName) lines.push(`- 錯誤型別：${last.errorName}`);
-      if (last.errorCode) lines.push(`- 錯誤代碼：${last.errorCode}`);
-      lines.push(`- 訊息：${last.errorMessage || "(無)"}`);
+      lines.push(`- 時間：${last.toLocaleString()}。詳細資訊請查看桌面端日誌。`);
     }
 
     // 操作提示
@@ -439,32 +461,25 @@ export class DiscordAdapter implements ChannelAdapter {
     lines.push("> 若 API Key 未填或錯誤，請到 Cyrene 設定 → 模型，確認 provider/Key/模型名。");
 
     const text = lines.join("\n").slice(0, 2000);
-    await cmd.editReply(text).catch(() => {});
+    await cmd.editReply({ content: text, allowedMentions: { parse: [] } }).catch(() => {});
   }
 
-  /** 處理 /mode：切換執行模式（work=工具權限全部開啟 / chat=工具權限關閉）。 */
+  /** 處理 /mode：切換 Discord 執行模式。 */
   private async handleModeCommand(cmd: ChatInputCommandInteraction): Promise<void> {
-    try {
-      await cmd.deferReply({ ephemeral: false });
-    } catch (err) {
-      console.warn(LOG, `/mode deferReply 失敗:`, err instanceof Error ? err.message : err);
-      return;
-    }
     const value = cmd.options.getString("mode", true);
     if (value !== "work" && value !== "chat") {
       await cmd.editReply("`/mode` 需要 `work` 或 `chat`。").catch(() => {});
       return;
     }
-    const targetSandbox = value === "work" ? "all" : "off";
     try {
-      saveChannelsSettings({ toolSandbox: targetSandbox });
+      saveChannelsSettings({ discord: { ...loadChannelsSettings().discord, mode: value } });
       // 切換後，目前 mode 對應的工作/聊天對話隨之切換；開啟對應對話視窗並記錄其 session id。
       ensureDiscordSessionAndOpen();
       recordCurrentDiscordSessionId();
-      const label = value === "work" ? "**Work**（可呼叫工具）" : "**Chat**（純聊天，不呼叫工具）";
-      console.log(LOG, `/${SLASH_MODE}: 切換 toolSandbox → ${targetSandbox}`);
+      const label = value === "work" ? "**Work**（依桌面端權限使用工具）" : "**Chat**（純聊天，不呼叫工具）";
+      console.log(LOG, `/${SLASH_MODE}: 切換至 ${value}`);
       await cmd.editReply(
-        `✅ 已切換執行模式為 ${label}，已切到 ${value === "work" ? "Discord 對話 (Work)" : "Discord 對話 (Chat)"}。\n之後頻道訊息會進到這個 ${value === "work" ? "Work" : "Chat"} 對話。`
+        `✅ 已切換擁有者的私訊模式為 ${label}。伺服器頻道使用 Chat。`
       ).catch(() => {});
     } catch (err) {
       console.warn(LOG, `/${SLASH_MODE} 切換失敗:`, err instanceof Error ? err.message : err);
@@ -515,29 +530,32 @@ export class DiscordAdapter implements ChannelAdapter {
     return cfg.boundChannelId === channelId;
   }
 
-  /** 去重 + 下載附件 + 轉成 IncomingMessage 並交給 dispatcher。
-   *  fromGuild=true 時，把「給 agent 處理的那則用戶訊息」與「Bot 回覆」鏡像到桌面端 Discord 對話。 */
+  /** 去重、下載附件並轉交 dispatcher。伺服器對話與擁有者的 Work 私訊分開鏡像。 */
   private async dispatchIncoming(msg: Message, text: string, fromGuild: boolean): Promise<void> {
+    if (msg.client !== this.client) return;
     // 去重
     if (msg.id && this.#seenMessageIds.has(msg.id)) return;
     if (msg.id) this.#seenMessageIds.add(msg.id);
     if (this.#seenMessageIds.size > 1000) this.#seenMessageIds.clear();
 
-    if (fromGuild && text.trim()) {
-      appendDiscordUserMessage(text);
-    }
-
     try {
       const incoming = await this.normalizeDiscordMessage(msg, text);
+      if (msg.client !== this.client) return;
+      const isOwner = await this.isApplicationOwner(msg.author.id);
+      if (msg.client !== this.client) return;
+      recordDiscordMessageAccess(incoming, isOwner, currentDiscordMode());
+      const { mode } = getDiscordMessageAccess(incoming);
+      const mirror = loadChannelsSettings().mirrorToDesktop && (fromGuild || mode === "work");
+      if (mirror && text.trim()) appendDiscordUserMessage(text, mode);
       const outgoing = await this.onMessage!(incoming);
       // 鏡像 Bot 回覆到桌面端對應（work/chat）的 Discord 對話
-      if (fromGuild && outgoing?.parts) {
+      if (mirror && outgoing?.parts) {
         const replyText = outgoing.parts
           .filter((p) => p.kind === "text")
           .map((p) => (p as { text: string }).text)
           .join("\n")
           .trim();
-        if (replyText) appendDiscordReply(replyText);
+        if (replyText) appendDiscordReply(replyText, mode);
       }
     } catch (err) {
       console.error(LOG, "處理入站消息失敗:", err instanceof Error ? err.message : err);
@@ -551,6 +569,8 @@ export class DiscordAdapter implements ChannelAdapter {
   private async normalizeDiscordMessage(msg: Message, text: string): Promise<IncomingMessage> {
     const attachments: IncomingMessage["attachments"] = [];
     const fromGuild = msg.guildId != null;
+    const voiceReplyText = getDiscordVoiceReplyText(text);
+    const referencedMessages = voiceReplyText ? undefined : await resolveDiscordMessageContext(msg, text);
 
     for (const att of msg.attachments.values()) {
       const kind: ChannelAttachment["kind"] = att.contentType?.startsWith("image/")
@@ -581,6 +601,8 @@ export class DiscordAdapter implements ChannelAdapter {
       // 頻道模式：chatId = 頻道 id，replies 回到同一頻道；DM：chatId = 使用者 id
       chatId: fromGuild ? msg.channelId : msg.author.id,
       text: (text || "").trim() || "[空消息]",
+      voiceReplyText,
+      referencedMessages,
       attachments: attachments.length > 0 ? attachments : undefined,
       at: msg.createdAt,
       _raw: { id: msg.id, content: msg.content, channelId: msg.channelId, guildId: msg.guildId },
@@ -628,6 +650,7 @@ export class DiscordAdapter implements ChannelAdapter {
 
   async stop(): Promise<void> {
     this.started = false;
+    this.ownerLookup = undefined;
     if (this.client) {
       try {
         this.client.destroy();
@@ -653,12 +676,13 @@ export class DiscordAdapter implements ChannelAdapter {
     if (!text && attachments.length === 0 && embeds.length === 0) {
       return { ok: false, error: "沒有可發送的內容（capability 全部被降級）" };
     }
+    const payload = { content: text || undefined, files: attachments, embeds, allowedMentions: { parse: [] } };
 
     // targetId 可能是頻道 id（頻道模式）或使用者 id（DM）。先嘗試當頻道解析。
     try {
       const channel = await this.tryResolveTextChannel(msg.targetId);
       if (channel) {
-        await channel.send({ content: text || undefined, files: attachments, embeds });
+        await channel.send(payload);
         console.log(LOG, `send ok: channel=${channel.id} parts=${msg.parts.length}`);
         return { ok: true };
       }
@@ -670,7 +694,7 @@ export class DiscordAdapter implements ChannelAdapter {
     // 非頻道 → 視為 DM
     try {
       const user = await this.client.users.fetch(msg.targetId);
-      await user.send({ content: text || undefined, files: attachments, embeds });
+      await user.send(payload);
       console.log(LOG, `send ok (DM): target=${msg.targetId} parts=${msg.parts.length}`);
       return { ok: true };
     } catch (err) {
@@ -727,11 +751,4 @@ function stripBotMention(content: string, botId: string): string {
 
 function escapeRegex(input: string): string {
   return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-/** 遮罩 API Key：顯示前 4 + 尾 4，中間以 * 取代，避免洩漏完整機密。 */
-function maskKey(key: string): string {
-  const k = key.trim();
-  if (k.length <= 8) return "****";
-  return `${k.slice(0, 4)}****${k.slice(-4)}`;
 }
