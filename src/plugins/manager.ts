@@ -94,6 +94,8 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+export const PLUGIN_STARTUP_TIMEOUT_MS = 10_000;
+
 export class PluginManager {
   private readonly eventBus = createPluginEventBus();
   private records = new Map<string, PluginRecord>();
@@ -105,6 +107,7 @@ export class PluginManager {
   private enabledMap: Record<string, boolean>;
   private started = false;
   private startupActivations = new Map<string, Promise<void>>();
+  private activationControllers = new Set<AbortController>();
 
   private startupDiscovery: Promise<void> = Promise.resolve();
 
@@ -220,6 +223,7 @@ export class PluginManager {
   start(activateAfter: Promise<void> = Promise.resolve()): Promise<void> {
     let discovered!: () => void;
     this.startupDiscovery = new Promise<void>((resolve) => { discovered = resolve; });
+    this.opts.runtime.promptRegistry.setStartupReady?.(this.waitForStartupTools(() => true));
     return this.enqueueOperation(async () => {
       if (this.started) return;
       this.started = true;
@@ -479,6 +483,10 @@ export class PluginManager {
   }
 
   stop(): Promise<void> {
+    // 退出先取消当前激活，避免排队等待其十秒截止时间。
+    for (const controller of this.activationControllers) {
+      controller.abort(new Error("plugin startup cancelled by shutdown"));
+    }
     return this.enqueueOperation(async () => {
       if (!this.started) return;
       await this.publishHostLifecycleBarrier("plugins:stopping", undefined);
@@ -649,39 +657,56 @@ export class PluginManager {
     if (!record || this.instances.has(id)) return;
     this.statuses.set(id, "starting");
     this.errors.delete(id);
+    let ctx: DisposableContext | undefined;
+    let plugin: CyrenePlugin | undefined;
+    const controller = new AbortController();
+    this.activationControllers.add(controller);
+    let onAbort!: () => void;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      const plugin = await loadPlugin(record);
-      const ctx = createContext(
-        id,
-        path.join(this.opts.storageRoot, id),
-        this.opts.runtime,
-        this.eventBus,
-        record.manifest.deps,
-      );
-      try {
-        await plugin.register(ctx);
-      } catch (error) {
-        ctx.beginStop();
-        if (plugin.unregister) {
-          try {
-            await runPluginCleanup(() => plugin.unregister!(), `插件 ${id} unregister`);
-          } catch (cleanupError) {
-            console.warn(`[plugins] 插件 ${id} 激活回滚时 unregister 失败`, cleanupError);
-          }
-        }
-        await ctx.dispose();
-        throw error;
-      }
-      this.instances.set(id, plugin);
-      this.contexts.set(id, ctx);
+      await Promise.race([
+        (async () => {
+          plugin = await loadPlugin(record);
+          controller.signal.throwIfAborted();
+          ctx = createContext(
+            id, path.join(this.opts.storageRoot, id), this.opts.runtime,
+            this.eventBus, record.manifest.deps,
+          );
+          await plugin.register(ctx);
+        })(),
+        new Promise<never>((_, reject) => {
+          onAbort = () => {
+            ctx?.beginStop();
+            reject(controller.signal.reason);
+          };
+          controller.signal.addEventListener("abort", onAbort, { once: true });
+          timer = setTimeout(() => {
+            controller.abort(new Error(`插件 ${id} 启动超时（${PLUGIN_STARTUP_TIMEOUT_MS}ms）`));
+          }, PLUGIN_STARTUP_TIMEOUT_MS);
+        }),
+      ]);
+      this.instances.set(id, plugin!);
+      this.contexts.set(id, ctx!);
       this.statuses.set(id, "running");
       this.notifyRunningState(id, true);
       console.log(`[plugins] 已启用 ${id}@${record.manifest.version}`);
     } catch (error) {
-      const message = errorMessage(error);
       this.statuses.set(id, "failed");
-      this.errors.set(id, message);
+      this.errors.set(id, errorMessage(error));
+      ctx?.beginStop();
+      if (plugin?.unregister) {
+        try {
+          await runPluginCleanup(() => plugin!.unregister!(), `插件 ${id} unregister`);
+        } catch (cleanupError) {
+          console.warn(`[plugins] 插件 ${id} 激活回滚时 unregister 失败`, cleanupError);
+        }
+      }
+      await ctx?.dispose();
       throw error;
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+      controller.signal.removeEventListener("abort", onAbort);
+      this.activationControllers.delete(controller);
     }
   }
 

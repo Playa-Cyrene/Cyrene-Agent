@@ -25,6 +25,7 @@ export interface PluginPromptRegistry {
   unregister(ownerId: string, providerId: string): boolean;
   build(input: PluginPromptBuildInput): Promise<string>;
   clear(): void;
+  setStartupReady(ready: Promise<void>): void;
 }
 
 function fullProviderId(ownerId: string, providerId: string): string {
@@ -64,6 +65,7 @@ async function resolveProvider(entry: PromptEntry, input: PluginPromptBuildInput
 
 export function createPluginPromptRegistry(): PluginPromptRegistry {
   const entries = new Map<string, PromptEntry>();
+  let startupReady: Promise<void> = Promise.resolve();
 
   return {
     register(ownerId, provider, signal, isReady) {
@@ -104,7 +106,14 @@ export function createPluginPromptRegistry(): PluginPromptRegistry {
       return entries.delete(fullProviderId(ownerId, providerId));
     },
 
+    setStartupReady(ready) {
+      startupReady = ready;
+    },
+
     async build(input) {
+      // Provider 可在 register() 的异步尾部才登记，必须先完成发现与激活。
+      // 插件激活期间的无头请求只读取已运行的 Provider，避免等待自身或相互等待。
+      if (input.source !== "plugin-agent") await startupReady;
       // 先拍快照再并行执行：结果仍按注册顺序拼接，运行中增删不会改变本轮内容。
       const snapshot = [...entries.values()].filter((entry) => {
         if (entry.signal.aborted || (entry.isReady && !entry.isReady())) return false;

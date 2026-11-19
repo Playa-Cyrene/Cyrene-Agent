@@ -93,6 +93,7 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginManager {
         deps.ipc.removeHandler(channel);
       },
       promptRegistry: {
+        setStartupReady: (ready) => pluginPromptRegistry.setStartupReady(ready),
         register: (id, provider, signal) => pluginPromptRegistry.register(id, provider, signal, () => manager.isRunning(id)),
         unregister: (id, providerId) => pluginPromptRegistry.unregister(id, providerId),
       },

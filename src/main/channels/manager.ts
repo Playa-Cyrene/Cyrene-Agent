@@ -31,6 +31,8 @@ export class ChannelManager {
   private dispatchFn: DispatchFn | null = null;
   /** 启动后已开启的 adapter（start 成功的才会调 stop） */
   private startedAdapters = new Set<ChannelId>();
+  private stopGeneration = 0;
+  private startingAdapters = new Map<ChannelAdapter, { promise: Promise<void>; cancelled: boolean }>();
 
   has(id: ChannelId): boolean {
     return this.adapters.has(id);
@@ -86,17 +88,11 @@ export class ChannelManager {
 
   /** 启动所有已注册 adapter（失败的跳过、记 log） */
   async startAll(): Promise<void> {
+    const generation = this.stopGeneration;
     for (const [id, adapter] of this.adapters) {
-      // 跳过已启动的 adapter（插件注册渠道场景：registerChannelAdapter 已 startOne）
-      if (this.startedAdapters.has(adapter.id)) continue;
+      if (generation !== this.stopGeneration) break;
       try {
-        // 每次 start 前重新注入 handler（防止 setDispatcher 之前 adapter 已经被外部注入 null）
-        if (this.dispatchFn) {
-          setAdapterHandler(adapter, this.makeAdapterHandler(id, adapter));
-        }
-        await adapter.start();
-        this.startedAdapters.add(adapter.id);
-        logger.info(LogTag.Channels, `started: ${adapter.id} (${adapter.displayName})`);
+        await this.startAdapter(id, adapter);
       } catch (err) {
         console.error(LOG, `渠道启动失败 [${adapter.id}]:`, err instanceof Error ? err.message : err);
       }
@@ -112,17 +108,18 @@ export class ChannelManager {
     this.assertOwner(id, owner);
     const adapter = this.adapters.get(id);
     if (!adapter) return false;
-    if (this.startedAdapters.has(id)) {
+    const starting = this.startingAdapters.get(adapter);
+    if (starting) starting.cancelled = true;
+    setAdapterHandler(adapter, null);
+    this.adapters.delete(id);
+    this.owners.delete(id);
+    if (this.startedAdapters.delete(id)) {
       try {
         await adapter.stop();
       } catch (err) {
         console.warn(LOG, `渠道停止失败 [${id}]:`, err instanceof Error ? err.message : err);
       }
-      this.startedAdapters.delete(id);
     }
-    setAdapterHandler(adapter, null);
-    this.adapters.delete(id);
-    this.owners.delete(id);
     logger.info(LogTag.Channels, `unregistered: ${id}`);
     return true;
   }
@@ -136,18 +133,47 @@ export class ChannelManager {
     this.assertOwner(id, owner);
     const adapter = this.adapters.get(id);
     if (!adapter) return;
-    if (this.startedAdapters.has(id)) return;
-    if (this.dispatchFn) {
-      setAdapterHandler(adapter, this.makeAdapterHandler(id, adapter));
+    return this.startAdapter(id, adapter);
+  }
+
+  private async startAdapter(id: ChannelId, adapter: ChannelAdapter): Promise<void> {
+    const pending = this.startingAdapters.get(adapter);
+    if (pending) {
+      if (!pending.cancelled) return pending.promise;
+      // 显式重启等待旧启动完成清理，再重新启动同一实例。
+      await pending.promise.catch(() => undefined);
+      return this.startAdapter(id, adapter);
     }
-    await adapter.start();
-    this.startedAdapters.add(id);
-    logger.info(LogTag.Channels, `started: ${id} (${adapter.displayName})`);
+    if (this.adapters.get(id) !== adapter || this.startedAdapters.has(id)) return;
+    const entry = { promise: Promise.resolve(), cancelled: false };
+    entry.promise = Promise.resolve().then(async () => {
+      if (entry.cancelled) throw new Error(`channel startup cancelled: ${id}`);
+      if (this.dispatchFn) setAdapterHandler(adapter, this.makeAdapterHandler(id, adapter));
+      try {
+        await adapter.start();
+      } finally {
+        if (entry.cancelled || this.adapters.get(id) !== adapter) await adapter.stop();
+      }
+      if (entry.cancelled || this.adapters.get(id) !== adapter) {
+        throw new Error(`channel startup cancelled: ${id}`);
+      }
+      this.startedAdapters.add(id);
+      logger.info(LogTag.Channels, `started: ${id} (${adapter.displayName})`);
+    }).finally(() => { this.startingAdapters.delete(adapter); });
+    this.startingAdapters.set(adapter, entry);
+    return entry.promise;
   }
 
   /** 关闭所有已启动的 adapter */
   async stopAll(): Promise<void> {
-    for (const id of this.startedAdapters) {
+    this.stopGeneration++;
+    for (const [adapter, entry] of this.startingAdapters) {
+      entry.cancelled = true;
+      setAdapterHandler(adapter, null);
+    }
+    const started = [...this.startedAdapters];
+    this.startedAdapters.clear();
+    for (const id of started) {
       const adapter = this.adapters.get(id);
       if (!adapter) continue;
       try {
@@ -156,7 +182,6 @@ export class ChannelManager {
         console.warn(LOG, `渠道停止失败 [${id}]:`, err instanceof Error ? err.message : err);
       }
     }
-    this.startedAdapters.clear();
   }
 
   getAdapter(channel: ChannelId): ChannelAdapter | undefined {
@@ -177,10 +202,11 @@ export class ChannelManager {
   }
 
   private makeAdapterHandler(channel: ChannelId, adapter: ChannelAdapter) {
+    const generation = this.stopGeneration;
     return async (msg: IncomingMessage): Promise<OutgoingMessage | null> => {
       // 消息身份来自注册者，不能由普通插件冒充 qq/qqbot 绕过宿主路由。
       // 旧实例即使保留了回调，也不能在注销/替换后继续注入消息。
-      if (this.adapters.get(channel) !== adapter || msg.channel !== channel) {
+      if (generation !== this.stopGeneration || this.adapters.get(channel) !== adapter || msg.channel !== channel) {
         console.warn(LOG, `拒绝渠道身份不匹配或已注销的入站消息 [${channel}]`);
         return null;
       }
