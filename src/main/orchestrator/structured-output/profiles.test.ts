@@ -7,6 +7,8 @@ import {
 describe("resolveStructuredOutputProfile", () => {
   test.each([
     ["chatgpt", "gpt-6-astra", "openai", "provider_json_schema"],
+    ["chatgpt", "gpt-6.2-astra", "openai", "provider_json_schema"],
+    ["chatgpt", "gpt-6.2-sol", "openai", "provider_json_schema"],
     ["chatgpt", "gpt-6.1-terra", "openai", "provider_json_schema"],
     ["chatgpt", "gpt-6-sol", "openai", "provider_json_schema"],
     ["chatgpt", "gpt-6-luna", "openai", "provider_json_schema"],
@@ -69,6 +71,17 @@ describe("resolveStructuredOutputProfile", () => {
 
   test("GPT-6.1 Terra rule matches only the verified model name on Chat Completions", () => {
     for (const [model, transport] of [["gpt-6.1-terra-preview", "openai"], ["gpt-6.1-terra", "responses"]] as const) {
+      expect(resolveStructuredOutputProfile({
+        provider: "chatgpt",
+        model,
+        transport,
+        endpointKind: "official",
+      }).mode).toBe("prompt_json");
+    }
+  });
+
+  test("GPT-6.2 rules match only the verified model names on Chat Completions", () => {
+    for (const [model, transport] of [["gpt-6.2-astra-pro", "openai"], ["gpt-6.2", "openai"], ["gpt-6.2-sol", "responses"]] as const) {
       expect(resolveStructuredOutputProfile({
         provider: "chatgpt",
         model,

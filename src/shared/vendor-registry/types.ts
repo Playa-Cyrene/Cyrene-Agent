@@ -66,6 +66,12 @@ export interface ReasoningCapability {
   supportsProMode?: boolean;
   /** 旧能力表的默认档位兜底；优先使用 defaultEffort。 */
   autoEffort?: ReasoningEffort;
+  /**
+   * 用户显式选了关闭（但不支持关闭）或 minimal（但不支持该档）时改用的档位。
+   * 未声明时两者都回到默认档位。GPT-6.2：官方迁移指南要求把 none / minimal 改为 low。
+   * 没有保存偏好的用户不受影响，仍用默认档位。
+   */
+  lowEffortFallback?: ReasoningEffort;
 }
 
 export interface ReasoningPreference {

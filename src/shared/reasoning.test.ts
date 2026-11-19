@@ -561,6 +561,44 @@ describe("resolveEffectiveReasoning", () => {
     expect(resolveEffectiveReasoning({ mode: "off", proMode: true }, proCap))
       .toEqual({ mode: "off" });
   });
+
+  describe("lowEffortFallback：想少用推理的偏好不直接升到默认档", () => {
+    const lowFallbackCap: ReasoningCapability = {
+      control: "effort",
+      supportedEfforts: ["low", "medium", "high", "xhigh", "max"],
+      defaultEffort: "medium",
+      requestStyle: "openai-effort",
+      supportsDisable: false,
+      supportsProMode: true,
+      lowEffortFallback: "low",
+    };
+
+    test.each([
+      [{ mode: "off" }, { mode: "on", effort: "low" }],
+      [{ mode: "off", proMode: true }, { mode: "on", effort: "low" }],
+      [{ mode: "on", effort: "minimal" }, { mode: "on", effort: "low" }],
+      [{ mode: "on", effort: "minimal", proMode: true }, { mode: "on", effort: "low", proMode: true }],
+      [{ mode: "auto" }, { mode: "on", effort: "medium" }],
+      [undefined, { mode: "on", effort: "medium" }],
+      [{ mode: "on", effort: "high" }, { mode: "on", effort: "high" }],
+    ] as const)("%j → %j", (preference, expected) => {
+      expect(resolveEffectiveReasoning(preference, lowFallbackCap)).toEqual(expected);
+    });
+
+    test("支持关闭的模型仍保持 off；支持 minimal 的模型仍保留 minimal", () => {
+      expect(resolveEffectiveReasoning({ mode: "off" }, { ...lowFallbackCap, supportsDisable: true }))
+        .toEqual({ mode: "off" });
+      expect(resolveEffectiveReasoning(
+        { mode: "on", effort: "minimal" },
+        { ...lowFallbackCap, supportedEfforts: ["minimal", "low", "medium"] },
+      )).toEqual({ mode: "on", effort: "minimal" });
+    });
+
+    test("回退档本身不受支持时忽略，回到默认档", () => {
+      expect(resolveEffectiveReasoning({ mode: "off" }, { ...lowFallbackCap, supportedEfforts: ["medium", "high"] }))
+        .toEqual({ mode: "on", effort: "medium" });
+    });
+  });
 });
 
 // ── E. 规则表数据完整性 ──────────────────────────────────────
