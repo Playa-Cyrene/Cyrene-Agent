@@ -27,17 +27,19 @@ export const GEMINI_REGISTRY = defineVendor({
   },
   models: [
     {
-      model: "gemini-4-neon",
+      model: "gemini-4-hydrogen",
       recommendedFor: ["chat"],
-      note: "2026-11-18 正式发布（GA），仅付费层可用；固定型号名，无日期后缀。",
+      note: "2026-11-12 正式发布（GA），免费层与付费层均可用；固定型号名，无日期后缀。",
       unknownCapabilities: [
         { feature: "sampling", transport: "openai", note: "官方说明 temperature/top_p/top_k 应移除，传入会被忽略；未加采样白名单即不注入采样参数。" },
       ],
     },
+    // Neon 仅付费层可用，排在免费层可用的 Hydrogen 之后：新建档案默认取清单首项（mainModels[0]），
+    // 不能让免费层 key 的新档案默认落到调用不了的型号。
     {
-      model: "gemini-4-hydrogen",
+      model: "gemini-4-neon",
       recommendedFor: ["chat"],
-      note: "2026-11-12 正式发布（GA），免费层与付费层均可用；固定型号名，无日期后缀。",
+      note: "2026-11-18 正式发布（GA），仅付费层可用；固定型号名，无日期后缀。",
       unknownCapabilities: [
         { feature: "sampling", transport: "openai", note: "官方说明 temperature/top_p/top_k 应移除，传入会被忽略；未加采样白名单即不注入采样参数。" },
       ],
