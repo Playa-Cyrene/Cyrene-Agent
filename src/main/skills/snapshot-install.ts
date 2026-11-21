@@ -6,7 +6,7 @@
 // initSkills 扫描前调用，用哨兵文件保证只安装一次：
 //   - 哨兵存在 → 跳过（已装过，不重复覆盖）
 //   - 目标目录已有用户内容 → 跳过并写哨兵（不覆盖用户手动放的 skill）
-//   - 否则解压 → 写哨兵
+//   - 否则在独立暂存目录解压并写哨兵，再整体提交
 //
 // 纯函数模块：不直接碰 electron，归档路径由调用方解析传入（见
 // external-content-paths.resolveSkillsSnapshotArchivePath）。
@@ -27,6 +27,10 @@ export interface SnapshotInstallOptions {
   mkdirSync?: (p: string, opts?: { recursive?: boolean }) => void;
   writeFileSync?: (p: string, content: string) => void;
   readdirSync?: (p: string) => string[];
+  mkdtempSync?: (prefix: string) => string;
+  rmdirSync?: (p: string) => void;
+  renameSync?: (from: string, to: string) => void;
+  rmSync?: (p: string, opts: { recursive: true; force: true }) => void;
   extract?: (archivePath: string, opts: { dir: string }) => Promise<void>;
 }
 
@@ -54,6 +58,10 @@ export async function installSkillsSnapshot(options: SnapshotInstallOptions): Pr
     mkdirSync = (p, opts) => fs.mkdirSync(p, opts),
     writeFileSync = (p, c) => fs.writeFileSync(p, c, "utf8"),
     readdirSync = (p) => fs.readdirSync(p),
+    mkdtempSync = (prefix) => fs.mkdtempSync(prefix),
+    rmdirSync = (p) => fs.rmdirSync(p),
+    renameSync = (from, to) => fs.renameSync(from, to),
+    rmSync = (p, opts) => fs.rmSync(p, opts),
     extract = async (a, o) => {
       const { default: extractZip } = await import("extract-zip");
       await extractZip(a, o);
@@ -81,14 +89,26 @@ export async function installSkillsSnapshot(options: SnapshotInstallOptions): Pr
     return "skipped_existing";
   }
 
+  let staging: string | undefined;
   try {
-    mkdirSync(userSkillsDir, { recursive: true });
-    await extract(archivePath, { dir: userSkillsDir });
-    writeFileSync(sentinel, new Date().toISOString());
+    mkdirSync(path.dirname(userSkillsDir), { recursive: true });
+    staging = mkdtempSync(path.join(path.dirname(userSkillsDir), `.${path.basename(userSkillsDir)}-snapshot-`));
+    await extract(archivePath, { dir: staging });
+    // 哨兵随完整目录一起提交；异常或崩溃残留不会被下一次启动误认作用户内容。
+    writeFileSync(snapshotSentinelPath(staging), new Date().toISOString());
+    // 只允许删除空目标；解压期间出现的用户文件必须令提交失败，不能递归清理。
+    if (existsSync(userSkillsDir)) rmdirSync(userSkillsDir);
+    renameSync(staging, userSkillsDir);
+    staging = undefined;
     logger.info(LogTag.Skills, `已安装第三方 skills 快照 -> ${userSkillsDir} (${path.basename(archivePath)})`);
     return "installed";
   } catch (err) {
-    logger.warn(LogTag.Skills, `第三方 skills 快照解压失败（跳过，仅缺部分 skill）:`, err instanceof Error ? err.message : err);
+    logger.warn(LogTag.Skills, `第三方 skills 快照安装失败（下次启动重试）:`, err instanceof Error ? err.message : err);
     return "failed";
+  } finally {
+    if (staging) {
+      try { rmSync(staging, { recursive: true, force: true }); }
+      catch { /* 只清理本轮暂存；残留在用户技能目录之外，不影响下次重试。 */ }
+    }
   }
 }
