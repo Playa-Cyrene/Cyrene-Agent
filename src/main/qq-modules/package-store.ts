@@ -7,6 +7,8 @@ import { isQqPackagePath, QQ_PACKAGE_LIMITS, QqPackageError, qqPackageDigest, ve
 
 interface StoreState { schemaVersion: 1; active: string | null; previous: string | null; highestSequence: number }
 export interface QqInstalledCandidate { packageId: string; manifest: QqPackageManifest }
+/** Host-only executable selection. Never serialize these paths to renderer IPC. */
+export interface QqVerifiedRuntimeCandidate extends QqInstalledCandidate { packageDirectory: string; entryPath: string }
 const MARKER = "Cyrene QFCA candidate package store v1\n";
 const packageId = (value: unknown): value is string => typeof value === "string" && /^pkg-[a-f0-9]{64}$/.test(value);
 const emptyState = (): StoreState => ({ schemaVersion: 1, active: null, previous: null, highestSequence: 0 });
@@ -132,6 +134,25 @@ export class QqPackageStore {
     if (!this.ensureRoot(false)) return null;
     const state = this.state();
     return state.active ? this.readPackage(state.active) : null;
+  }
+  /** Revalidate immediately before EVERY process start, including restart. The caller
+   * pins the previewed/confirmed package ID, not a path or an arbitrary installed version.
+   * This is read-only and fails closed while an install/recovery lock is present.
+   * Checks are not an OS sandbox or atomic with process execution: a hostile process
+   * with the same OS-user rights can still replace bytes after verification (TOCTOU). */
+  resolveSelectedRuntime(expectedPackageId: string): QqVerifiedRuntimeCandidate {
+    if (!packageId(expectedPackageId)) fail("invalid-runtime-candidate");
+    if (!this.ensureRoot(false)) fail("runtime-candidate-unavailable");
+    const lock = join(this.root, "install-lock");
+    if (existsSync(lock)) fail("install-busy-or-recovery-required");
+    if (this.state().active !== expectedPackageId) fail("runtime-candidate-changed");
+    const candidate = this.readPackage(expectedPackageId);
+    // Detect selection changes during verification; callers must also serialize
+    // lifecycle/install operations. This is not a cross-process execution lease.
+    if (existsSync(lock)) fail("install-busy-or-recovery-required");
+    if (this.state().active !== expectedPackageId) fail("runtime-candidate-changed");
+    const packageDirectory = join(this.root, expectedPackageId, "payload");
+    return { ...candidate, packageDirectory, entryPath: join(packageDirectory, candidate.manifest.entry) };
   }
   install(input: QqSignedPackage, consent: { userConfirmed: true }): QqInstalledCandidate {
     if (!strictObject(consent, { userConfirmed: (v) => v === true })) fail("explicit-consent-required");

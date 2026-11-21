@@ -61,3 +61,13 @@ it("does not equate a successful kill call with confirmed child exit", async () 
     await vi.advanceTimersByTimeAsync(1000); await assertion;
   } finally { vi.useRealTimers(); }
 });
+
+it("replays an observed exit to late ownership observers and supports detachment before replay", async () => {
+  const entry = join(root, "entry.cjs"); writeFileSync(entry, "");
+  const child = Object.assign(new EventEmitter(), { postMessage: vi.fn(), kill: vi.fn() }); mocks.fork.mockReturnValue(child);
+  const transport = createQqUtilityProcess(root, entry); child.emit("exit", 0);
+  const observed = vi.fn(), cancelled = vi.fn(); transport.onExit(observed); transport.onExit(cancelled)();
+  expect(observed).not.toHaveBeenCalled(); await Promise.resolve();
+  expect(observed).toHaveBeenCalledOnce(); expect(cancelled).not.toHaveBeenCalled();
+  await transport.terminate(); expect(child.kill).not.toHaveBeenCalled();
+});

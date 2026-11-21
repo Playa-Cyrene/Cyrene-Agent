@@ -336,6 +336,7 @@ export interface SettingsApi {
   channelsGetConfig: () => Promise<any>;
   channelsSaveConfig: (patch: unknown) => Promise<any>;
   channelsRestart: () => Promise<{ ok: boolean }>;
+  channelsQqModuleAction?: (input: import("../../../shared/qq-module-actions").QqModuleActionCommand) => Promise<import("../../../shared/qq-module-actions").QqModuleActionResult>;
   channelsQqModuleInstallationStatus: (input: import("../../../shared/qq-module-installation").QqModuleListenInput) => Promise<import("../../../shared/qq-module-installation").QqModuleInstallationStatus>;
   channelsQqTestConnection: () => Promise<{ ok: boolean; error?: string; detail?: Record<string, unknown> }>;
   /**

@@ -29,6 +29,8 @@ export interface QqSignedPackage {
 export interface QqPackageVerificationContext {
   /** Host-owned pins only. Never accept a public key supplied by the package/renderer. */
   trustedKeys: ReadonlyMap<string, string>;
+  /** Optional host-owned exact bundled manifest pin, enforced on installed readback too. */
+  expectedManifestDigest?: string;
   hostVersion: string;
   platform: string;
   arch: string;
@@ -77,6 +79,8 @@ export function verifyQqPackage(input: QqSignedPackage, context: QqPackageVerifi
     })),
   })) fail("invalid-manifest");
   const manifest = value as QqPackageManifest;
+  if (context.expectedManifestDigest !== undefined && (!digest(context.expectedManifestDigest)
+    || qqPackageDigest(input.manifest) !== context.expectedManifestDigest)) fail("unexpected-manifest");
   const pin = context.trustedKeys.get(manifest.keyId);
   if (!pin) throw new QqPackageError("untrusted-publisher");
   try {
