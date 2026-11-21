@@ -417,7 +417,7 @@
     "go": "Go",
     "loading": "Loading",
     "agentControl": "Cyrene is controlling",
-    "actions": { "starting": "Starting", "opening": "Opening page", "switching": "Switching tab", "clicking": "Clicking element", "filling": "Filling text", "pressing": "Pressing key", "scrolling": "Scrolling page", "screenshot": "Capturing page" },
+    "actions": { "starting": "Starting", "opening": "Opening page", "switching": "Switching tab", "clicking": "Clicking element", "filling": "Filling text", "pressing": "Pressing key", "scrolling": "Scrolling page", "screenshot": "Capturing page", "waiting": "Waiting for browser to return" },
     "emptyTitle": "No page open",
     "emptyHint": "Enter a URL such as example.com to start browsing",
     "errors": {

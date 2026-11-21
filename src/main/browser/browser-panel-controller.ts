@@ -56,6 +56,9 @@ const EMPTY_TAB_STATE = {
 
 /** 新标签导航等待面板首个可见尺寸的上限；超时仍按当时状态继续导航。 */
 const VISIBLE_BOUNDS_FOR_NAVIGATION_MS = 1500;
+const CONTROL_PANEL_RESUME_TIMEOUT_MS = 120_000;
+
+export type BrowserControlResumeState = "not-controlled" | "ready" | "resumed" | "timed-out" | "lease-lost" | "tab-changed";
 
 interface BrowserTab {
   id: string;
@@ -123,11 +126,14 @@ export class BrowserPanelController {
   private elementPickerTimer: ReturnType<typeof setTimeout> | null = null;
   private elementPickerBusy = false;
   private readonly observations = new Map<string, BrowserObservationRecord>();
+  private readonly observationGenerations = new Map<string, number>();
   private readonly sessionPersistence = new BrowserSessionPersistence();
   private controlLease: { conversationId: string; tabId: string } | null = null;
+  private controlNeedsObservation = false;
   private openPanelForControl: (() => void) | null = null;
   private visibleBoundsWaiters = new Set<() => void>();
-  private controlAction: "starting" | "opening" | "switching" | "clicking" | "filling" | "pressing" | "scrolling" | "screenshot" | "active" | undefined;
+  private controlResumeWaiters = new Set<() => void>();
+  private controlAction: "starting" | "opening" | "switching" | "clicking" | "filling" | "pressing" | "scrolling" | "screenshot" | "waiting" | "active" | undefined;
   private controlActionTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly observedWindows = new WeakSet<BrowserWindow>();
   private getViewportMode: () => BrowserViewportMode = () => DEFAULT_BROWSER_VIEWPORT_MODE;
@@ -186,6 +192,7 @@ export class BrowserPanelController {
       }
       return `浏览器控制已开启，绑定标签 ${this.controlLease.tabId}。`;
     }
+    this.controlNeedsObservation = false;
     const tab = input.tabId ? this.tabs.find((candidate) => candidate.id === input.tabId) : this.getActiveTab();
     if (!tab) return "找不到要绑定的浏览器标签。";
     if (tab.kind === "exam") return "考试答题页不能作为外部网页控制目标。请先切换到普通网页标签。";
@@ -222,6 +229,7 @@ export class BrowserPanelController {
       return "当前任务不持有浏览器控制权，未执行退出操作。";
     }
     this.controlLease = null;
+    this.controlNeedsObservation = false;
     this.setControlAction(undefined);
     this.retryUserAgentReloadAfterGuard();
     return "浏览器控制已退出；网页标签和登录状态保留。";
@@ -231,7 +239,7 @@ export class BrowserPanelController {
     if (this.controlActionTimer) clearTimeout(this.controlActionTimer);
     this.controlActionTimer = null;
     this.controlAction = action;
-    if (action && action !== "active") {
+    if (action && action !== "active" && action !== "waiting") {
       this.controlActionTimer = setTimeout(() => {
         if (this.controlAction === action) {
           this.controlAction = "active";
@@ -248,6 +256,47 @@ export class BrowserPanelController {
 
   hasActiveControl(): boolean {
     return this.controlLease !== null;
+  }
+
+  /** Wait for a hidden controlled panel to return; resumed mutations must re-observe the page first. */
+  async waitForControlVisible(input: {
+    conversationId?: string;
+    runId?: string;
+    signal?: AbortSignal;
+  }): Promise<BrowserControlResumeState> {
+    await this.readyPromise;
+    if (!this.matchesControlOwner(input.conversationId, input.runId) || !this.controlLease) return "not-controlled";
+    if (input.signal?.aborted) throw input.signal.reason ?? new DOMException("The operation was aborted", "AbortError");
+    if (this.hasVisibleBounds()) return this.activeTabId === this.controlLease.tabId ? "ready" : "tab-changed";
+
+    return new Promise<BrowserControlResumeState>((resolve) => {
+      let done = false;
+      let timer: ReturnType<typeof setTimeout>;
+      const finish = (result: BrowserControlResumeState) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        this.controlResumeWaiters.delete(check);
+        input.signal?.removeEventListener("abort", onAbort);
+        if (this.matchesControlOwner(input.conversationId, input.runId)) {
+          this.setControlAction("active");
+        }
+        resolve(result);
+      };
+      const check = () => {
+        if (this.disposed || !this.matchesControlOwner(input.conversationId, input.runId) || !this.controlLease) {
+          finish("lease-lost");
+        } else if (this.hasVisibleBounds()) {
+          finish(this.activeTabId === this.controlLease.tabId ? "resumed" : "tab-changed");
+        }
+      };
+      const onAbort = () => finish("lease-lost");
+      timer = setTimeout(() => finish("timed-out"), CONTROL_PANEL_RESUME_TIMEOUT_MS);
+      this.controlResumeWaiters.add(check);
+      input.signal?.addEventListener("abort", onAbort, { once: true });
+      this.setControlAction("waiting");
+      check();
+    });
   }
 
   private matchesControlOwner(conversationId?: string, _runId?: string): boolean {
@@ -311,6 +360,7 @@ export class BrowserPanelController {
       this.controlLease.tabId = previousTabId;
       return "切换标签失败。";
     }
+    this.controlNeedsObservation = true;
     return `已绑定标签 ${input.tabId}。请重新读取页面元素后再操作。`;
   }
 
@@ -320,6 +370,8 @@ export class BrowserPanelController {
     this.setControlAction("clicking");
     const hit = await this.validateTargetAt(checked.contents, checked.target, input.observationId);
     if (!hit.ok) return hit.reason;
+    const stale = this.revalidateControlTarget(input, checked.contents);
+    if (stale) return stale;
     const win = this.getWindow();
     if (!win || win.isDestroyed() || !win.isFocused()) return "Cyrene 窗口当前未获得焦点。已暂停浏览器操作，请先点回 Cyrene 窗口。";
     checked.contents.sendInputEvent({ type: "mouseMove", x: hit.x, y: hit.y });
@@ -337,6 +389,8 @@ export class BrowserPanelController {
     this.setControlAction("filling");
     const hit = await this.validateTargetAt(checked.contents, checked.target, input.observationId);
     if (!hit.ok) return hit.reason;
+    const stale = this.revalidateControlTarget(input, checked.contents);
+    if (stale) return stale;
     const win = this.getWindow();
     if (!win || win.isDestroyed() || !win.isFocused()) return "Cyrene 窗口当前未获得焦点。已暂停浏览器操作，请先点回 Cyrene 窗口。";
     checked.contents.sendInputEvent({ type: "mouseMove", x: hit.x, y: hit.y });
@@ -352,6 +406,7 @@ export class BrowserPanelController {
   async controlPress(input: { conversationId?: string; runId?: string; key: string; observationId?: string; ref?: string }): Promise<string> {
     const checked = this.assertControl(input.conversationId, input.runId);
     if (!checked.ok) return checked.reason;
+    if (this.controlNeedsObservation && !input.observationId) return "浏览器隐藏或切换标签后页面可能已变化；请重新读取当前页面后再继续。";
     this.setControlAction("pressing");
     const win = this.getWindow();
     if (!win || win.isDestroyed() || !win.isFocused()) return "Cyrene 窗口当前未获得焦点。已暂停浏览器操作，请先点回 Cyrene 窗口。";
@@ -364,6 +419,8 @@ export class BrowserPanelController {
       if (!target.ok) return target.reason;
       const hit = await this.validateTargetAt(target.contents, target.target, input.observationId);
       if (!hit.ok) return hit.reason;
+      const stale = this.revalidateControlTarget(input as { conversationId?: string; runId?: string; observationId: string }, target.contents);
+      if (stale) return stale;
       target.contents.sendInputEvent({ type: "mouseDown", x: hit.x, y: hit.y, button: "left", clickCount: 1 });
       target.contents.sendInputEvent({ type: "mouseUp", x: hit.x, y: hit.y, button: "left", clickCount: 1 });
       this.observations.delete(input.observationId);
@@ -377,6 +434,7 @@ export class BrowserPanelController {
   async controlScroll(input: { conversationId?: string; runId?: string; direction: "up" | "down"; amount?: number; observationId?: string; ref?: string }): Promise<string> {
     let checked = this.assertControl(input.conversationId, input.runId);
     if (!checked.ok) return checked.reason;
+    if (this.controlNeedsObservation && !input.observationId) return "浏览器隐藏或切换标签后页面可能已变化；请重新读取当前页面后再继续。";
     this.setControlAction("scrolling");
     const win = this.getWindow();
     if (!win || win.isDestroyed() || !win.isFocused()) return "Cyrene 窗口当前未获得焦点。已暂停浏览器操作，请先点回 Cyrene 窗口。";
@@ -388,6 +446,8 @@ export class BrowserPanelController {
       if (!target.ok) return target.reason;
       const hit = await this.validateTargetAt(target.contents, target.target, input.observationId);
       if (!hit.ok) return hit.reason;
+      const stale = this.revalidateControlTarget(input as { conversationId?: string; runId?: string; observationId: string }, target.contents);
+      if (stale) return stale;
       x = hit.x;
       y = hit.y;
       checked = { ok: true, tab: target.tab, contents: target.contents };
@@ -431,6 +491,18 @@ export class BrowserPanelController {
     return { ...checked, target };
   }
 
+  private revalidateControlTarget(
+    input: { conversationId?: string; runId?: string; observationId: string },
+    contents: WebContents,
+  ): string | undefined {
+    const checked = this.assertControl(input.conversationId, input.runId);
+    if (!checked.ok) return checked.reason;
+    if (checked.contents !== contents || !this.observations.has(input.observationId)) {
+      return "浏览器在验证期间隐藏或切换了标签；本次操作未发送。请重新读取页面后再试。";
+    }
+    return undefined;
+  }
+
   private async validateTargetAt(contents: WebContents, target: RuntimeSnapshot["elements"][number], observationId: string): Promise<{ ok: true; x: number; y: number } | { ok: false; reason: string }> {
     const [x, y, width, height] = target.bounds;
     try {
@@ -460,10 +532,25 @@ export class BrowserPanelController {
     const contents = tab?.view?.webContents;
     if (!tab || !contents || contents.isDestroyed() || contents.isLoading() || !tab.state.url
       || !this.bounds || this.bounds.width <= 0 || this.bounds.height <= 0) return false;
+    const observationGeneration = this.observationGenerations.get(tab.id) ?? 0;
+    const initialUrl = tab.state.url;
+    const initialControlLease = this.controlLease ? { ...this.controlLease } : null;
+    const isSnapshotCurrent = () => {
+      const currentLease = this.controlLease;
+      return (this.observationGenerations.get(tab.id) ?? 0) === observationGeneration
+        && this.hasVisibleBounds()
+        && this.activeTabId === tab.id
+        && this.getActiveTab() === tab
+        && tab.state.url === initialUrl
+        && !contents.isDestroyed()
+        && !contents.isLoading()
+        && currentLease?.conversationId === initialControlLease?.conversationId
+        && currentLease?.tabId === initialControlLease?.tabId;
+    };
     this.clearElementPicker();
     try {
       const snapshot = await startPlaywrightElementPicker(contents);
-      if (this.getActiveTab()?.id !== tab.id || tab.state.loading || contents.isDestroyed()) {
+      if (!isSnapshotCurrent() || tab.state.loading) {
         if (!contents.isDestroyed()) await cancelPlaywrightElementPicker(contents).catch(() => undefined);
         return false;
       }
@@ -605,9 +692,34 @@ export class BrowserPanelController {
       return { ok: false, reason: reasons.join("；") };
     }
     try {
+      const observationGeneration = this.observationGenerations.get(tab.id) ?? 0;
+      const initialUrl = tab.state.url;
+      const initialControlLease = this.controlLease ? { ...this.controlLease } : null;
+      const isSnapshotCurrent = () => {
+        const currentLease = this.controlLease;
+        return (this.observationGenerations.get(tab.id) ?? 0) === observationGeneration
+          && this.hasVisibleBounds()
+          && this.activeTabId === tab.id
+          && this.getActiveTab() === tab
+          && tab.state.url === initialUrl
+          && !contents.isDestroyed()
+          && !contents.isLoading()
+          && currentLease?.conversationId === initialControlLease?.conversationId
+          && currentLease?.tabId === initialControlLease?.tabId;
+      };
       const snapshot = await capturePlaywrightPageSnapshot(contents);
+      if (!isSnapshotCurrent()) {
+        return { ok: false, reason: "浏览器在读取页面期间隐藏、切换或页面已变化；请重新读取当前页面。" };
+      }
+      await appendBrowserObservationLog({ tabId: tab.id, url: initialUrl, snapshot });
+      if (!isSnapshotCurrent()) {
+        return { ok: false, reason: "浏览器在读取页面期间隐藏、切换或页面已变化；请重新读取当前页面。" };
+      }
       this.rememberObservation(tab, snapshot);
-      await appendBrowserObservationLog({ tabId: tab.id, url: tab.state.url, snapshot });
+      if (this.matchesControlOwner(owner?.conversationId, owner?.runId) && this.controlLease?.tabId === tab.id) {
+        this.controlNeedsObservation = false;
+        if (this.controlAction === "waiting") this.setControlAction("active");
+      }
       return { ok: true, snapshot };
     } catch (error) {
       console.warn("[BrowserPanel] Playwright 页面识别失败", {
@@ -732,6 +844,7 @@ export class BrowserPanelController {
   }
 
   private forgetTabObservations(tabId: string): void {
+    this.observationGenerations.set(tabId, (this.observationGenerations.get(tabId) ?? 0) + 1);
     for (const [id, observation] of this.observations) {
       if (observation.tabId === tabId) this.observations.delete(id);
     }
@@ -848,10 +961,19 @@ export class BrowserPanelController {
   }
 
   setBounds(bounds: BrowserPanelBounds | null): void {
+    const wasVisible = this.hasVisibleBounds();
     this.bounds = bounds;
+    if (wasVisible && !this.hasVisibleBounds()) {
+      if (this.controlLease) this.controlNeedsObservation = true;
+      this.forgetTabObservations(this.activeTabId);
+      if (this.controlLease && this.controlLease.tabId !== this.activeTabId) {
+        this.forgetTabObservations(this.controlLease.tabId);
+      }
+    }
     if (bounds && bounds.width > 0 && bounds.height > 0) {
       for (const resolve of [...this.visibleBoundsWaiters]) resolve();
     }
+    for (const resolve of [...this.controlResumeWaiters]) resolve();
     if (!this.initialized) return;
     const win = this.getWindow();
     if (this.parentWindow && this.parentWindow !== win) {
@@ -944,6 +1066,7 @@ export class BrowserPanelController {
     if (this.activeTabId !== tabId) {
       this.forgetTabObservations(this.activeTabId);
       this.forgetTabObservations(tabId);
+      if (this.controlLease) this.controlNeedsObservation = true;
     }
     if (this.elementPickerTabId && this.elementPickerTabId !== tabId) this.clearElementPicker();
     this.activeTabId = tab.id;
@@ -1049,6 +1172,8 @@ export class BrowserPanelController {
     this.controlAction = undefined;
     for (const resolve of [...this.visibleBoundsWaiters]) resolve();
     this.visibleBoundsWaiters.clear();
+    for (const resolve of [...this.controlResumeWaiters]) resolve();
+    this.controlResumeWaiters.clear();
     if (this.elementPickerTimer) clearTimeout(this.elementPickerTimer);
     this.elementPickerTimer = null;
     this.elementPickerTabId = "";
@@ -1670,5 +1795,6 @@ export class BrowserPanelController {
   private publish(): void {
     this.onStateChanged(this.getState());
     this.schedulePersistence();
+    for (const resolve of [...this.controlResumeWaiters]) resolve();
   }
 }
