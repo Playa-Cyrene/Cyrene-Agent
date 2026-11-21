@@ -429,6 +429,7 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
   const cancelRequestedTurnsRef = useRef(new Set<string>());
   // 会话待发队列投影：权威数据是主进程会话文件里的 pendingMessages，
   // 页面只持显示快照，入队/删除/认领/其他窗口变更后按稳定标识（id）对账刷新
+  const submissionTails = useRef(new Map<string, Promise<void>>());
   const submissions = useRef(new Map<string, SubmittingDraft>());
   const [submittingDrafts, setSubmittingDrafts] = useState<SubmittingDraft[]>([]);
   const [waitingClaims, setWaitingClaims] = useState<ReadonlySet<string>>(new Set());
@@ -1497,27 +1498,37 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
     const id = crypto.randomUUID();
     const submission: SubmittingDraft = { scope: scopeKey, content, attachments, stop: { requested: false } };
     updateSubmittingDraft(id, submission);
+    // 只串行等待持久入队，依赖等待与模型运行不占用后续提交的位置。
+    const previous = submissionTails.current.get(scopeKey);
+    let release!: () => void;
+    const committed = new Promise<void>(resolve => { release = resolve; });
+    submissionTails.current.set(scopeKey, committed);
     try {
-      await enqueueAndConsumeDraft(id, submission, parsedMessage);
+      await previous;
+      await enqueueAndConsumeDraft(id, submission, parsedMessage, release);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       feedback.notice({ tone: "error", message: submissions.current.get(id)?.committedId
         ? detail : t("chatPage.errorEnqueueFailed", { error: detail }) });
     } finally {
+      release();
+      if (submissionTails.current.get(scopeKey) === committed) submissionTails.current.delete(scopeKey);
       updateSubmittingDraft(id);
     }
   }
 
   async function enqueueAndConsumeDraft(
-    userMessageId: string, submission: SubmittingDraft, parsedMessage: ReturnType<typeof parseComposerMessage>,
+    userMessageId: string, submission: SubmittingDraft, parsedMessage: ReturnType<typeof parseComposerMessage>, release: () => void,
   ) {
     const { content } = submission;
     // 提前反馈仅用于显示，模型变更、会话准备、入队成功仍是派发前置条件。
     await modelSwitcher.barrier();
     if (submission.stop.requested) return;
     const message = parsedMessage.rawContent;
-    activeEarlyTtsRef.current?.queue.cancel();
-    activeEarlyTtsRef.current = null;
+    if (!activeSessionId || !activeRunsBySession.current[activeSessionId]) {
+      activeEarlyTtsRef.current?.queue.cancel();
+      activeEarlyTtsRef.current = null;
+    }
     const userSticker = parsedMessage.userSticker;
     const visibleMessage = parsedMessage.visibleContent;
     const attachmentsForMessage = submission.attachments.map((attachment) => ({ ...attachment }));
@@ -1590,7 +1601,7 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
       attachments: attachmentsForMessage,
       userSticker,
       onEnqueuing: (id) => { submission.stop.sessionId = sessionId; submission.stop.pendingId = id; },
-      onCommitted: (committedId) => updateSubmittingDraft(userMessageId, { ...submission, committedId }),
+      onCommitted: (committedId) => { updateSubmittingDraft(userMessageId, { ...submission, committedId }); release(); },
     });
     if (!enqueued) return;
     if (submission.stop.requested) {
@@ -1718,28 +1729,9 @@ export function ChatPage({ onOpenSettings, scheduledTasksNavigation = 0 }: { onO
     });
   }
 
-  /** 运行中把当前草稿排进持久队列（composer 加号按钮）：入队成功才清草稿与附件。 */
+  /** 运行和依赖等待期间共用提交去重、顺序与持久回执。 */
   async function queueCurrentDraft(value: string) {
-    if (!activeSessionId || !value.trim()) return;
-    const sessionId = activeSessionId;
-    const parsedMessage = parseComposerMessage(mode, value);
-    if (!parsedMessage.rawContent) return;
-    const userSticker = parsedMessage.userSticker;
-    const visibleContent = parsedMessage.visibleContent;
-    const attachmentsForMessage = attachments.map((attachment) => ({ ...attachment }));
-    const userMessageId = crypto.randomUUID();
-    const enqueued = await queueFlow.enqueue(sessionId, mode, {
-      id: userMessageId,
-      rawContent: parsedMessage.rawContent,
-      visibleContent,
-      attachments: attachmentsForMessage,
-      userSticker,
-    });
-    if (!enqueued) return;
-    // 请求期间用户继续输入时不清掉新内容：仅当草稿仍是排队时的文本才清空；
-    // 附件同样只清随消息入队的那些（空快照不清任何附件），期间新加的保留
-    setDrafts((current) => (current[scopeKey] === value ? { ...current, [scopeKey]: "" } : current));
-    clearScopeAttachments(attachmentsForMessage);
+    await sendMessage(value);
   }
 
   const isCurrentScopeRunning = Boolean(activeSessionId && activeRunsBySession.current[activeSessionId]);

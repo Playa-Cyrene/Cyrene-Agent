@@ -44,6 +44,20 @@ function builtOptions() {
 }
 
 describe("plugin-agent", () => {
+  it.each(["deadline", "plugin", "external"])("interrupts preparation on %s without running tools", async source => {
+    const controller = new AbortController();
+    const buildOptions = vi.fn(() => new Promise<never>(() => {}));
+    const runHarness = vi.fn();
+    const runGoal = createPluginAgentRunner({ pluginId: "minecraft-bot", userDataPath: "unused",
+      pluginSignal: source === "plugin" ? controller.signal : new AbortController().signal,
+      createDeadline: () => source === "deadline" ? controller.signal : new AbortController().signal,
+      agentRuntime: { buildOptions } as never, runHarness: runHarness as never });
+    const pending = runGoal({ runId: "cancel-build", goal: "goal", tools: [goalTool()], signal: source === "external" ? controller.signal : undefined });
+    controller.abort();
+    expect((await pending).terminal).toMatchObject({ status: source === "deadline" ? "timeout" : "cancelled", externalEffectsMayContinue: false });
+    expect(buildOptions.mock.calls[0][0].signal.aborted).toBe(true);
+    expect(runHarness).not.toHaveBeenCalled();
+  });
   it("拒绝缺少显式 effectKind 的目标工具", async () => {
     const runHarness = vi.fn();
     const runGoal = createPluginAgentRunner({
@@ -159,11 +173,11 @@ describe("plugin-agent", () => {
       maxWallMs: 60_000,
     });
 
-    expect(runHarness.mock.calls[0]?.[0].signal.aborted).toBe(true);
+    expect(runHarness).not.toHaveBeenCalled();
     expect(result.terminal).toEqual({
       status: "timeout",
       reason: "timeout",
-      externalEffectsMayContinue: true,
+      externalEffectsMayContinue: false,
     });
   });
 

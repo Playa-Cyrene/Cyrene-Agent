@@ -671,7 +671,10 @@ export async function createRuntimeDependencies(
             if (channel === IPC.EMBEDDING_SET_MODEL || channel === IPC.RERANKER_SET_MODE) return vectorReady();
             if ((channel === IPC.SETTINGS_SAVE_GENERAL || channel === IPC.TTS_SAVE_SETTINGS) && patch && typeof patch === "object"
               && ["searchMinimaxKey", "searchEngine", "playwrightMcpEnabled", "filesystemMcpEnabled"].some(key => key in patch)) {
-              return waitForMcp();
+              return waitForMcp(id =>
+                (id === "minimax-web-search" && ("searchEngine" in patch || "searchMinimaxKey" in patch))
+                || (id === PLAYWRIGHT_MCP_ID && "playwrightMcpEnabled" in patch)
+                || (id === FILESYSTEM_MCP_ID && "filesystemMcpEnabled" in patch));
             }
           }),
           windowManager: shell.windowManager,

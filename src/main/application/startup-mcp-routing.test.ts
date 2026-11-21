@@ -65,3 +65,18 @@ it("measures Work waiting for selected MCP while Chat can proceed without it", a
   process.stdout.write("WORK_MCP_MEASUREMENT " + JSON.stringify({ chatUnselectedMs: chatMs, workSelectedMs: workMs, workAlreadyReadyMs: performance.now() - readyAt, injectedDiscoveryDelayMs: 1500 }) + "\n");
   expect(workMs).toBeGreaterThanOrEqual(1500);
 });
+
+it("search settings wait only for affected builtins", async () => {
+  const from = source.indexOf("ipc: afterStartup(ipc, (channel, patch) => {");
+  const callback = source.slice(from + "ipc: afterStartup(ipc, ".length, source.indexOf("}),", from) + 1);
+  const wait = vi.fn(async (select: (id: string) => boolean) => {
+    expect(select("unrelated-slow")).toBe(false);
+    expect(select("minimax-web-search")).toBe(true);
+    expect(select("playwright")).toBe(false);
+  });
+  const code = ts.transpileModule("return " + callback, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+  const ready = new Function("IPC", "waitForMcp", "PLAYWRIGHT_MCP_ID", "FILESYSTEM_MCP_ID", code)(IPC, wait, "playwright", "filesystem");
+  await ready(IPC.TTS_SAVE_SETTINGS, { searchEngine: "tavily" });
+  await ready(IPC.SETTINGS_SAVE_GENERAL, { searchEngine: "disabled" });
+  expect(wait).toHaveBeenCalledTimes(2);
+});

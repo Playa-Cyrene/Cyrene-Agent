@@ -121,7 +121,7 @@ export interface AgentRunFinishedContext {
 }
 
 export interface AgentRuntime {
-  buildOptions(input: AguiRunInput, toolIds?: readonly string[]): Promise<{ options: CyreneRunOptions; latestUserText: string }>;
+  buildOptions(input: AguiRunInput & { signal?: AbortSignal }, toolIds?: readonly string[]): Promise<{ options: CyreneRunOptions; latestUserText: string }>;
   onRunFinished(result: CyreneRunResult, latestUserText: string, context: AgentRunFinishedContext): Promise<{ sticker: string | null }>;
   buildSchedulerOptions(task: ScheduledTask): Promise<SchedulerRunOptions>;
 }

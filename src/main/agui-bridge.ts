@@ -1386,10 +1386,10 @@ export function registerAgUiIpc(
       const id = byMessage ? target.messageId : target.assistantTurnId;
       if (typeof sessionId !== "string" || !sessionId || typeof id !== "string" || !id) return false;
       for (const { input, controller } of starting) {
-        if (input?.sessionId === sessionId && (byMessage ? input.currentUser?.turnId : input.assistantTurnId) === id) controller.abort();
+        if (input?.sessionId === sessionId && (byMessage ? input.currentUser?.turnId : input.assistantTurnId) === id) { inbox.suppressWake(sessionId); controller.abort(); }
       }
       const active = sessionActiveRuns.get(sessionId);
-      if (active && (byMessage ? active.messageId : active.assistantTurnId) === id) active.abort();
+      if (active && (byMessage ? active.messageId : active.assistantTurnId) === id) { inbox.suppressWake(sessionId); active.abort(); }
       if (byMessage) {
         // 认领与派发之间已有持久回执；取消后迟到的 runs.admit 会读到 cancelled。
         await getConversationDatabase(app.getPath("userData")).call("runs.cancelUnstartedRequest", sessionId, id);

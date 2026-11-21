@@ -2396,10 +2396,10 @@ describe("agui-bridge background shell smoke (mock sessions, isolated SQLite)", 
     } finally { await manager.disposeAllShellJobs(); }
   });
 
-  it("cancellation, deleted conversations and shutdown cannot restart the agent", async () => {
+  it.each([false, true])("cancellation (targeted=%s), deletion and shutdown cannot restart the agent", async (targeted) => {
     mocks.skipDefaultRunFinished = true; mocks.neverComplete = true; mocks.completeOnAbort = true;
     const original = await start();
-    mocks.handlers.get(IPC.AGUI_CANCEL)!({}, original.runId);
+    await mocks.handlers.get(IPC.AGUI_CANCEL)!({}, targeted ? { sessionId: "original", assistantTurnId: "initial" } : original.runId);
     await expect.poll(() => bridge.__getSessionActiveRunForTest("original")).toBeUndefined();
     original.onShellJobComplete!(snapshot());
     const { getConversationTranscriptStore } = await import("./orchestrator/conversation-transcript-store");
