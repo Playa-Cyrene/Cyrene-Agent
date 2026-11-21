@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { PluginManager, type PluginManagerOptions } from "./manager";
 import { PLUGIN_CLEANUP_TIMEOUT_MS, type PluginRuntime } from "./context";
 import { createPluginPromptRegistry } from "./prompts";
+import { ChannelManager } from "../main/channels/manager";
 import * as installer from "./installer";
 
 let tmp: string;
@@ -80,6 +81,138 @@ function harness(overrides: Partial<PluginManagerOptions> = {}) {
 }
 
 describe("PluginManager", () => {
+  it.each([
+    ["conversation", true], ["conversation", false], ["scheduler", true], ["scheduler", false],
+  ] as const)("includes Chat prompts in the first %s request (registered late=%s)", async (source, late) => {
+    const h = harness();
+    writeFileSync(path.join(tmp, "demo", "index.cjs"), `module.exports = {
+      async register(ctx) {
+        if (${!late}) ctx.registerPromptProvider({
+          id: "early", modes: ["chat"], sources: ["conversation", "scheduler", "plugin-agent"], provide: () => "PLUGIN_CONTEXT"
+        });
+        await new Promise(resolve => ctx.registerIpc("release", resolve));
+        if (${late}) ctx.registerPromptProvider({
+          id: "late", modes: ["chat"], sources: ["conversation", "scheduler", "plugin-agent"], provide: () => "PLUGIN_CONTEXT"
+        });
+      }
+    };`);
+    const manager = new PluginManager(h.options);
+    h.options.runtime.promptRegistry = {
+      ...h.promptRegistry,
+      register: (id, provider, signal) => h.promptRegistry.register(id, provider, signal, () => manager.isRunning(id)),
+    };
+    const starting = manager.start();
+    let finished = false;
+    const prompt = h.promptRegistry.build({ source, mode: "chat", userText: "first" }).then(text => { finished = true; return text; });
+    await vi.waitFor(() => expect(h.ipc.has("plugin:demo:release")).toBe(true));
+    expect(finished).toBe(false);
+    expect(await h.promptRegistry.build({ source: "plugin-agent", mode: "chat", userText: "activation task" })).toBe("");
+    h.ipc.get("plugin:demo:release")!();
+    await starting;
+    expect(await prompt).toContain("PLUGIN_CONTEXT");
+    expect(await h.promptRegistry.build({ source, mode: "work", userText: "other" })).toBe("");
+    await manager.stop();
+  });
+
+  it("allows a plugins:ready listener to build external prompt context", async () => {
+    const h = harness();
+    const file = path.join(tmp, "demo", "index.cjs");
+    writeFileSync(file, `module.exports = {
+      register(ctx) {
+        ctx.registerPromptProvider({ id: "context", provide: () => "READY_CONTEXT" });
+        ctx.events.on("host:plugins:ready", async () => {
+          module.exports.result = await ctx.deps.llm.generateText([]);
+        });
+      }
+    };`);
+    const manifestPath = path.join(tmp, "demo", "manifest.json");
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    writeFileSync(manifestPath, JSON.stringify({ ...manifest, deps: ["llm"] }));
+    h.options.runtime.llm = {
+      generateText: () => h.promptRegistry.build({ source: "conversation", mode: "chat", userText: "ready" }),
+    };
+    const manager = new PluginManager(h.options);
+    await manager.start();
+    expect((require(file) as { result: string }).result).toContain("READY_CONTEXT");
+    await manager.stop();
+  });
+
+  it("times out a plugin after ten seconds and rejects its late registrations", async () => {
+    const h = harness();
+    let release!: () => void;
+    const moduleFile = path.join(tmp, "demo", "index.cjs");
+    writeFileSync(moduleFile, `module.exports = {
+      async register(ctx) {
+        module.exports.context = ctx;
+        ctx.registerIpc("ping", () => "pong");
+        await new Promise(resolve => { module.exports.release = resolve; });
+        ctx.registerIpc("late", () => "late");
+      }
+    };`);
+    fixturePlugin("healthy");
+    vi.useFakeTimers();
+    const manager = new PluginManager(h.options);
+    const starting = manager.start();
+    const firstPrompt = h.promptRegistry.build({ source: "conversation", mode: "chat", userText: "first" });
+    await vi.advanceTimersByTimeAsync(0);
+    const plugin = require(moduleFile) as { context: { signal: AbortSignal }; release(): void };
+    const context = plugin.context;
+    release = plugin.release;
+    expect(context.signal.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(9999);
+    expect(manager.list()[0].status).toBe("starting");
+    await vi.advanceTimersByTimeAsync(1);
+    expect(manager.list()[0]).toMatchObject({ status: "failed", error: expect.stringContaining("10000") });
+    await starting;
+    expect(await firstPrompt).toBe("");
+    expect(manager.isRunning("healthy")).toBe(true);
+    expect(h.tools).toContain("healthy_tool");
+    expect(context.signal.aborted).toBe(true);
+    expect(h.ipc.has("plugin:demo:ping")).toBe(false);
+    release();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.ipc.has("plugin:demo:late")).toBe(false);
+    expect(manager.isRunning("demo")).toBe(false);
+    await manager.stop();
+  });
+
+  it.each(["timeout", "shutdown"] as const)("cleans a pending plugin channel on %s and stops its late completion", async (action) => {
+    const h = harness();
+    const channels = new ChannelManager();
+    const port = channels.createPluginPort();
+    h.options.runtime.channelManager = port as unknown as PluginRuntime["channelManager"];
+    const file = path.join(tmp, "demo", "index.cjs");
+    writeFileSync(file, `module.exports = {
+      async register(ctx) {
+        const adapter = {
+          id: "slow-channel", displayName: "slow", capability: {}, onMessage: null,
+          start: () => new Promise(resolve => { module.exports.release = resolve; }),
+          stop: async () => { module.exports.stops = (module.exports.stops || 0) + 1; }
+        };
+        await ctx.registerChannelAdapter(adapter);
+      }
+    };`);
+    vi.useFakeTimers();
+    const manager = new PluginManager(h.options);
+    const starting = manager.start();
+    await vi.advanceTimersByTimeAsync(0);
+    const plugin = require(file) as { release(): void; stops?: number };
+    expect(channels.has("slow-channel" as never)).toBe(true);
+    if (action === "timeout") {
+      await vi.advanceTimersByTimeAsync(10_000);
+      await starting;
+    } else {
+      await manager.stop();
+      await starting;
+    }
+    expect(channels.has("slow-channel" as never)).toBe(false);
+    plugin.release();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(plugin.stops).toBe(1);
+    expect(manager.isRunning("demo")).toBe(false);
+    await manager.stop();
+  });
+
   it("启动时启用 defaultEnabled 插件并注册列表/开关 IPC", async () => {
     const h = harness();
     const mgr = new PluginManager(h.options);
@@ -96,6 +229,28 @@ describe("PluginManager", () => {
     });
     expect(h.ipc.has("plugins:set-enabled")).toBe(true);
     expect(h.ipc.has("plugin:demo:ping")).toBe(true);
+  });
+
+  it("waits only for the selected plugin during startup", async () => {
+    const h = harness();
+    const slow = fixturePlugin("slow");
+    writeFileSync(path.join(slow, "index.cjs"), `module.exports = {
+      register(ctx) { return new Promise((resolve) => ctx.registerIpc("release", resolve)); }
+    };`);
+    const manager = new PluginManager(h.options);
+    let reveal!: () => void;
+    const starting = manager.start(new Promise<void>((resolve) => { reveal = resolve; }));
+    const selectedReady = manager.waitForStartupTools((id) => id === "demo");
+    expect(h.tools).toEqual([]);
+    reveal();
+    await selectedReady;
+    expect(h.tools).toContain("demo_tool");
+    await vi.waitFor(() => expect(h.ipc.has("plugin:slow:release")).toBe(true));
+    expect(manager.isRunning("slow")).toBe(false);
+    h.ipc.get("plugin:slow:release")!();
+    await starting;
+    expect(manager.isRunning("slow")).toBe(true);
+    await manager.stop();
   });
 
   it("宿主事件可发布给插件，停用后监听器被移除", async () => {

@@ -1,12 +1,3 @@
-/**
- * Core 启动阶段（coreReady）：建立聊天可用所需的最小核心。
- * 按严格依赖顺序构造：迁移 → 技能 → 低成本服务 → 沙箱 → 计划模式 → 工具
- * → RAG（可降级）→ Agent Runtime → scheduler/channels（只装配不启动）
- * → 全部渲染进程可能调用的 IPC → 加载聊天页面 → 桌宠/辅助窗口 → core-ready
- * → reveal → 激活代理放行。
- * 技能/RAG/沙箱失败只记录降级；聊天页面加载失败是致命错误，向上抛出。
- */
-
 import type { IpcScope } from "./ipc-scope";
 import type { StartupReadiness } from "./readiness";
 import type { ShutdownCoordinator } from "./shutdown";
@@ -77,13 +68,10 @@ export interface CoreDependencies {
   activation: WindowActivationBroker;
   shutdown: ShutdownCoordinator;
   migrateStagedExternalContent(): void;
-  initSkills(): void | Promise<void>;
   /** 低成本服务与配置 getter；只构造，不建立网络连接。 */
   createLowCostServices(): CoreServices;
-  initSandbox(): void | Promise<void>;
   initPlanMode(): void;
-  registerAllTools(services: CoreServices): void;
-  initRag(): Promise<void>;
+  registerAllTools(services: CoreServices): void | Promise<void>;
   createRuntime(services: CoreServices): AgentRuntime;
   createChannels(runtime: AgentRuntime, services: CoreServices): ChannelsSubsystem;
   /** 必须在内置渠道适配器注册完成后调用；scheduler 先于本步完成 initialize。 */
@@ -95,15 +83,8 @@ export interface CoreDependencies {
   loadGeneralSettings(): GeneralSettings;
   /** 启动期一次性应用通用设置（登录项同步、桌宠偏好等）。 */
   applyGeneralSettings(settings: GeneralSettings, services: CoreServices): void;
-  revealStartupWindows(input: RevealStartupWindowsOptions): Promise<void>;
-  /** Loading 最短展示时长（ms）。 */
-  minimumSplashMs: number;
   /** 放行启动期间 pending 的辅助窗口（window-state 的 STARTUP_READY）。 */
   markStartupWindowsReady(): void;
-}
-
-function degradedMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 // 启动耗时埋点：无条件打印各阶段耗时与结束时刻（相对进程启动），供启动性能排查
@@ -115,6 +96,53 @@ async function timedStep<T>(name: string, fn: () => T | Promise<T>): Promise<T> 
     const end = performance.now();
     console.log(`[StartupTiming] core/${name} ${Math.round(end - start)}ms (at ${Math.round(end)}ms)`);
   }
+}
+
+export interface InitialSurfaceDependencies {
+  shell: ShellResult;
+  shutdown: ShutdownCoordinator;
+  loadGeneralSettings(): GeneralSettings;
+  revealStartupWindows(input: RevealStartupWindowsOptions): Promise<void>;
+  /** Loading 最短展示时长（ms）。 */
+  minimumSplashMs: number;
+  initialWindowShown?(showingChat: boolean): Promise<void>;
+}
+
+export async function showInitialSurface(deps: InitialSurfaceDependencies): Promise<void> {
+  const { shell, shutdown } = deps;
+  checkStartupActive(shutdown);
+  try {
+    await timedStep("chat-load", () => shell.chat.load());
+  } catch (error) {
+    if (shutdown.isStopping() && isCancelledPageLoad(error)) throw new StartupCancelledError();
+    throw error;
+  }
+  checkStartupActive(shutdown);
+  const disclaimerAccepted = hasCurrentDisclaimerConsent(deps.loadGeneralSettings().disclaimerAcceptedVersion);
+  let onboardingWindow = null;
+  try {
+    onboardingWindow = disclaimerAccepted ? null : await shell.windowManager.createOnboardingWindow?.() ?? null;
+  } catch (error) {
+    if (shutdown.isStopping() && isCancelledPageLoad(error)) throw new StartupCancelledError();
+    throw error;
+  }
+  checkStartupActive(shutdown);
+
+  // 等待最短展示时长 → 关闭 Loading → 显示欢迎窗或聊天主窗
+  await deps.revealStartupWindows({
+    splashWindow: shell.splashWindow,
+    chatWindow: shell.chat.window,
+    onboardingWindow,
+    showOnboardingWindow: !disclaimerAccepted,
+    loadingShownAt: shell.loadingShownAt,
+    minimumDurationMs: deps.minimumSplashMs,
+    isStopping: () => shutdown.isStopping(),
+  });
+  checkStartupActive(shutdown);
+  // 窗口已对用户可见的时刻锚点：在此之后打印结束的后台任务，都是“窗口出来后还在跑”的部分
+  console.log(`[StartupTiming] core/windows-revealed (at ${Math.round(performance.now())}ms)`);
+  await deps.initialWindowShown?.(disclaimerAccepted);
+  checkStartupActive(shutdown);
 }
 
 export async function startCore(deps: CoreDependencies): Promise<CoreResult> {
@@ -139,16 +167,6 @@ export async function startCore(deps: CoreDependencies): Promise<CoreResult> {
   try {
     // 升级迁移：必须在任何 prompts/skills 读取之前
     deps.migrateStagedExternalContent();
-
-    // Skill 系统：失败只降级，不阻塞聊天
-    try {
-      await timedStep("initSkills", () => deps.initSkills());
-    } catch (error) {
-      console.error("[Core] initSkills failed:", error);
-      readiness.markDegraded({ capability: "skills", message: degradedMessage(error), at: Date.now(), error });
-    }
-
-    checkStartupActive(shutdown);
 
     // 低成本服务（runtimeState/tts/embedding/proactive/git/lsp/screenshot/music/update）
     const services = deps.createLowCostServices();
@@ -183,27 +201,10 @@ export async function startCore(deps: CoreDependencies): Promise<CoreResult> {
       dispose: async () => { services.mailAttachmentStore.clear(); },
     });
 
-    // SRT 沙箱：失败不阻塞启动（fallback 到直接 spawn）
-    try {
-      await timedStep("initSandbox", () => deps.initSandbox());
-    } catch (error) {
-      console.error("[Core] initSandbox failed at startup:", error);
-      readiness.markDegraded({ capability: "sandbox", message: degradedMessage(error), at: Date.now(), error });
-    }
-
-    checkStartupActive(shutdown);
     deps.initPlanMode();
-    deps.registerAllTools(services);
-
-    // RAG：失败记录降级，聊天仍允许启动
-    try {
-      await timedStep("initRag", () => deps.initRag());
-    } catch (error) {
-      console.error("[Core] RAG init FAILED:", error);
-      readiness.markDegraded({ capability: "rag", message: degradedMessage(error), at: Date.now(), error });
-    }
-
+    await deps.registerAllTools(services);
     checkStartupActive(shutdown);
+
     const runtime = deps.createRuntime(services);
 
     // channels 只装配并同步注册内置 adapter；网络启动仍在 background 阶段。
@@ -226,7 +227,6 @@ export async function startCore(deps: CoreDependencies): Promise<CoreResult> {
     registerResource({ id: "plugins", phase: "stopActiveWork", dispose: async () => { await plugins.stop(); } });
     checkStartupActive(shutdown);
 
-    // 注册聊天渲染进程可能调用的全部 IPC 处理器 —— 必须先于 chat.load()
     await deps.registerCoreIpc({ ipc: shell.ipc, runtime, services, channels, scheduler });
     checkStartupActive(shutdown);
 
@@ -236,15 +236,6 @@ export async function startCore(deps: CoreDependencies): Promise<CoreResult> {
     releaseConstruction();
     unregisterConstruction();
 
-    // 全部处理器就绪后才加载聊天页面；页面加载失败属于致命错误（向上抛出）
-    try {
-      await timedStep("chat-load", () => shell.chat.load());
-    } catch (error) {
-      if (shutdown.isStopping() && isCancelledPageLoad(error)) throw new StartupCancelledError();
-      throw error;
-    }
-    checkStartupActive(shutdown);
-
     // 桌宠：窗口始终创建，petVisible 只决定是否显示（隐藏时不闪现）。
     // 始终创建是为了保证托盘"显示/隐藏桌宠"与设置面板开关随时能把窗口救回来，
     // 且 alwaysOnTop / zoom / live2d 生命周期在隐藏状态下同样完成接线。
@@ -253,14 +244,7 @@ export async function startCore(deps: CoreDependencies): Promise<CoreResult> {
     deps.applyGeneralSettings(generalSettings, services);
     // showOnReady=petVisible：页面就绪才显示，避免空窗口闪现；创建本身在核心 IPC 注册之后
     const disclaimerAccepted = hasCurrentDisclaimerConsent(generalSettings.disclaimerAcceptedVersion);
-    let onboardingWindow = null;
-    try {
-      onboardingWindow = disclaimerAccepted ? null : await shell.windowManager.createOnboardingWindow?.() ?? null;
-    } catch (error) {
-      if (shutdown.isStopping() && isCancelledPageLoad(error)) throw new StartupCancelledError();
-      throw error;
-    }
-    checkStartupActive(shutdown);
+    readiness.transition("core-ready");
     shell.windowManager.createPetWindow(generalSettings.petVisible && disclaimerAccepted);
     shell.windowManager.onPetWindowReady((win) => {
       shell.live2dWindowLifecycle.attach(win);
@@ -271,21 +255,6 @@ export async function startCore(deps: CoreDependencies): Promise<CoreResult> {
     shell.windowManager.setPetWindowAlwaysOnTop(generalSettings.petAlwaysOnTop);
     shell.windowManager.applyPetWindowZoom(generalSettings.petZoom);
 
-    readiness.transition("core-ready");
-
-    // 等待最短展示时长 → 关闭 Loading → 显示欢迎窗或聊天主窗 → 放行启动期间的激活请求
-    await deps.revealStartupWindows({
-      splashWindow: shell.splashWindow,
-      chatWindow: shell.chat.window,
-      onboardingWindow,
-      showOnboardingWindow: !disclaimerAccepted,
-      loadingShownAt: shell.loadingShownAt,
-      minimumDurationMs: deps.minimumSplashMs,
-      isStopping: () => shutdown.isStopping(),
-    });
-    checkStartupActive(shutdown);
-    // 窗口已对用户可见的时刻锚点：在此之后打印结束的后台任务，都是“窗口出来后还在跑”的部分
-    console.log(`[StartupTiming] core/windows-revealed (at ${Math.round(performance.now())}ms)`);
     deps.markStartupWindowsReady();
 
     // 主窗口可激活：消费启动期间排队的激活请求

@@ -23,6 +23,7 @@ import type { ScheduledRunResult, ScheduledTask, ScheduledTaskHistoryEntry } fro
 type LegacyRunOptions = Omit<CyreneRunOptions, "toolSystemContent" | "soulSystemBaseContent">;
 
 interface RunnerDeps {
+  waitForTools(task: ScheduledTask): Promise<void>;
   buildOptions: (task: ScheduledTask) => Promise<LegacyRunOptions>;
   /** 有绑定工作区的用户任务每次触发创建独立 Cyrene 会话，不复用当前活动聊天。 */
   createRunSession?: (task: ScheduledTask) => (string) | Promise<string>;
@@ -71,9 +72,14 @@ export function createSchedulerRunner(deps: RunnerDeps) {
   async function runScheduledTask(task: ScheduledTask, _scheduledFireAt: Date, manual: boolean): Promise<ScheduledRunResult> {
     const historyId = deps.id();
     const startedAt = deps.now();
-    const allTools = toolRegistry.getAllTools();
-    const effectiveTools = filterToolsForTask(task, allTools);
-    const effectiveToolIds = effectiveTools.map(t => t.id);
+
+    // Persist before asynchronous preparation consumes a once schedule.
+    deps.recordHistory({
+      id: historyId, taskId: task.id, taskTitle: task.title,
+      firedAt: startedAt.toISOString(), status: "running",
+      reason: "waiting for startup dependencies", effectiveToolIds: [],
+    });
+
     // Freeze the UI target before any async build work; a later window switch
     // must not redirect this run's canonical facts or presentation events.
     let conversationId: string | null = null;
@@ -88,6 +94,15 @@ export function createSchedulerRunner(deps: RunnerDeps) {
     } else {
       conversationId = deps.getActiveConversation?.()?.sessionId ?? null;
     }
+    // 先冻结投递会话，再等工具注册；手动执行与计时触发共用这个入口。
+    let effectiveTools: ReturnType<typeof filterToolsForTask> = [];
+    try {
+      await deps.waitForTools(task);
+      effectiveTools = filterToolsForTask(task, toolRegistry.getAllTools());
+    } catch (error) {
+      sessionCreationError ??= error instanceof Error ? error : new Error(String(error));
+    }
+    const effectiveToolIds = effectiveTools.map(tool => tool.id);
     const runMode = task.mode ?? "work";
     const noticeId = `scheduler-notice-${historyId}`;
     const replyId = `scheduler-reply-${historyId}`;

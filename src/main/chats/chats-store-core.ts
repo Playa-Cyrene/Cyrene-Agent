@@ -868,7 +868,7 @@ export function getPendingDispatch(sessionId: string): PendingDispatchState | nu
 * 调用方应先恢复该认领（续派不重复追加）再继续消费队列。
 * 认领等于真实历史消息入册（messageCount+1），与 legacy channel writer 一致地刷新 updatedAt 与索引。
 */
-export function claimPendingMessage(sessionId: string): ClaimPendingResult {
+export function claimPendingMessage(sessionId: string, expectedHead?: string): ClaimPendingResult {
   const record = readSessionRecordFile(sessionId);
   if (!record)
     return { ok: false, error: "session-not-found" };
@@ -878,6 +878,7 @@ export function claimPendingMessage(sessionId: string): ClaimPendingResult {
   if (queue.length === 0)
     return { ok: true, claimed: false };
   const head = queue[0];
+  if (expectedHead !== undefined && head.id !== expectedHead) return { ok: true, claimed: false };
   if (head.withdrawal?.status === "withdrawing") {
     return { ok: false, error: "withdrawal-in-progress" };
   }

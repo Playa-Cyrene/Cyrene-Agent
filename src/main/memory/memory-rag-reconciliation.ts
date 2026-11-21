@@ -53,8 +53,10 @@ function isSemanticallyRecallable(memory: L2Memory): boolean {
 
 export async function reconcileMemoryRag(
   deps: MemoryRagReconciliationDeps,
+  signal?: AbortSignal,
 ): Promise<MemoryRagReconciliationReport> {
   const memories = await deps.getMemories();
+  signal?.throwIfAborted();
   const vectors = deps.getVectors();
   const vectorsById = new Map(vectors.map((vector) => [vector.id, vector]));
   const validVectorIds = new Set<string>();
@@ -91,6 +93,7 @@ export async function reconcileMemoryRag(
   await deps.backup();
 
   for (const item of relink) {
+    signal?.throwIfAborted();
     try {
       await deps.markSynced(item.l2Id, item.ragId);
       report.relinked += 1;
@@ -101,21 +104,25 @@ export async function reconcileMemoryRag(
   }
 
   for (const memory of rebuild) {
+    signal?.throwIfAborted();
     try {
       const ragId = await deps.addVector(memory.content, memory.id, {
         source: "memory_reconciliation",
         isSummary: memory.isSummary === true,
         subEntryIds: memory.subEntryIds ?? [],
       });
+      signal?.throwIfAborted();
       await deps.markSynced(memory.id, ragId);
       report.rebuilt += 1;
     } catch (error) {
       report.failed += 1;
+      signal?.throwIfAborted();
       await deps.markSyncFailed(memory.id, error);
       deps.warn(`Failed to rebuild memory vector ${memory.id}`, error);
     }
   }
 
+  signal?.throwIfAborted();
   if (staleVectorIds.length > 0) {
     try {
       await deps.deleteVectors(staleVectorIds);

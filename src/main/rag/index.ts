@@ -284,6 +284,7 @@ export async function addL2MemoryVector(
   text: string,
   l2Id: string,
   metadata?: Record<string, unknown>,
+  signal?: AbortSignal,
 ): Promise<string> {
   if (!isMemoryEnabled()) throw new Error("记忆模式已关闭");
   if (!store || !provider) throw new Error("RAG not initialized");
@@ -291,7 +292,7 @@ export async function addL2MemoryVector(
   const currentStore = store;
   const currentProvider = provider;
   return trackVectorOperation(async () => {
-    const entry = await currentStore.addUnique(text, "user_memory", currentProvider, { ...metadata, l2Id });
+    const entry = await currentStore.addUnique(text, "user_memory", currentProvider, { ...metadata, l2Id }, signal);
     return entry.id;
   });
 }

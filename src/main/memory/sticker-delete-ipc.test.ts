@@ -15,7 +15,7 @@ vi.mock("electron", () => ({
   app: { getPath: () => state.root },
   dialog: {}, webUtils: {},
   contextBridge: { exposeInMainWorld: (name: string, api: unknown) => state.exposed.set(name, api) },
-  ipcRenderer: { invoke: state.invoke },
+  ipcRenderer: { invoke: state.invoke, on: vi.fn(), off: vi.fn(), removeListener: vi.fn(), listenerCount: vi.fn() },
   ipcMain: {
     handle: (name: string, handler: (...args: any[]) => any) => state.handlers.set(name, handler),
     on() {}, removeHandler() {}, removeListener() {},
@@ -51,6 +51,7 @@ let api: {
 beforeEach(async () => {
   state.root = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-sticker-ipc-"));
   state.handlers.clear(); state.invoke.mockClear(); clearStickerSettingsCache();
+  state.handlers.set(IPC.APP_RUNTIME_IPC_READY, async () => {});
   registerMemoryUserToolIpc({ windowManager: null });
   await import("../../preload/index");
   api = state.exposed.get("stickerManager");

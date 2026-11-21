@@ -1,3 +1,8 @@
+import { DatabaseSync } from "node:sqlite";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { BACKGROUND_STOP_GRACE_MS, createSharedStartupTasks } from "./background";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createStartupReadiness } from "./readiness";
 import { createShutdownCoordinator } from "./shutdown";
@@ -7,6 +12,48 @@ afterEach(() => {
 });
 
 describe("createShutdownCoordinator", () => {
+  it("flushes and closes SQLite while a shared vector warmup is still pending", async () => {
+    vi.useFakeTimers();
+    const dir = mkdtempSync(join(tmpdir(), "cyrene-warmup-shutdown-"));
+    const file = join(dir, "conversation.sqlite");
+    const db = new DatabaseSync(file);
+    try {
+      db.exec("CREATE TABLE journal (message TEXT)");
+      const readiness = createStartupReadiness();
+      const shutdown = createShutdownCoordinator({ readiness });
+      const startupTask = createSharedStartupTasks(shutdown, readiness);
+      let release!: () => void;
+      const warmup = vi.fn(() => new Promise<void>((resolve) => { release = resolve; }));
+      const vectorReady = startupTask("vector-memory", warmup);
+      const firstSend = vectorReady();
+      expect(vectorReady()).toBe(firstSend);
+      await Promise.resolve();
+      expect(warmup).toHaveBeenCalledOnce();
+
+      const order: string[] = [];
+      shutdown.register({ id: "journal", phase: "flushPersistence", dispose: () => {
+        db.exec("INSERT INTO journal VALUES ('pending turn')");
+        order.push("flush");
+      } });
+      shutdown.register({ id: "conversation-database", phase: "closePersistence", dispose: () => {
+        db.close();
+        order.push("close");
+      } });
+      const stopped = shutdown.requestControlledShutdown({ reason: "test", finalAction: () => order.push("exit") });
+      await vi.advanceTimersByTimeAsync(BACKGROUND_STOP_GRACE_MS);
+      expect(order).toEqual(["flush", "close", "exit"]);
+      await stopped;
+      const reader = new DatabaseSync(file, { readOnly: true });
+      try { expect(reader.prepare("SELECT message FROM journal").get()?.message).toBe("pending turn"); }
+      finally { reader.close(); }
+      release();
+      await expect(firstSend).rejects.toThrow();
+    } finally {
+      if (db.isOpen) db.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("closes the database after persistence flush even when a flush fails", async () => {
     const events: string[] = [];
     const coordinator = createShutdownCoordinator({ readiness: createStartupReadiness(), log: vi.fn() });

@@ -40,6 +40,20 @@ describe("PluginPromptRegistry", () => {
     })).toBe("[插件上下文：plugin:beta:shared]\nB:scheduler");
   });
 
+  it("插件完成激活后才调用已注册的 Provider", async () => {
+    const registry = createPluginPromptRegistry();
+    const provide = vi.fn(() => "READY");
+    let running = false;
+    registry.register("demo", { id: "context", provide }, new AbortController().signal, () => running);
+    const input = { source: "conversation", mode: "chat", userText: "hi" } as const;
+
+    expect(await registry.build(input)).toBe("");
+    expect(provide).not.toHaveBeenCalled();
+    running = true;
+    expect(await registry.build(input)).toContain("READY");
+    expect(provide).toHaveBeenCalledOnce();
+  });
+
   it("同一插件拒绝重复和非法 id，不同插件可使用相同短 id", () => {
     const registry = createPluginPromptRegistry();
     const signal = new AbortController().signal;
