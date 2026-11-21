@@ -941,6 +941,33 @@ describe("CyreneHarness completion", () => {
     expect(toolMessage?.content).not.toContain("toolOutputRef");
   });
 
+  it("moves tool result images out of the observation body into toolImages for the next model request", async () => {
+    const { fn: fetchMock } = fakeFetchSequencer([
+      assistantResponse({ toolCalls: [mutationToolCall("image-call")] }),
+      assistantResponse({ text: "已看到截图。" }),
+    ]);
+    vi.stubGlobal("fetch", fetchMock);
+    const image = { fileName: "shot-1731200000000-1.png", mediaType: "image/png" as const, width: 1568, height: 882 };
+    mockedDispatch.mockResolvedValue({
+      ...successDispatchResult("image-call"),
+      // 第二项是伪造的路径引用：即使混进来也不能进入 toolImages。
+      images: [image, { ...image, fileName: "..\\secret.png" }],
+    });
+
+    await runCyreneHarness({
+      systemPrompt: "you are a test agent",
+      messages: [{ role: "user", content: "看一下屏幕" }],
+      tools: [],
+      vendorConfig,
+    });
+
+    const secondRequest = fakeStreamChatWithSdk.mock.calls[1]?.[0].request as { messages: ChatMessage[] };
+    const toolMessage = secondRequest.messages.find((message) => message.role === "tool");
+    expect(toolMessage?.toolImages).toEqual([image]);
+    expect(toolMessage?.content).not.toContain("shot-1731200000000-1.png");
+    expect(toolMessage?.content).not.toContain("secret.png");
+  });
+
   it("records a durable lifecycle before dispatch and after committing a tool observation", async () => {
     const { fn: fetchMock } = fakeFetchSequencer([
       assistantResponse({ toolCalls: [mutationToolCall("durable-call")] }),

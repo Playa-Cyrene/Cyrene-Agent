@@ -65,7 +65,10 @@ export function estimateMessageContentTokens(
  */
 export function estimateSingleMessageTokens(message: ChatMessage, target?: ModelMessageOrigin): number {
   if (message.role !== "assistant") {
-    return estimateMessageContentTokens(message.content ?? "") + 4;
+    // 工具图片在投影时最多只发送最近几张，这里按引用数全额估算会偏高但不会低估：
+    // 低估会导致请求超限，偏高只是让压缩略早发生。
+    return estimateMessageContentTokens(message.content ?? "") + 4
+      + (message.toolImages?.length ?? 0) * DEFAULT_IMAGE_TOKEN_ESTIMATE;
   }
   let projected: ReturnType<typeof projectModelHistory>;
   try {

@@ -49,6 +49,14 @@ export type OpenAIContentBlock =
 
 export type ChatMessageContent = string | OpenAIContentBlock[];
 
+/** 工具结果附带的图片引用。只保存文件名与尺寸，编码数据在组装请求时读取。 */
+export interface ToolResultImage {
+  fileName: string;
+  mediaType: "image/png";
+  width: number;
+  height: number;
+}
+
 /** 统一工具调用描述（项目内部），与 OpenAI/Anthropic wire 格式解耦。 */
 export interface ToolCall {
   id: string;
@@ -91,6 +99,8 @@ export interface ChatMessage {
   /** 旧历史兼容输入。无来源原始数据不得直接发送给厂商。 */
   rawAssistant?: unknown;
   providerReplay?: ProviderReplay;
+  /** role:"tool" 的结果图片引用；由投影层按目标协议转成模型可见的图片。 */
+  toolImages?: ToolResultImage[];
   /** 已落盘的模型生成图片引用；编码数据不得出现在此字段。 */
   attachments?: GeneratedImageAttachment[];
   /** 仅供本地 transcript / UI 使用；Adapter 序列化时不得发送。 */

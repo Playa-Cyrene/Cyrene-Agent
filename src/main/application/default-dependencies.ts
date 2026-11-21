@@ -120,6 +120,7 @@ import { prepareBackgroundSessionMutation, disposeShellCompletionDispatch, hasAc
 import { updateLocaleContext } from "../locale-context";
 import { registerCallIpc } from "../call/call-manager";
 import { initSkills, skillRegistry } from "../skills";
+import { configureToolResultImageDirectory, pruneToolResultImages } from "../orchestrator/tool-result-images";
 import { createSchedulerSubsystem } from "../scheduler/bootstrap";
 import { createChannelsSubsystem } from "../channels/bootstrap";
 import { createLifecyclePublisher } from "../plugin-host/lifecycle-publisher";
@@ -401,6 +402,9 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
         const llmClient = createLlmClient();
         const ttsSynthesisService = createTtsSynthesisService();
         clearLegacyStickerEmbeddingCache(app.getPath("userData"));
+        // 工具结果图片只从这个目录读取；上次运行（含异常退出）遗留的自动截图在启动时补删。
+        configureToolResultImageDirectory(path.join(app.getPath("userData"), "computer-use"));
+        void pruneToolResultImages();
         const citaService = createCitaService({ llmClient });
         const socialContextService = createSocialContextService({ llmClient, enqueueLLMTask });
         const proactiveLifecycle = createProactiveLifecycle({
