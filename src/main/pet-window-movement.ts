@@ -90,7 +90,7 @@ export class PetWindowMoveController {
     const currentPosition = window.getPosition();
     const current = normalizeWindowPosition(currentPosition[0], currentPosition[1]);
     if (current?.x === position.x && current.y === position.y) return;
-    // Pin the configured DIP size so fractional display scaling cannot compound rounding on each move.
+    // 固定配置中的逻辑尺寸，避免分数缩放下连续移动时累积像素取整误差。
     window.setBounds({ ...position, ...this.getWindowSize() }, false);
   }
 

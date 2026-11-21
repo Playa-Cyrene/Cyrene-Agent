@@ -6,6 +6,7 @@ import { IPC } from "../../shared/ipc-channels";
 export const PET_WINDOW_BASE_WIDTH = 400;
 export const PET_WINDOW_BASE_HEIGHT = 500;
 
+/** 创建、拖动和缩放桌宠时共用的窗口逻辑尺寸。 */
 export function getPetWindowSize(zoom = 1): { width: number; height: number } {
   const scale = Number.isFinite(zoom) && zoom > 0 ? zoom : 1;
   return {
