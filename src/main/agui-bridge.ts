@@ -1,3 +1,4 @@
+import { assertTermsExecutionAllowed, isTermsExecutionAllowed } from "./terms/terms-runtime";
 // AG-UI IPC 桥：按会话模式选择执行链并把事件透传给渲染进程。
 //
 // 架构：
@@ -522,8 +523,11 @@ export function registerAgUiIpc(
     },
     retire: retireCompletion,
     isBusy: sessionId => sessionActiveRuns.has(sessionId),
-    canWakeNow: async sessionId => (await chatsStore.getSession(sessionId))?.mode !== "learn"
-      || ![...sessionActiveRuns.values()].some(run => run.mode === "learn"),
+    canWakeNow: async sessionId => {
+      const session = await chatsStore.getSession(sessionId);
+      return isTermsExecutionAllowed() && (session?.mode !== "learn"
+        || ![...sessionActiveRuns.values()].some(run => run.mode === "learn"));
+    },
     canDeliver: canDeliverCompletion,
     wake: async (sessionId, eventId, completion) => {
       if (!await chatsStore.getSession(sessionId)) { inbox.discard(sessionId); return; }
@@ -536,6 +540,7 @@ export function registerAgUiIpc(
   const dispatchRun = async (event: { sender?: WebContents }, rawInput: unknown, background = false, sourceCompletion?: ShellCompletionSource) => {
     const sourceWorkspace = sourceCompletion?.sourceWorkspace;
     await waitPreviousDispatch();
+    assertTermsExecutionAllowed();
     if (!buildOptionsFn || !onFinished) {
       throw new Error("AG-UI 桥未初始化");
     }

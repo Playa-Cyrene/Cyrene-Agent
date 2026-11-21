@@ -10,6 +10,7 @@
  * <think> 清理、JSON 候选提取、Repair、reasoning 关闭、temperature 兼容等。
  */
 
+import { assertTermsExecutionAllowed, TermsConsentRequiredError } from "../terms/terms-runtime";
 import { getAdapterForConfig } from "../orchestrator/vendors";
 import type { VendorConfig, ChatMessage, ChatRequest } from "../orchestrator/vendors";
 import { recordUsage, recordRequest } from "../token-usage-store";
@@ -155,6 +156,7 @@ function buildVendorConfig(config: MemoryModelConfig): VendorConfig {
  * 业务模块拿到的直接是校验过的结构化对象，不再自行 JSON.parse。
  */
 export async function invokeMemoryStructuredOutput<T>(options: InvokeMemoryStructuredOutputOptions<T>): Promise<T> {
+  assertTermsExecutionAllowed();
   const { operation, systemPrompt, userPrompt, maxOutputTokens, parseSchema, validateBusiness, signal } = options;
   const config = options.config ?? loadMemoryModelConfig();
 
@@ -167,11 +169,20 @@ export async function invokeMemoryStructuredOutput<T>(options: InvokeMemoryStruc
   const adapter = getAdapterForConfig(cfg);
   const soStage = OPERATION_TO_SO_STAGE[operation];
 
+  // 修复重试也是新请求；保留专用错误，不被结构化输出层包装成网络/协议错误。
+  let consentError: TermsConsentRequiredError | undefined;
+  const checkConsent = () => {
+    try { assertTermsExecutionAllowed(); } catch (error) {
+      if (error instanceof TermsConsentRequiredError) consentError = error;
+      throw error;
+    }
+  };
   const result = await runStructuredOutput<T, ChatRequest>({
     stage: soStage,
     profile,
     signal,
     buildRequest: (repair) => {
+      checkConsent();
       const structuredOutput = buildStructuredOutputRequest(profile, operation);
       const messages: ChatMessage[] = [
         { role: "system", content: systemPrompt },
@@ -189,6 +200,7 @@ export async function invokeMemoryStructuredOutput<T>(options: InvokeMemoryStruc
       };
     },
     generate: async (request, generateSignal) => {
+      checkConsent();
       const http = adapter.buildRequest(request, cfg);
 
       const timeoutMs = resolveTimeoutPolicy({ stage: "memory-llm" }).totalMs;
@@ -259,6 +271,7 @@ export async function invokeMemoryStructuredOutput<T>(options: InvokeMemoryStruc
     validateBusiness,
   });
 
+  if (consentError) throw consentError;
   if (result.outcome === "failure") {
     throw new MemoryLlmProtocolError(
       operation,
@@ -299,6 +312,7 @@ function buildStructuredOutputRequest(
 // 以下保留 invokeMemoryLlm 供尚未迁移到 Structured Output 的调用方使用。
 
 export async function invokeMemoryLlm(request: MemoryLlmRequest): Promise<MemoryLlmResponse> {
+  assertTermsExecutionAllowed();
   const { operation, messages, maxOutputTokens, signal } = request;
   const config = request.config ?? loadMemoryModelConfig();
 

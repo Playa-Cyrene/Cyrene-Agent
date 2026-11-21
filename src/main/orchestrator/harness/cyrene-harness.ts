@@ -1,3 +1,4 @@
+import { isTermsExecutionAllowed, TermsConsentRequiredError } from "../../terms/terms-runtime";
 import { getAdapterForConfig } from "../vendors";
 import { modelMessageOrigin } from "../vendors/model-history";
 /**
@@ -104,12 +105,20 @@ export interface HarnessRun {
  *
  * 主循环每一轮：压缩检查 → LLM 调用 → 工具执行 或 最终回复。
  */
+function finishForTermsConsent(run: HarnessRun): HarnessResult {
+  return {
+    ...finishRun(run, "请阅读并同意最新条款后继续。", true, "error"),
+    terminal: { status: "runtime_error", reason: "E_TERMS_CONSENT_REQUIRED", externalEffectsMayContinue: true },
+  };
+}
+
 export async function runCyreneHarness(input: HarnessInput): Promise<HarnessResult> {
   const run = createRun(input);
   run.clock.startActive();
   materializeInitialContext(run);
 
   while (!run.clock.isExecutionTimeout()) {
+    if (!isTermsExecutionAllowed()) return finishForTermsConsent(run);
     // 用户取消：finalAnswer 保持为空，不生成 "最终回复被取消。" 之类的占位文案。
     if (input.signal?.aborted) return cancelledResult(run);
     refreshRunTools(run);
@@ -156,6 +165,7 @@ export async function runCyreneHarness(input: HarnessInput): Promise<HarnessResu
         await compaction;
       } catch (error) {
         if (input.signal?.aborted) return cancelledResult(run);
+        if (error instanceof TermsConsentRequiredError) return finishForTermsConsent(run);
         return finishRun(run, `上下文压缩失败：${errorMessage(error)}`, true, "error");
       }
       // 会话摘要已提交检查点，运行历史与后续轮次从同一压缩视图继续。
@@ -169,8 +179,10 @@ export async function runCyreneHarness(input: HarnessInput): Promise<HarnessResu
     // ── callLLM ──
     let response: ChatResponse;
     try {
+      if (!isTermsExecutionAllowed()) return finishForTermsConsent(run);
       response = await callRoundLLM(run, promptLayers, roundId);
     } catch (err) {
+      if (err instanceof TermsConsentRequiredError) return finishForTermsConsent(run);
       // signal abort 属于用户取消：按 cancelled 结算，不归类为 error。
       if (input.signal?.aborted) return cancelledResult(run);
       // 失败摘要：模型名 / 请求地址 / 错误码置顶，堆栈跟在后面，定位不用翻设置。

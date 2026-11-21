@@ -17,6 +17,7 @@ import type { ReviewSnapshot, ReviewRestoreOutcome } from "../shared/review-type
 import type { WorkspaceListResult, WorkspaceReadResult } from "../shared/workspace-files-types";
 import type { OpenInAppListResult, OpenInAppOpenResult } from "../shared/open-in-app-types";
 import type { NewsApi, NewsPayload } from "../shared/news-types";
+import type { TermsApi, TermsSnapshot } from "../shared/terms-types";
 import { getLive2DIpcListenerCounts } from "./live2d-listener-diagnostics";
 import { exposeMusicApi } from "./music";
 import type { AppUpdateApi, AppUpdateState } from "../shared/app-update";
@@ -210,6 +211,19 @@ const systemApi = {
 };
 
 contextBridge.exposeInMainWorld("system", systemApi);
+
+const termsApi: TermsApi = {
+  get: () => ipcRenderer.invoke(IPC.TERMS_GET),
+  accept: (request) => ipcRenderer.invoke(IPC.TERMS_ACCEPT, request),
+  onUpdated: (callback) => {
+    const listener = (_event: unknown, snapshot: TermsSnapshot) => {
+      try { callback(snapshot); } catch (error) { console.error("[Preload] terms listener failed:", error); }
+    };
+    ipcRenderer.on(IPC.TERMS_UPDATED, listener);
+    return () => ipcRenderer.off(IPC.TERMS_UPDATED, listener);
+  },
+};
+contextBridge.exposeInMainWorld("terms", termsApi);
 
 // 项目公告：取正文走 invoke，主进程对到新版本时反向推送
 const newsApi: NewsApi = {

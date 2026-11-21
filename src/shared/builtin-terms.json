@@ -1,0 +1,1006 @@
+{
+  "schemaVersion": 1,
+  "revision": 1,
+  "consentVersion": "2026-11-02",
+  "locales": {
+    "zh-CN": {
+      "heading": "Cyrene 免责声明与使用条款",
+      "sections": [
+        {
+          "title": "阅读提示",
+          "blocks": [
+            {
+              "kind": "paragraph",
+              "text": "使用本软件前，请阅读并理解以下内容，尤其是 **Agent 操作与权限风险、数据与第三方服务、未成年人使用限制以及无担保与责任边界**。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "本软件可能在你授予的权限范围内操作本机文件、执行命令或调用外部服务。模型输出可能错误，权限与审批机制也不能消除全部风险。请备份重要数据，保持最小权限，并在不确定时停止操作。"
+            }
+          ]
+        },
+        {
+          "title": "一、项目性质与角色来源",
+          "blocks": [
+            {
+              "kind": "paragraph",
+              "text": "Cyrene 是开源桌面 Agent 与拟人化交互工具。本项目以个人粉丝、非商业同人创作为定位，其中“昔涟”的角色设定取材于米哈游旗下游戏《崩坏：星穹铁道》。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "相关角色名称、形象、世界观、官方图像、文案、音频及商标等第三方内容，其权利属于相应权利人。本项目不是米哈游或 HoYoverse 官方软件，不代表其立场，也不意味着获得其背书、合作或对本软件的整体授权。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "项目的同人创作定位不改变原创代码的开源许可，也不扩大第三方素材的许可范围。"
+            }
+          ]
+        },
+        {
+          "title": "二、代码许可与第三方内容",
+          "blocks": [
+            {
+              "kind": "paragraph",
+              "text": "本项目原创源代码依 [MIT License](https://github.com/Playa-Cyrene/Cyrene-Agent/blob/master/LICENSE) 授权。代码的使用、修改和分发应遵守该许可证，包括保留其中要求保留的版权与许可声明。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "MIT License 不自动适用于角色、图像、模型、声音、文字、字体、商标及其他第三方内容。依赖库和其他随附资源应分别遵守其适用的许可、授权说明或权利人政策。本声明不修改 MIT License，也不替代各项第三方许可。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "本项目不因分发或引用第三方内容而授予其商业使用权、再许可权或其他未经授予的权利。复制、传播、公开展示、直播、收费服务或商业推广前，请核实所涉及内容的具体授权范围。项目中的署名或致谢，不等于对相关素材作出无限制授权。"
+            }
+          ]
+        },
+        {
+          "title": "三、用户使用责任",
+          "blocks": [
+            {
+              "kind": "paragraph",
+              "text": "请在有权使用的设备、账户、文件和数据范围内使用本软件。向模型、工具或外部服务提供他人的资料、录音或其他内容前，应确认拥有相应权限，并尊重相关人员的隐私和其他合法权益。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "不得利用本软件实施违法活动，侵犯他人权益，传播虚假或恶意诽谤内容，冒充他人，或规避其他服务的访问控制与使用限制。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "发布、转发或据以采取行动前，请自行核实 AI 生成内容，特别是涉及他人权益、专业判断或不可逆操作的内容。用户应对自身的违法使用、越权操作及其他应由自身负责的行为承担相应责任；开发者的责任边界统一依本声明第九节说明。"
+            }
+          ]
+        },
+        {
+          "title": "四、Agent 操作与权限风险",
+          "blocks": [
+            {
+              "kind": "paragraph",
+              "text": "本软件是实验性 Agent 工具，不是安全防护产品。它可能根据模型输出、系统规则和你授予的权限，执行文件读写、命令运行、浏览器操作或其他工具调用。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "大语言模型可能产生错误、不完整或不安全的输出，也可能受到不可信网页、文件、消息或工具返回内容的误导。沙箱、权限分级、审批弹窗和其他防护措施只能降低风险，不能保证电脑、账户、文件或数据安全。"
+            },
+            {
+              "kind": "heading",
+              "text": "4.1 单次授权与持续授权"
+            },
+            {
+              "kind": "paragraph",
+              "text": "在需要审批的操作中，请核对界面展示的操作内容、目标路径、参数和影响范围。点击“同意”“允许”或含义相同的按钮，表示你授权执行所展示范围内的操作；如果信息不清楚、范围过大或结果无法接受，请拒绝或取消。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "某些功能会依据已保存的权限、工具开关、渠道设置或持续授权执行操作，并非每次都会再次弹出审批。请了解当前启用的模式及授权范围，不要把“曾经允许某个操作”理解为其后所有操作都安全。"
+            },
+            {
+              "kind": "heading",
+              "text": "4.2 完全访问权限"
+            },
+            {
+              "kind": "paragraph",
+              "text": "**完全访问属于高风险模式。** 启用后，部分操作可能不再逐次请求确认；Agent 在相应权限范围内执行命令、修改或删除文件时，可能造成不可恢复的数据损失、系统异常或其他不利后果。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "请仅在已备份重要资料、能够接受相关风险的设备或隔离环境中使用。保持对权限状态的关注，在不需要时降低权限或停用相关功能。完全访问仍受操作系统、账户及具体工具能力限制，不代表软件拥有或能够安全使用设备上的全部权限。"
+            },
+            {
+              "kind": "heading",
+              "text": "4.3 插件与外部工具"
+            },
+            {
+              "kind": "paragraph",
+              "text": "插件、MCP 服务、脚本和其他扩展可能拥有独立的文件、网络或账户访问能力，其行为与风险取决于具体实现和配置。安装或连接前，请核实来源、所需权限及数据去向，不要仅因扩展出现在列表或能够连接，就将其视为已完成安全审查。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "重要操作前请备份数据。对于删除、覆盖、批量修改或其他难以撤销的操作，应特别谨慎；不确定时优先停止，并在副本或隔离环境中验证。"
+            }
+          ]
+        },
+        {
+          "title": "五、数据处理与第三方服务",
+          "blocks": [
+            {
+              "kind": "paragraph",
+              "text": "本软件会在本机保存运行所需的配置、聊天记录、记忆、索引或日志等数据，具体内容随所用功能和设置而变化。请妥善保护本机账户、存储设备、备份及访问权限。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "**本地保存不等于完全离线处理。** 根据你选择的服务、启用的功能和操作内容，相关信息可能被发送至对应的外部服务，例如："
+            },
+            {
+              "kind": "list",
+              "items": [
+                "对话上下文、角色提示和相关记忆发送至模型服务；",
+                "用于云端向量计算的文本发送至嵌入模型接口；",
+                "语音识别、合成或声音克隆所需的文本、音频发送至所选语音服务；",
+                "任务所需的图片、文件内容、网页信息或工具结果发送至相应模型、插件或工具服务；",
+                "使用公告、更新检查、资源下载或外部聊天渠道时，与相应网络服务进行通信。"
+              ]
+            },
+            {
+              "kind": "paragraph",
+              "text": "API Key、访问令牌及其他连接凭据可能用于向你配置的服务端点进行身份验证。请仔细核对端点地址，避免将凭据或数据发送至不可信服务。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "本软件本身不提供你所选择的第三方大语言模型或 API 服务。各服务的可用性、收费、内容规则、数据保留和使用政策由相应提供方决定；使用前请了解其条款及数据政策。第三方服务的故障、规则变更或停止提供服务，可能影响本软件的相关功能。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "自动整理记忆、主动任务、语音或其他后台功能也可能产生服务调用与费用，具体取决于你的配置。请关注所用服务的额度、账单和用量限制。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "不要提供无权处理的信息。对于秘密凭据、工作机密、私人对话及其他敏感内容，应先确认是否确有必要处理、由谁接收，以及当前配置是否符合你的要求。本节是一般性说明，不表示所有配置具有相同的数据流向，也不承诺所有数据均已加密或不存在其他网络通信。"
+            }
+          ]
+        },
+        {
+          "title": "六、语音与素材使用",
+          "blocks": [
+            {
+              "kind": "paragraph",
+              "text": "本软件提供语音合成及可选的声音克隆功能，实际能力取决于你选择的引擎和服务。本软件不分发《崩坏：星穹铁道》中昔涟的官方语音素材。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "**仅使用具有相应授权的音频和声音资料。** 授权应覆盖录音的实际使用方式、上传至相关服务的行为，以及适用时的声音克隆和生成用途。取得一份音频文件，并不等于已经获得上述全部权限。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "请尊重录音、表演、声音及其他相关权益，不得利用生成语音冒充他人、进行欺诈，或使公众误以为真实人物作出了未经其确认的发言。公开使用生成内容时，应按适用要求作出必要说明。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "使用模型、图像、表情包、字体或其他第三方素材时，同样应核实来源与许可。声音或素材的使用授权不因本软件能够导入、处理或生成相关内容而自动取得。"
+            }
+          ]
+        },
+        {
+          "title": "七、AI 内容与交互边界",
+          "blocks": [
+            {
+              "kind": "paragraph",
+              "text": "本软件中的 AI 角色由计算机程序和大语言模型驱动，其回复与交互受角色设定、对话上下文及系统规则等因素影响。AI 生成的具体内容不必然代表开发者的观点或立场，也不应被当作任何真实人物或原作权利人的意见。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "角色可能使用拟人化语言，表达关心、亲近或其他情绪。这些表达属于生成式交互，不应被视为角色具有人类情感、自我意识或自主承诺能力的证据，也不构成真实人际关系或持续陪伴的保证。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "使用者可能在互动中产生真实的情绪体验或赋予角色个人意义；本说明不否定这些感受，但这些体验不意味着本软件承诺互惠的情感关系、持续不变的人格或特定的情绪支持效果。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "AI 回复可能包含事实错误、遗漏、不适当表达或前后不一致。模型、配置、软件版本及上下文变化也可能影响交互表现。本软件不能替代现实中的人际支持、专业帮助或需要独立核实的重要判断。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "建议保持与现实生活的联系，避免过度依赖。如果使用已经影响睡眠、学习、工作或现实关系，请考虑减少使用，并向可信赖的人或适当的专业人士寻求支持。"
+            }
+          ]
+        },
+        {
+          "title": "八、未成年人使用限制",
+          "blocks": [
+            {
+              "kind": "paragraph",
+              "text": "本软件不面向未成年人提供以持续性情感亲密关系为核心的虚拟伴侣、虚拟亲属等用途。未成年人不应将本软件用于上述用途。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "未成年人使用一般学习或工具功能，应在监护人知情、明确同意并适当监督下进行。监护人应评估生成内容、工具权限及第三方服务是否适合该未成年人，关注使用时间、费用和现实生活中的影响。监护人同意不使本软件成为面向未成年人的情感陪伴服务，也不替代其他适用的使用限制。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "本桌面版不主动核验年龄，不应将能够安装或使用理解为已经完成适龄审查。使用者和监护人应结合所在地要求及所用第三方服务的年龄限制，判断是否适合使用。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "将本软件部署为可供不特定公众访问的服务时，部署者应独立评估并履行适用的未成年人保护、年龄核验及监护人同意要求，不能仅依赖桌面版中的本声明代替必要措施。"
+            }
+          ]
+        },
+        {
+          "title": "九、无担保与责任边界",
+          "blocks": [
+            {
+              "kind": "paragraph",
+              "text": "本软件按“原样”提供，是持续开发中的实验性开源项目。开发者不保证软件持续可用、完全稳定或没有缺陷，也不保证生成内容准确、交互表现不变，或软件适合某一特定用途。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "模型输出、工具执行、权限配置、第三方服务以及设备或环境异常，都可能导致不符合预期的结果。请结合实际用途评估风险，并采取合理的备份、权限控制与核实措施。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "在适用法律允许的范围内，开发者不对因模型输出、用户授权操作、权限配置、第三方服务或未备份造成的损失承担赔偿责任。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "**本声明不免除开发者依法应承担的责任，也不排除使用者依法享有、不能通过声明取消的权利。** 用户的授权或确认不等于放弃这些权利。各项代码与资源许可证中的适用规定仍应一并遵守。"
+            }
+          ]
+        },
+        {
+          "title": "十、条款阅读、接受与更新",
+          "blocks": [
+            {
+              "kind": "paragraph",
+              "text": "使用本软件前，请阅读本声明，并通过软件提供的确认流程明确接受。若不接受，请不要继续使用本软件。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "本声明发生涉及使用风险、数据处理、责任边界等重要内容的更新时，将通过软件展示更新后的条款，并要求重新确认。已接受旧版本不代表已经接受后续的重要变更。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "接受本声明不代替具体操作审批，也不自动授予完全访问、账户访问或其他工具权限；相应功能仍应以实际授权范围为准。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "本声明用于说明本软件的使用条件与风险，不改变第三方服务、开源依赖或素材各自适用的条款。任何表述都不应被理解为本项目有权替第三方作出授权或承诺。"
+            }
+          ]
+        },
+        {
+          "title": "十一、权利联络与争议内容处理",
+          "blocks": [
+            {
+              "kind": "paragraph",
+              "text": "若米哈游 / HoYoverse 或其他合法权利人认为本软件存在侵犯权益的情形，请通过以下方式联系："
+            },
+            {
+              "kind": "list",
+              "items": [
+                "电子邮箱：[ky2569ly@gmail.com](mailto:ky2569ly@gmail.com)，邮件标题请注明“版权事宜”；",
+                "B 站：[Playa0 作者空间](https://space.bilibili.com/260670644)，私信请注明“版权联络”；",
+                "GitHub：[Playa-Cyrene/Cyrene-Agent](https://github.com/Playa-Cyrene/Cyrene-Agent)。"
+              ]
+            },
+            {
+              "kind": "paragraph",
+              "text": "请尽量提供被指内容的位置、相关权利依据、具体请求及可回复的联系方式。涉及私人资料、未公开授权材料或其他敏感内容时，请优先通过非公开渠道联系，不要直接上传至公开 Issue。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "收到有效通知后，将尽快（通常于 7 个工作日内）核实并处理，并根据核实结果采取必要措施。处理过程中可能需要核实相关内容与权利依据。版权事宜享有最高响应优先级。"
+            }
+          ]
+        },
+        {
+          "title": "十二、问题反馈与功能建议",
+          "blocks": [
+            {
+              "kind": "paragraph",
+              "text": "如遇到问题、Bug 或有功能建议，欢迎通过以下渠道反馈："
+            },
+            {
+              "kind": "list",
+              "items": [
+                "[GitHub Issues](https://github.com/Playa-Cyrene/Cyrene-Agent/issues)；",
+                "电子邮箱：[ky2569ly@gmail.com](mailto:ky2569ly@gmail.com)，标题建议注明“反馈”或“Bug”；",
+                "B 站私信 [Playa0](https://space.bilibili.com/260670644)，开头注明“反馈/Bug”。"
+              ]
+            },
+            {
+              "kind": "paragraph",
+              "text": "提交前请移除 API Key、访问令牌、账户凭据、私人对话及其他不宜公开的内容。优先提供必要的版本信息、复现步骤、错误提示和经过脱敏的日志片段，不要公开完整配置或不相关的用户数据。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "普通用户反馈会尽力查看，但不保证及时回复。反馈入口不是紧急援助渠道，也不保证能够恢复已经丢失的数据。"
+            }
+          ]
+        },
+        {
+          "title": "十三、致谢",
+          "blocks": [
+            {
+              "kind": "paragraph",
+              "text": "特别鸣谢 B 站 UP 主 [是依七哒](https://space.bilibili.com/457683484) 制作并分享的 Live2D 模型相关资源，为本项目的桌宠展示提供了重要参考与支持。相关素材的权利归属及使用范围，以实际适用的授权和权利人政策为准；如存在侵权或使用不当，将积极配合处理。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "感谢所有通过 Pull Request 为项目作出贡献的开发者，以及提交问题反馈、建议和支持本项目的朋友。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "贡献记录见 [贡献者名单](https://github.com/Playa-Cyrene/Cyrene-Agent/blob/master/docs/CONTRIBUTORS.md)；项目作者、组织成员与维护者介绍见 [组织成员与维护者](https://github.com/Playa-Cyrene/Cyrene-Agent/blob/master/docs/MAINTAINERS.md)。"
+            }
+          ]
+        }
+      ]
+    },
+    "en": {
+      "heading": "Cyrene Disclaimer and Terms of Use",
+      "sections": [
+        {
+          "title": "Before you begin",
+          "blocks": [
+            {
+              "kind": "paragraph",
+              "text": "Please read and understand the following before using this software, especially **Agent operations and permission risks, data and third-party services, restrictions on use by minors, and warranty and liability boundaries**."
+            },
+            {
+              "kind": "paragraph",
+              "text": "Within the permissions you grant, the software may operate on local files, execute commands, or call external services. Model output can be wrong, and permission and approval mechanisms cannot eliminate every risk. Back up important data, use the least privileges necessary, and stop if you are unsure."
+            }
+          ]
+        },
+        {
+          "title": "1. Project and character origins",
+          "blocks": [
+            {
+              "kind": "paragraph",
+              "text": "Cyrene is an open-source desktop Agent and humanlike interaction tool. This project is positioned as a personal fan-made, non-commercial work. The character “Cyrene” draws on HoYoverse's game *Honkai: Star Rail*."
+            },
+            {
+              "kind": "paragraph",
+              "text": "Rights in third-party character names, appearances, settings, official images, text, audio, trademarks, and other content belong to their respective rights holders. This project is not official miHoYo or HoYoverse software, does not represent their views, and does not imply their endorsement, partnership, or authorization of the software as a whole."
+            },
+            {
+              "kind": "paragraph",
+              "text": "The project's fan-work positioning does not change the open-source license of its original code or expand the permissions for third-party assets."
+            }
+          ]
+        },
+        {
+          "title": "2. Code license and third-party content",
+          "blocks": [
+            {
+              "kind": "paragraph",
+              "text": "The project's original source code is licensed under the [MIT License](https://github.com/Playa-Cyrene/Cyrene-Agent/blob/master/LICENSE). Use, modification, and distribution of that code must comply with the license, including retaining the copyright and permission notices it requires."
+            },
+            {
+              "kind": "paragraph",
+              "text": "The MIT License does not automatically cover characters, images, models, voices, text, fonts, trademarks, or other third-party content. Dependencies and bundled resources remain subject to their respective licenses, authorization terms, or rights-holder policies. This statement neither changes the MIT License nor replaces third-party licenses."
+            },
+            {
+              "kind": "paragraph",
+              "text": "Distributing or referring to third-party content does not grant commercial use, sublicensing, or other rights that have not been granted. Before copying, distributing, publicly displaying, livestreaming, offering paid services, or using content for commercial promotion, check the scope of the relevant permissions. Attribution or acknowledgment in this project is not an unrestricted license for an asset."
+            }
+          ]
+        },
+        {
+          "title": "3. User responsibilities",
+          "blocks": [
+            {
+              "kind": "paragraph",
+              "text": "Use the software only with devices, accounts, files, and data you are authorized to use. Before providing someone else's information, recordings, or other content to a model, tool, or external service, confirm that you have the necessary permissions and respect their privacy and other legitimate rights."
+            },
+            {
+              "kind": "paragraph",
+              "text": "Do not use this software for unlawful activities, infringement of others' rights, false or maliciously defamatory content, impersonation, or circumventing another service's access controls or usage restrictions."
+            },
+            {
+              "kind": "paragraph",
+              "text": "Verify AI-generated content before publishing, forwarding, or acting on it, especially when it concerns other people's rights, professional judgments, or irreversible actions. Users are responsible for their own unlawful use, unauthorized actions, and other conduct for which they are responsible. The developer's liability boundaries are set out in Section 9."
+            }
+          ]
+        },
+        {
+          "title": "4. Agent operations and permission risks",
+          "blocks": [
+            {
+              "kind": "paragraph",
+              "text": "This software is an experimental Agent tool, not a security protection product. Based on model output, system rules, and the permissions you grant, it may read or write files, execute commands, operate a browser, or call other tools."
+            },
+            {
+              "kind": "paragraph",
+              "text": "Large language models may produce incorrect, incomplete, or unsafe output. They may also be misled by untrusted web pages, files, messages, or tool responses. Sandboxing, permission levels, approval dialogs, and other safeguards reduce risk but cannot guarantee the safety of your computer, accounts, files, or data."
+            },
+            {
+              "kind": "heading",
+              "text": "4.1 Individual and continuing authorization"
+            },
+            {
+              "kind": "paragraph",
+              "text": "When an operation requires approval, check the displayed action, target paths, parameters, and scope of impact. Clicking “Agree,” “Allow,” or an equivalent button authorizes the operation within the scope shown. Refuse or cancel if the information is unclear, the scope is too broad, or the result would be unacceptable."
+            },
+            {
+              "kind": "paragraph",
+              "text": "Some features act under saved permissions, tool switches, channel settings, or continuing authorization and do not request approval every time. Understand the active mode and authorization scope. Having allowed an operation before does not make all later operations safe."
+            },
+            {
+              "kind": "heading",
+              "text": "4.2 Full access"
+            },
+            {
+              "kind": "paragraph",
+              "text": "**Full access is a high-risk mode.** Once enabled, some operations may no longer ask for approval individually. Commands and file changes or deletion performed by the Agent within its permissions may cause irreversible data loss, system problems, or other adverse consequences."
+            },
+            {
+              "kind": "paragraph",
+              "text": "Use it only on a device or in an isolated environment where important data has been backed up and the relevant risks are acceptable to you. Monitor the permission state, and lower permissions or disable features when they are no longer needed. Full access remains subject to operating-system, account, and tool limitations; it does not mean that the software has, or can safely exercise, every permission on the device."
+            },
+            {
+              "kind": "heading",
+              "text": "4.3 Plugins and external tools"
+            },
+            {
+              "kind": "paragraph",
+              "text": "Plugins, MCP services, scripts, and other extensions may have independent access to files, networks, or accounts. Their behavior and risks depend on their implementation and configuration. Before installing or connecting them, check their source, required permissions, and data destinations. Being listed or connectable does not mean an extension has passed a security review."
+            },
+            {
+              "kind": "paragraph",
+              "text": "Back up data before important operations. Be particularly careful with deletion, overwriting, bulk changes, and other actions that are hard to undo. If unsure, stop first and test on a copy or in an isolated environment."
+            }
+          ]
+        },
+        {
+          "title": "5. Data processing and third-party services",
+          "blocks": [
+            {
+              "kind": "paragraph",
+              "text": "The software stores configuration, chat history, memories, indexes, logs, or other data needed for operation on your device, depending on the features and settings used. Protect your local account, storage devices, backups, and access permissions."
+            },
+            {
+              "kind": "paragraph",
+              "text": "**Local storage does not mean all processing is offline.** Depending on the services you choose, enabled features, and operations performed, relevant information may be sent to external services, for example:"
+            },
+            {
+              "kind": "list",
+              "items": [
+                "Conversation context, character prompts, and relevant memories sent to a model service;",
+                "Text for cloud-based vector computation sent to an embedding model endpoint;",
+                "Text or audio needed for speech recognition, synthesis, or voice cloning sent to the selected speech service;",
+                "Images, file contents, web information, or tool results required for a task sent to the corresponding model, plugin, or tool service;",
+                "Network communication for announcements, update checks, resource downloads, or external messaging channels."
+              ]
+            },
+            {
+              "kind": "paragraph",
+              "text": "API keys, access tokens, and other connection credentials may be used to authenticate with the service endpoints you configure. Check endpoint addresses carefully to avoid sending credentials or data to an untrusted service."
+            },
+            {
+              "kind": "paragraph",
+              "text": "The software itself does not provide the third-party large language model or API services you select. Their providers determine availability, pricing, content rules, and data retention and usage policies. Review their terms and data policies before use. Outages, policy changes, or discontinuation of a third-party service may affect related features."
+            },
+            {
+              "kind": "paragraph",
+              "text": "Automatic memory organization, proactive tasks, speech, and other background features may also generate service calls and charges, depending on your configuration. Monitor quotas, bills, and usage limits for the services you use."
+            },
+            {
+              "kind": "paragraph",
+              "text": "Do not provide information you are not authorized to process. Before processing secret credentials, confidential work materials, private conversations, or other sensitive content, confirm that processing is necessary, identify its recipients, and check that the configuration meets your requirements. This is a general explanation: it does not imply identical data flows in every configuration or promise that all data is encrypted or that no other network communication occurs."
+            }
+          ]
+        },
+        {
+          "title": "6. Speech and asset use",
+          "blocks": [
+            {
+              "kind": "paragraph",
+              "text": "The software offers speech synthesis and optional voice cloning, with capabilities depending on the selected engine and service. The software does not distribute official Cyrene voice assets from *Honkai: Star Rail*."
+            },
+            {
+              "kind": "paragraph",
+              "text": "**Use only audio and voice materials for which you have the required permissions.** Authorization should cover the actual use of the recording, uploading it to relevant services, and, where applicable, voice cloning and generation. Having an audio file does not mean you hold all these permissions."
+            },
+            {
+              "kind": "paragraph",
+              "text": "Respect rights relating to recordings, performances, voices, and other relevant interests. Do not use generated speech to impersonate people, commit fraud, or lead the public to believe that a real person made a statement they have not confirmed. Make the required disclosures when using generated content publicly."
+            },
+            {
+              "kind": "paragraph",
+              "text": "Check sources and licenses when using models, images, stickers, fonts, or other third-party assets as well. Permission to use a voice or asset does not arise merely because the software can import, process, or generate it."
+            }
+          ]
+        },
+        {
+          "title": "7. AI content and interaction boundaries",
+          "blocks": [
+            {
+              "kind": "paragraph",
+              "text": "The AI characters in this software are driven by computer programs and large language models. Their responses and interactions are influenced by character settings, conversation context, and system rules. Specific AI-generated content does not necessarily represent the developer's views or position and should not be treated as the views of a real person or the original rights holder."
+            },
+            {
+              "kind": "paragraph",
+              "text": "Characters may use humanlike language to express care, closeness, or other emotions. These expressions are part of generative interaction and should not be taken as evidence of human emotions, self-awareness, or an ability to make autonomous commitments. They do not establish a real interpersonal relationship or a guarantee of continuing companionship."
+            },
+            {
+              "kind": "paragraph",
+              "text": "Users may have genuine emotional experiences or attach personal meaning to a character. This statement does not dismiss those feelings, but such experiences do not mean that the software promises a reciprocal emotional relationship, an unchanging personality, or a particular emotional support outcome."
+            },
+            {
+              "kind": "paragraph",
+              "text": "AI responses may contain factual errors, omissions, inappropriate expressions, or inconsistencies. Changes to models, settings, software versions, and context can also affect interactions. The software cannot replace real-world interpersonal support, professional help, or important judgments that need independent verification."
+            },
+            {
+              "kind": "paragraph",
+              "text": "Maintain connections with everyday life and avoid excessive reliance. If use is affecting sleep, study, work, or real-world relationships, consider reducing use and seeking support from trusted people or appropriate professionals."
+            }
+          ]
+        },
+        {
+          "title": "8. Restrictions on use by minors",
+          "blocks": [
+            {
+              "kind": "paragraph",
+              "text": "This software is not intended to provide minors with virtual companion, virtual family member, or similar uses centered on an ongoing emotionally intimate relationship. Minors should not use the software for these purposes."
+            },
+            {
+              "kind": "paragraph",
+              "text": "A minor's use of general learning or tool features should take place with a guardian's knowledge, explicit consent, and appropriate supervision. The guardian should assess whether generated content, tool permissions, and third-party services are suitable, and monitor time spent, costs, and effects on everyday life. Guardian consent does not make the software an emotional companionship service for minors or replace other applicable restrictions."
+            },
+            {
+              "kind": "paragraph",
+              "text": "This desktop version does not actively verify age. Being able to install or use it should not be understood as having passed an age-suitability review. Users and guardians should consider local requirements and the age restrictions of third-party services when deciding whether use is appropriate."
+            },
+            {
+              "kind": "paragraph",
+              "text": "Anyone deploying this software as a service accessible to the general public should independently assess and meet applicable requirements for protecting minors, age verification, and guardian consent. They must not rely on this desktop disclaimer in place of necessary measures."
+            }
+          ]
+        },
+        {
+          "title": "9. Warranty and liability boundaries",
+          "blocks": [
+            {
+              "kind": "paragraph",
+              "text": "This software is provided “as is” as an experimental open-source project under ongoing development. The developer does not guarantee uninterrupted availability, complete stability, freedom from defects, accuracy of generated content, unchanged interaction behavior, or fitness for a particular purpose."
+            },
+            {
+              "kind": "paragraph",
+              "text": "Model output, tool execution, permission settings, third-party services, and device or environmental problems can produce unexpected results. Assess risks for your intended use and take reasonable measures for backups, access control, and verification."
+            },
+            {
+              "kind": "paragraph",
+              "text": "To the extent permitted by applicable law, the developer is not liable for losses caused by model output, user-authorized operations, permission configuration, third-party services, or a failure to back up data."
+            },
+            {
+              "kind": "paragraph",
+              "text": "**This statement does not exempt the developer from responsibilities that must be borne under applicable law or exclude user rights that cannot be waived by a disclaimer.** User authorization or confirmation does not waive those rights. Applicable provisions in code and resource licenses must also be observed."
+            }
+          ]
+        },
+        {
+          "title": "10. Reading, accepting, and updating the terms",
+          "blocks": [
+            {
+              "kind": "paragraph",
+              "text": "Read this statement before use and explicitly accept it through the software's confirmation process. If you do not accept it, do not continue using the software."
+            },
+            {
+              "kind": "paragraph",
+              "text": "When important content concerning usage risks, data processing, liability boundaries, or similar matters changes, the software will display the updated terms and require confirmation again. Acceptance of an earlier version does not mean acceptance of later material changes."
+            },
+            {
+              "kind": "paragraph",
+              "text": "Acceptance of this statement does not replace individual operation approvals or automatically grant full access, account access, or other tool permissions. Features remain subject to their actual authorization scope."
+            },
+            {
+              "kind": "paragraph",
+              "text": "This statement explains conditions and risks of use. It does not alter the separate terms of third-party services, open-source dependencies, or assets. Nothing in it should be understood as allowing this project to grant rights or make commitments on a third party's behalf."
+            }
+          ]
+        },
+        {
+          "title": "11. Rights-holder contact and disputed content",
+          "blocks": [
+            {
+              "kind": "paragraph",
+              "text": "If miHoYo / HoYoverse or another legitimate rights holder believes this software infringes their rights, please contact:"
+            },
+            {
+              "kind": "list",
+              "items": [
+                "Email: [ky2569ly@gmail.com](mailto:ky2569ly@gmail.com), with “版权事宜” (copyright matter) in the subject;",
+                "Bilibili: [Playa0's profile](https://space.bilibili.com/260670644), marking your private message “版权联络” (copyright contact);",
+                "GitHub: [Playa-Cyrene/Cyrene-Agent](https://github.com/Playa-Cyrene/Cyrene-Agent)."
+              ]
+            },
+            {
+              "kind": "paragraph",
+              "text": "Where possible, identify the content in question, provide the basis for your rights and your specific request, and include a way to reply. For private information, unpublished authorization materials, or other sensitive content, use a non-public contact channel rather than uploading it to a public Issue."
+            },
+            {
+              "kind": "paragraph",
+              "text": "Upon receiving a valid notice, we will investigate and address it as soon as possible (usually within 7 working days), and take necessary measures based on the findings. The process may require verification of the content and the basis for the rights claimed. Copyright matters receive the highest response priority."
+            }
+          ]
+        },
+        {
+          "title": "12. Bug reports and feature suggestions",
+          "blocks": [
+            {
+              "kind": "paragraph",
+              "text": "If you encounter a problem or bug, or have a feature suggestion, you are welcome to use:"
+            },
+            {
+              "kind": "list",
+              "items": [
+                "[GitHub Issues](https://github.com/Playa-Cyrene/Cyrene-Agent/issues);",
+                "Email: [ky2569ly@gmail.com](mailto:ky2569ly@gmail.com), preferably with “反馈” (feedback) or “Bug” in the subject;",
+                "A Bilibili private message to [Playa0](https://space.bilibili.com/260670644), beginning with “反馈/Bug” (feedback/bug)."
+              ]
+            },
+            {
+              "kind": "paragraph",
+              "text": "Remove API keys, access tokens, account credentials, private conversations, and other information unsuitable for public disclosure before submitting. Prefer necessary version information, reproduction steps, error messages, and redacted log excerpts. Do not publish complete configurations or unrelated user data."
+            },
+            {
+              "kind": "paragraph",
+              "text": "We will try to review ordinary user feedback but cannot guarantee a prompt reply. Feedback channels are not emergency assistance channels and do not guarantee recovery of lost data."
+            }
+          ]
+        },
+        {
+          "title": "13. Acknowledgments",
+          "blocks": [
+            {
+              "kind": "paragraph",
+              "text": "Special thanks to Bilibili creator [是依七哒](https://space.bilibili.com/457683484) for creating and sharing Live2D model resources that provided important reference and support for this project's desktop character display. Rights and permitted uses remain subject to the applicable authorization and rights-holder policies. We will cooperate in addressing infringement or inappropriate use."
+            },
+            {
+              "kind": "paragraph",
+              "text": "Thanks to all developers who contribute through Pull Requests, and everyone who reports issues, offers suggestions, or supports the project."
+            },
+            {
+              "kind": "paragraph",
+              "text": "See the [contributors list](https://github.com/Playa-Cyrene/Cyrene-Agent/blob/master/docs/CONTRIBUTORS.md) for contributors and the [maintainers list](https://github.com/Playa-Cyrene/Cyrene-Agent/blob/master/docs/MAINTAINERS.md) for organization members and maintainers."
+            }
+          ]
+        }
+      ]
+    },
+    "ja-JP": {
+      "heading": "Cyrene 免責事項および利用条件",
+      "sections": [
+        {
+          "title": "ご利用前に",
+          "blocks": [
+            {
+              "kind": "paragraph",
+              "text": "本ソフトウェアを使用する前に、以下の内容、特に **Agent の操作と権限に伴うリスク、データと第三者サービス、未成年者の利用制限、保証と責任の範囲** をお読みください。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "本ソフトウェアは、付与された権限の範囲でローカルファイルの操作、コマンドの実行、外部サービスの呼び出しを行う場合があります。モデルの出力には誤りがあり得ます。また、権限設定や承認の仕組みですべてのリスクをなくすことはできません。重要なデータをバックアップし、必要最小限の権限で使用してください。判断できない場合は操作を中止してください。"
+            }
+          ]
+        },
+        {
+          "title": "1. プロジェクトとキャラクターの由来",
+          "blocks": [
+            {
+              "kind": "paragraph",
+              "text": "Cyrene は、オープンソースのデスクトップ Agent および擬人的な対話ツールです。本プロジェクトは個人のファンによる非商業的な二次創作を目的としており、「昔涟」のキャラクター設定は miHoYo のゲーム『崩壊：スターレイル』に由来します。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "キャラクター名、外見、世界観、公式画像、文章、音声、商標など、第三者のコンテンツに関する権利は、それぞれの権利者に帰属します。本プロジェクトは miHoYo または HoYoverse の公式ソフトウェアではなく、その見解を代表するものでもありません。公式の推奨、提携、または本ソフトウェア全体に対する許諾を意味するものではありません。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "本プロジェクトの二次創作としての位置付けは、独自のコードに適用されるオープンソースライセンスを変更したり、第三者の素材に関する許諾範囲を拡大したりするものではありません。"
+            }
+          ]
+        },
+        {
+          "title": "2. コードのライセンスと第三者コンテンツ",
+          "blocks": [
+            {
+              "kind": "paragraph",
+              "text": "本プロジェクト独自のソースコードは [MIT License](https://github.com/Playa-Cyrene/Cyrene-Agent/blob/master/LICENSE) に基づいて提供されます。使用、変更、配布に際しては、必要な著作権表示および許諾表示の保持を含め、同ライセンスを遵守してください。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "MIT License は、キャラクター、画像、モデル、声、文章、フォント、商標などの第三者コンテンツに自動的に適用されるものではありません。依存ライブラリや同梱リソースには、それぞれのライセンス、許諾条件、権利者の方針が適用されます。本声明は MIT License を変更するものでも、第三者のライセンスに代わるものでもありません。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "本プロジェクトが第三者コンテンツを配布または参照していても、商業利用、再許諾、その他の未付与の権利が与えられるわけではありません。複製、配布、公開展示、配信、有料サービス、商業的な宣伝に使用する前に、対象コンテンツの具体的な許諾範囲を確認してください。クレジットや謝辞の記載は、素材への無制限な許諾を意味しません。"
+            }
+          ]
+        },
+        {
+          "title": "3. 利用者の責任",
+          "blocks": [
+            {
+              "kind": "paragraph",
+              "text": "利用権限のある機器、アカウント、ファイル、データの範囲内で本ソフトウェアを使用してください。他人の情報、録音、その他のコンテンツをモデル、ツール、外部サービスへ提供する前に、必要な権限があることを確認し、プライバシーその他の正当な権利を尊重してください。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "違法行為、他者の権利侵害、虚偽または悪意のある名誉毀損的な内容の拡散、なりすまし、他のサービスのアクセス制御や利用制限の回避に、本ソフトウェアを使用しないでください。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "AI が生成した内容を公開、転送、または行動の根拠とする前に、特に他者の権利、専門的な判断、取り消せない操作に関する場合は、内容を確認してください。利用者は、自らの違法な使用、権限を超えた操作など、自身が責任を負うべき行為について相応の責任を負います。開発者の責任の範囲については、第9節をご覧ください。"
+            }
+          ]
+        },
+        {
+          "title": "4. Agent の操作と権限に伴うリスク",
+          "blocks": [
+            {
+              "kind": "paragraph",
+              "text": "本ソフトウェアは実験的な Agent ツールであり、セキュリティ保護製品ではありません。モデルの出力、システムのルール、付与された権限に基づき、ファイルの読み書き、コマンドの実行、ブラウザー操作、その他のツール呼び出しを行う場合があります。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "大規模言語モデルは、誤った、不完全な、または安全でない出力を生成する可能性があります。また、信頼できないウェブページ、ファイル、メッセージ、ツールの応答によって誤誘導される場合もあります。サンドボックス、権限レベル、承認ダイアログなどの対策はリスクを低減しますが、機器、アカウント、ファイル、データの安全を保証するものではありません。"
+            },
+            {
+              "kind": "heading",
+              "text": "4.1 個別の許可と継続的な許可"
+            },
+            {
+              "kind": "paragraph",
+              "text": "承認が必要な操作では、表示された操作内容、対象パス、パラメーター、影響範囲を確認してください。「同意」「許可」などのボタンを押すことは、表示された範囲内の操作を許可することを意味します。情報が不明確な場合、範囲が広すぎる場合、結果を受け入れられない場合は、拒否またはキャンセルしてください。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "一部の機能は、保存済みの権限、ツールの有効・無効設定、チャンネル設定、継続的な許可に基づいて動作し、毎回承認を求めるわけではありません。有効なモードと許可範囲を把握してください。以前に操作を許可したことは、その後のすべての操作が安全であることを意味しません。"
+            },
+            {
+              "kind": "heading",
+              "text": "4.2 フルアクセス権限"
+            },
+            {
+              "kind": "paragraph",
+              "text": "**フルアクセスはリスクの高いモードです。** 有効にすると、一部の操作では個別の確認を求めなくなる場合があります。Agent が権限の範囲内でコマンドを実行し、ファイルを変更または削除することにより、回復できないデータ損失、システムの異常、その他の不利益が生じる可能性があります。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "重要なデータをバックアップし、関連するリスクを受け入れられる機器または隔離環境でのみ使用してください。権限の状態を確認し、不要になったら権限を下げるか、関連機能を無効にしてください。フルアクセスも OS、アカウント、個々のツールの制限を受けます。機器上のすべての権限を持つこと、またはそれらを安全に行使できることを意味しません。"
+            },
+            {
+              "kind": "heading",
+              "text": "4.3 プラグインと外部ツール"
+            },
+            {
+              "kind": "paragraph",
+              "text": "プラグイン、MCP サービス、スクリプトなどの拡張機能は、ファイル、ネットワーク、アカウントへ独自にアクセスできる場合があります。その動作とリスクは実装と設定によって異なります。インストールまたは接続する前に、提供元、必要な権限、データの送信先を確認してください。一覧に表示されることや接続できることだけで、安全性の審査が済んでいると判断しないでください。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "重要な操作の前にはデータをバックアップしてください。削除、上書き、一括変更など、元に戻しにくい操作には特に注意が必要です。不確かな場合はまず中止し、コピーまたは隔離環境で検証してください。"
+            }
+          ]
+        },
+        {
+          "title": "5. データ処理と第三者サービス",
+          "blocks": [
+            {
+              "kind": "paragraph",
+              "text": "本ソフトウェアは、動作に必要な設定、チャット履歴、記憶、インデックス、ログなどのデータをローカルに保存します。具体的な内容は、使用する機能と設定によって異なります。ローカルアカウント、保存機器、バックアップ、アクセス権限を適切に保護してください。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "**ローカル保存は、すべての処理がオフラインで行われることを意味しません。** 選択したサービス、有効な機能、操作内容に応じて、関連情報が外部サービスに送信される場合があります。例えば、以下の通信があります。"
+            },
+            {
+              "kind": "list",
+              "items": [
+                "対話コンテキスト、キャラクターのプロンプト、関連する記憶のモデルサービスへの送信。",
+                "クラウドでのベクトル計算に使用する文章の埋め込みモデル API への送信。",
+                "音声認識、音声合成、声のクローンに必要な文章や音声の、選択した音声サービスへの送信。",
+                "タスクに必要な画像、ファイル内容、ウェブ情報、ツールの結果の、対応するモデル、プラグイン、ツールサービスへの送信。",
+                "お知らせ、更新確認、リソースのダウンロード、外部チャットチャンネルに関するネットワーク通信。"
+              ]
+            },
+            {
+              "kind": "paragraph",
+              "text": "API キー、アクセストークンなどの接続情報は、設定したサービスのエンドポイントで認証に使われる場合があります。認証情報やデータを信頼できないサービスへ送らないよう、エンドポイントのアドレスを確認してください。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "本ソフトウェア自体は、利用者が選択する第三者の大規模言語モデルや API サービスを提供しません。利用可能性、料金、コンテンツの規則、データの保持・利用方針は各提供者が定めます。利用前にその規約とデータ方針を確認してください。第三者サービスの障害、方針変更、提供終了により、関連機能が影響を受ける場合があります。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "記憶の自動整理、自発的なタスク、音声などのバックグラウンド機能も、設定によってはサービスの呼び出しや料金を発生させます。使用するサービスの利用枠、請求、使用量制限を確認してください。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "処理する権限のない情報を提供しないでください。秘密の認証情報、業務上の機密、個人的な会話などの機微な内容については、処理の必要性、受信者、現在の設定が要件を満たすかどうかを先に確認してください。本節は一般的な説明であり、すべての設定でデータの流れが同一であることや、すべてのデータが暗号化されること、他のネットワーク通信がないことを保証するものではありません。"
+            }
+          ]
+        },
+        {
+          "title": "6. 音声と素材の使用",
+          "blocks": [
+            {
+              "kind": "paragraph",
+              "text": "本ソフトウェアは音声合成と、任意に使用する声のクローン機能を提供します。実際の機能は、選択したエンジンとサービスによって異なります。本ソフトウェアは『崩壊：スターレイル』の昔涟の公式音声素材を配布しません。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "**必要な許諾を得た音声・録音資料のみを使用してください。** 許諾は、録音の実際の使用方法、関連サービスへのアップロード、該当する場合は声のクローンおよび生成用途をカバーする必要があります。音声ファイルを入手しただけでは、これらすべての権限を得たことにはなりません。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "録音、実演、声などに関する権利を尊重してください。生成音声によるなりすまし、詐欺、実在する人物が確認していない発言をしたと公衆に誤認させる行為をしないでください。生成内容を公開する場合は、適用される要件に従って必要な表示を行ってください。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "モデル、画像、スタンプ、フォントなどの第三者素材も、出所とライセンスを確認してください。本ソフトウェアで取り込み、処理、生成ができることによって、声や素材の利用許諾が自動的に得られるわけではありません。"
+            }
+          ]
+        },
+        {
+          "title": "7. AI コンテンツと対話の境界",
+          "blocks": [
+            {
+              "kind": "paragraph",
+              "text": "本ソフトウェアの AI キャラクターは、コンピュータープログラムと大規模言語モデルによって動作します。応答や対話は、キャラクター設定、対話コンテキスト、システムのルールなどに影響されます。個々の AI 生成内容が開発者の見解や立場を表すとは限らず、実在する人物や原作の権利者の意見として扱うべきではありません。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "キャラクターは、気遣い、親しみ、その他の感情を擬人的な言葉で表現する場合があります。これらは生成型の対話の一部であり、人間のような感情、自意識、自律的な約束能力を持つ証拠とみなすべきではありません。また、現実の対人関係や継続的な寄り添いを保証するものではありません。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "利用者が対話を通じて実際の感情を抱き、キャラクターに個人的な意味を見いだすことはあり得ます。本説明はその感情を否定しません。ただし、その体験は、相互の感情的関係、変わらない人格、特定の精神的支援効果を本ソフトウェアが約束することを意味しません。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "AI の応答には、事実誤認、情報の欠落、不適切な表現、一貫性の欠如が含まれる場合があります。モデル、設定、ソフトウェアのバージョン、コンテキストの変更も対話に影響します。本ソフトウェアは、現実の人間関係による支援、専門家の助け、独立した確認が必要な重要な判断に代わるものではありません。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "現実の生活とのつながりを保ち、過度な依存を避けてください。睡眠、学習、仕事、現実の人間関係に影響が出ている場合は、利用を減らし、信頼できる人や適切な専門家に相談することを検討してください。"
+            }
+          ]
+        },
+        {
+          "title": "8. 未成年者の利用制限",
+          "blocks": [
+            {
+              "kind": "paragraph",
+              "text": "本ソフトウェアは、継続的な情緒的親密関係を中心とする仮想の伴侶、仮想の家族などの用途を未成年者に提供することを目的としていません。未成年者は、これらの目的で本ソフトウェアを使用すべきではありません。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "未成年者が一般的な学習機能やツール機能を使う場合は、保護者の認識、明確な同意、適切な監督の下で行ってください。保護者は、生成内容、ツールの権限、第三者サービスがその未成年者に適しているかを評価し、利用時間、費用、日常生活への影響に注意してください。保護者の同意によって本ソフトウェアが未成年者向けの情緒的な伴侶サービスになるわけではなく、他の適用される制限に代わるものでもありません。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "本デスクトップ版は積極的な年齢確認を行いません。インストールや利用が可能であることを、年齢適合性の審査が済んだことと受け取らないでください。利用者と保護者は、所在地の要件や第三者サービスの年齢制限を踏まえ、利用の適否を判断してください。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "本ソフトウェアを不特定の公衆が利用できるサービスとして公開する場合、提供者は未成年者保護、年齢確認、保護者の同意など、適用される要件を独自に評価し、履行してください。必要な対策の代わりに、デスクトップ版の本声明だけに依拠してはなりません。"
+            }
+          ]
+        },
+        {
+          "title": "9. 保証と責任の範囲",
+          "blocks": [
+            {
+              "kind": "paragraph",
+              "text": "本ソフトウェアは継続開発中の実験的なオープンソースプロジェクトであり、「現状のまま」提供されます。開発者は、継続的な利用可能性、完全な安定性、不具合がないこと、生成内容の正確性、対話の振る舞いが変わらないこと、特定の用途への適合性を保証しません。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "モデルの出力、ツールの実行、権限設定、第三者サービス、機器や環境の異常により、予期しない結果が生じる場合があります。用途に応じてリスクを評価し、バックアップ、権限管理、内容の確認などの合理的な対策を講じてください。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "適用される法律で認められる範囲で、開発者はモデルの出力、利用者が許可した操作、権限設定、第三者サービス、またはバックアップを行わなかったことによる損失について、賠償責任を負いません。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "**本声明は、開発者が法律上負うべき責任を免除するものではなく、声明によって取り消すことのできない利用者の権利を排除するものでもありません。** 利用者の許可や確認は、これらの権利の放棄を意味しません。コードやリソースのライセンスに適用される規定も併せて遵守してください。"
+            }
+          ]
+        },
+        {
+          "title": "10. 条項の確認、同意、更新",
+          "blocks": [
+            {
+              "kind": "paragraph",
+              "text": "本ソフトウェアの使用前に本声明を読み、ソフトウェアの確認手続きで明確に同意してください。同意しない場合は、使用を続けないでください。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "利用上のリスク、データ処理、責任の範囲などの重要な内容が変更された場合、ソフトウェアは更新後の条項を表示し、再確認を求めます。旧版への同意は、その後の重要な変更への同意を意味しません。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "本声明への同意は、個々の操作の承認に代わるものではなく、フルアクセス、アカウントアクセス、その他のツール権限を自動的に付与するものでもありません。関連機能は実際に許可された範囲に従います。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "本声明は本ソフトウェアの利用条件とリスクを説明するものであり、第三者サービス、オープンソースの依存関係、素材に適用されるそれぞれの条件を変更するものではありません。本プロジェクトが第三者を代理して許諾や約束を行えるという意味に解釈しないでください。"
+            }
+          ]
+        },
+        {
+          "title": "11. 権利者からの連絡と問題のあるコンテンツへの対応",
+          "blocks": [
+            {
+              "kind": "paragraph",
+              "text": "miHoYo / HoYoverse またはその他の正当な権利者が、本ソフトウェアによる権利侵害を認めた場合は、以下へご連絡ください。"
+            },
+            {
+              "kind": "list",
+              "items": [
+                "メール：[ky2569ly@gmail.com](mailto:ky2569ly@gmail.com)。件名に「版权事宜」と記載してください。",
+                "Bilibili：[Playa0 のプロフィール](https://space.bilibili.com/260670644)。私信に「版权联络」と記載してください。",
+                "GitHub：[Playa-Cyrene/Cyrene-Agent](https://github.com/Playa-Cyrene/Cyrene-Agent)。"
+              ]
+            },
+            {
+              "kind": "paragraph",
+              "text": "可能な範囲で、対象コンテンツの場所、権利の根拠、具体的な要望、返信先をお知らせください。個人情報、未公開の許諾資料などの機微な内容は、公開 Issue に直接掲載せず、非公開の連絡手段を優先してください。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "有効な通知を受領後、できるだけ速やかに（通常は7営業日以内に）確認と対応を行い、確認結果に基づいて必要な措置を講じます。対応の過程で、対象コンテンツや権利の根拠を確認する必要が生じる場合があります。著作権に関する連絡を最優先で対応します。"
+            }
+          ]
+        },
+        {
+          "title": "12. 不具合報告と機能提案",
+          "blocks": [
+            {
+              "kind": "paragraph",
+              "text": "問題、不具合、機能に関する提案は、以下の窓口にお寄せください。"
+            },
+            {
+              "kind": "list",
+              "items": [
+                "[GitHub Issues](https://github.com/Playa-Cyrene/Cyrene-Agent/issues)。",
+                "メール：[ky2569ly@gmail.com](mailto:ky2569ly@gmail.com)。件名に「反馈」または「Bug」と記載することを推奨します。",
+                "[Playa0](https://space.bilibili.com/260670644) への Bilibili 私信。冒頭に「反馈/Bug」と記載してください。"
+              ]
+            },
+            {
+              "kind": "paragraph",
+              "text": "送信前に、API キー、アクセストークン、アカウントの認証情報、個人的な会話など、公開に適さない情報を削除してください。必要なバージョン情報、再現手順、エラーメッセージ、機微な情報を除いたログの抜粋を優先し、設定全体や無関係なユーザーデータを公開しないでください。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "通常のフィードバックは可能な範囲で確認しますが、迅速な返信は保証できません。これらの窓口は緊急支援の窓口ではなく、失われたデータの復旧も保証しません。"
+            }
+          ]
+        },
+        {
+          "title": "13. 謝辞",
+          "blocks": [
+            {
+              "kind": "paragraph",
+              "text": "Live2D モデル関連のリソースを制作・共有し、本プロジェクトのデスクトップキャラクター表示に重要な参考と支援を提供してくださった Bilibili クリエイター [是依七哒](https://space.bilibili.com/457683484) に感謝します。素材の権利と利用範囲は、実際に適用される許諾および権利者の方針に従います。権利侵害や不適切な使用があれば、対応に協力します。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "Pull Request を通じて貢献する開発者の皆様、問題の報告や提案を寄せてくださる方々、プロジェクトを支援してくださる皆様に感謝します。"
+            },
+            {
+              "kind": "paragraph",
+              "text": "貢献者は [貢献者一覧](https://github.com/Playa-Cyrene/Cyrene-Agent/blob/master/docs/CONTRIBUTORS.md)、組織メンバーとメンテナーは [メンテナー一覧](https://github.com/Playa-Cyrene/Cyrene-Agent/blob/master/docs/MAINTAINERS.md) をご覧ください。"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

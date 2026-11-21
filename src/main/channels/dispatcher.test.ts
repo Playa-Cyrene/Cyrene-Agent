@@ -39,6 +39,28 @@ vi.mock("./history-log", () => ({
 }));
 
 describe("channels/dispatcher", () => {
+  it("rechecks terms after a queued message is admitted without starting a turn", async () => {
+    const { configureTermsExecutionGate } = await import("../terms/terms-runtime");
+    let accepted = true;
+    const restore = configureTermsExecutionGate(() => accepted);
+    const queue = createKeyedQueue({ maxPendingPerKey: 20 });
+    let release!: () => void;
+    const msg = makeIncoming();
+    const held = queue.run(`external:${makeSessionId(msg.channel, msg.chatId)}`, () => new Promise<void>(resolve => { release = resolve; }));
+    const runAgent = vi.fn();
+    try {
+      await Promise.resolve();
+      const dispatcher = makeDispatcher({ queue, buildAndRunAgent: runAgent });
+      const pending = dispatcher.handleIncoming(msg);
+      const rejected = expect(pending).rejects.toMatchObject({ code: "E_TERMS_CONSENT_REQUIRED" });
+      accepted = false;
+      release();
+      await held;
+      await rejected;
+      expect(runAgent).not.toHaveBeenCalled();
+    } finally { restore(); }
+  });
+
   function makeIncoming(overrides: Partial<IncomingMessage> = {}): IncomingMessage {
     return {
       channel: "qq",

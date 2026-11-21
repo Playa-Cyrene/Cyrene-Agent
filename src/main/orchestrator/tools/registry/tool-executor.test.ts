@@ -86,3 +86,19 @@ describe("executeToolDefinition", () => {
       .rejects.toMatchObject({ name: "AbortError" });
   });
 });
+
+it("rejects newly dispatched tools but lets an already executing tool finish", async () => {
+  const { configureTermsExecutionGate } = await import("../../../terms/terms-runtime");
+  let accepted = true;
+  const restore = configureTermsExecutionGate(() => accepted);
+  let finish!: (value: string) => void;
+  const execute = vi.fn(() => new Promise<string>(resolve => { finish = resolve; }));
+  try {
+    const pending = executeToolDefinition(fakeTool(execute), {});
+    accepted = false;
+    expect(await executeToolDefinition(fakeTool(execute), {})).toMatchObject({ errorCode: "E_TERMS_CONSENT_REQUIRED", effectState: "not_applied", retryable: false });
+    finish("saved successfully");
+    expect(await pending).toMatchObject({ status: "succeeded", output: "saved successfully" });
+    expect(execute).toHaveBeenCalledTimes(1);
+  } finally { restore(); }
+});

@@ -351,3 +351,20 @@ describe("proactive chat service", () => {
     expect(ctx.state.lastProactiveAt).toBe(NOW);
   });
 });
+
+it.each([true, false])("does not deliver after consent changes during generation (durable=%s)", async durable => {
+  const { configureTermsExecutionGate } = await import("../terms/terms-runtime");
+  let accepted = true;
+  const restore = configureTermsExecutionGate(() => accepted);
+  const pending = deferred<{ kind: "send"; text: string }>();
+  const ctx = setup({ runModel: () => pending.promise, requiresDurableIntent: () => durable });
+  try {
+    const evaluation = ctx.service.evaluateCandidate(candidate);
+    await Promise.resolve();
+    accepted = false;
+    pending.resolve({ kind: "send", text: "not sent" });
+    await evaluation;
+    expect(ctx.commitMessage).not.toHaveBeenCalled();
+    expect(ctx.state.unansweredCount).toBe(0);
+  } finally { restore(); }
+});

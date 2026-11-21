@@ -1,3 +1,4 @@
+import { isTermsExecutionAllowed } from "../../terms/terms-runtime";
 import type { ToolCall } from "../vendors/types";
 import { resolveEffectKind, type ToolDefinition } from "../tools/registry/tool-registry";
 import { parseToolCallArgs } from "./types";
@@ -92,6 +93,10 @@ export async function scheduleToolCalls<T>(
   };
 
   while (index < options.calls.length) {
+    if (!isTermsExecutionAllowed()) {
+      await commitNotStarted(index, "E_TERMS_CONSENT_REQUIRED");
+      return { cancelled: false, halted: true };
+    }
     if (options.signal?.aborted) {
       await commitNotStarted(index, "aborted_before_dispatch");
       return { cancelled: true, halted: false };
@@ -191,7 +196,7 @@ async function runParallelGroup<T>(
     active.set(callIndex, promise);
   };
 
-  while (launchIndex < calls.length && active.size < maxParallel && !options.signal?.aborted) {
+  while (launchIndex < calls.length && active.size < maxParallel && !options.signal?.aborted && isTermsExecutionAllowed()) {
     launch(launchIndex++);
   }
 
@@ -233,7 +238,7 @@ async function runParallelGroup<T>(
 
       // 发射循环：halt / 取消 / 出错后不再发射新调用
       while (!halted && !cancelled && firstError === undefined
-        && launchIndex < calls.length && active.size < maxParallel && !options.signal?.aborted) {
+        && launchIndex < calls.length && active.size < maxParallel && !options.signal?.aborted && isTermsExecutionAllowed()) {
         launch(launchIndex++);
       }
     }
@@ -242,6 +247,7 @@ async function runParallelGroup<T>(
     if (active.size > 0) await Promise.allSettled([...active.values()]);
   }
 
+  halted = halted || !isTermsExecutionAllowed();
   if (firstError !== undefined) {
     return { started: launchIndex, cancelled, halted, error: firstError };
   }

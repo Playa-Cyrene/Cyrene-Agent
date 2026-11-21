@@ -58,3 +58,20 @@ describe("channels/delivery-service", () => {
     await expect(service.send(message)).resolves.toEqual({ ok: true });
   });
 });
+
+it("blocks new channel sends without aborting an in-flight send", async () => {
+  const { configureTermsExecutionGate } = await import("../terms/terms-runtime");
+  let accepted = true;
+  const restore = configureTermsExecutionGate(() => accepted);
+  let finish!: (value: { ok: boolean }) => void;
+  const send = vi.fn(() => new Promise<{ ok: boolean }>(resolve => { finish = resolve; }));
+  const service = createChannelDeliveryService({ getAdapter: () => ({ send }) as never });
+  try {
+    const pending = service.send(message);
+    accepted = false;
+    expect(await service.send(message)).toEqual({ ok: false, error: "E_TERMS_CONSENT_REQUIRED" });
+    finish({ ok: true });
+    expect(await pending).toEqual({ ok: true });
+    expect(send).toHaveBeenCalledTimes(1);
+  } finally { restore(); }
+});

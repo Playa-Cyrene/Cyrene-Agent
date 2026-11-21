@@ -1653,3 +1653,13 @@ describe("CyreneHarness transcript sink", () => {
     expect(result.terminateReason).toBe("error");
   });
 });
+
+it("settles a terms-blocked Harness with an explicit non-success reason", async () => {
+  const { configureTermsExecutionGate } = await import("../../terms/terms-runtime");
+  const restore = configureTermsExecutionGate(() => false);
+  try {
+    const result = await runCyreneHarness(harnessInput());
+    expect(result.terminal).toEqual({ status: "runtime_error", reason: "E_TERMS_CONSENT_REQUIRED", externalEffectsMayContinue: true });
+    expect(result.terminateReason).toBe("error");
+  } finally { restore(); }
+});

@@ -1,3 +1,4 @@
+import { TermsConsentRequiredError, assertTermsExecutionAllowed } from "../terms/terms-runtime";
 import type { WebContents } from "electron";
 import { IPC } from "../../shared/ipc-channels";
 import type { PluginPromptMode, PluginTurnStatus } from "../../plugins/api";
@@ -133,7 +134,7 @@ export function createSchedulerRunner(deps: RunnerDeps) {
           finishedAt: finishedAt.toISOString(),
           durationMs,
           status: "failed",
-          reason: status,
+          reason: code ?? status,
           errorMessage: message,
           effectiveToolIds,
           ...(conversationId ? { sessionId: conversationId } : {}),
@@ -209,6 +210,7 @@ export function createSchedulerRunner(deps: RunnerDeps) {
     let transcriptSink: ReturnType<ConversationJournalService["createRunSink"]> | undefined;
     try {
       if (sessionCreationError) throw sessionCreationError;
+      assertTermsExecutionAllowed();
       const legacyOptions = await deps.buildOptions(task);
       legacyOptions.tools = effectiveTools;
 
@@ -270,6 +272,7 @@ export function createSchedulerRunner(deps: RunnerDeps) {
 
       const agent = new CyreneAgent({ threadId: `scheduler-${task.id}`, description: `Scheduled task: ${task.title}` });
 
+      assertTermsExecutionAllowed();
       await new Promise<void>((resolve, reject) => {
         const sub = agent.runWithEvents(options).subscribe({
           next: (event) => {
@@ -339,8 +342,10 @@ export function createSchedulerRunner(deps: RunnerDeps) {
         }
       }
       if (status !== "success") {
-        publishFailure(finishedAt, status, `定时任务${status}终止`);
-        return { ok: false, historyId, error: status, effectiveToolIds };
+        const consentCode = agent.lastResult?.terminal?.reason === "E_TERMS_CONSENT_REQUIRED"
+          ? "E_TERMS_CONSENT_REQUIRED" : undefined;
+        publishFailure(finishedAt, status, consentCode ?? `定时任务${status}终止`, consentCode);
+        return { ok: false, historyId, error: consentCode ?? status, effectiveToolIds };
       }
       deps.recordHistory({
         id: historyId,
@@ -392,7 +397,7 @@ export function createSchedulerRunner(deps: RunnerDeps) {
     } catch (err) {
       const finishedAt = deps.now();
       const message = err instanceof Error ? err.message : String(err);
-      const errorCode = err instanceof AgentRuntimeError ? err.code : undefined;
+      const errorCode = err instanceof AgentRuntimeError || err instanceof TermsConsentRequiredError ? err.code : undefined;
       publishFailure(finishedAt, "runtime_error", message, errorCode);
       return { ok: false, historyId, error: message, effectiveToolIds };
     }

@@ -11,6 +11,11 @@
     "empty": "暂无内容"
   },
   "onboarding": {
+    "termsVersion": "同意版本 {{version}} · 内容修订 {{revision}}",
+    "termsChanged": "条款在阅读期间发生了更新。请重新打开并阅读最新内容，再确认同意。",
+    "termsUnavailable": "暂时无法取得可确认的条款版本。可以阅读内置正文，但不能完成同意。请重新打开应用后重试。",
+    "termsUpdateTitle": "请确认最新条款",
+    "termsUpdateNotice": "条款需要重新确认。新的操作已暂停，正在进行的安全步骤会收尾；会话和草稿会保留。请阅读最新条款后继续。",
     "quit": "退出 Cyrene",
     "posterAlt": "Cyrene 欢迎海报",
     "posterUnavailable": "欢迎海报暂时无法加载",

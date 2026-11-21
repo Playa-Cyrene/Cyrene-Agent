@@ -341,3 +341,49 @@ describe("SchedulerEngine", () => {
     }
   });
 });
+
+it("preserves a once task while consent is pending and runs it once after acceptance", async () => {
+  const { configureTermsExecutionGate } = await import("../terms/terms-runtime");
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-06-22T08:00:00.000Z"));
+  let accepted = false;
+  const restore = configureTermsExecutionGate(() => accepted);
+  const store = makeStore([dailyTask({ schedule: { kind: "once", runAt: "2026-06-22T08:00:00.000Z" } })]);
+  const runTask = vi.fn(async () => ({}) as ScheduledRunResult);
+  const engine = new SchedulerEngine({ store, runTask });
+  try {
+    engine.start();
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(runTask).not.toHaveBeenCalled();
+    expect(store.updateTask).not.toHaveBeenCalled();
+    expect((await engine.fireNow("task-1")).reason).toBe("E_TERMS_CONSENT_REQUIRED");
+    accepted = true;
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(runTask).toHaveBeenCalledTimes(1);
+    expect(store.getTasks()[0].enabled).toBe(false);
+  } finally { engine.stop(); restore(); vi.useRealTimers(); }
+});
+
+it("does not replay an already admitted once run if consent changes during its preparation", async () => {
+  const { configureTermsExecutionGate } = await import("../terms/terms-runtime");
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-06-22T07:59:59.000Z"));
+  let accepted = true;
+  const restore = configureTermsExecutionGate(() => accepted);
+  const store = makeStore([dailyTask({ schedule: { kind: "once", runAt: "2026-06-22T08:00:00.000Z" } })]);
+  let finish!: (value: ScheduledRunResult) => void;
+  const runTask = vi.fn(() => new Promise<ScheduledRunResult>(resolve => { finish = resolve; }));
+  const engine = new SchedulerEngine({ store, runTask });
+  try {
+    engine.start();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(runTask).toHaveBeenCalledTimes(1);
+    accepted = false;
+    finish({ ok: false, historyId: "admitted", error: "E_TERMS_CONSENT_REQUIRED", effectiveToolIds: [] });
+    await Promise.resolve();
+    accepted = true;
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(runTask).toHaveBeenCalledTimes(1);
+    expect(store.getTasks()[0].enabled).toBe(false);
+  } finally { engine.stop(); restore(); vi.useRealTimers(); }
+});

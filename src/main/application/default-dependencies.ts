@@ -40,6 +40,9 @@ import { ConversationJournalService } from "../orchestrator/conversation-journal
 import { activeConversationRegistry } from "../chats/active-conversation-registry";
 import { registerSettingsIpc } from "../settings/settings-ipc";
 import { registerNewsIpc } from "../news/news-feed";
+import { createTermsService } from "../terms/terms-service";
+import { broadcastTermsSnapshot, registerTermsIpc } from "../terms/terms-ipc";
+import { configureTermsExecutionGate } from "../terms/terms-runtime";
 import {
   applyGeneralSettings,
   handleGeneralSettingsChanged,
@@ -137,7 +140,7 @@ import { resolveGitExecutable, type ResolvedGitExecutable } from "../code-git/gi
 import { registerCodeGitIpc } from "../code-git/code-git-ipc";
 import { installSingleInstanceGuard } from "../single-instance";
 import { migrateLegacyUserData } from "../user-data-migration";
-import { createWindowManager } from "../windows/window-manager";
+import { createWindowManager, type WindowManager } from "../windows/window-manager";
 import { createTray } from "../tray";
 import { createSplashWindow } from "../startup/create-splash-window";
 import { revealStartupWindows } from "../startup/startup-window-reveal";
@@ -302,6 +305,53 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
   const readiness = createStartupReadiness();
   const activation = createWindowActivationBroker();
   const shutdown = createShutdownCoordinator({ readiness, timeoutMs: SHUTDOWN_TIMEOUT_MS });
+  let terms: ReturnType<typeof createTermsService> | undefined;
+  let termsWindowManager: WindowManager | null = null;
+  let lastTermsAccepted: boolean | undefined;
+  let termsRevealTimer: ReturnType<typeof setTimeout> | undefined;
+  const hasTermsConsent = () => terms?.hasCurrentConsent() ?? false;
+  // 在服务完成迁移后的同步加载之前一律禁止新执行，不能把未初始化当作已接受。
+  const releaseTermsGate = configureTermsExecutionGate(() => !shutdown.isStopping() && hasTermsConsent());
+  function getTermsService(): ReturnType<typeof createTermsService> {
+    if (terms) return terms;
+    terms = createTermsService({
+      cachePath: path.join(app.getPath("userData"), "terms-cache.json"),
+      consentPath: path.join(app.getPath("userData"), "terms-consent.json"),
+      readLegacyConsent: () => loadGeneralSettings().disclaimerAcceptedVersion,
+      broadcast: (snapshot) => {
+        broadcastTermsSnapshot(snapshot);
+        const becameAccepted = lastTermsAccepted === false && snapshot.accepted;
+        lastTermsAccepted = snapshot.accepted;
+        if (!snapshot.accepted) {
+          if (termsRevealTimer) clearTimeout(termsRevealTimer);
+          termsRevealTimer = undefined;
+          termsWindowManager?.hidePetWindow();
+        }
+        if (becameAccepted) {
+          // 留出 IPC 回复时间；读取期间再次换版时，旧接受不能把工作区重新放行。
+          if (termsRevealTimer) clearTimeout(termsRevealTimer);
+          termsRevealTimer = setTimeout(() => {
+            termsRevealTimer = undefined;
+            if (shutdown.isStopping() || !hasTermsConsent()) return;
+            termsWindowManager?.closeOnboardingWindow?.();
+            if (loadGeneralSettings().petVisible) termsWindowManager?.showPetWindow();
+            void termsWindowManager?.openReactChatWindow().catch((error) => {
+              console.error("[Terms] failed to restore workspace:", error);
+            });
+          }, 0);
+        }
+      },
+    });
+    lastTermsAccepted = terms.hasCurrentConsent();
+    return terms;
+  }
+  shutdown.register({ id: "terms-sync", phase: "quiesce", dispose: () => {
+    terms?.dispose();
+    if (termsRevealTimer) clearTimeout(termsRevealTimer);
+    termsRevealTimer = undefined;
+    // 退出期间仍禁止新执行；释放仅在所有在飞单元完成后进行。
+  } });
+  shutdown.register({ id: "terms-gate", phase: "closePersistence", dispose: releaseTermsGate });
   shutdown.register({ id: "shell-completion-dispatch", phase: "quiesce", dispose: disposeShellCompletionDispatch });
   shutdown.register({ id: "shell-jobs", phase: "stopLocalResources", dispose: disposeAllShellJobs });
   shutdown.register({ id: "conversation-database", phase: "closePersistence", dispose: closeConversationDatabases });
@@ -353,12 +403,18 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
       },
       createIpcScope: () => createIpcScope(),
       createSplashWindow: (options) => createSplashWindow({ isDev, onShown: options.onShown }),
-      createWindowManager: () => createWindowManager({
-        getCurrentAppIconPath,
-        isDev,
-        loadPetWindowSettingsSlice: loadGeneralSettings,
-        persistPetWindowPosition: ({ x, y }) => saveGeneralSettings({ petWindowX: x, petWindowY: y }),
-      }),
+      createWindowManager: () => {
+        // prepare 阶段已完成旧用户目录迁移，此时才读取条款缓存与接受记录。
+        getTermsService();
+        termsWindowManager = createWindowManager({
+          getCurrentAppIconPath,
+          isDev,
+          hasCurrentDisclaimerConsent: hasTermsConsent,
+          loadPetWindowSettingsSlice: loadGeneralSettings,
+          persistPetWindowPosition: ({ x, y }) => saveGeneralSettings({ petWindowX: x, petWindowY: y }),
+        });
+        return termsWindowManager;
+      },
       createChatShell: (windowManager) => windowManager.createReactChatWindowShell(),
       registerProtocolHandlers,
       registerShellIpc: ({ ipc, windowManager, live2dWindowLifecycle }) => {
@@ -678,6 +734,7 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
         // 设置变更反应：窗口/托盘/截图热键/主动服务联动
         onGeneralSettingsChanged((before, after) =>
           handleGeneralSettingsChanged(before, after, {
+            hasCurrentDisclaimerConsent: hasTermsConsent,
             windowManager: shell.windowManager,
             tray: shell.tray,
             screenshotService: services.screenshot,
@@ -705,6 +762,8 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
 
         // 项目公告：渲染端首次打开时拉一次，之后主进程每 6 小时对一次版本
         registerNewsIpc(ipc);
+        registerTermsIpc({ ipc, service: getTermsService() });
+        getTermsService().start();
 
         registerMemoryUserToolIpc({
           ipc,
@@ -812,7 +871,9 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
       },
 
       loadGeneralSettings,
+      hasCurrentDisclaimerConsent: hasTermsConsent,
       applyGeneralSettings: (settings, services) => applyGeneralSettings(settings, {
+        hasCurrentDisclaimerConsent: hasTermsConsent,
         windowManager: shell.windowManager,
         tray: shell.tray,
         screenshotService: services.screenshot,

@@ -1669,6 +1669,22 @@ describe("agui-bridge background shell smoke (mock sessions, isolated SQLite)", 
     return mocks.runCyreneAgent.mock.calls[0][0] as import("./orchestrator/cyrene-agent").CyreneRunOptions;
   }
 
+  it("persists completed shell work during a consent pause and shutdown without waking a run", async () => {
+    const original = await start();
+    await expect.poll(() => bridge.__getSessionActiveRunForTest("original")).toBeUndefined();
+    const { configureTermsExecutionGate } = await import("./terms/terms-runtime");
+    const restore = configureTermsExecutionGate(() => false);
+    try {
+      original.onShellJobComplete!(snapshot("consent-pending"));
+      await bridge.disposeShellCompletionDispatch();
+      const { getConversationTranscriptStore } = await import("./orchestrator/conversation-transcript-store");
+      const audit = await getConversationTranscriptStore(mocks.userDataRoot).readAuditEntries("original");
+      expect(audit.filter(entry => entry.kind === "background_event_pending")).toHaveLength(1);
+      expect(audit.filter(entry => entry.kind === "background_event")).toHaveLength(0);
+      expect(mocks.runCyreneAgent).toHaveBeenCalledTimes(1);
+    } finally { restore(); }
+  });
+
   it("defers a Learn completion until another vault run settles", async () => {
     mocks.getSession.mockImplementation((id: string) => ({ id, mode: "learn", messages: [],
       workspaceBinding: { workspaceRoot: path.join(mocks.userDataRoot, id), displayName: id, boundAt: 1 } }));

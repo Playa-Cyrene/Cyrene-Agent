@@ -1,3 +1,4 @@
+import { assertTermsExecutionAllowed, TermsConsentRequiredError } from "../terms/terms-runtime";
 // CyreneAgent —— 把两条 Agent 循环包进 AG-UI 的 AbstractAgent。
 //
 // - 持有 runWithEvents 入口：Chat 使用 chat-loop，其余模式使用 CyreneHarness。
@@ -464,6 +465,7 @@ export class CyreneAgent extends AbstractAgent {
 
       (async () => {
         try {
+          assertTermsExecutionAllowed();
           subscriber.next({ type: EventType.RUN_STARTED, threadId, runId });
 
           const adapterTimer = perf.begin("get_adapter");
@@ -626,7 +628,7 @@ export class CyreneAgent extends AbstractAgent {
           } catch (closureError) {
             console.error(LOG_PREFIX, "transcript failure closure failed:", closureError);
           }
-          const safeErr = new AgentRuntimeError("E_MODEL_REQUEST_FAILED", classification.userMessage, {
+          const safeErr = err instanceof TermsConsentRequiredError ? err : new AgentRuntimeError("E_MODEL_REQUEST_FAILED", classification.userMessage, {
             ...(classification.modelFailure ? { modelFailure: classification.modelFailure } : {}),
           });
           finished = true;

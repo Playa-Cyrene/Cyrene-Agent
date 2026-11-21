@@ -6,6 +6,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import en from "../../i18n/en.json";
 import ja from "../../i18n/ja-JP.json";
 import zh from "../../i18n/zh-CN.json";
+import builtin from "../../../../shared/builtin-terms.json";
+import type { TermsSnapshot } from "../../../../shared/terms-types";
 import { DisclaimerSettingsPanel } from "./DisclaimerSettingsPanel";
 
 afterEach(async () => { await i18next.changeLanguage("zh-CN"); });
@@ -90,4 +92,21 @@ describe("完整条款与本地化", () => {
       i18next.addResource("zh-CN", "translation", key, original);
     }
   });
+});
+
+
+it("展示传入的完整远程快照，不执行正文标签或危险链接", async () => {
+  await i18next.changeLanguage("en");
+  const snapshot = structuredClone({ ...builtin, contentHash: "a".repeat(64), accepted: false, source: "remote" }) as TermsSnapshot;
+  snapshot.locales.en.heading = "Updated remote terms";
+  snapshot.locales.en.sections[0].blocks[0] = { kind: "paragraph", text: '<script>alert(1)</script> [bad](javascript:alert) [safe](https://example.com) **notice**' };
+  const html = renderToStaticMarkup(<DisclaimerSettingsPanel snapshot={snapshot} />);
+  expect(html).toContain("Updated remote terms");
+  expect(html.match(/<article/g)).toHaveLength(14);
+  expect(html).not.toContain("<script>");
+  expect(html).toContain("&lt;script&gt;");
+  expect(html).not.toContain('href="javascript:');
+  expect(html).toContain('href="https://example.com"');
+  expect(html).toContain("<strong>notice</strong>");
+  expect(html).toContain("Content revision 1");
 });

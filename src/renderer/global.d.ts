@@ -200,6 +200,7 @@ declare global {
       onChanged: (callback: () => void) => () => void;
     };
     system?: SystemApi;
+    terms?: import("../shared/terms-types").TermsApi;
     news?: import("../shared/news-types").NewsApi;
     review?: ReviewApi;
     workspaceFiles?: WorkspaceFilesApi;
