@@ -34,7 +34,8 @@ try {
   const customInstall = getCustomInstall(installer);
   assert.ok(customInstall, "customInstall macro must exist");
   assert.equal(getCustomInstall(installer.replace(/\r?\n/g, "\r\n")), customInstall, "CRLF checkout must preserve the integration check");
-  assert.ok(customInstall.indexOf("!insertmacro CyreneValidateInstallation") > customInstall.indexOf('Rename "$INSTDIR\\..\\.Cyrene.models-preserve"'));
+  assert.ok(customInstall.includes("!insertmacro CyreneRestoreModels"));
+  assert.ok(customInstall.indexOf("!insertmacro CyreneValidateInstallation") > customInstall.indexOf("!insertmacro CyreneRestoreModels"));
   assert.ok(customInstall.indexOf("!insertmacro CyreneValidateInstallation") < customInstall.indexOf("CreateShortCut"));
 
   await writeFile(script, `Unicode true
@@ -140,7 +141,7 @@ SectionEnd
 $ErrorActionPreference = 'Stop'
 $stream = [System.IO.File]::Open(${ps(invalid)}, 'Open', 'Read', 'None')
 try {
-  $process = Start-Process -FilePath ${ps(exe)} -ArgumentList '/S' -PassThru -Wait
+  $process = Start-Process -FilePath ${ps(exe)} -ArgumentList '/S' -PassThru -Wait -WindowStyle Hidden
   $code = $process.ExitCode
 } finally { $stream.Dispose() }
 exit $code
