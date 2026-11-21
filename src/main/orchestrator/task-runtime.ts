@@ -201,7 +201,7 @@ export function createTaskExecutor(input: {
   return async (request) => {
     const profile = getTaskAgentProfile(request.subagentType);
     const lease = characterPool.acquire(input.parent.parentConversationId, request.companionId);
-    let session: TaskSession;
+    let session: TaskSession | undefined;
     try {
       const previous = request.taskId
         ? null
@@ -245,7 +245,33 @@ export function createTaskExecutor(input: {
         transcriptTodoItems = projectTaskTodoItems(snapshot.entries);
       }
     } catch (error) {
-      lease.release();
+      // create/resume 已提交 running，但首条 prompt 或恢复读取仍可能失败。
+      // 此时尚未启动 harness，也要结束本轮元数据，否则同进程重试会一直被 running 拦住。
+      // session 只在本次成功取得所有权后赋值，不能终止 resume 守卫拒绝的其他活动任务。
+      try {
+        if (session) {
+          const cancelled = input.parent.signal?.aborted;
+          try {
+            await transcript?.runs.markTerminal(session.childRunId, cancelled ? "cancelled" : "failed");
+          } catch (terminalError) {
+            // runs.create 自身失败时可能尚无 run 行；其余落库错误保留诊断。
+            if (!(terminalError instanceof Error && terminalError.message === "HARNESS_RUN_NOT_FOUND")) {
+              console.error("[TaskRuntime] preparation run terminal 记录失败:", terminalError);
+            }
+          }
+          try {
+            await input.store.checkpoint(session.id, {
+              status: cancelled ? "cancelled" : "failed",
+              error: { code: cancelled ? "TASK_CANCELLED" : "TASK_RUNTIME_ERROR", message: error instanceof Error ? error.message : String(error) },
+              completedAt: Date.now(),
+            });
+          } catch (checkpointError) {
+            console.error("[TaskRuntime] preparation checkpoint 失败:", checkpointError);
+          }
+        }
+      } finally {
+        lease.release();
+      }
       throw error;
     }
 
