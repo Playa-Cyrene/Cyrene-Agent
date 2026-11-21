@@ -30,6 +30,9 @@ jobs:
       - name: Verify Electron installation
         run: pnpm exec electron --version
 
+      - name: Test issue triage response handling
+        run: node --test .github/scripts/issue-triage.test.mjs
+
       - name: Test installer completion validation
         run: node scripts/verify/installer-validation.mjs
 

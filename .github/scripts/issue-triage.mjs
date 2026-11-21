@@ -14,6 +14,7 @@
 // 两个变量必须成对配置，只填其一视为配置错误并跳过判断，避免半配置状态下静默走错提供方。
 
 import { readFileSync } from "node:fs";
+import { fetchJsonObject, warnResponseShape } from "./issue-triage-response.mjs";
 
 const API_BASE = "https://api.github.com";
 const GITHUB_MODELS_ENDPOINT = "https://models.github.ai/inference/chat/completions";
@@ -155,20 +156,30 @@ function extractKeywords(text) {
 async function searchCandidates(issue, keywords) {
   if (keywords.length === 0) return [];
   const query = `repo:${owner}/${repo} is:issue ${keywords.join(" OR ")}`;
-  const res = await api(`/search/issues?per_page=${MAX_CANDIDATES}&sort=relevance&q=${encodeURIComponent(query)}`);
-  if (!res.ok) {
-    // 搜索失败只影响重复判断，其余两类标签仍可继续，因此返回空数组而不中断
-    console.warn(`[issue-triage] 搜索候选失败（${res.status}）`);
+  const data = await fetchJsonObject("search", () => api(`/search/issues?per_page=${MAX_CANDIDATES}&sort=relevance&q=${encodeURIComponent(query)}`));
+  // 搜索不可用只影响重复判断，其余两类判断仍可继续。
+  if (!data) return [];
+  if (!Array.isArray(data.items) || data.items.some(item =>
+    !item || !Number.isInteger(item.number) || typeof item.title !== "string" ||
+    (item.body != null && typeof item.body !== "string")
+  )) {
+    warnResponseShape("search");
     return [];
   }
-  const data = await res.json();
-  return (data.items ?? []).filter((item) => item.number !== issue.number);
+  return data.items.filter((item) => item.number !== issue.number);
 }
 
 function resolveProvider() {
   const baseUrl = (process.env.LLM_BASE_URL ?? "").trim().replace(/\/+$/, "");
   const model = (process.env.LLM_MODEL ?? "").trim();
   if (baseUrl && model) {
+    try {
+      const url = new URL(baseUrl);
+      if (!["https:", "http:"].includes(url.protocol)) throw new Error("invalid protocol");
+    } catch {
+      console.warn("[issue-triage] LLM_BASE_URL 不是有效的 HTTP(S) 地址，本次跳过");
+      return null;
+    }
     const apiKey = (process.env.LLM_API_KEY ?? "").trim();
     if (!apiKey) {
       console.warn("[issue-triage] 配置了自有端点但缺少 LLM_API_KEY，本次跳过");
@@ -231,14 +242,15 @@ function parseVerdict(content) {
   const end = content.lastIndexOf("}");
   if (start === -1 || end === -1 || end < start) return null;
   try {
-    return JSON.parse(content.slice(start, end + 1));
+    const verdict = JSON.parse(content.slice(start, end + 1));
+    return verdict && typeof verdict === "object" && !Array.isArray(verdict) ? verdict : null;
   } catch {
     return null;
   }
 }
 
 async function judge(provider, issue, candidates) {
-  const res = await fetch(provider.endpoint, {
+  const data = await fetchJsonObject("model", () => fetch(provider.endpoint, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${provider.apiKey}`,
@@ -253,13 +265,16 @@ async function judge(provider, issue, candidates) {
       ],
       temperature: 0,
     }),
-  });
-  if (!res.ok) {
-    console.warn(`[issue-triage] 模型调用失败（${res.status}），本次跳过`);
+  }));
+  if (!data) return null;
+  const content = data.choices?.[0]?.message?.content;
+  if (!Array.isArray(data.choices) || typeof content !== "string") {
+    warnResponseShape("model");
     return null;
   }
-  const data = await res.json();
-  return parseVerdict(data.choices?.[0]?.message?.content);
+  const verdict = parseVerdict(content);
+  if (!verdict) console.warn("[issue-triage][model] 模型内容不是有效判断，本次跳过");
+  return verdict;
 }
 
 // 从模型输出里挑出该打、且当前还没有的标签
