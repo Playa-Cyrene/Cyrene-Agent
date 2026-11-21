@@ -1,9 +1,10 @@
+import type { Rectangle, Size } from "electron";
 import { normalizeWindowCoordinate, normalizeWindowPosition, type WindowPosition } from "./window-position";
 
 export interface PetWindowLike {
   isDestroyed(): boolean;
   getPosition(): number[];
-  setPosition(x: number, y: number, animate?: boolean): void;
+  setBounds(bounds: Rectangle, animate?: boolean): void;
 }
 
 type PositionLogger = (message: string, error: unknown) => void;
@@ -14,6 +15,7 @@ export class PetWindowMoveController {
 
   constructor(
     private readonly getWindow: () => PetWindowLike | null,
+    private readonly getWindowSize: () => Size,
     private readonly persistPosition: (position: WindowPosition) => void,
     private readonly logWarning: PositionLogger = (message, error) => console.warn(message, error),
   ) {}
@@ -88,7 +90,8 @@ export class PetWindowMoveController {
     const currentPosition = window.getPosition();
     const current = normalizeWindowPosition(currentPosition[0], currentPosition[1]);
     if (current?.x === position.x && current.y === position.y) return;
-    window.setPosition(position.x, position.y, false);
+    // Pin the configured DIP size so fractional display scaling cannot compound rounding on each move.
+    window.setBounds({ ...position, ...this.getWindowSize() }, false);
   }
 
   private getUsableWindow(): PetWindowLike | null {

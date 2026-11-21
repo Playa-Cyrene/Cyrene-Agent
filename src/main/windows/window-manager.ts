@@ -1,6 +1,6 @@
 import { app, BrowserWindow, screen, type NativeImage } from "electron";
 import { IPC } from "../../shared/ipc-channels";
-import { createPetWindow, PET_WINDOW_BASE_HEIGHT, PET_WINDOW_BASE_WIDTH, type PetWindowSettingsSlice } from "../startup/create-pet-window";
+import { createPetWindow, getPetWindowSize, type PetWindowSettingsSlice } from "../startup/create-pet-window";
 import {
   createCallWindow,
   createReactChatWindowShell,
@@ -78,6 +78,7 @@ export function createWindowManager(options: WindowManagerOptions): WindowManage
 
   const petWindowMoveController = new PetWindowMoveController(
     () => petWindow,
+    () => getPetWindowSize(options.loadPetWindowSettingsSlice().petZoom),
     (position) => {
       options.persistPetWindowPosition(position);
     },
@@ -328,9 +329,8 @@ export function createWindowManager(options: WindowManagerOptions): WindowManage
     applyPetWindowZoom(zoom: number): void {
       const win = getUsablePetWindow();
       if (!win) return;
-      const width = Math.round(PET_WINDOW_BASE_WIDTH * zoom);
-      const height = Math.round(PET_WINDOW_BASE_HEIGHT * zoom);
-      win.setSize(width, height);
+      const [x, y] = win.getPosition();
+      win.setBounds({ x, y, ...getPetWindowSize(zoom) }, false);
       if (!win.isDestroyed()) {
         win.webContents.send(IPC.PET_ZOOM, zoom);
       }
