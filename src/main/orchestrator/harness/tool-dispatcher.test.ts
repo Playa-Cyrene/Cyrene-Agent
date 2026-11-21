@@ -5,6 +5,7 @@ import type { ToolDefinition } from "../tools/registry/tool-registry";
 import type { AgentState } from "./types";
 import { dispatchToolCall, DEFAULT_TRUNCATION, truncateOutput } from "./tool-dispatcher";
 import { resolveUncertainEffect } from "./uncertain-effect-guard";
+import { allowToolResultImages, formatToolImageResult } from "../tool-result-images";
 import type { ToolOutputStore } from "./tool-output/tool-output-store";
 import { ToolOutputPersistenceError } from "./tool-output/file-tool-output-store";
 
@@ -318,5 +319,35 @@ describe("dispatchToolCall truthful execution", () => {
 
     expect(put).toHaveBeenCalledWith(expect.objectContaining({ toolName: "task", output }));
     expect(result.fullOutputRef).toBe(`tool-result://v1/${"d".repeat(64)}`);
+  });
+});
+
+describe("dispatchToolCall 工具结果图片", () => {
+  const image = { fileName: "shot-1731200000000-1.png", mediaType: "image/png" as const, width: 1568, height: 882 };
+  const screenshotTool = (execute: ToolDefinition["execute"]): ToolDefinition => ({
+    id: "computer_screenshot", name: "Screenshot", description: "shot", enabled: true,
+    inputSchema: { type: "object", properties: {} }, effectKind: "read", execute,
+  });
+  const shotCall = { id: "shot", name: "computer_screenshot", arguments: "{}" };
+
+  it("宿主登记的工具成功返回时取出图片引用", async () => {
+    const tool = allowToolResultImages(screenshotTool(async () => formatToolImageResult("已截取", image)));
+    const result = await dispatchToolCall(shotCall, { state: state(), tools: [tool], checkPermission: async () => true });
+    expect(result.outcome).toBe("success");
+    expect(result.images).toEqual([image]);
+  });
+
+  it("未登记的同名工具（例如插件注册的 computer_screenshot）输出同样结构也不带图", async () => {
+    const tool = screenshotTool(async () => formatToolImageResult("已截取", image));
+    const result = await dispatchToolCall(shotCall, { state: state(), tools: [tool], checkPermission: async () => true });
+    expect(result.outcome).toBe("success");
+    expect(result.images).toBeUndefined();
+  });
+
+  it("登记的工具执行失败时不带图", async () => {
+    const tool = allowToolResultImages(screenshotTool(async () => { throw new ToolExecutionError("E_SHOT", "截图失败", "transient"); }));
+    const result = await dispatchToolCall(shotCall, { state: state(), tools: [tool], checkPermission: async () => true });
+    expect(result.outcome).toBe("failure");
+    expect(result.images).toBeUndefined();
   });
 });

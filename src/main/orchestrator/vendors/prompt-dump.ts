@@ -54,6 +54,22 @@ export interface DumpRequestMeta {
   transport: "openai" | "anthropic" | "responses";
   endpoint: string;
   body: Record<string, unknown>;
+  /** 本次请求里工具截图的 base64 数据；落盘前替换掉，截图不能因为开启 dump 而长期留在磁盘上。 */
+  redactedImageData?: ReadonlySet<string>;
+}
+
+/** 把请求体里的工具截图数据（原始 base64 或 data URL）替换为占位说明，其余内容原样保留。 */
+export function redactToolImageData(value: unknown, data: ReadonlySet<string>): unknown {
+  if (data.size === 0) return value;
+  if (typeof value === "string") {
+    const match = [...data].find(item => value === item || (value.startsWith("data:") && value.endsWith(`;base64,${item}`)));
+    return match ? `[工具截图已省略：${Buffer.byteLength(match, "base64")} 字节]` : value;
+  }
+  if (Array.isArray(value)) return value.map(item => redactToolImageData(item, data));
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, redactToolImageData(item, data)]));
+  }
+  return value;
 }
 
 export interface DumpResponseMeta {
@@ -101,7 +117,7 @@ export function dumpRequest(meta: DumpRequestMeta): string {
     phase: "request",
     transport: meta.transport,
     endpoint: meta.endpoint,
-    body: meta.body,
+    body: meta.redactedImageData ? redactToolImageData(meta.body, meta.redactedImageData) : meta.body,
   };
   writeFile(folder, `${traceId}_req.json`, payload);
   return traceId;

@@ -7,7 +7,7 @@
  * - ToolCallResult 来自 orchestrator/types
  */
 
-import type { ChatMessage, ToolCall, ToolSpec } from "../vendors/types";
+import type { ChatMessage, ToolCall, ToolResultImage, ToolSpec } from "../vendors/types";
 import type { ToolDefinition } from "../tools/registry/tool-registry";
 import type { CyreneRunTerminalResult } from "../../../shared/run-terminal";
 import type { TodoItem } from "../../../shared/task-session";
@@ -62,6 +62,8 @@ export interface ToolObservation {
   toolOutputRef?: ToolOutputRef;
   /** 面向 UI 的专用呈现数据；由 Harness 白名单事件转发，不混入工具结果正文。 */
   presentation?: { type: "mail_draft_card"; data: Record<string, unknown> };
+  /** 白名单工具返回的图片引用；随工具结果消息交给模型查看，不写入结果正文。 */
+  images?: ToolResultImage[];
   /** 工具活动面板可见的短摘要；敏感工具不得从原始输出推导预览。 */
   activityPreview?: string;
   /** 工具返回的原始输出（未截断前），可能被截断后只保留 preview */

@@ -52,8 +52,10 @@ export async function captionImage(
   image: VisionImage,
   userQuery: string,
   config: VisionConfig,
+  /** 调用方自带完整指令时替换默认框架（例如桌面截图的转述与定位）。 */
+  options?: { instruction?: string },
 ): Promise<string> {
-  const instruction = buildInstruction(userQuery);
+  const instruction = options?.instruction ?? buildInstruction(userQuery);
   // base64 本地数据拼 data URL；公网 URL 原样直传，厂商服务器自行拉图
   const imageUrl = "url" in image ? image.url : "data:" + image.mime + ";base64," + image.base64;
 

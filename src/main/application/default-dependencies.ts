@@ -120,6 +120,7 @@ import { prepareBackgroundSessionMutation, disposeShellCompletionDispatch, hasAc
 import { updateLocaleContext } from "../locale-context";
 import { registerCallIpc } from "../call/call-manager";
 import { initSkills, skillRegistry } from "../skills";
+import { configureToolResultImageDirectory, pruneToolResultImages } from "../orchestrator/tool-result-images";
 import { createSchedulerSubsystem } from "../scheduler/bootstrap";
 import { createChannelsSubsystem } from "../channels/bootstrap";
 import { createLifecyclePublisher } from "../plugin-host/lifecycle-publisher";
@@ -144,6 +145,7 @@ import { revealStartupWindows } from "../startup/startup-window-reveal";
 import { bootstrapMusicService } from "../music/bootstrap";
 import { resolveMusicPaths } from "../music/paths";
 import { initializeScreenshotService } from "../screenshot/screenshot-lifecycle";
+import { initializeComputerUse } from "../computer-use/computer-use-lifecycle";
 import { bootstrapConfigGetters } from "../startup/bootstrap-config";
 import { bootstrapPermission } from "../permission/bootstrap";
 import { registerPopQuizIpc, registerPopQuizTool } from "../orchestrator/pop-quiz";
@@ -401,6 +403,9 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
         const llmClient = createLlmClient();
         const ttsSynthesisService = createTtsSynthesisService();
         clearLegacyStickerEmbeddingCache(app.getPath("userData"));
+        // 工具结果图片只从这个目录读取；上次运行（含异常退出）遗留的自动截图在启动时补删。
+        configureToolResultImageDirectory(path.join(app.getPath("userData"), "computer-use"));
+        void pruneToolResultImages();
         const citaService = createCitaService({ llmClient });
         const socialContextService = createSocialContextService({ llmClient, enqueueLLMTask });
         const proactiveLifecycle = createProactiveLifecycle({
@@ -482,6 +487,18 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
           capturePetWindow: () => shell.windowManager.capturePetWindow(),
           ipc: shell.ipc,
         });
+
+        // Computer use：只注册工具，helper 进程在首次调用时才启动；父进程退出时 helper 自行结束。
+        const computerUse = initializeComputerUse({
+          settings: initialSettings,
+          outputDirectory: path.join(app.getPath("userData"), "computer-use"),
+          getOverlayWindows: () => {
+            const pet = shell.windowManager.getPetWindow();
+            return pet ? [pet] : [];
+          },
+        });
+        // 受控退出时删除本次运行的自动截图；异常退出由下次启动时的清理兜底。
+        shutdown.register({ id: "computer-use", phase: "stopLocalResources", dispose: () => computerUse.shutdown() });
 
         // Cloud Music wiring（MusicService + IPC + Agent 工具）；
         // 后端由首次音乐动作惰性连接，退出清理由中心协调器负责。

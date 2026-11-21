@@ -163,6 +163,8 @@ const sections: {
       "settingsPage.tools.weatherSource",
       "settingsPage.tools.travel",
       "settingsPage.tools.amapKey",
+      "settingsPage.tools.computerUse",
+      "settingsPage.tools.computerUseImageMode",
       "settingsPage.tools.search",
       "settingsPage.tools.searchEnabled",
       "settingsPage.tools.searchSource",

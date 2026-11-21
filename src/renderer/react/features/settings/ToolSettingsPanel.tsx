@@ -17,6 +17,8 @@ interface ToolValues {
   weatherSource: "open-meteo" | "amap";
   amapKey: string;
   travelEnabled: boolean;
+  computerUseEnabled: boolean;
+  computerUseImageMode: "direct" | "relay";
   searchEngine: SearchEngine;
   searchBochaKey: string;
   searchTavilyKey: string;
@@ -25,7 +27,7 @@ interface ToolValues {
 }
 
 const defaults: ToolValues = {
-  weatherEnabled: false, weatherSource: "open-meteo", amapKey: "", travelEnabled: false,
+  weatherEnabled: false, weatherSource: "open-meteo", amapKey: "", travelEnabled: false, computerUseEnabled: false, computerUseImageMode: "direct",
   searchEngine: "off", searchBochaKey: "", searchTavilyKey: "", searchMinimaxKey: "", searchAnySearchKey: "",
 };
 
@@ -146,7 +148,7 @@ export function ToolSettingsPanel({ musicSettingsNavigation = 0 }: { musicSettin
     }
   }
 
-  async function setBoolean(key: "weatherEnabled" | "travelEnabled", checked: boolean) {
+  async function setBoolean(key: "weatherEnabled" | "travelEnabled" | "computerUseEnabled", checked: boolean) {
     await savePatch({ [key]: checked });
   }
 
@@ -222,6 +224,8 @@ export function ToolSettingsPanel({ musicSettingsNavigation = 0 }: { musicSettin
           <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong data-settings-search-id="settingsPage.tools.weatherSource">{t("settingsPage.tools.weatherSource")}</strong></div><SettingsSelect className="cy-settings-tools__select" ariaLabel={t("settingsPage.tools.weatherSource")} value={values.weatherSource} disabled={saving} options={[{ value: "open-meteo", label: t("settingsPage.tools.openMeteo") }, { value: "amap", label: t("settingsPage.tools.amapWeather") }]} onChange={(weatherSource) => void savePatch({ weatherSource })} /></div>
           <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong data-settings-search-id="settingsPage.tools.travel">{t("settingsPage.tools.travel")}</strong><span>{t("settingsPage.tools.travelDescription")}</span></div><SettingsSwitch ariaLabel={t("settingsPage.tools.travel")} checked={values.travelEnabled} disabled={saving} onChange={(checked) => void setBoolean("travelEnabled", checked)} /></div>
           {(values.weatherSource === "amap" || values.travelEnabled) && <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong data-settings-search-id="settingsPage.tools.amapKey">{t("settingsPage.tools.amapKey")}</strong><span>{t("settingsPage.tools.amapKeyDescription")}</span></div><div className="cy-settings-row__control cy-settings-tools__field"><SettingsPasswordInput showLabel={t("settingsPage.asr.showSecret")} hideLabel={t("settingsPage.asr.hideSecret")} value={values.amapKey} onChange={(event) => setValues((current) => ({ ...current, amapKey: event.target.value }))} /><Button disabled={saving} onClick={() => void savePatch({ amapKey: values.amapKey })}>{t("settingsPage.tools.save")}</Button></div></div>}
+          <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong data-settings-search-id="settingsPage.tools.computerUse">{t("settingsPage.tools.computerUse")}</strong><span>{t("settingsPage.tools.computerUseDescription")}</span></div><SettingsSwitch ariaLabel={t("settingsPage.tools.computerUse")} checked={values.computerUseEnabled} disabled={saving} onChange={(checked) => void setBoolean("computerUseEnabled", checked)} /></div>
+          {values.computerUseEnabled && <div className="cy-settings-row"><div className="cy-settings-row__copy"><strong data-settings-search-id="settingsPage.tools.computerUseImageMode">{t("settingsPage.tools.computerUseImageMode")}</strong><span>{t("settingsPage.tools.computerUseImageModeDescription")}</span></div><SettingsSelect className="cy-settings-tools__select" ariaLabel={t("settingsPage.tools.computerUseImageMode")} value={values.computerUseImageMode} disabled={saving} options={[{ value: "direct", label: t("settingsPage.tools.computerUseImageModeDirect") }, { value: "relay", label: t("settingsPage.tools.computerUseImageModeRelay") }]} onChange={(computerUseImageMode) => void savePatch({ computerUseImageMode })} /></div>}
         </Card>
       </section>
 
