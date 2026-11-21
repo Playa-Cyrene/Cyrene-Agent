@@ -147,6 +147,7 @@ describe("createSchedulerRunner lifecycle events", () => {
     const deps = makeRunnerDeps({ waitForTools: () => new Promise<void>(resolve => { release = resolve; }) });
     runnerMocks.getAllTools.mockClear();
     const run = createSchedulerRunner(deps).runScheduledTask(makeTask({ allowedToolIds: ["probe-ping"] }), new Date(), manual);
+    expect(deps.recordHistory).toHaveBeenCalledWith(expect.objectContaining({ status: "running", reason: "waiting for startup dependencies" }));
     expect(runnerMocks.getAllTools).not.toHaveBeenCalled();
     runnerMocks.getAllTools.mockReturnValueOnce([{ id: "probe-ping", enabled: true }, { id: "other", enabled: true }] as never);
     release();
@@ -502,7 +503,7 @@ describe("createSchedulerRunner lifecycle events", () => {
       getChatWebContents: () => ({ isDestroyed: () => false, send } as never),
       recordHistory: vi.fn(() => {
         historyCalls += 1;
-        if (historyCalls > 1) throw new Error("history unavailable");
+        if (historyCalls > 2) throw new Error("history unavailable");
       }),
     });
     const result = await createSchedulerRunner(deps as never).runScheduledTask(makeTask(), new Date(), false);

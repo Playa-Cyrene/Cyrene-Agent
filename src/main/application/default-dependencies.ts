@@ -693,11 +693,15 @@ export async function createRuntimeDependencies(
         registerNewsIpc(ipc);
 
         registerMemoryUserToolIpc({
-          ipc: afterStartup(ipc, (channel) => {
+          ipc: afterStartup(ipc, (channel, payload) => {
             if (channel.startsWith("skill:")) return skillsReady();
             if (channel.startsWith("memory-panel:")) return memoryReady();
             if (channel === IPC.TOOL_GET_CATALOG || channel === IPC.TOOL_GET_ENABLED || channel === IPC.TOOL_SET_ENABLED) return waitForToolCatalog();
-            if (channel === IPC.MCP_ADD_SERVER || channel === IPC.MCP_REMOVE_SERVER || channel === IPC.MCP_LIST_SERVERS) return waitForMcp();
+            if (channel === IPC.MCP_ADD_SERVER || channel === IPC.MCP_REMOVE_SERVER) {
+              const id = channel === IPC.MCP_REMOVE_SERVER ? payload
+                : payload && typeof payload === "object" ? (payload as { id?: unknown }).id : undefined;
+              return waitForMcp(serverId => serverId === id);
+            }
           }),
           windowManager: shell.windowManager,
         });

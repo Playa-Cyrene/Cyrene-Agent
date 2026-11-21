@@ -38,6 +38,7 @@ const handlers = {
 };
 
 interface MountOptions {
+  waitingToSend?: boolean;
   modelBusy?: boolean;
   attachments?: ComposerAttachment[];
   pendingQueue?: Array<{ id: string; content: string; attachmentCount?: number }>;
@@ -60,6 +61,7 @@ async function mountComposer(options: MountOptions = {}) {
       docked: true,
       attachments: options.attachments ?? [],
       modelBusy: options.modelBusy ?? false,
+      waitingToSend: options.waitingToSend ?? false,
       pendingQueue: options.pendingQueue ?? [],
       onChange: setValue,
       onSubmit: handlers.onSubmit,
@@ -197,8 +199,8 @@ describe("ChatComposer 忙闲路由（真实 Sender）", () => {
     expect(handlers.onSubmit).toHaveBeenCalledWith("直接发送");
   });
 
-  it("运行中 Enter 加入待发队列而非提交", async () => {
-    await mountComposer({ modelBusy: true });
+  it.each([true, false])("运行或等待依赖时 Enter 入队（modelBusy=%s）", async (modelBusy) => {
+    await mountComposer({ modelBusy, waitingToSend: !modelBusy });
     input("排队消息");
     pressEnter();
     expect(handlers.onQueueMessage).toHaveBeenCalledWith("排队消息");

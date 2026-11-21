@@ -21,6 +21,29 @@ function fakeAdapter(id: string): ChannelAdapter {
 }
 
 describe("ChannelManager", () => {
+  it("unregister releases bulk startup before a hung adapter resolves", async () => {
+    const manager = new ChannelManager();
+    const port = manager.createPluginPort();
+    const slow = fakeAdapter("slow");
+    const next = fakeAdapter("next");
+    let release!: () => void;
+    slow.start = () => new Promise<void>(resolve => { release = resolve; });
+    slow.stop = vi.fn(async () => {});
+    next.start = vi.fn(async () => {});
+    port.register(slow);
+    manager.register(next);
+    const one = port.startOne(slow.id).catch(() => {});
+    const all = manager.startAll();
+    await Promise.resolve();
+    await port.unregister(slow.id);
+    await all;
+    await one;
+    expect(next.start).toHaveBeenCalledOnce();
+    expect(slow.stop).not.toHaveBeenCalled();
+    release();
+    await vi.waitFor(() => expect(slow.stop).toHaveBeenCalledOnce());
+    await manager.stopAll();
+  });
   it.each([true, false])("shares startup between plugin and background (plugin first=%s)", async (pluginFirst) => {
     const manager = new ChannelManager();
     const port = manager.createPluginPort();

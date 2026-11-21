@@ -73,6 +73,13 @@ export function createSchedulerRunner(deps: RunnerDeps) {
     const historyId = deps.id();
     const startedAt = deps.now();
 
+    // Persist before asynchronous preparation consumes a once schedule.
+    deps.recordHistory({
+      id: historyId, taskId: task.id, taskTitle: task.title,
+      firedAt: startedAt.toISOString(), status: "running",
+      reason: "waiting for startup dependencies", effectiveToolIds: [],
+    });
+
     // Freeze the UI target before any async build work; a later window switch
     // must not redirect this run's canonical facts or presentation events.
     let conversationId: string | null = null;

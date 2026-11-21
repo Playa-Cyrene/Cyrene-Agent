@@ -615,7 +615,7 @@ export function ChatComposer({
       const count = Math.max(filteredSkillSuggestionsRef.current.length, 1);
       setActiveSlashSuggestionIndex((current) => (current + (event.key === "ArrowDown" ? 1 : count - 1)) % count);
     }
-    if (!modelBusy || event.key !== "Enter" || event.shiftKey || event.ctrlKey || event.altKey || event.metaKey) return;
+    if ((!modelBusy && !waitingToSend) || event.key !== "Enter" || event.shiftKey || event.ctrlKey || event.altKey || event.metaKey) return;
     if (composing) return;
     event.preventDefault();
     if (value.trim()) onQueueMessage?.(value);

@@ -32,7 +32,7 @@ export class ChannelManager {
   /** 启动后已开启的 adapter（start 成功的才会调 stop） */
   private startedAdapters = new Set<ChannelId>();
   private stopGeneration = 0;
-  private startingAdapters = new Map<ChannelAdapter, { promise: Promise<void>; cancelled: boolean }>();
+  private startingAdapters = new Map<ChannelAdapter, { promise: Promise<void>; cancelled: boolean; cancel: () => void; settled: Promise<void> }>();
 
   has(id: ChannelId): boolean {
     return this.adapters.has(id);
@@ -109,7 +109,7 @@ export class ChannelManager {
     const adapter = this.adapters.get(id);
     if (!adapter) return false;
     const starting = this.startingAdapters.get(adapter);
-    if (starting) starting.cancelled = true;
+    if (starting) { starting.cancelled = true; starting.cancel(); }
     setAdapterHandler(adapter, null);
     this.adapters.delete(id);
     this.owners.delete(id);
@@ -141,12 +141,14 @@ export class ChannelManager {
     if (pending) {
       if (!pending.cancelled) return pending.promise;
       // 显式重启等待旧启动完成清理，再重新启动同一实例。
-      await pending.promise.catch(() => undefined);
+      await pending.settled.catch(() => undefined);
       return this.startAdapter(id, adapter);
     }
     if (this.adapters.get(id) !== adapter || this.startedAdapters.has(id)) return;
-    const entry = { promise: Promise.resolve(), cancelled: false };
-    entry.promise = Promise.resolve().then(async () => {
+    let cancel!: () => void;
+    const cancelled = new Promise<void>((_, reject) => { cancel = () => reject(new Error(`channel startup cancelled: ${id}`)); });
+    const entry = { promise: Promise.resolve(), settled: Promise.resolve(), cancelled: false, cancel };
+    entry.settled = Promise.resolve().then(async () => {
       if (entry.cancelled) throw new Error(`channel startup cancelled: ${id}`);
       if (this.dispatchFn) setAdapterHandler(adapter, this.makeAdapterHandler(id, adapter));
       try {
@@ -160,6 +162,7 @@ export class ChannelManager {
       this.startedAdapters.add(id);
       logger.info(LogTag.Channels, `started: ${id} (${adapter.displayName})`);
     }).finally(() => { this.startingAdapters.delete(adapter); });
+    entry.promise = Promise.race([entry.settled, cancelled]);
     this.startingAdapters.set(adapter, entry);
     return entry.promise;
   }
@@ -169,6 +172,7 @@ export class ChannelManager {
     this.stopGeneration++;
     for (const [adapter, entry] of this.startingAdapters) {
       entry.cancelled = true;
+      entry.cancel();
       setAdapterHandler(adapter, null);
     }
     const started = [...this.startedAdapters];
