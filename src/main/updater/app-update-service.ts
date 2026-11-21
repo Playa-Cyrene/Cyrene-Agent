@@ -41,6 +41,7 @@ export function createAppUpdateService(options: CreateAppUpdateServiceOptions): 
   let state: AppUpdateState = { phase: "idle", currentVersion };
   let checkPromise: Promise<unknown> | null = null;
   let downloadPromise: Promise<unknown> | null = null;
+  let installRequested = false;
   const listeners = new Set<(state: AppUpdateState) => void>();
 
   updater.autoDownload = false;
@@ -60,13 +61,19 @@ export function createAppUpdateService(options: CreateAppUpdateServiceOptions): 
     for (const listener of listeners) listener({ ...state });
   };
 
-  updater.on("checking-for-update", () => publish({ phase: "checking" }));
-  updater.on("update-available", (info) => publish({
+  const hasDownload = () => Boolean(downloadPromise) || state.phase === "downloading" || state.phase === "downloaded";
+  // 周期检查和迟到的检查事件都不能撤销正在下载或已经可安装的版本。
+  const publishCheck = (patch: Partial<AppUpdateState> & Pick<AppUpdateState, "phase">): void => {
+    if (!hasDownload()) publish(patch);
+  };
+
+  updater.on("checking-for-update", () => publishCheck({ phase: "checking" }));
+  updater.on("update-available", (info) => publishCheck({
     phase: "available",
     availableVersion: typeof info?.version === "string" ? info.version : undefined,
     releaseNotesHtml: normalizeReleaseNotes(info?.releaseNotes),
   }));
-  updater.on("update-not-available", () => publish({ phase: "not_available" }));
+  updater.on("update-not-available", () => publishCheck({ phase: "not_available" }));
   updater.on("download-progress", (progress) => publish({
     phase: "downloading",
     percent: finiteNumber(progress?.percent),
@@ -81,14 +88,17 @@ export function createAppUpdateService(options: CreateAppUpdateServiceOptions): 
     percent: 100,
   }));
   // 错误只带错误码，用户可读文案由渲染层按码翻译；下载中报错按下载失败归档
-  updater.on("error", () => publish({
-    phase: "error",
-    error: downloadPromise ? "download_failed" : "check_failed",
-  }));
+  updater.on("error", () => {
+    // 安装器启动也会派发 error；请求安装后不能再当作迟到的检查错误忽略。
+    if (state.phase === "downloaded" && !installRequested) return;
+    const downloading = Boolean(downloadPromise) || state.phase === "downloading";
+    publish({ phase: "error", error: downloading ? "download_failed" : "check_failed" });
+  });
 
   return {
     getState: () => ({ ...state }),
     async check() {
+      if (hasDownload()) return { ...state };
       if (!isPackaged) {
         publish({ phase: "not_available" });
         return { ...state };
@@ -96,7 +106,7 @@ export function createAppUpdateService(options: CreateAppUpdateServiceOptions): 
       if (!checkPromise) {
         publish({ phase: "checking" });
         checkPromise = updater.checkForUpdates().catch(() => {
-          publish({ phase: "error", error: "check_failed" });
+          publishCheck({ phase: "error", error: "check_failed" });
         }).finally(() => {
           checkPromise = null;
         });
@@ -106,10 +116,13 @@ export function createAppUpdateService(options: CreateAppUpdateServiceOptions): 
     },
     async download() {
       if (!isPackaged) return { ...state };
+      // updater 的 error 事件不带操作标识，检查先结束再下载，避免错误归因交叉。
+      if (checkPromise) await checkPromise;
       if (!downloadPromise && state.phase !== "downloaded") {
+        installRequested = false;
         publish({ phase: "downloading", percent: state.percent ?? 0 });
         downloadPromise = updater.downloadUpdate().catch(() => {
-          publish({ phase: "error", error: "download_failed" });
+          if (state.phase !== "downloaded") publish({ phase: "error", error: "download_failed" });
         }).finally(() => {
           downloadPromise = null;
         });
@@ -125,6 +138,7 @@ export function createAppUpdateService(options: CreateAppUpdateServiceOptions): 
       // 静默安装：跳过 NSIS 完整向导，不再让用户选"为所有人/仅为我"，
       // 避免 perMachine 切换导致安装目录漂移（旧目录被卸载器清空、新目录落到 C 盘）。
       // 升级时安装目录里的用户内容由 NSIS 脚本（installer.nsh）暂存保护。
+      installRequested = true;
       updater.quitAndInstall(true, true);
       return true;
     },
