@@ -10,6 +10,7 @@ import { requiresUserInteraction } from "./interactive-tools";
  */
 
 import type { ToolCall } from "../vendors/types";
+import { parseToolResultImages } from "../tool-result-images";
 import type { ToolDefinition } from "../tools/registry/tool-registry";
 import type { ToolCallResult } from "../types";
 import type { AgentState, HarnessEvent, SideEffectKind, TodoItem, ToolObservation, ToolPermissionResult } from "./types";
@@ -381,6 +382,8 @@ export async function dispatchToolCall(
   }
 
   const presentation = parseMailDraftPresentation(call.name, args, result.output);
+  // 失败结果不带图：错误文本里出现的引用不应被当成工具真实产出的图片。
+  const images = result.status === "succeeded" ? parseToolResultImages(tool, result.output) : undefined;
   const observation: ToolDispatchResult = {
     outcome,
     category: result.category,
@@ -400,6 +403,7 @@ export async function dispatchToolCall(
         : "邮件操作未成功",
     } : {}),
     ...(presentation ? { presentation } : {}),
+    ...(images ? { images } : {}),
     rawResult: result,
   };
   const persisted = ctx.deferOutputPersistence

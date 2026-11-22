@@ -18,6 +18,7 @@
 import type { ChatMessage, ToolCall } from "../vendors/types";
 import type { ToolCallResult } from "../types";
 import { TranscriptWriteError } from "../transcript-sink";
+import { isToolResultImage } from "../tool-result-images";
 import type { HarnessToolFinishedEvent, SideEffectKind, ToolCallOutcome, ToolObservation } from "./types";
 import type { ToolRiskLevel } from "../../permission-policy";
 import { parseToolCallArgs, toolCallFingerprint } from "./types";
@@ -437,10 +438,16 @@ function toolResultMessage(
   }
   delete modelObservation.rawResult;
   delete modelObservation.toolOutputRef;
+  // 图片引用走独立字段：留在正文 JSON 里只会被当成文字发送，模型看不到图。
+  const images = Array.isArray(modelObservation.images)
+    ? modelObservation.images.filter(isToolResultImage)
+    : [];
+  delete modelObservation.images;
   return {
     role: "tool",
     toolCallId: call.id,
     name: call.name,
     content: JSON.stringify(modelObservation),
+    ...(images.length > 0 ? { toolImages: images } : {}),
   };
 }
