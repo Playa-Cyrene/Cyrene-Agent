@@ -18,7 +18,7 @@ vi.mock("../orchestrator/mcp-manager", () => ({
   addMcpServer: vi.fn(), listMcpServers: () => [], removeMcpServer: vi.fn(),
 }));
 vi.mock("../app-icon", () => ({ getAppIconPath: vi.fn() }));
-vi.mock("../orchestrator/tools/registry/tool-registration", () => ({ syncBuiltInToolToggles: vi.fn() }));
+vi.mock("../orchestrator/tools/registry/tool-toggles", () => ({ syncBuiltInToolToggles: vi.fn() }));
 vi.mock("./model-settings", () => ({ loadModelSettings: vi.fn(), getPublicModelConfig: vi.fn() }));
 vi.mock("./launch-at-login", () => ({ syncLaunchAtLogin: vi.fn() }));
 

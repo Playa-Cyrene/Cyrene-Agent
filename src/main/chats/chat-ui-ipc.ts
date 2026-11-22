@@ -1,3 +1,4 @@
+import { registerChatWindowIpc } from "./chat-window-ipc";
 import { app, BrowserWindow, clipboard, dialog } from "electron";
 import { stat, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -23,7 +24,7 @@ import { describePendingAttachment } from "../rag/file-ingest";
 import { captionImageSafe, buildImageCaptionPrompt, validateCaptionImagePath } from "../chat/image-caption";
 import { resolveCaptionVisionConfig, resolveImageRoute } from "../orchestrator/image-router";
 import type { WindowManager } from "../windows/window-manager";
-import { reactChatSession, reactChatWindow } from "../windows/window-state";
+import { reactChatWindow } from "../windows/window-state";
 import {
   activeChatTargetRegistry,
   parseActiveTargetPayload,
@@ -33,6 +34,8 @@ import { flushSummaryMemory } from "../memory/summary-memory-scheduler";
 import { createGeneratedImageStore } from "./generated-image-store";
 
 export interface ChatUiIpcDependencies {
+  windowIpcRegistered?: boolean;
+  onChatReady?(): void;
   live2dWindowLifecycle: { getDiagnostics(): unknown };
   get windowManager(): WindowManager | null;
   /** 传入共享 scope 以便退出时统一注销；缺省时使用独立 scope。 */
@@ -63,27 +66,7 @@ export function registerChatUiIpc(deps: ChatUiIpcDependencies): void {
     window: live2dWindowLifecycle.getDiagnostics(),
   }));
 
-  ipc.on(IPC.CHAT_MINIMIZE, (event) => {
-    BrowserWindow.fromWebContents(event.sender)?.minimize();
-  });
-
-  ipc.on(IPC.CHAT_CLOSE, (event) => {
-    BrowserWindow.fromWebContents(event.sender)?.close();
-  });
-
-  ipc.on(IPC.CHAT_TOGGLE_MAXIMIZE, (event) => {
-    const senderWindow = BrowserWindow.fromWebContents(event.sender);
-    if (!senderWindow) return;
-    if (senderWindow.isMaximized()) {
-      senderWindow.unmaximize();
-    } else {
-      senderWindow.maximize();
-    }
-  });
-
-  ipc.handle(IPC.CHAT_IS_MAXIMIZED, (event) => {
-    return BrowserWindow.fromWebContents(event.sender)?.isMaximized() ?? false;
-  });
+  if (!deps.windowIpcRegistered) registerChatWindowIpc(ipc, deps.onChatReady);
 
   ipc.handle(IPC.CHAT_GET_REASONING_STATE, async (_event, payload?: { sessionId?: unknown; modelProfileId?: unknown }) => {
     const baseSettings = loadModelSettings();
@@ -296,17 +279,6 @@ export function registerChatUiIpc(deps: ChatUiIpcDependencies): void {
     if (typeof sessionId !== "string" || sessionId.trim().length === 0) return false;
     void deps.windowManager?.openReactChatWindow(sessionId);
     return true;
-  });
-
-  // reactChatWindow → main：声明 ChatPage 已挂好 IPC 监听
-  ipc.on(IPC.CHATS_REACT_READY, (event) => {
-    const win = reactChatWindow;
-    if (!win || win.isDestroyed()) return;
-    if (event.sender !== win.webContents) return;
-    const pending = reactChatSession.markReady();
-    if (pending) {
-      win.webContents.send(IPC.CHATS_REACT_SWITCH_SESSION, pending);
-    }
   });
 
   // 聊天窗口启动/切换会话时上报当前活跃目标（会话 + 模式 + 渲染目标标识）；

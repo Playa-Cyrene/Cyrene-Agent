@@ -1,4 +1,5 @@
-import { contextBridge, ipcRenderer, webUtils } from "electron";
+import { startupIpc as ipcRenderer } from "./startup-ipc";
+import { contextBridge, webUtils } from "electron";
 import { IPC } from "../shared/ipc-channels";
 import type { ContextCompactionPhaseEvent } from "../shared/context-usage";
 import type { QqListenAuthRequirement } from "../shared/qq-listen";
@@ -12,7 +13,7 @@ import type {
 import type { UiTheme } from "../shared/ui-theme";
 import type { PluginPanelApi } from "../shared/plugin-management";
 import type { ReasoningPreference } from "../shared/reasoning";
-import type { AguiRunAck } from "../shared/run-terminal";
+import type { AguiCancelTarget, AguiRunAck } from "../shared/run-terminal";
 import type { ReviewSnapshot, ReviewRestoreOutcome } from "../shared/review-types";
 import type { WorkspaceListResult, WorkspaceReadResult } from "../shared/workspace-files-types";
 import type { OpenInAppListResult, OpenInAppOpenResult } from "../shared/open-in-app-types";
@@ -194,7 +195,7 @@ const aguiApi = {
     ipcRenderer.on(IPC.AGUI_EVENT, listener);
     return () => ipcRenderer.off(IPC.AGUI_EVENT, listener);
   },
-  cancel: (runId?: string) => ipcRenderer.invoke(IPC.AGUI_CANCEL, runId),
+  cancel: (target?: AguiCancelTarget) => ipcRenderer.invoke(IPC.AGUI_CANCEL, target),
   // 落盘确认（单向通知）：本轮 run 的终态消息已写入会话存储，
   // 主进程据此发布桌面轮次结束事件（插件生命周期观察）。
   reportRunPersisted: (payload: { runId: string; finalMessageId?: string }) => {

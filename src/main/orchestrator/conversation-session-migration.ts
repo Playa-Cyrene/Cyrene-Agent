@@ -49,9 +49,9 @@ export class ConversationSessionMigration {
     return { session: { ...session, messageCount: page.messageCount }, messages, hasMore: page.hasMore, nextBefore: page.nextBefore };
   }
   reconcilePendingDispatch(id: string): Promise<boolean> { return chatsStore.reconcilePendingDispatch(id); }
-  async claimPendingMessage(id: string): Promise<chatsStore.ClaimPendingResult> {
+  async claimPendingMessage(id: string, expectedHead?: string): Promise<chatsStore.ClaimPendingResult> {
     await this.ensureConversationMigrated(id);
-    const claimed = await chatsStore.claimPendingMessage(id);
+    const claimed = await chatsStore.claimPendingMessage(id, expectedHead);
     if (!claimed.ok || !claimed.claimed)
       return claimed;
     const session = await this.loadComposedSession(id);

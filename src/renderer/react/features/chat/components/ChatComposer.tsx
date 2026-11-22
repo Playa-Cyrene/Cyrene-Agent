@@ -31,6 +31,7 @@ import { FileIcon, hasFileIconMapping } from "./file-icon";
 import { vscodeIconForFile } from "./vscodeFileIcon";
 
 interface ChatComposerProps {
+  restoringSession?: boolean;
   value: string;
   mode: string;
   docked: boolean;
@@ -42,6 +43,7 @@ interface ChatComposerProps {
   attachments: ComposerAttachment[];
   attachmentBusy?: boolean;
   modelBusy?: boolean;
+  waitingToSend?: boolean;
   /** 压缩状态机回调：透传给 ContextUsageRing，让消息流渲染「正在触发压缩」占位条。 */
   onCompactPhaseChange?: (phase: "idle" | "running" | "done" | "error") => void;
   pendingQueue?: PendingQueueDockItem[];
@@ -293,6 +295,7 @@ function WorkspaceFolderButton({
 }
 
 export function ChatComposer({
+  restoringSession = false,
   value,
   mode,
   docked,
@@ -302,6 +305,7 @@ export function ChatComposer({
   attachments,
   attachmentBusy = false,
   modelBusy = false,
+  waitingToSend = false,
   onCompactPhaseChange,
   pendingQueue = [],
   onChange,
@@ -611,7 +615,7 @@ export function ChatComposer({
       const count = Math.max(filteredSkillSuggestionsRef.current.length, 1);
       setActiveSlashSuggestionIndex((current) => (current + (event.key === "ArrowDown" ? 1 : count - 1)) % count);
     }
-    if (!modelBusy || event.key !== "Enter" || event.shiftKey || event.ctrlKey || event.altKey || event.metaKey) return;
+    if ((!modelBusy && !waitingToSend) || event.key !== "Enter" || event.shiftKey || event.ctrlKey || event.altKey || event.metaKey) return;
     if (composing) return;
     event.preventDefault();
     if (value.trim()) onQueueMessage?.(value);
@@ -733,8 +737,8 @@ export function ChatComposer({
         value={value}
         placeholder={modelBusy ? t("composer.placeholderBusy") : placeholder}
         // 忙态使用 Sender 自带的停止按钮；Enter 入队由 onKeyDown 在内建提交前处理。
-        loading={modelBusy}
-        disabled={!modelBusy && requiresWorkspace && !workspaceName}
+        loading={modelBusy || waitingToSend}
+        disabled={restoringSession || (!modelBusy && requiresWorkspace && !workspaceName)}
         autoSize={{ minRows: 3, maxRows: 7 }}
         onChange={handleComposerValueChange}
         onCancel={onCancel}
@@ -745,7 +749,7 @@ export function ChatComposer({
           if (!submitValue.trim()) return;
           onSubmit(submitValue);
         }}
-        suffix={(actionNode, { components }) => modelBusy ? (
+        suffix={(actionNode, { components }) => modelBusy || waitingToSend ? (
           <components.LoadingButton
             title={t("composer.stopRun")}
             aria-label={t("composer.stopRun")}

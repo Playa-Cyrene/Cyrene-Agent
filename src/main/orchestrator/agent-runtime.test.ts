@@ -41,6 +41,8 @@ function createDeps(
   publishPluginHostEvent: AgentRuntimeDeps["publishPluginHostEvent"],
 ): AgentRuntimeDeps {
   return {
+    waitForPromptSkills: async () => {},
+    waitForStartup: vi.fn(async () => {}),
     runtimeStateService: {
       getState: () => ({ status: "idle", expression: 0, updatedAt: 0 }),
     },
@@ -298,6 +300,8 @@ function modelSettingsFixture() {
 /** 覆盖装配链路的完整依赖桩：所有外部依赖都是可控的 vi.fn。 */
 function createFullDeps(overrides?: Partial<AgentRuntimeDeps>): AgentRuntimeDeps {
   return {
+    waitForPromptSkills: async () => {},
+    waitForStartup: vi.fn(async () => {}),
     runtimeStateService: {
       getState: () => ({ status: "idle", expression: 0, updatedAt: 0 }),
       smoothFeeling: vi.fn(),

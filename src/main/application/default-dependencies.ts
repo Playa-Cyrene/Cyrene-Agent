@@ -1,37 +1,31 @@
+import { afterStartup } from "./ipc-scope";
+import { setImmediate as yieldToEventLoop } from "node:timers/promises";
+import type { registerChatSurfaceIpc } from "../chats/chat-surface-ipc";
 import { disposeAllShellJobs } from "../orchestrator/tools/builtin-tools/shell-job-manager";
-import { closeConversationDatabases } from "../storage/conversation-database-client";
 /**
  * 默认应用依赖装配（真正的组合根胶水层）：
  * 持有全部业务子系统的导入与工厂闭包，把它们按窄依赖喂给各启动阶段。
- * 只有 index.ts 引用本模块；application.ts 与各 bootstrap 模块不感知具体实现。
+ * 首屏恢复后由 startup-dependencies 加载本模块。
  *
  * 本文件内的闭包只做构造与委托；任何长期任务都必须由对应启动阶段显式启动。
  */
 
-import { app, BrowserWindow, dialog, screen, session } from "electron";
+import { app, BrowserWindow, screen, session } from "electron";
 import http from "node:http";
 import * as fs from "fs";
 import * as path from "path";
 import { autoUpdater } from "electron-updater";
 
-import { ensureGpuSandboxAcl } from "../gpu-sandbox-acl";
 import { getExternalContentPaths } from "../external-content-paths";
 import { migrateStagedExternalContent } from "../external-content-migration";
 import { logger, LogTag } from "../logger";
-import { renderBanner } from "../../shared/banner";
 import { IPC } from "../../shared/ipc-channels";
-import { isDev } from "../env";
 import {
   loadGeneralSettings,
   saveGeneralSettings,
   onGeneralSettingsChanged,
 } from "../settings/settings-facade";
-import {
-  getCurrentAppIconPath,
-  markStartupPhaseReady,
-  reactChatWindow,
-  setGetCurrentAppIconPath,
-} from "../windows/window-state";
+import { markStartupPhaseReady, reactChatWindow } from "../windows/window-state";
 import { loadModelSettings, saveModelSettings } from "../settings/model-settings";
 import { getConversationTranscriptStore } from "../orchestrator/conversation-transcript-store";
 import { getHarnessRunStore } from "../orchestrator/harness/run-store";
@@ -73,7 +67,6 @@ import { clearLegacyStickerEmbeddingCache, loadStickerTextIndex } from "../stick
 import { toolRegistry } from "../orchestrator/tools/registry/tool-registry";
 import { pluginPromptRegistry } from "../../plugins/prompts";
 import type { PluginManager } from "../../plugins/manager";
-import { registerAllTools } from "../orchestrator/tools/registry/tool-registration";
 import { LspManager } from "../lsp/manager";
 import { initSandbox } from "../orchestrator/sandbox/sandbox-exec";
 import {
@@ -87,16 +80,11 @@ import {
   restorePlanSession,
   type PlanStateSnapshot,
 } from "../orchestrator/plan-mode";
-import { initMcpManager, pruneMcpServersByIds } from "../orchestrator/mcp-manager";
-import { syncPlaywrightMcp, syncFilesystemMcp, REMOVED_BUILTIN_MCP_IDS } from "../sync-mcp-builtin";
+import { restoreMcpServer, listMcpServerConfigs, pruneMcpServersByIds } from "../orchestrator/mcp-manager";
+import { syncPlaywrightMcp, syncFilesystemMcp, PLAYWRIGHT_MCP_ID, FILESYSTEM_MCP_ID, REMOVED_BUILTIN_MCP_IDS } from "../sync-mcp-builtin";
 import { registerAppUpdateIpc } from "../updater/app-update-ipc";
 import { createGitHubAppUpdateService, scheduleStartupUpdateCheck } from "../updater/github-app-updater";
-import { registerWindowSystemIpc } from "../windows/window-system-ipc";
 import { enqueueLLMTask } from "../llm-queue";
-import {
-  registerPrivilegedSchemes,
-  registerProtocolHandlers,
-} from "../protocols/bootstrap";
 import { memoryStore } from "../memory/memory-store";
 import { backupMemoryRagFiles, reconcileMemoryRag } from "../memory/memory-rag-reconciliation";
 import { initReranker, resetReranker } from "../rag/reranker";
@@ -111,12 +99,9 @@ import { createToastService } from "../toast/toast-service";
 import { toastEvents } from "../toast/toast-events";
 import { createToastWindowShell } from "../windows/create-toast-window";
 import * as chatsStore from "../chats/chats-store";
-import { flush as flushTokenUsage } from "../token-usage-store";
 import { TtsSessionService } from "../tts/tts-session-service";
 import { registerTtsIpc } from "../tts/tts-ipc";
 import { loadUserProfile } from "../settings-store";
-import { getAppIconPath } from "../app-icon";
-import { prepareBackgroundSessionMutation, disposeShellCompletionDispatch, hasActiveConversationRun, registerAgUiIpc } from "../agui-bridge";
 import { updateLocaleContext } from "../locale-context";
 import { registerCallIpc } from "../call/call-manager";
 import { initSkills, skillRegistry } from "../skills";
@@ -124,7 +109,7 @@ import { createSchedulerSubsystem } from "../scheduler/bootstrap";
 import { createChannelsSubsystem } from "../channels/bootstrap";
 import { createLifecyclePublisher } from "../plugin-host/lifecycle-publisher";
 import { createPendingTurnLifecycle } from "../plugin-host/pending-turn-lifecycle";
-import { startPluginRuntime } from "../plugin-runtime";
+import { createPluginRuntime } from "../plugin-runtime";
 import { createAgentRuntime } from "../orchestrator/agent-runtime";
 import { reconcileCrashedInterruptions } from "../orchestrator/conversation-interruption-reconciliation";
 import { createRuntimeStateService } from "../orchestrator/runtime-state-service";
@@ -135,12 +120,6 @@ import { createSocialContextService } from "../services/social-context/social-co
 import { createGitService } from "../code-git/git-service";
 import { resolveGitExecutable, type ResolvedGitExecutable } from "../code-git/git-executable";
 import { registerCodeGitIpc } from "../code-git/code-git-ipc";
-import { installSingleInstanceGuard } from "../single-instance";
-import { migrateLegacyUserData } from "../user-data-migration";
-import { createWindowManager } from "../windows/window-manager";
-import { createTray } from "../tray";
-import { createSplashWindow } from "../startup/create-splash-window";
-import { revealStartupWindows } from "../startup/startup-window-reveal";
 import { bootstrapMusicService } from "../music/bootstrap";
 import { resolveMusicPaths } from "../music/paths";
 import { initializeScreenshotService } from "../screenshot/screenshot-lifecycle";
@@ -157,22 +136,14 @@ import { GmailService } from "../email/gmail-service";
 import { registerGmailIpc } from "../email/gmail-ipc";
 import { MailAttachmentStore } from "../email/mail-attachment-store";
 
-import { createIpcScope } from "./ipc-scope";
-import { createShutdownCoordinator } from "./shutdown";
-import { createStartupReadiness } from "./readiness";
-import { createWindowActivationBroker } from "./window-activation";
-import { prepareBeforeReady } from "./pre-ready";
-import { startShell } from "./shell-bootstrap";
 import { configureNodeRequestProxy } from "../network/node-request-proxy";
 import { startCore } from "./core-bootstrap";
-import { startBackground } from "./background";
+import { createSharedStartupTasks, startBackground } from "./background";
 import { installUpdateShutdownFallback, type UpdateLifecycleLike } from "./electron-lifecycle";
+import type { ConversationMode } from "../../shared/chat-types";
+import { shouldExposeSearchTool } from "../orchestrator/search-backend-filter";
+import { waitForStartupTask, checkStartupActive } from "./startup-cancellation";
 import type { ApplicationDependencies } from "./application";
-
-/** Loading 最短展示时长（ms）：从实际 show() 时刻起算。 */
-const SPLASH_MIN_MS = 2500;
-/** 受控退出总超时（ms）：超时后中止信号并记录未完成资源。 */
-const SHUTDOWN_TIMEOUT_MS = 10_000;
 
 function broadcastToAuxWindows(channel: string, payload: unknown): void {
   const win = reactChatWindow;
@@ -194,7 +165,7 @@ function configureProxyForNodeRequests(): Promise<void> {
   });
 }
 
-async function reconcileUserMemoryIndex(): Promise<void> {
+async function reconcileUserMemoryIndex(signal?: AbortSignal): Promise<void> {
   if (!isMemoryEnabled()) return;
   if (!isUserMemoryVectorStoreReady()) {
     console.warn("[Memory/RAG] reconciliation skipped: vector store is not writable");
@@ -204,12 +175,12 @@ async function reconcileUserMemoryIndex(): Promise<void> {
     getMemories: () => memoryStore.getAllL2(),
     getVectors: () => getEntriesBySource("user_memory"),
     backup: async () => backupMemoryRagFiles(app.getPath("userData")),
-    addVector: addL2MemoryVector,
+    addVector: (text, id, metadata) => addL2MemoryVector(text, id, metadata, signal),
     markSynced: (l2Id, ragId) => memoryStore.markL2SyncStatus(l2Id, "synced", ragId),
     markSyncFailed: (l2Id, error) => memoryStore.markL2SyncStatus(l2Id, "sync_failed", undefined, error),
     deleteVectors: (ids) => deleteUserMemoryVectors(ids),
     warn: (message, error) => console.warn(`[Memory/RAG] ${message}:`, error),
-  });
+  }, signal);
   logger.info(LogTag.RAG, "reconciliation:", report);
 }
 
@@ -271,7 +242,14 @@ function recoverInterruptedPlanSessions(plansRoot: string): void {
   }
 }
 
-export function createDefaultApplicationDependencies(): ApplicationDependencies {
+export async function createRuntimeDependencies(
+  { readiness, activation, shutdown }: Pick<ApplicationDependencies, "readiness" | "activation" | "shutdown">,
+  surface: ReturnType<typeof registerChatSurfaceIpc>,
+): Promise<Pick<ApplicationDependencies, "startCore" | "startBackground">> {
+  await yieldToEventLoop();
+  checkStartupActive(shutdown);
+  const { disposeShellCompletionDispatch, hasActiveConversationRun, prepareBackgroundSessionMutation, registerAgUiIpc }: typeof import("../agui-bridge") =
+    require("../agui-bridge");
   // Agent Runtime 早于插件管理器构造；通过窄闭包在运行期转发宿主事件，避免反转启动顺序。
   let pluginManager: PluginManager | undefined;
   // 自动压缩与 CHATS_COMPACT 必须共享同一个会话级压缩器，避免两条路径各自组装 provider。
@@ -299,88 +277,136 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
   app.on("will-quit", () => {
     pendingTurnLifecycle.disposeAll();
   });
-  const readiness = createStartupReadiness();
-  const activation = createWindowActivationBroker();
-  const shutdown = createShutdownCoordinator({ readiness, timeoutMs: SHUTDOWN_TIMEOUT_MS });
   shutdown.register({ id: "shell-completion-dispatch", phase: "quiesce", dispose: disposeShellCompletionDispatch });
   shutdown.register({ id: "shell-jobs", phase: "stopLocalResources", dispose: disposeAllShellJobs });
-  shutdown.register({ id: "conversation-database", phase: "closePersistence", dispose: closeConversationDatabases });
 
-  // 注入应用图标路径 getter（窗口工厂统一读取，避免循环依赖）。
-  // 必须在 shell 阶段之前注入：聊天窗口壳与托盘在 shell 阶段创建时就会读取，
-  // 若等到 core 阶段再注入，托盘会拿到空路径而显示 Electron 默认图标。
-  // getter 为惰性求值，此处注册不触发磁盘读取。
-  setGetCurrentAppIconPath(() => getAppIconPath(loadGeneralSettings().uiIcon));
+  const startupTask = createSharedStartupTasks(shutdown, readiness);
+  const skillsReady = startupTask("skills", initSkills);
+  const sandboxReady = startupTask("sandbox", () => initSandbox());
+  const memoryReady = startupTask("rag", async (signal) => {
+    const modelSettings = loadModelSettings();
+    const knowledgeBase = initializeKnowledgeBase(app.getPath("userData"));
+    setMemoryMode(modelSettings.memoryMode);
+    initializeSummaryMemoryScheduler({
+      userDataRoot: app.getPath("userData"),
+      sessions: chatsStore,
+      onError: (conversationId, error) => logger.warn(LogTag.RAG, "summary memory update failed:", conversationId, error),
+    });
+    enableSummaryMemoryScheduler(isSummaryMemoryEnabled());
+    const wikiMigration = createConversationSessionMigration(app.getPath("userData"));
+    initializeWikiMemoryScheduler({
+      userDataRoot: app.getPath("userData"),
+      sourceReader: createWikiChatSourceReader({
+        transcriptStore: getConversationTranscriptStore(app.getPath("userData")),
+        listSessions: chatsStore.listSessions,
+        ensureConversationMigrated: (id) => wikiMigration.ensureConversationMigrated(id),
+      }),
+      onError: (conversationId, error) => logger.warn(LogTag.RAG, "wiki memory update failed:", conversationId, error),
+    });
+    // 注册 RAG 落盘：受控退出在 flushPersistence 阶段刷盘；
+    // Windows 会话结束（断电/强制关机）走同步紧急落盘兜底
+    shutdown.register({
+      id: "rag-store",
+      phase: "flushPersistence",
+      dispose: async () => { await flushRAGStore(); },
+    });
+    shutdown.registerEmergencyFlush("rag-store", () => flushRAGStoreSync());
+    shutdown.register({
+      id: "summary-memory",
+      phase: "flushPersistence",
+      dispose: async () => { await flushAllSummaryMemory(); },
+    });
+    shutdown.register({
+      id: "wiki-memory",
+      phase: "flushPersistence",
+      dispose: async () => { await enableWikiMemoryScheduler(false); },
+    });
+    shutdown.register({
+      id: "knowledge-base",
+      phase: "flushPersistence",
+      dispose: async () => { await knowledgeBase.close(); },
+    });
+    await enableWikiMemoryScheduler(modelSettings.memoryMode === "wiki");
+    signal.throwIfAborted();
+    await initWorldbook();
+    signal.throwIfAborted();
+    if (isMemoryEnabled()) {
+      await initVectorMemory("auto", undefined, undefined, modelSettings.embeddingModel, modelSettings.embeddingDimensions);
+      if (signal.aborted) await disposeVectorMemory();
+    } else {
+      logger.info(LogTag.RAG, "vector memory disabled by settings");
+    }
+    signal.throwIfAborted();
+    logger.info(LogTag.RAG, "RAG initialized OK");
+  });
+  const vectorReady = startupTask("vector-memory", async (signal) => {
+    await memoryReady();
+    if (!isMemoryEnabled() || shutdown.isStopping()) return;
+    try {
+      await reconcileUserMemoryIndex(signal);
+    } finally {
+      if (!signal.aborted && isMemoryEnabled()) {
+        await initReranker(loadModelSettings().rerankerMode);
+        if (signal.aborted) resetReranker();
+      }
+    }
+  });
+  let momentsReady: Promise<void> = Promise.resolve();
+  let pluginsReady: Promise<void> = Promise.resolve();
+  const mcpTasks = new Map<string, Promise<void>>();
+  let announceServers!: () => void;
+  const serversDiscovered = new Promise<void>((resolve) => { announceServers = resolve; });
+
+  async function waitForMcp(select: (id: string) => boolean = () => true): Promise<void> {
+    await serversDiscovered;
+    await Promise.all([...mcpTasks].filter(([id]) => select(id)).map(([, task]) => task));
+    checkStartupActive(shutdown);
+  }
+
+  const waitForToolCatalog = () => Promise.all([
+    skillsReady(), waitForMcp(), pluginManager!.waitForStartupTools(() => true),
+  ]);
+
+  async function waitForConversation(mode: ConversationMode, toolIds?: readonly string[] | "all", signal?: AbortSignal): Promise<void> {
+    checkStartupActive(shutdown);
+    await readiness.waitFor("core-ready", signal);
+    const settings = loadGeneralSettings();
+    const chatTools = Object.entries(settings.toolModeOverrides)
+      .filter(([id, overrides]) => settings.chatToolsEnabled && overrides.chat && shouldExposeSearchTool(id, settings.searchEngine))
+      .map(([id]) => id);
+    // 调度任务按冻结的工具名单启动；插件无头运行只执行自己传入的回调。
+    const selected = toolIds ?? (mode === "chat" ? chatTools : "all");
+    const uses = (id: string) => selected === "all" || selected.includes(id);
+    const usesPrefix = (prefix: string) => selected === "all" || selected.some((id) => id.startsWith(prefix));
+    const tasks: Array<Promise<unknown>> = [loadModelSettings().memoryMode === "vector" ? vectorReady() : memoryReady()];
+    if (mode !== "chat" || uses("invoke_skill") || uses("read_skill_reference")) tasks.push(skillsReady());
+    if (uses("run_shell") && (toolIds !== undefined || settings.toolModeOverrides.run_shell?.[mode] !== false)) tasks.push(sandboxReady());
+    const needsMomentsTools = toolIds !== undefined
+      ? ["moments_view", "moments_post", "moments_interact"].some(uses)
+      : toolRegistry.getEnabledToolsForMode(mode, settings.toolModeOverrides)
+        .some((tool) => ["moments_view", "moments_post", "moments_interact"].includes(tool.id));
+    if (settings.momentsEnabled && (needsMomentsTools || (mode === "chat" && settings.chatMomentsContextEnabled))) {
+      tasks.push(momentsReady);
+    }
+    if (selected === "all" || selected.length) {
+      tasks.push(pluginManager!.waitForStartupTools((id) => usesPrefix(id + "_")));
+      tasks.push(waitForMcp((id) => {
+        if (id === PLAYWRIGHT_MCP_ID && !settings.playwrightMcpEnabled) return false;
+        if (id === FILESYSTEM_MCP_ID && !settings.filesystemMcpEnabled) return false;
+        return (toolIds !== undefined || shouldExposeSearchTool(id + "-", settings.searchEngine)) && usesPrefix(id + "-");
+      }));
+    }
+    await waitForStartupTask(Promise.all(tasks), signal);
+    checkStartupActive(shutdown);
+  }
 
   return {
-    app,
-    dialog,
-    readiness,
-    activation,
-    shutdown,
-
-    prepare: () => prepareBeforeReady({
-      installSingleInstance: (onSecondInstance) => installSingleInstanceGuard(app, onSecondInstance),
-      migrateLegacyUserData: () => {
-        return migrateLegacyUserData({
-          appDataPath: app.getPath("appData"),
-          targetUserDataPath: app.getPath("userData"),
-        });
-      },
-      registerPrivilegedSchemes,
-      configureGpuSwitches: () => {
-        if (loadGeneralSettings().disableGpuElectron) {
-          app.commandLine.appendSwitch("disable-gpu");
-          app.commandLine.appendSwitch("enable-unsafe-swiftshader");
-        }
-      },
-      ensureGpuSandboxAcl: () => ensureGpuSandboxAcl({
-        isPackaged: app.isPackaged,
-        exeDir: path.dirname(app.getPath("exe")),
-        userDataDir: app.getPath("userData"),
-      }),
-      activation,
-    }),
-
-    startShell: () => startShell({
-      readiness,
-      activation,
-      shutdown,
-      writeStartupLog: () => {
-        // banner 是纯文本（无色彩、无日志前缀），与 logger 输出区分开
-        process.stdout.write("\n" + renderBanner() + "\n\n");
-        logger.info(LogTag.Runtime, "starting Cyrene Agent");
-      },
-      createIpcScope: () => createIpcScope(),
-      createSplashWindow: (options) => createSplashWindow({ isDev, onShown: options.onShown }),
-      createWindowManager: () => createWindowManager({
-        getCurrentAppIconPath,
-        isDev,
-        loadPetWindowSettingsSlice: loadGeneralSettings,
-        persistPetWindowPosition: ({ x, y }) => saveGeneralSettings({ petWindowX: x, petWindowY: y }),
-      }),
-      createChatShell: (windowManager) => windowManager.createReactChatWindowShell(),
-      registerProtocolHandlers,
-      registerShellIpc: ({ ipc, windowManager, live2dWindowLifecycle }) => {
-        // quit 由组合根注入：窗口系统 IPC 不直接依赖 electron app，且退出仍走受控链路。
-        registerWindowSystemIpc({ ipc, windowManager, quit: () => app.quit() });
-        registerChatUiIpc({ ipc, live2dWindowLifecycle, windowManager });
-      },
-      createTray: (input) => createTray({
-        togglePetWindow: input.togglePetWindow,
-        requestActivation: input.requestActivation,
-        quit: () => app.quit(),
-      }),
-      flushTokenUsage,
-    }),
-
     // 代理需要已就绪的 Electron session 才能查询，且必须早于 core 中的第一个模型 / 嵌入请求
     startCore: (shell) => configureProxyForNodeRequests().then(() => startCore({
       shell,
       readiness,
       activation,
       shutdown,
-      minimumSplashMs: SPLASH_MIN_MS,
       markStartupWindowsReady: () => markStartupPhaseReady(),
 
       // 升级迁移：NSIS 暂存的安装目录用户内容合并进 userData，
@@ -389,9 +415,6 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
         isPackaged: app.isPackaged,
         ...getExternalContentPaths(),
       }),
-      // Skill 系统：扫描双源 skills + 注册 meta-tool
-      initSkills,
-
       createLowCostServices: () => {
         const runtimeStateService = createRuntimeStateService();
         runtimeStateService.onChange(() => {
@@ -436,6 +459,9 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
 
         // 内置工具配置 getter
         bootstrapConfigGetters({
+          waitForCallContext: (signal) => waitForStartupTask(Promise.all([
+            skillsReady(), loadModelSettings().memoryMode === "vector" ? vectorReady() : memoryReady(),
+          ]), signal),
           loadGeneralSettings,
         });
 
@@ -512,10 +538,6 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
         };
       },
 
-      // SRT 沙箱初始化（检测安装状态，不弹 UAC）：必须在 registerAllTools 前，
-      // 让 run_shell 的 workspace_mutation 分支能用上沙箱。失败不阻塞启动。
-      initSandbox: () => initSandbox(),
-
       initPlanMode: () => {
         const plansRoot = path.join(app.getPath("userData"), "plans");
         // 计划模式路径根注入：write_plan / plan.md 读写基于 userData/plans/<会话键>/
@@ -543,64 +565,17 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
       },
 
       // 工具注册：集中到一个显式入口（依赖沙箱/Git/LSP 就绪）
-      registerAllTools: (services) => registerAllTools({ lspManager: services.lsp, gmailService: services.gmail }),
-
-      initRag: async () => {
-        const modelSettings = loadModelSettings();
-        const knowledgeBase = initializeKnowledgeBase(app.getPath("userData"));
-        setMemoryMode(modelSettings.memoryMode);
-        initializeSummaryMemoryScheduler({
-          userDataRoot: app.getPath("userData"),
-          sessions: chatsStore,
-          onError: (conversationId, error) => logger.warn(LogTag.RAG, "summary memory update failed:", conversationId, error),
-        });
-        enableSummaryMemoryScheduler(isSummaryMemoryEnabled());
-        const wikiMigration = createConversationSessionMigration(app.getPath("userData"));
-        initializeWikiMemoryScheduler({
-          userDataRoot: app.getPath("userData"),
-          sourceReader: createWikiChatSourceReader({
-            transcriptStore: getConversationTranscriptStore(app.getPath("userData")),
-            listSessions: chatsStore.listSessions,
-            ensureConversationMigrated: (id) => wikiMigration.ensureConversationMigrated(id),
-          }),
-          onError: (conversationId, error) => logger.warn(LogTag.RAG, "wiki memory update failed:", conversationId, error),
-        });
-        await enableWikiMemoryScheduler(modelSettings.memoryMode === "wiki");
-        await initWorldbook();
-        if (isMemoryEnabled()) {
-          await initVectorMemory("auto", undefined, undefined, modelSettings.embeddingModel, modelSettings.embeddingDimensions);
-        } else {
-          logger.info(LogTag.RAG, "vector memory disabled by settings");
-        }
-        // 注册 RAG 落盘：受控退出在 flushPersistence 阶段刷盘；
-        // Windows 会话结束（断电/强制关机）走同步紧急落盘兜底
-        shutdown.register({
-          id: "rag-store",
-          phase: "flushPersistence",
-          dispose: async () => { await flushRAGStore(); },
-        });
-        shutdown.registerEmergencyFlush("rag-store", () => flushRAGStoreSync());
-        shutdown.register({
-          id: "summary-memory",
-          phase: "flushPersistence",
-          dispose: async () => { await flushAllSummaryMemory(); },
-        });
-        shutdown.register({
-          id: "wiki-memory",
-          phase: "flushPersistence",
-          dispose: async () => { await enableWikiMemoryScheduler(false); },
-        });
-        shutdown.register({
-          id: "knowledge-base",
-          phase: "flushPersistence",
-          dispose: async () => { await knowledgeBase.close(); },
-        });
-        logger.info(LogTag.RAG, "RAG initialized OK");
+      registerAllTools: async (services) => {
+        const { registerAllTools } = await import("../orchestrator/tools/registry/tool-registration.js");
+        checkStartupActive(shutdown);
+        registerAllTools({ lspManager: services.lsp, gmailService: services.gmail });
       },
 
       createRuntime: (services) => {
         const transcriptCompactor = getTranscriptCompactor();
         return createAgentRuntime({
+          waitForPromptSkills: (signal) => waitForStartupTask(skillsReady(), signal),
+          waitForStartup: waitForConversation,
           runtimeStateService: services.runtimeState,
           llmClient: services.llm,
           enqueueLLMTask,
@@ -642,7 +617,7 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
       }),
 
       startPlugins: async (services, scheduler, runtime) => {
-        pluginManager = await startPluginRuntime({
+        pluginManager = createPluginRuntime({
           llmClient: services.llm,
           ipc: shell.ipc,
           schedulerStore: scheduler.store,
@@ -654,13 +629,16 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
             .filter((window) => window && !window.isDestroyed())
             .map((window) => window!.webContents),
         });
+        pluginsReady = pluginManager.start(Promise.resolve().then(() => checkStartupActive(shutdown)));
+        void pluginsReady.catch((error) => console.error("[Startup] plugins failed:", error));
         return pluginManager;
       },
 
       createScheduler: (runtime) => createSchedulerSubsystem({
         agentRuntime: runtime,
+        waitForTools: (task) => waitForConversation(task.mode ?? "work", task.toolMode === "all-enabled" ? "all" : task.allowedToolIds),
         getReactChatWindow: () => reactChatWindow,
-        ipc: shell.ipc,
+        ipc: afterStartup(shell.ipc, channel => channel === IPC.SCHEDULER_GET_TOOLS ? waitForToolCatalog() : undefined),
         publishLifecycle: lifecyclePublisher,
         // runReader 接入 harness 运行存储：孤儿工具按运行状态归类，避免误判 not_executed
         conversationJournal: new ConversationJournalService({
@@ -686,8 +664,19 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
           }),
         );
 
+        registerChatUiIpc({ ipc, windowManager: shell.windowManager, live2dWindowLifecycle: shell.live2dWindowLifecycle, windowIpcRegistered: true });
         registerSettingsIpc({
-          ipc,
+          surfaceRegistered: true,
+          ipc: afterStartup(ipc, (channel, patch) => {
+            if (channel === IPC.EMBEDDING_SET_MODEL || channel === IPC.RERANKER_SET_MODE) return vectorReady();
+            if ((channel === IPC.SETTINGS_SAVE_GENERAL || channel === IPC.TTS_SAVE_SETTINGS) && patch && typeof patch === "object"
+              && ["searchMinimaxKey", "searchEngine", "playwrightMcpEnabled", "filesystemMcpEnabled"].some(key => key in patch)) {
+              return waitForMcp(id =>
+                (id === "minimax-web-search" && ("searchEngine" in patch || "searchMinimaxKey" in patch))
+                || (id === PLAYWRIGHT_MCP_ID && "playwrightMcpEnabled" in patch)
+                || (id === FILESYSTEM_MCP_ID && "filesystemMcpEnabled" in patch));
+            }
+          }),
           windowManager: shell.windowManager,
           getGeneralSettings: loadGeneralSettings,
           saveGeneralSettings,
@@ -696,7 +685,7 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
           runtimeStateService: services.runtimeState,
           proactiveLifecycle: services.proactive,
           reconcileUserMemoryIndex,
-          switchMemoryMode,
+          switchMemoryMode: async (mode) => { await vectorReady(); await switchMemoryMode(mode); },
           syncVolcanoSearchMcp,
           syncPlaywrightMcp,
           syncFilesystemMcp,
@@ -707,24 +696,37 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
         registerNewsIpc(ipc);
 
         registerMemoryUserToolIpc({
-          ipc,
+          ipc: afterStartup(ipc, (channel, payload) => {
+            if (channel.startsWith("skill:")) return skillsReady();
+            if (channel.startsWith("memory-panel:")) return memoryReady();
+            if (channel === IPC.TOOL_GET_CATALOG || channel === IPC.TOOL_GET_ENABLED || channel === IPC.TOOL_SET_ENABLED) return waitForToolCatalog();
+            if (channel === IPC.MCP_ADD_SERVER || channel === IPC.MCP_REMOVE_SERVER) {
+              const id = channel === IPC.MCP_REMOVE_SERVER ? payload
+                : payload && typeof payload === "object" ? (payload as { id?: unknown }).id : undefined;
+              return waitForMcp(serverId => serverId === id);
+            }
+          }),
           windowManager: shell.windowManager,
         });
-        registerWikiMemoryIpc(ipc);
-        registerKnowledgeBaseIpc(ipc);
+        const memoryIpc = afterStartup(ipc, memoryReady);
+        registerWikiMemoryIpc(memoryIpc);
+        registerKnowledgeBaseIpc(memoryIpc);
 
         // ── TTS IPC ──
         registerTtsIpc({ ipc, ttsSessionService: services.ttsSession });
 
         // 聊天会话存储 IPC（chats-store.initialize 建好 cyrene-chats 目录并加载 index）
         await registerChatsIpc(ipc, {
+          surface,
+          beforePendingClaim: (mode, signal) => waitForConversation(mode, undefined, signal),
           llmClient: services.llm,
           isPrimaryModelBusy: hasActiveConversationRun,
           beforeWorkspaceBindingChange: prepareBackgroundSessionMutation,
           beforeSessionDelete: prepareBackgroundSessionMutation,
           transcriptCompactor,
         });
-        await registerMomentsIpc(ipc);
+        momentsReady = registerMomentsIpc(ipc, Promise.resolve().then(() => checkStartupActive(shutdown)));
+        void momentsReady.catch((error) => console.error("[Startup] moments failed:", error));
         registerCodeGitIpc({ ipc, service: services.git });
         // 会话工作区只读文件（右侧面板文件树 / 预览）
         registerWorkspaceFilesIpc(ipc);
@@ -845,7 +847,9 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
         });
         toastService.registerIpc(ipc);
         // 预创建隐藏窗口，提前加载渲染页，首次弹出零延迟
-        toastWindowController.preload();
+        void Promise.resolve().then(() => {
+          if (!shutdown.isStopping()) toastWindowController.preload();
+        }, () => undefined);
         shutdown.register({
           id: "toast-center",
           phase: "stopLocalResources",
@@ -855,72 +859,70 @@ export function createDefaultApplicationDependencies(): ApplicationDependencies 
           },
         });
       },
-      revealStartupWindows,
     })),
 
-    startBackground: (core) => startBackground({
-      core,
-      readiness,
-      shutdown,
-      channels: core.channels,
-      scheduler: core.scheduler,
-      pruneRemovedMcp: async () => {
-        // 一次性清理已下架的内置 MCP（Firecrawl hosted 等）
-        const removed = await pruneMcpServersByIds([...REMOVED_BUILTIN_MCP_IDS]);
-        if (removed.length > 0) {
-          console.log("[Cyrene] 已清理遗留的已下架内置 MCP:", removed.join(", "));
-        }
-      },
-      syncBuiltInMcp: async () => {
-        // 内置 MCP 自动连接：Playwright / Filesystem（均默认关闭，选项控制）
-        await syncPlaywrightMcp(loadGeneralSettings());
-        await syncFilesystemMcp({
-          filesystemMcpEnabled: loadGeneralSettings().filesystemMcpEnabled,
-          allowedDir: app.getPath("downloads"),
-        });
-      },
-      restoreMcp: (signal) => initMcpManager({ signal }),
-      reconcileMemory: async (signal) => {
-        if (signal.aborted || !isMemoryEnabled()) return;
-        try {
-          await reconcileUserMemoryIndex();
-        } catch (err) {
-          console.warn("[Memory/RAG] startup reconciliation failed:", err);
-          throw err;
-        }
-      },
-      initializeReranker: async () => {
-        if (!isMemoryEnabled()) return;
-        // initReranker 内部检测模型是否安装，未安装自动降级为 none
-        try {
-          const modelSettings = loadModelSettings();
-          await initReranker(modelSettings.rerankerMode);
-          logger.info(LogTag.Reranker, "initialized with mode:", modelSettings.rerankerMode);
-        } catch (err) {
-          logger.warn(LogTag.Reranker, "startup init failed:", err);
-        }
-      },
-      prewarmScreenshot: async () => {
-        await core.services.screenshot.prewarm();
-      },
-      scheduleUpdateCheck: async () => {
-        const dispose = scheduleStartupUpdateCheck(core.services.update);
-        return { dispose };
-      },
-      startProactiveTrigger: async () => {
-        core.services.proactive.initializeProactiveTrigger();
-        return { dispose: () => core.services.proactive.stopProactiveTrigger() };
-      },
-      startMomentsReactionScanner: async () => {
-        // 启动即补扫一轮：重启前已逾期的反应任务尽快续上，不等第一个扫描周期
-        momentsService.startReactionScanner();
-        return { dispose: () => momentsService.stopReactionScanner() };
-      },
-    }),
-
-    logFatal: (error) => {
-      console.error("[Cyrene] fatal startup error:", error);
-      logger.error(LogTag.Runtime, "fatal startup error:", error);
+    startBackground: (core) => {
+      return startBackground({
+        core,
+        readiness,
+        shutdown,
+        channels: core.channels,
+        scheduler: core.scheduler,
+        pruneRemovedMcp: async () => {
+          // 一次性清理已下架的内置 MCP（Firecrawl hosted 等）
+          const removed = await pruneMcpServersByIds([...REMOVED_BUILTIN_MCP_IDS]);
+          if (removed.length > 0) {
+            console.log("[Cyrene] 已清理遗留的已下架内置 MCP:", removed.join(", "));
+          }
+        },
+        prepareChatCapabilities: async () => { await Promise.all([skillsReady(), sandboxReady(), pluginsReady, momentsReady]); },
+        restoreMcp: async (signal) => {
+          let restoring: Promise<void>[];
+          try {
+            const settings = loadGeneralSettings();
+            const saved = new Map(listMcpServerConfigs().map((config) => [config.id, config]));
+            const ids = new Set([...saved.keys(), PLAYWRIGHT_MCP_ID, FILESYSTEM_MCP_ID]);
+            restoring = [...ids].map(async (id) => {
+              const restore = (async () => {
+                if (id === PLAYWRIGHT_MCP_ID) await syncPlaywrightMcp(settings);
+                if (id === FILESYSTEM_MCP_ID) await syncFilesystemMcp({
+                  filesystemMcpEnabled: settings.filesystemMcpEnabled, allowedDir: app.getPath("downloads"),
+                });
+                const builtin = id === PLAYWRIGHT_MCP_ID || id === FILESYSTEM_MCP_ID;
+                const config = builtin ? listMcpServerConfigs().find((entry) => entry.id === id) : saved.get(id);
+                if (config) await restoreMcpServer(config, signal);
+              })();
+              // The 30s barrier releases background producers. A selected tool still waits for its own discovery.
+              const settled = restore.catch((error) => console.warn("[MCP] startup failed:", id, error))
+                .finally(() => mcpTasks.delete(id));
+              mcpTasks.set(id, settled);
+              await settled;
+            });
+          } finally {
+            announceServers();
+          }
+          await Promise.all(restoring);
+        },
+        reconcileMemory: async () => { await memoryReady(); },
+        initializeReranker: async () => { await vectorReady(); },
+        prewarmScreenshot: async () => {
+          await core.services.screenshot.prewarm();
+        },
+        scheduleUpdateCheck: async () => {
+          const dispose = scheduleStartupUpdateCheck(core.services.update);
+          return { dispose };
+        },
+        startProactiveTrigger: async () => {
+          core.services.proactive.initializeProactiveTrigger();
+          return { dispose: () => core.services.proactive.stopProactiveTrigger() };
+        },
+        startMomentsReactionScanner: async () => {
+          // 启动即补扫一轮：重启前已逾期的反应任务尽快续上，不等第一个扫描周期
+          momentsService.startReactionScanner();
+          return { dispose: () => momentsService.stopReactionScanner() };
+        },
+      });
     },
+
   };
 }

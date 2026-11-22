@@ -21,6 +21,108 @@ function fakeAdapter(id: string): ChannelAdapter {
 }
 
 describe("ChannelManager", () => {
+  it("unregister releases bulk startup before a hung adapter resolves", async () => {
+    const manager = new ChannelManager();
+    const port = manager.createPluginPort();
+    const slow = fakeAdapter("slow");
+    const next = fakeAdapter("next");
+    let release!: () => void;
+    slow.start = () => new Promise<void>(resolve => { release = resolve; });
+    slow.stop = vi.fn(async () => {});
+    next.start = vi.fn(async () => {});
+    port.register(slow);
+    manager.register(next);
+    const one = port.startOne(slow.id).catch(() => {});
+    const all = manager.startAll();
+    await Promise.resolve();
+    await port.unregister(slow.id);
+    await all;
+    await one;
+    expect(next.start).toHaveBeenCalledOnce();
+    expect(slow.stop).not.toHaveBeenCalled();
+    release();
+    await vi.waitFor(() => expect(slow.stop).toHaveBeenCalledOnce());
+    await manager.stopAll();
+  });
+  it.each([true, false])("shares startup between plugin and background (plugin first=%s)", async (pluginFirst) => {
+    const manager = new ChannelManager();
+    const port = manager.createPluginPort();
+    const adapter = fakeAdapter("plugin-test");
+    let release!: () => void;
+    adapter.start = vi.fn(() => new Promise<void>((resolve) => { release = resolve; }));
+    port.register(adapter);
+    const first = pluginFirst ? port.startOne(adapter.id) : manager.startAll();
+    const second = pluginFirst ? manager.startAll() : port.startOne(adapter.id);
+    await Promise.resolve();
+    expect(adapter.start).toHaveBeenCalledOnce();
+    release();
+    await Promise.all([first, second]);
+    await manager.stopAll();
+  });
+
+  it.each(["unregister", "stopAll"] as const)("stops a late startup after %s without marking it running", async (action) => {
+    const manager = new ChannelManager();
+    const port = manager.createPluginPort();
+    const adapter = fakeAdapter("plugin-test");
+    let release!: () => void;
+    adapter.start = vi.fn(() => new Promise<void>((resolve) => { release = resolve; }));
+    adapter.stop = vi.fn(async () => {});
+    port.register(adapter);
+    const starting = port.startOne(adapter.id);
+    const rejected = expect(starting).rejects.toThrow(/cancelled/);
+    await Promise.resolve();
+    if (action === "unregister") await port.unregister(adapter.id);
+    else await manager.stopAll();
+    release();
+    await rejected;
+    expect(adapter.stop).toHaveBeenCalledOnce();
+    if (action === "unregister") expect(manager.has(adapter.id)).toBe(false);
+    else {
+      adapter.start = vi.fn(async () => {});
+      await port.startOne(adapter.id);
+      expect(adapter.start).toHaveBeenCalledOnce();
+      await manager.stopAll();
+    }
+  });
+
+  it("does not continue starting further adapters after stopAll", async () => {
+    const manager = new ChannelManager();
+    const first = fakeAdapter("first");
+    const second = fakeAdapter("second");
+    let release!: () => void;
+    first.start = vi.fn(() => new Promise<void>((resolve) => { release = resolve; }));
+    first.stop = vi.fn(async () => {});
+    second.start = vi.fn(async () => {});
+    manager.register(first);
+    manager.register(second);
+    const starting = manager.startAll();
+    await Promise.resolve();
+    await manager.stopAll();
+    release();
+    await starting;
+    expect(first.stop).toHaveBeenCalledOnce();
+    expect(second.start).not.toHaveBeenCalled();
+  });
+
+  it("shares a failed startup and allows a later retry", async () => {
+    const manager = new ChannelManager();
+    const adapter = fakeAdapter("plugin-test");
+    let reject!: (error: Error) => void;
+    adapter.start = vi.fn(() => new Promise<void>((_, fail) => { reject = fail; }));
+    manager.register(adapter);
+    const first = manager.startOne(adapter.id);
+    const second = manager.startAll();
+    const rejected = expect(first).rejects.toThrow("offline");
+    await Promise.resolve();
+    reject(new Error("offline"));
+    await Promise.all([rejected, second]);
+    expect(adapter.start).toHaveBeenCalledOnce();
+    adapter.start = vi.fn(async () => {});
+    await manager.startOne(adapter.id);
+    expect(adapter.start).toHaveBeenCalledOnce();
+    await manager.stopAll();
+  });
+
   it("startOne 启动单个 adapter；unregister 先 stop 再移除", async () => {
     const mgr = new ChannelManager();
     const adapter = fakeAdapter("qq");

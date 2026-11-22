@@ -9,7 +9,7 @@
 
 import { app } from "electron";
 import { createApplication } from "./application/application";
-import { createDefaultApplicationDependencies } from "./application/default-dependencies";
+import { createDefaultApplicationDependencies } from "./application/startup-dependencies";
 import { registerPluginPanelScheme } from "./plugin-panel-protocol";
 import { installGlobalNavigationGuard } from "./windows/external-link";
 

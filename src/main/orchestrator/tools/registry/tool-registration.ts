@@ -1,6 +1,6 @@
 import { loadGeneralSettings } from "../../../settings/settings-facade";
 import { loadModelSettings } from "../../../settings/model-settings";
-import type { GeneralSettings } from "../../../settings/general-settings";
+import { syncBuiltInToolToggles } from "./tool-toggles";
 import { registerEmailTools } from "../email-tools";
 import { registerGmailTools } from "../gmail-tools";
 import type { GmailService } from "../../../email/gmail-service";
@@ -20,11 +20,6 @@ import { registerZCodeFileTools } from "../zcode-file-tools";
 import type { LspManager } from "../../../lsp/manager";
 import { registerLspTool } from "../lsp-tool";
 import "../built-in-tools";
-
-export function syncBuiltInToolToggles(settings: GeneralSettings): void {
-  toolRegistry.setEnabled("weather", settings.weatherEnabled);
-  toolRegistry.setEnabled("plan_trip", settings.travelEnabled);
-}
 
 export function registerAllTools(deps: { lspManager: LspManager; gmailService?: GmailService }): void {
   registerLspTool(deps.lspManager, toolRegistry);

@@ -4,7 +4,14 @@ import { createApplication } from "./application";
 import { createShutdownCoordinator } from "./shutdown";
 import { createStartupReadiness } from "./readiness";
 import { createWindowActivationBroker } from "./window-activation";
-import { startCore, type CoreDependencies, type CoreServices } from "./core-bootstrap";
+import { startCore as startRuntime, showInitialSurface, type CoreDependencies as RuntimeDependencies, type InitialSurfaceDependencies, type CoreServices } from "./core-bootstrap";
+
+type CoreDependencies = RuntimeDependencies & InitialSurfaceDependencies;
+
+async function startCore(deps: CoreDependencies) {
+  await showInitialSurface(deps);
+  return startRuntime(deps);
+}
 
 function makeServices(): CoreServices {
   return {
@@ -64,12 +71,9 @@ function makeCoreDeps(calls: string[], overrides: Partial<CoreDependencies> = {}
     activation,
     shutdown: createShutdownCoordinator({ readiness, timeoutMs: 1000 }),
     migrateStagedExternalContent: () => { calls.push("migrate"); },
-    initSkills: () => { calls.push("skills"); },
     createLowCostServices: () => { calls.push("services"); return makeServices(); },
-    initSandbox: async () => { calls.push("sandbox"); },
     initPlanMode: () => { calls.push("plan"); },
     registerAllTools: () => { calls.push("tools"); },
-    initRag: async () => { calls.push("rag"); },
     createRuntime: () => { calls.push("runtime"); return {} as never; },
     createChannels: () => ({
       initialize: () => { calls.push("channels-initialize"); },
@@ -104,30 +108,32 @@ function makeCoreDeps(calls: string[], overrides: Partial<CoreDependencies> = {}
 }
 
 describe("startCore", () => {
-  it("registers every renderer IPC handler before loading chat", async () => {
+  it("shows chat before constructing adapters and registering runtime IPC", async () => {
     const calls: string[] = [];
     await startCore(makeCoreDeps(calls));
-    expect(calls.indexOf("register-core-ipc")).toBeLessThan(calls.indexOf("chat-load"));
-    // 提醒中心装配必须晚于 IPC 注册、早于任何渲染页加载（toast 窗口预加载会 invoke getAll）
+    expect(calls.indexOf("reveal")).toBeLessThan(calls.indexOf("register-core-ipc"));
     expect(calls.indexOf("wire-toast-center")).toBeGreaterThan(calls.indexOf("register-core-ipc"));
-    expect(calls.indexOf("wire-toast-center")).toBeLessThan(calls.indexOf("chat-load"));
-    expect(calls.indexOf("channels-initialize")).toBeLessThan(calls.indexOf("chat-load"));
+    expect(calls.indexOf("reveal")).toBeLessThan(calls.indexOf("channels-initialize"));
     expect(calls.indexOf("channels-initialize")).toBeLessThan(calls.indexOf("plugins-start"));
     // scheduler store 必须先于插件初始化：插件调度服务写入的是已加载的 store
     expect(calls.indexOf("scheduler-initialize")).toBeLessThan(calls.indexOf("plugins-start"));
-    expect(calls.indexOf("plugins-start")).toBeLessThan(calls.indexOf("chat-load"));
     expect(calls).not.toContain("channels-start");
     expect(calls).not.toContain("scheduler-start");
   });
 
-  it("degrades RAG failure but still loads chat", async () => {
+  it("waits for history hydration before runtime assembly", async () => {
     const calls: string[] = [];
-    const deps = makeCoreDeps(calls, {
-      initRag: async () => { throw new Error("rag offline"); },
-    });
-    await expect(startCore(deps)).resolves.toBeDefined();
-    expect(deps.readiness.getDegradedReasons().has("rag")).toBe(true);
+    const gate = deferred();
+    const entered = deferred();
+    const deps = makeCoreDeps(calls, { initialWindowShown: async () => { entered.resolve(); await gate.promise; } });
+    const starting = startCore(deps);
+    await entered.promise;
     expect(deps.chatLoad).toHaveBeenCalledOnce();
+    expect(calls).toContain("reveal");
+    expect(calls).not.toContain("register-core-ipc");
+    gate.resolve();
+    await starting;
+    expect(calls).toContain("register-core-ipc");
   });
 
   it("waits for the built-in adapter boundary before starting plugins", async () => {
@@ -164,18 +170,8 @@ describe("startCore", () => {
     expect(startPlugins).toHaveBeenCalledWith(expect.anything(), expect.anything(), runtime);
   });
 
-  it("degrades skills failure and continues startup", async () => {
-    const deps = makeCoreDeps([], {
-      initSkills: () => { throw new Error("skills broken"); },
-    });
-    await expect(startCore(deps)).resolves.toBeDefined();
-    expect(deps.readiness.getDegradedReasons().has("skills")).toBe(true);
-  });
-
   it("treats chat load failure as fatal", async () => {
-    const deps = makeCoreDeps([], {
-      initRag: async () => undefined,
-    });
+    const deps = makeCoreDeps([]);
     vi.mocked(deps.shell.chat.load).mockRejectedValue(new Error("renderer failed"));
     await expect(startCore(deps)).rejects.toThrow("renderer failed");
     const markReadySpy = vi.spyOn(deps.activation, "markReady");
@@ -203,7 +199,7 @@ describe("startCore", () => {
     expect(hidden.shell.windowManager.onPetWindowReady).toHaveBeenCalled();
   });
 
-  it("runs reveal after core-ready and drains activation last", async () => {
+  it("reveals chat before releasing activation", async () => {
     const calls: string[] = [];
     const deps = makeCoreDeps(calls);
     await startCore(deps);
@@ -231,31 +227,26 @@ function deferred<T = void>() {
 }
 
 describe("startup interrupted by shutdown", () => {
-  it.each(["initSkills", "initSandbox", "initRag", "registerCoreIpc"] as const)(
-    "does not start later stages after shutdown during %s", async (stage) => {
-      const gate = deferred();
-      const entered = deferred();
-      const calls: string[] = [];
-      const deps = makeCoreDeps(calls, { [stage]: () => { entered.resolve(); return gate.promise; } });
-      const starting = startCore(deps);
-      const result = expect(starting).rejects.toThrow("startup cancelled by shutdown");
-      await entered.promise;
-      const final = vi.fn();
-      const stopping = deps.shutdown.requestControlledShutdown({ reason: "test", finalAction: final });
-      expect(final).not.toHaveBeenCalled();
-      gate.resolve();
-      await result;
-      await stopping;
-      expect(final).toHaveBeenCalledOnce();
-      expect(deps.readiness.getPhase()).toBe("stopped");
-      expect(deps.chatLoad).not.toHaveBeenCalled();
-      expect(calls).not.toContain("reveal");
-      expect(deps.activation.isReady()).toBe(false);
-      if (stage === "initSkills") expect(calls).not.toContain("services");
-      if (stage === "initSandbox") expect(calls).not.toContain("plan");
-      if (stage === "initRag") expect(calls).not.toContain("runtime");
-    },
-  );
+  it("keeps runtime unavailable when shutdown interrupts IPC registration", async () => {
+    const gate = deferred();
+    const entered = deferred();
+    const calls: string[] = [];
+    const deps = makeCoreDeps(calls, { registerCoreIpc: () => { entered.resolve(); return gate.promise; } });
+    const starting = startCore(deps);
+    const result = expect(starting).rejects.toThrow("startup cancelled by shutdown");
+    await entered.promise;
+    const final = vi.fn();
+    const stopping = deps.shutdown.requestControlledShutdown({ reason: "test", finalAction: final });
+    expect(final).not.toHaveBeenCalled();
+    gate.resolve();
+    await result;
+    await stopping;
+    expect(final).toHaveBeenCalledOnce();
+    expect(deps.readiness.getPhase()).toBe("stopped");
+    expect(deps.chatLoad).toHaveBeenCalledOnce();
+    expect(calls).toContain("reveal");
+    expect(deps.activation.isReady()).toBe(false);
+  });
 
   it("cleans late plugin startup before channels and persistence close", async () => {
     const gate = deferred();
@@ -279,7 +270,7 @@ describe("startup interrupted by shutdown", () => {
     expect(calls.indexOf("plugin-stop")).toBeLessThan(calls.indexOf("channels-stop"));
     expect(calls.indexOf("channels-stop")).toBeLessThan(calls.indexOf("db-close"));
     expect(final).toHaveBeenCalledOnce();
-    expect(deps.chatLoad).not.toHaveBeenCalled();
+    expect(deps.chatLoad).toHaveBeenCalledOnce();
   });
 
   it("does not delay shutdown on a page load that needs window disposal to settle", async () => {
@@ -361,7 +352,7 @@ describe("startup interrupted by shutdown", () => {
       pluginStopped.resolve();
       await vi.advanceTimersByTimeAsync(0);
       expect(calls).toContain("channels-stop");
-      expect(deps.chatLoad).not.toHaveBeenCalled();
+      expect(deps.chatLoad).toHaveBeenCalledOnce();
     } finally { vi.useRealTimers(); }
   });
   it("cancels while adapter registration is pending without starting plugins", async () => {

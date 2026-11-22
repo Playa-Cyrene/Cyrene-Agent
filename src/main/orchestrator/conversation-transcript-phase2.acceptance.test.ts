@@ -30,6 +30,8 @@ function makeRoot(prefix: string): string {
 
 function buildOptionsDeps(): BuildOptionsDeps {
   return {
+    waitForPromptSkills: async () => {},
+    waitForStartup: async () => {},
     loadModelSettings: () => ({ provider: "test", baseUrl: "https://example.test", model: "model", apiKey: "key", contextWindowTokens: 256_000 }),
     loadGeneralSettings: () => ({ currentStyleId: "default", customStyle: {} }),
     loadUserProfile: () => ({}),

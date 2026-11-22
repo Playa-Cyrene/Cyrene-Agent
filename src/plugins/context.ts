@@ -59,7 +59,7 @@ export interface PluginRuntime {
   };
   registerIpc: (channel: string, handler: (...args: unknown[]) => unknown) => void;
   unregisterIpc: (channel: string) => void;
-  promptRegistry: Pick<PluginPromptRegistry, "register" | "unregister">;
+  promptRegistry: Pick<PluginPromptRegistry, "register" | "unregister"> & Partial<Pick<PluginPromptRegistry, "setStartupReady">>;
   /** 宿主服务工厂；新宿主服务只允许从这里注入，不再向 PluginContext 增加特例。 */
   hostServices?: PluginHostServiceFactory;
   /** 未提供工厂时的兼容入口：宿主基础 LLM 服务（由框架包装 purpose 前缀）。 */
@@ -244,16 +244,17 @@ export function createContext(
         throw new Error(`插件渠道 id 已被占用: ${adapter.id}`);
       }
       runtime.channelManager.register(adapter);
+      // 先登记所有权，启动卡住或激活超时时 dispose 也能立即撤销渠道。
+      tracker.track("channel-adapter", adapter.id, async () => {
+        await runtime.channelManager.unregister(adapter.id);
+      });
       try {
         await runtime.channelManager.startOne(adapter.id);
       } catch (err) {
         // 半成功回滚：start 失败时撤销已注册的 adapter，避免 dispose 遗漏
-        await runtime.channelManager.unregister(adapter.id);
+        await tracker.release("channel-adapter", adapter.id);
         throw err;
       }
-      tracker.track("channel-adapter", adapter.id, async () => {
-        await runtime.channelManager.unregister(adapter.id);
-      });
     },
     async unregisterChannelAdapter(channelId) {
       if (!tracker.has("channel-adapter", channelId)) {
