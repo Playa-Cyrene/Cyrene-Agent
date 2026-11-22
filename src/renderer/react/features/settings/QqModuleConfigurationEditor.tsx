@@ -2,11 +2,13 @@ import { useEffect, useRef, useState } from "react";
 import { Alert, Button, Checkbox, Input, Space, Spin } from "antd";
 import type { QqModuleActionCommand, QqModuleActionResult, QqModuleConfigurationView } from "../../../../shared/qq-module-actions";
 import { useTranslation } from "../../i18n";
+import { createQqModuleInitialReader, runQqModuleAction } from "./qq-module-initial-read";
 
 export function QqModuleConfigurationEditor({ action, onBusy, onClose, onSaved }: {
   action: (command: QqModuleActionCommand) => Promise<QqModuleActionResult>;
   onBusy(busy: boolean): void; onClose(): void; onSaved(): void;
 }) {
+  const [readInitial] = useState(createQqModuleInitialReader);
   const { t } = useTranslation(); const key = "settingsPage.channels.qqModule.configuration";
   const [view, setView] = useState<QqModuleConfigurationView>();
   const [account, setAccount] = useState(""), [host, setHost] = useState(""), [port, setPort] = useState("");
@@ -20,11 +22,11 @@ export function QqModuleConfigurationEditor({ action, onBusy, onClose, onSaved }
     setPrivateIds(next.config?.allowedPrivateUserIds.join(", ") ?? ""); setGroupIds(next.config?.allowedGroupIds.join(", ") ?? "");
     setMention(next.config?.groupRequireMention ?? true); setEnabled(next.enabled); setStale(false);
   };
-  const request = async (command: QqModuleActionCommand) => {
+  const request = async (command: QqModuleActionCommand | "initialize") => {
     if (locked.current) return;
     locked.current = true; setBusy(true); onBusy(true); setMessage(""); const current = ++sequence.current;
     try {
-      const result = await action(command);
+      const result = await (command === "initialize" ? readInitial(action, "read-configuration") : runQqModuleAction(action, command));
       if (!alive.current || sequence.current !== current) return;
       if (!result.ok || !(result.state === "configuration" || result.state === "configuration-saved")) {
         setMessage(!result.ok && result.error === "stale" ? "stale" : "failed"); setStale(true); return;
@@ -32,10 +34,11 @@ export function QqModuleConfigurationEditor({ action, onBusy, onClose, onSaved }
       populate(result.configuration);
       if (result.state === "configuration-saved") { setMessage("saved"); onSaved(); }
     } catch { if (alive.current && current === sequence.current) { setMessage("failed"); setStale(true); } }
-    finally { locked.current = false; if (alive.current && current === sequence.current) { setBusy(false); onBusy(false); } }
+    finally { if (alive.current && current === sequence.current) { locked.current = false; setBusy(false); onBusy(false); } }
   };
   useEffect(() => {
-    alive.current = true; void request({ action: "read-configuration" });
+    alive.current = true; locked.current = false; setView(undefined); setStale(false);
+    void request("initialize");
     return () => { alive.current = false; sequence.current++; onBusy(false); };
   }, [action]);
   const ids = (raw: string) => raw.split(/[\s,，]+/).filter(Boolean);
