@@ -714,6 +714,13 @@ export function registerAgUiIpc(
     }
 
     let admitted = false;
+    let detachPendingTurnWatchers: (() => void) | null = null;
+    let registeredLearnTools = false;
+    const settlePendingAdjustments = async (): Promise<void> => {
+      const reset = await chatsStore.resetPendingAdjustByRun(sessionId, runId);
+      if (reset?.ok === false) throw new Error(reset.error);
+      if (reset?.reset) broadcastChatsChanged();
+    };
     try {
       if (background && !inbox.canWake(sessionId)) {
         releaseSessionGuard?.();
@@ -734,6 +741,7 @@ export function registerAgUiIpc(
       } else {
         // 退出/重注册会清空内存队列，下一次主动运行从审计事实恢复尚未投递的结果。
         const entries = await transcriptStore.readShellCompletionEntries(sessionId);
+        runAbortController.signal.throwIfAborted();
         const closed = new Set(entries.flatMap(entry => entry.kind === "background_event" || entry.kind === "background_event_retired"
           ? [entry.payload.jobId] : []));
         inbox.restore(sessionId, entries.flatMap(entry => entry.kind === "background_event_pending" && entry.runId && !closed.has(entry.payload.jobId)
@@ -832,10 +840,6 @@ export function registerAgUiIpc(
         modelContext = await journal.buildModelContext(sessionId);
       } catch (error) {
         perf.dump();
-        try { (await chatsStore.resetPendingAdjustByRun(sessionId, runId)); } catch { /* 复位尽力而为 */ }
-        releaseSessionGuard?.();
-        releaseSessionGuard = null;
-        endConversation();
         throw error;
       }
     }
@@ -868,8 +872,7 @@ export function registerAgUiIpc(
     }));
     } catch (error) {
       perf.dump();
-      // run 未开跑即失败：清掉这期间可能落下的插话标记，条目回普通队列
-      try { (await chatsStore.resetPendingAdjustByRun(sessionId, runId)); } catch { /* 复位尽力而为 */ }
+      // 所有订阅前失败统一在外层结算。
       throw error;
     }
     const { options, latestUserText } = built;
@@ -943,14 +946,11 @@ export function registerAgUiIpc(
       } catch (error) {
         // 守卫已注册：configure 失败时必须释放，否则该会话永久拒绝新 run。
         // 语义保持"配置失败 → 中断本次 run"（learn 工具不可用时不静默降级）。
-        try { (await chatsStore.resetPendingAdjustByRun(sessionId, runId)); } catch { /* 复位尽力而为 */ }
-        releaseSessionGuard?.();
-        releaseSessionGuard = null;
-        endConversation();
         throw error;
       }
       try {
         registerObsidianTools();
+        registeredLearnTools = true;
       } catch (err) {
         console.warn("[Learn] Obsidian 工具注册失败：", err);
       }
@@ -962,29 +962,6 @@ export function registerAgUiIpc(
     // Chat 启用工具时会进入 Harness，由 Harness adapter 创建同一条运行记录。
     if (mode === "chat" && (options.tools ?? []).length === 0) {
       await database.call("runs.create", { conversationId: sessionId, runId });
-    }
-
-    // 桌面轮次事件：run 真正开跑时登记协调器（立即发布 turn:started）。
-    // turn:finished 由协调器在"终态 + 渲染端落盘确认"双条件满足后发布一次。
-    let detachPendingTurnWatchers: (() => void) | null = null;
-    if (pendingTurns && sender && !background) {
-      pendingTurns.beginTurn({
-        runId,
-        conversationId: sessionId,
-        mode,
-        inputMessageId: input.userTurnId ?? "",
-        ...(input.assistantTurnId ? { assistantMessageId: input.assistantTurnId } : {}),
-        startedAt: turnStartedAt,
-        runTimeoutMs: options.timeoutMs,
-      });
-      // 发起 run 的渲染进程销毁 / 重载 / 导航后，落盘确认永远不会到达，直接清理
-      const disposePendingTurn = (): void => { pendingTurns?.disposeEntry(runId); };
-      sender.once("destroyed", disposePendingTurn);
-      sender.once("did-start-navigation", disposePendingTurn);
-      detachPendingTurnWatchers = () => {
-        sender.removeListener("destroyed", disposePendingTurn);
-        sender.removeListener("did-start-navigation", disposePendingTurn);
-      };
     }
 
     let pendingRunFinishedEvent: unknown | null = null;
@@ -1010,9 +987,7 @@ export function registerAgUiIpc(
       // 已接受的插话入册但不自动重跑；旧版本仅标记的条目仍回普通队列。
       // 先提交再释放守卫，确保下一次用户续跑能读到这些消息。
       try {
-        const reset = await chatsStore.resetPendingAdjustByRun(sessionId, runId);
-        if (!reset.ok) throw new Error(reset.error);
-        if (reset.reset > 0) broadcastChatsChanged();
+        await settlePendingAdjustments();
       } catch (err) {
         console.warn("[AgUiBridge] 插话标记复位失败:", err);
       }
@@ -1080,6 +1055,28 @@ export function registerAgUiIpc(
     }
     if (background && runAbortController.signal.aborted) throw new Error("SHELL_COMPLETION_CANCELLED");
     if (!background) runAbortController.signal.throwIfAborted();
+    // 桌面轮次事件：run 真正开跑时登记协调器（立即发布 turn:started）。
+    // turn:finished 由协调器在"终态 + 渲染端落盘确认"双条件满足后发布一次。
+    if (pendingTurns && sender && !background) {
+      pendingTurns.beginTurn({
+        runId,
+        conversationId: sessionId,
+        mode,
+        inputMessageId: input.userTurnId ?? "",
+        ...(input.assistantTurnId ? { assistantMessageId: input.assistantTurnId } : {}),
+        startedAt: turnStartedAt,
+        runTimeoutMs: options.timeoutMs,
+      });
+      // 发起 run 的渲染进程销毁 / 重载 / 导航后，落盘确认永远不会到达，直接清理
+      const disposePendingTurn = (): void => { pendingTurns?.disposeEntry(runId); };
+      sender.once("destroyed", disposePendingTurn);
+      sender.once("did-start-navigation", disposePendingTurn);
+      detachPendingTurnWatchers = () => {
+        sender.removeListener("destroyed", disposePendingTurn);
+        sender.removeListener("did-start-navigation", disposePendingTurn);
+      };
+    }
+
     const sub = agent.runWithEvents(options).subscribe({
       next: (baseEvent) => {
         const eventType = (baseEvent as { type?: string })?.type;
@@ -1353,12 +1350,26 @@ export function registerAgUiIpc(
     return { success: true, runId };
     } catch (error) {
       const cancelled = !background && runAbortController.signal.aborted;
+      if (cancelled) inbox.suppressWake(sessionId);
+      let cleanupError: unknown;
+      try {
+        await settlePendingAdjustments();
+      } catch (failure) { cleanupError = failure; }
+      await settleRunCompletions(sessionId, runId, false);
+      activeRuns.delete(runId);
+      cancelPendingChoicesForRun(runId);
+      cancelPendingApprovalsForRun(runId);
+      cancelPendingQuizzesForRun(runId);
+      detachPendingTurnWatchers?.();
+      pendingTurns?.disposeEntry(runId);
+      if (registeredLearnTools) { try { unregisterObsidianTools(); } catch { /* ignore */ } }
       if (admitted) await database.call("runs.terminal", runId, cancelled ? "cancelled" : "failed", Date.now(), (error as Error).message).catch(failure => console.error("[AgUiBridge] 失败回执写入失败:", failure));
       releaseSessionGuard?.();
       backgroundRunControllers.delete(runAbortController);
       endConversation();
       // 后台失败由派发器统一延迟重试，不能用立即定时器覆盖退避。
-      if (!background) shellCompletions?.kick(sessionId);
+      if (!background && !cancelled && !cleanupError) shellCompletions?.kick(sessionId);
+      if (cleanupError) throw cleanupError;
       if (cancelled) return { success: false, runId, status: "cancelled" };
       throw error;
     }

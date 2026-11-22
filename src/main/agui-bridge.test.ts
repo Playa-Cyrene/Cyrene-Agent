@@ -1663,6 +1663,69 @@ describe("agui-bridge background shell smoke (mock sessions, isolated SQLite)", 
   });
   const snapshot = (jobId = "job-smoke") => ({ jobId, pid: null, status: "exited" as const, exitCode: 7,
     reason: null, totalBytes: 4, logFile: "fixture.log", command: "fixture", shell: "cmd", startedAt: "2026-01-01", durationMs: 10, tail: "done" });
+  it.each(["shell-read", "run-create", "build", "build-cleanup-fails"])("settles preparation cancellation at %s before returning", async phase => {
+    const { EventEmitter } = await import("node:events");
+    const { ConversationDatabaseClient } = await import("./storage/conversation-database-client");
+    const { ConversationTranscriptStore } = await import("./orchestrator/conversation-transcript-store");
+    const { ShellCompletionDispatcher } = await import("./orchestrator/shell-completion-dispatcher");
+    const { createPendingTurnLifecycle } = await import("./plugin-host/pending-turn-lifecycle");
+    let release!: () => void;
+    let entered = false;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const pause = async () => { entered = true; await gate; };
+    const publisher = { publishTurnStarted: vi.fn(), publishTurnFinished: vi.fn() };
+    const turns = createPendingTurnLifecycle({ publisher: publisher as never });
+    const resume = vi.spyOn(ShellCompletionDispatcher.prototype, "resume");
+    const originalCall = ConversationDatabaseClient.prototype.call;
+    const database = vi.spyOn(ConversationDatabaseClient.prototype, "call").mockImplementation(async function (method, ...args) {
+      const result = await originalCall.call(this, method, ...args);
+      if (phase === "run-create" && method === "runs.create") await pause();
+      return result;
+    });
+    const originalRead = ConversationTranscriptStore.prototype.readShellCompletionEntries;
+    const read = vi.spyOn(ConversationTranscriptStore.prototype, "readShellCompletionEntries").mockImplementation(async function (...args) {
+      const result = await originalRead.apply(this, args);
+      if (phase === "shell-read") await pause();
+      return result;
+    });
+    const mode = phase === "run-create" ? "chat" : "work";
+    mocks.getSession.mockReturnValue({ id: "cancel-preparation", mode, messages: [], workspaceBinding: { workspaceRoot: mocks.userDataRoot, displayName: "test", boundAt: 1 } });
+    bridge.registerAgUiIpc(async () => {
+      if (phase.startsWith("build")) await pause();
+      return { options: { settings: { provider: "test", baseUrl: "", model: "fake", apiKey: "", contextWindowTokens: 256000 }, messages: [], timeoutMs: 1000, toolSystemContent: "", soulSystemBaseContent: "" }, latestUserText: "test" };
+    }, async () => {}, () => null, undefined, undefined, turns);
+    const sender = Object.assign(new EventEmitter(), { isDestroyed: () => false, send: vi.fn() });
+    const call = mocks.handlers.get(IPC.AGUI_RUN)!({ sender }, { sessionId: "cancel-preparation", assistantTurnId: "answer", userTurnId: "user", currentUser: { turnId: "user", text: "test", visibleContent: "test" } }) as Promise<unknown>;
+    void call.catch(() => {});
+    try {
+      await vi.waitFor(() => expect(entered).toBe(true));
+      const runId = bridge.__getSessionActiveRunForTest("cancel-preparation")!;
+      let acceptedAdjustment = phase.startsWith("build");
+      mocks.resetPendingAdjustByRun.mockImplementation(async () => {
+        expect(bridge.__getSessionActiveRunForTest("cancel-preparation")).toBeDefined();
+        if (phase === "build-cleanup-fails") throw new Error("ADJUST_PERSIST_FAILED");
+        acceptedAdjustment = false;
+        return { ok: true, reset: 1 };
+      });
+      await mocks.handlers.get(IPC.AGUI_CANCEL)!({}, { sessionId: "cancel-preparation", assistantTurnId: "answer" });
+      resume.mockClear();
+      const result = phase === "build-cleanup-fails"
+        ? expect(call).rejects.toThrow("ADJUST_PERSIST_FAILED")
+        : expect(call).resolves.toMatchObject({ status: "cancelled" });
+      release();
+      await result;
+      expect(resume).not.toHaveBeenCalled();
+      expect(mocks.resetPendingAdjustByRun).toHaveBeenCalledWith("cancel-preparation", runId);
+      if (phase !== "build-cleanup-fails") expect(acceptedAdjustment).toBe(false);
+      expect(mocks.runCyreneAgent).not.toHaveBeenCalled();
+      expect(publisher.publishTurnStarted).not.toHaveBeenCalled();
+      expect(turns.pendingCount()).toBe(0);
+      expect(sender.listenerCount("destroyed")).toBe(0);
+      expect(sender.listenerCount("did-start-navigation")).toBe(0);
+      expect(bridge.__getSessionActiveRunForTest("cancel-preparation")).toBeUndefined();
+    } finally { release(); await call.catch(() => {}); resume.mockRestore(); database.mockRestore(); read.mockRestore(); }
+  });
+
   async function start() {
     await mocks.handlers.get(IPC.AGUI_RUN)!({ sender: { isDestroyed: () => false, send: vi.fn() } },
       { sessionId: "original", assistantTurnId: "initial" });
