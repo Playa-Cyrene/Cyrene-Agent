@@ -2,7 +2,7 @@ import { lstatSync } from "node:fs";
 import { QqAdoptionProofCoordinator, snapshotQqAdoptionContext, type QqAdoptionContext, type QqAdoptionProof, type QqAdoptionProofPorts } from "./adoption-proof";
 import { QqAdoptionIntentStore, type QqAdoptionIntent } from "./adoption-intent";
 import { createQqCurrentHostLegacyAdoptionPort } from "./adoption-legacy-port";
-import { buildQqMigrationPlan, qqMigrationDigest, readQqMigrationToken } from "./migration-plan";
+import { qqMigrationDigest, type QqMigrationPlan } from "./migration-plan";
 import { readQqLifecycleDiagnostics } from "./lifecycle-diagnostics";
 import { join } from "node:path";
 import type { QqModuleActionCommand, QqModuleActionResult, QqModuleConfigurationView } from "../../shared/qq-module-actions";
@@ -50,7 +50,6 @@ export class QqProductionHost {
   private readonly service: QqModuleHostService;
   private binding?: QqConfigurationProposalBinding;
   private upgradePreview?: { operationId: string; accountId: string; connectionEpoch: number; packageId: string; context: QqAdoptionContext; sourceDigest: string };
-  private readonly secure: QqSecureStoragePort;
   private upgradeIntent?: QqAdoptionIntent;
   private upgradeImported?: { proposal: ReturnType<QqConfigurationProposalStore["propose"]>; generation: string };
   private owner?: QqDriverOwnershipSupervisor;
@@ -66,7 +65,6 @@ export class QqProductionHost {
     if (options.legacyUpgrade && (options.adoption || options.ownership.bootstrap)) throw new Error("QQ_PRODUCTION_AMBIGUOUS_UPGRADE");
     if (options.adoption && options.ownership.bootstrap) throw new Error("QQ_PRODUCTION_AMBIGUOUS_ADOPTION");
     const secure = options.secureStorage ?? createQqElectronSecureStoragePort();
-    this.secure = secure;
     this.credentials = new QqSecureCredentialStore(qqSecureCredentialDirectory(options.userDataPath), secure);
     this.proposals = new QqConfigurationProposalStore(qqConfigurationProposalDirectory(options.userDataPath));
     const desired = () => {
@@ -100,6 +98,7 @@ export class QqProductionHost {
     this.service = new QqModuleHostService({ userDataPath: options.userDataPath, router: options.router,
       ...options.releasePolicy, appName: "Cyrene", secureStorage: secure,
       readLegacySettings: () => this.readUpgradeSettings(),
+      prepareConfirmedMigration: options.legacyUpgrade ? (plan, token) => this.prepareUpgradeImport(plan, token) : undefined,
       ...(options.legacyUpgrade ? { migrationLegacy: {
         getMigrationIdentity: () => options.router.getMigrationIdentity(),
         prepareMigrationStop: async (identity: { accountId: string; connectionEpoch: number }) => {
@@ -156,24 +155,22 @@ export class QqProductionHost {
     if (this.adoptionProof && (!this.adoptionHeld() || (this.owner && !this.owner.verifyNoOtherDrivers(this.candidate)))) throw new Error("QQ_PRODUCTION_ADOPTION_LOST");
     return this.options.legacyUpgrade.readLegacySettings();
   }
-  private importUpgradeConfiguration(): void {
+  private prepareUpgradeImport(plan: QqMigrationPlan, token: string): (confirmedToken: string) => void {
     const p = this.assertUpgradePreview();
-    const bytes = this.readUpgradeSettings();
-    if (qqMigrationDigest(bytes) !== p.sourceDigest) throw new Error("QQ_PRODUCTION_UPGRADE_STALE");
-    const identity = this.options.router.getMigrationIdentity();
-    if (!identity || identity.accountId !== p.accountId || identity.connectionEpoch !== p.connectionEpoch) throw new Error("QQ_PRODUCTION_UPGRADE_STALE");
+    if (plan.sourceDigest !== p.sourceDigest || plan.identity.selfId !== p.accountId
+      || plan.identity.connectionEpoch !== p.connectionEpoch) throw new Error("QQ_PRODUCTION_UPGRADE_STALE");
     // Never overwrite another secure credential/proposal or silently merge policies.
     if (this.credentials.getMetadata() || this.proposals.read()) throw new Error("QQ_PRODUCTION_UPGRADE_DESTINATION_EXISTS");
-    const plan = buildQqMigrationPlan(bytes, { selfId: p.accountId, connectionEpoch: p.connectionEpoch });
-    const intent = new QqAdoptionIntentStore(this.options.userDataPath);
-    intent.persistIntent(p.context); this.upgradeIntent = intent.read()!;
-    let token = readQqMigrationToken(bytes, this.secure, { userDataPath: this.options.userDataPath, appName: "Cyrene" });
-    try {
-      if (!token.trim()) throw new Error("QQ_PRODUCTION_UPGRADE_CREDENTIAL_REQUIRED");
-      const credential = this.credentials.write({ accountId: p.accountId, token, expectedGeneration: null, userConfirmed: true });
+    if (!token.trim()) throw new Error("QQ_PRODUCTION_UPGRADE_CREDENTIAL_REQUIRED");
+    // Retain only the reviewed non-secret context in the writer. The coordinator
+    // supplies the token again when it commits under its migration-store lock.
+    return confirmedToken => {
+      const intent = new QqAdoptionIntentStore(this.options.userDataPath);
+      intent.persistIntent(p.context); this.upgradeIntent = intent.read()!;
+      const credential = this.credentials.write({ accountId: p.accountId, token: confirmedToken, expectedGeneration: null, userConfirmed: true });
       const proposal = this.proposals.propose({ config: plan.config, enabled: true, credentialGeneration: credential.generation }, null);
       this.upgradeImported = { proposal, generation: credential.generation };
-    } finally { token = ""; }
+    };
   }
   private adoptionHeld(): boolean { return !this.adoptionProof || this.adoptionProof.isHeld(); }
   private view(): QqModuleConfigurationView {
@@ -219,7 +216,7 @@ export class QqProductionHost {
       }
       const p = this.upgradePreview;
       if (!p || p.operationId !== command.operationId || p.accountId !== command.accountId || command.userConfirmed !== true) return { ok: false, error: "stale" };
-      try { this.importUpgradeConfiguration(); return await this.service.execute(command); }
+      try { return await this.service.execute(command); }
       finally { this.grant = undefined; }
     }
     if (this.options.router.getDriver() === "legacy" && ["preview-setup", "confirm-setup", "preview-recovery", "confirm-recovery", "preview-reconfigure", "confirm-reconfigure", "propose-configuration"].includes(command.action)) return { ok: false, error: "unconfigured" };

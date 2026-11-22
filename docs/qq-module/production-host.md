@@ -34,10 +34,10 @@ shutdown 先停止新请求、等待已确认操作、真实停止路由，随�
 `legacyUpgrade` 是 MAIN-only 组合，包含只读旧 settings reader 和 adoption 的精确 context、reviewed policy、exclusive historical scope provider。不接受 renderer 路径、版本白名单、信任根、token 或历史证明。
 
 1. preview 只读取旧设置和已验证的当前账号/连接 epoch，绑定旧 host、新 host、模块 manifest SHA256、scope/session 及 settings digest。包 ID 必须与 context 的 module SHA256 对应。不会读出 token、冻结、停机或写 sidecar。
-2. 明确账号确认后，先创建固定 `qq-module-adoption` durable prepared；随后安全解读旧 token，写入新的凭据 envelope 和完全对应的配置提案。已有新凭据或提案拒绝覆盖。旧 settings/history/bindings 保持不变。
+2. 明确账号确认后，先只读复核当前已选包及签名期限/信任、绑定的旧设置、账号/连接 epoch 和监听配置。包过期或预检拒绝时不写生命周期标记、凭据或提案，不停止旧驱动，可以安装新的有效包后重新预览。通过预检后在迁移锁内先持久化固定 `qq-module-adoption` 的意图，再写入新的凭据 envelope 和对应配置提案。已有新凭据或提案拒绝覆盖。旧 settings/history/bindings 保持不变。
 3. 通用迁移协调器持久化 migration prepared，再调用受控 adoption wrapper。经审查的外部 scope 被冻结并证明历史未纳管 driver 缺席；同一个实际 router 完成 legacy listener close 与工作 drain，随后取得 ownership epoch 和一次性启动 grant。
 4. 已验证包以隔离消息接收状态启动，核验实际账号与连接；在保存 selected 前重查旧 source、新提案/凭据代次、外部 lease 和已安装包的完整性/期限/信任。保存 selected 后才激活。
-5. 失败不重启旧 driver，不清锁、不删除部分导入。写入新凭据/提案不等于迁移成功；prepared 或残留 sidecar 只表示需要审查。旧 stop 失败、导入失败或外部证据丢失会阻断重试或恢复，不自动覆盖导入。
+5. 开始持久化或尝试停机后的故障仍按原规则闭锁：不重启旧 driver，不清锁、不删除部分导入。写入新凭据/提案不等于迁移成功；prepared 或残留 sidecar 只表示需要审查。旧 stop 失败、导入失败或外部证据丢失会阻断重试或恢复，不自动覆盖导入。
 6. 成功迁移的 canonical source 是 migration record，新安全凭据与提案支持随后显式恢复/重配；clean-retired 后新 host 仍需重新确认才能启动。dirty scope 不能通过新的 adoption proof 绕过。
 
 此接线已用合成旧加密数据测试，不代表任何真实旧版本已经获准。正式 policy/provider 与现场验收缺失时保持未注入，不启用生产、不自动合并或发布。

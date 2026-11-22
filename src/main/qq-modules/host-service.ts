@@ -7,7 +7,7 @@ import { QqInstallationController } from "./installation-controller";
 import { QqPackageStore } from "./package-store";
 import type { QqPackageVerificationContext, QqSignedPackage } from "./package-verifier";
 import { QqMigrationCoordinator, type QqMigrationLegacyPort } from "./migration";
-import type { QqMigrationSecretStorage } from "./migration-plan";
+import type { QqMigrationPlan, QqMigrationSecretStorage } from "./migration-plan";
 import { QqMigrationStore } from "./migration-store";
 import { QqFirstSetupCoordinator } from "./first-setup";
 import { QqFirstSetupStore } from "./first-setup-store";
@@ -26,6 +26,7 @@ export interface QqModuleHostOptions {
   readLegacySettings(): Uint8Array;
   /** Optional reviewed production adoption wrapper around this same router. */
   migrationLegacy?: QqMigrationLegacyPort;
+  prepareConfirmedMigration?(plan: QqMigrationPlan, token: string): (confirmedToken: string) => void;
   secureStorage: QqMigrationSecretStorage;
   appName: string;
   readFirstConfiguration(accountId: string): QqRuntimeConfig;
@@ -90,6 +91,7 @@ export class QqModuleHostService {
     }
     const migration = new QqMigrationCoordinator({ store: this.migrationStore, readLegacySettings: options.readLegacySettings,
       legacy: options.migrationLegacy ?? options.router, secureStorage: options.secureStorage,
+      prepareConfirmedMigration: options.prepareConfirmedMigration,
       legacyMachine: { userDataPath: options.userDataPath, appName: options.appName },
       ...this.factory, backendReconnectTimeoutMs: options.backendReconnectTimeoutMs });
     this.installation = new QqInstallationController({ packages: this.packages, verificationContext: options.verificationContext, migration });

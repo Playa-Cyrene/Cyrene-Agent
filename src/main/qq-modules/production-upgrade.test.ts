@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { createQqProductionHost, type QqProductionHost } from "./production-host";
 import { QqModuleActionGateway } from "./action-gateway";
+import { getQqStartupMode } from "./startup-recovery";
 import { QqRoutingAdapter } from "../channels/adapters/qq-routing-adapter";
 import { QqSecureCredentialStore, qqSecureCredentialDirectory } from "./secure-credential-store";
 import { QqConfigurationProposalStore, qqConfigurationProposalDirectory } from "./configuration-proposal";
@@ -30,9 +31,9 @@ function fixture() {
   const original = Buffer.from(settings), keys = generateKeyPairSync("ed25519"), file = Buffer.from("// synthetic module");
   const manifest: QqPackageManifest = { schemaVersion: 1, moduleId: "qfca", version: "0.1.0", releaseSequence: 1, keyId: "fixture", issuedAt: 100, expiresAt: 2000,
     hostVersionRange: { minInclusive: "1.3.0", maxExclusive: "1.4.0" }, apiSupport: { major: 1, minMinor: 0, maxMinor: 0 }, targets: [{ platform: "win32", arch: "x64" }], entry: "entry.cjs", files: [{ path: "entry.cjs", size: file.length, sha256: qqPackageDigest(file) }] };
-  const bytes = Buffer.from(JSON.stringify(manifest));
-  let verificationNow = 1000;
-  const releasePolicy = { verificationContext: () => ({ trustedKeys: new Map([["fixture", keys.publicKey.export({ type: "spki", format: "pem" }).toString()]]), hostVersion: "1.3.7", platform: "win32", arch: "x64", now: verificationNow }),
+  let bytes = Buffer.from(JSON.stringify(manifest));
+  let verificationNow = 1000, expireAfterChecks = Infinity;
+  const releasePolicy = { verificationContext: () => ({ trustedKeys: new Map([["fixture", keys.publicKey.export({ type: "spki", format: "pem" }).toString()]]), hostVersion: "1.3.7", platform: "win32", arch: "x64", now: expireAfterChecks-- <= 0 ? 3000 : verificationNow }),
     candidate: () => ({ manifest: bytes, signature: sign(null, Buffer.concat([Buffer.from(QQ_PACKAGE_SIGNATURE_DOMAIN), bytes]), keys.privateKey), files: new Map([["entry.cjs", file]]) }) };
   const legacy = { id: "qq" as const, displayName: "synthetic legacy", capability: { text: true }, onMessage: null,
     start: vi.fn(async () => {}), stop: vi.fn(async () => {}), send: vi.fn(async () => ({ ok: true })), getStatus: () => ({ enabled: true, phase: "running" as const }),
@@ -54,7 +55,13 @@ function fixture() {
   const install = async () => { const p = extract(await gateway.execute({ action: "preview-install" }, owner)); expect(await gateway.execute({ action: "confirm-install", operationId: p.operationId, userConfirmed: true }, owner)).toEqual({ ok: true, state: "installed" }); };
   const preview = async () => { await install(); return extract(await gateway.execute({ action: "preview-migration" }, owner)); };
   const confirm = (p: ReturnType<typeof extract>) => gateway.execute({ action: "confirm-migration", operationId: p.operationId, accountId: p.accountId!, userConfirmed: true }, owner);
-  return { root, service, options, gateway, owner, legacy, peers, secure, context, freeze, createTransport, extract, preview, confirm,
+  const publishFresh = () => {
+    expireAfterChecks = Infinity; verificationNow = 3000;
+    bytes = Buffer.from(JSON.stringify({ ...manifest, version: "0.1.1", releaseSequence: 2, issuedAt: 2500, expiresAt: 4000 }));
+    context.moduleSha256 = qqPackageDigest(bytes);
+  };
+  return { root, service, options, gateway, owner, legacy, peers, secure, context, freeze, createTransport, extract, preview, confirm, publishFresh,
+    expireAfter: (validChecks: number) => { expireAfterChecks = validChecks; },
     original, readSettings: () => settings, changeSettings: () => { settings = Buffer.from(settings.toString().replace("6200", "6201")); }, expire: () => { verificationNow = 3000; }, lose: () => { held = false; }, deny: () => { approved = false; } };
 }
 it("previews without touching secrets or stopping; confirms actual migration and preserves legacy source", async () => {
@@ -84,6 +91,40 @@ it("rejects changed source or revoked review before import and stop", async () =
     const s = fixture(), p = await s.preview(); if (kind === "source") s.changeSettings(); else s.deny();
     expect((await s.confirm(p)).ok).toBe(false); expect(s.secure.encryptString).not.toHaveBeenCalled(); expect(s.legacy.prepareMigrationStop).not.toHaveBeenCalled(); expect(s.createTransport).not.toHaveBeenCalled();
   }
+});
+it.each([0, 1])("keeps legacy available and permits a fresh confirmed upgrade after expiry on confirmation check %i", async validChecks => {
+  const s = fixture(), stale = await s.preview();
+  s.expireAfter(validChecks);
+  expect((await s.confirm(stale)).ok).toBe(false);
+  expect(s.secure.decryptString).not.toHaveBeenCalled();
+  expect(s.secure.encryptString).not.toHaveBeenCalled();
+  expect(s.freeze).not.toHaveBeenCalled();
+  expect(s.legacy.prepareMigrationStop).not.toHaveBeenCalled();
+  expect(s.createTransport).not.toHaveBeenCalled();
+  expect(s.options.router.getDriver()).toBe("legacy");
+  expect(getQqStartupMode(s.root)).toBe("legacy");
+  for (const sidecar of ["qq-module-adoption", "qq-module-migration", "qq-module-driver-ownership",
+    "qq-module-credentials", "qq-module-configuration-proposals"]) expect(existsSync(join(s.root, sidecar))).toBe(false);
+  expect(s.readSettings()).toEqual(s.original);
+  s.publishFresh();
+  const fresh = await s.preview();
+  expect(fresh.packageId).not.toBe(stale.packageId);
+  expect(await s.confirm(stale)).toEqual({ ok: false, error: "stale" });
+  expect(await s.confirm(fresh)).toEqual({ ok: true, state: "committed" });
+});
+it("rejects a conflicting destination before making a migration marker", async () => {
+  const s = fixture(), preview = await s.preview();
+  const store = new QqSecureCredentialStore(qqSecureCredentialDirectory(s.root), s.secure);
+  const existing = store.write({ accountId: "10000", token: "synthetic-existing-secret", expectedGeneration: null, userConfirmed: true });
+  expect((await s.confirm(preview)).ok).toBe(false);
+  expect(store.getMetadata()).toEqual(existing);
+  expect(s.options.router.getDriver()).toBe("legacy");
+  expect(getQqStartupMode(s.root)).toBe("legacy");
+  expect(existsSync(join(s.root, "qq-module-adoption"))).toBe(false);
+  expect(existsSync(join(s.root, "qq-module-migration"))).toBe(false);
+  expect(existsSync(qqConfigurationProposalDirectory(s.root))).toBe(false);
+  expect(s.freeze).not.toHaveBeenCalled();
+  expect(s.legacy.prepareMigrationStop).not.toHaveBeenCalled();
 });
 it("keeps durable intent and imported sidecars on failed legacy stop without restarting or overwriting", async () => {
   const s = fixture(), p = await s.preview(); s.legacy.prepareMigrationStop.mockResolvedValue({ safeToSwitch: false, stopped: false, drained: false });
