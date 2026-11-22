@@ -3,6 +3,7 @@ import * as os from "os";
 import * as path from "path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { backupMemoryRagFiles, reconcileMemoryRag, type MemoryRagReconciliationDeps } from "./memory-rag-reconciliation";
+import { JsonVectorStore } from "../rag/vectorstore";
 import type { L2Memory } from "./memory-types";
 
 function memory(overrides: Partial<L2Memory> & Pick<L2Memory, "id" | "content">): L2Memory {
@@ -43,6 +44,31 @@ function createDeps(
 }
 
 describe("memory/RAG reconciliation", () => {
+  it("discards an embedding that finishes after shutdown without updating either store", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "memory-rag-stop-"));
+    backupTempDirs.push(dir);
+    const vectors = new JsonVectorStore(dir);
+    const controller = new AbortController();
+    const deps = createDeps([memory({ id: "pending", content: "pending" })], []);
+    const provider = {
+      name: "test", dims: 2, embedBatch: vi.fn(),
+      embed: vi.fn(async () => {
+        controller.abort();
+        return [0, 1];
+      }),
+    };
+    deps.addVector = async (text, l2Id) =>
+      (await vectors.addUnique(text, "user_memory", provider, { l2Id }, controller.signal)).id;
+
+    await expect(reconcileMemoryRag(deps, controller.signal)).rejects.toThrow();
+    expect(provider.embed).toHaveBeenCalledOnce();
+    expect(vectors.stats.total).toBe(0);
+    expect(vectors.getIndexMeta()).toBeNull();
+    expect(deps.markSynced).not.toHaveBeenCalled();
+    expect(deps.markSyncFailed).not.toHaveBeenCalled();
+    expect(deps.deleteVectors).not.toHaveBeenCalled();
+  });
+
   it("repairs recallable memories and removes terminal, orphaned, and mismatched vectors", async () => {
     const memories = [
       memory({ id: "l2_valid", content: "valid", ragId: "rag_valid" }),

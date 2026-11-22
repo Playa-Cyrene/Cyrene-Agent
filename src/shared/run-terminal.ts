@@ -46,6 +46,8 @@ export interface CyreneRunTerminalResult {
  *
  * 终态仍由事件流承载，ack.success=false 仅表示 run 没能开始（如 sessionId 缺失）。
  */
+export type AguiCancelTarget = string | { sessionId: string; messageId: string } | { sessionId: string; assistantTurnId: string };
+
 export interface AguiRunAck {
   /** A prior request returns its durable receipt rather than starting again. */
   duplicate?: boolean;

@@ -12,7 +12,7 @@
 //   - 可调模型的旧 auto 会解析为默认档并显式发送；不可调模型不增加字段
 //   - 不支持的 effort 已在 resolveEffectiveReasoning 退回 defaultEffort
 //     （applyReasoningPreference 信任传入的 preference）
-//   - supportsDisable=false 时，旧 off 偏好在共享解析层回退到默认档
+//   - supportsDisable=false 时，旧 off 偏好在共享解析层回退到 lowEffortFallback（若声明）或默认档
 //   - fixed-on 走 resolveEffectiveReasoning 后 effective.mode 永远 on，
 //     故 applyReasoningPreference 不再判 fixed-on/off → 直接按 on 处理
 //   - 互斥字段防御：每个 requestStyle 只用自己专属字段，路径互不交叉

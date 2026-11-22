@@ -51,6 +51,14 @@ export interface DispatchReceipt {
 }
 export function runCommand(database: ConversationDatabase, method: string, args: any[]): unknown {
   const db = database.db;
+  if (method === "runs.cancelUnstartedRequest") {
+    return database.transaction(() => {
+      const request = db.prepare("SELECT run_id FROM conversation_requests WHERE conversation_id=? AND request_id=? AND dispatch_json IS NULL AND status='admitted'").get(args[0], args[1]);
+      if (!request?.run_id) return false;
+      runCommand(database, "runs.terminal", [request.run_id, "cancelled"]);
+      return true;
+    });
+  }
   if (method === 'runs.failRequest')
     return database.transaction(() => {
       const request = db.prepare('SELECT * FROM conversation_requests WHERE conversation_id=? AND request_id=?').get(args[0], args[1]);

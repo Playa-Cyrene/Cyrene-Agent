@@ -1,3 +1,4 @@
+import { waitForStartupTask } from "./application/startup-cancellation";
 import type {
   PluginAgentEvent,
   PluginAgentRunOptions,
@@ -169,15 +170,30 @@ export function createPluginAgentRunner(deps: PluginAgentRunnerDeps): NonNullabl
 
     const deadline = deps.createDeadline?.(maxWallMs) ?? AbortSignal.timeout(maxWallMs);
     const signals = combineSignals({ external: options.signal, plugin: deps.pluginSignal, deadline });
-    const built = await deps.agentRuntime.buildOptions({
-      sessionId: `plugin:${deps.pluginId}`,
-      workspaceBindingSessionId: null,
-      executionMode: "work",
-      mode: "work",
-      promptSource: "plugin-agent",
-      promptChannel: "minecraft",
-      currentUser: { turnId: `plugin:${runId}`, text: goal, visibleContent: goal },
-    });
+    let built: Awaited<ReturnType<AgentRuntime["buildOptions"]>>;
+    try {
+      signals.signal.throwIfAborted();
+      const building = deps.agentRuntime.buildOptions({
+        signal: signals.signal,
+        sessionId: `plugin:${deps.pluginId}`,
+        workspaceBindingSessionId: null,
+        executionMode: "work",
+        mode: "work",
+        promptSource: "plugin-agent",
+        promptChannel: "minecraft",
+        currentUser: { turnId: `plugin:${runId}`, text: goal, visibleContent: goal },
+      }, []);
+      await waitForStartupTask(building, signals.signal);
+      signals.signal.throwIfAborted();
+      built = await building;
+    } catch (error) {
+      if (!signals.signal.aborted) throw error;
+      const timeout = signals.firstAbortSource() === "deadline";
+      return { text: "", rounds: 0, terminal: {
+        status: timeout ? "timeout" : "cancelled",
+        reason: timeout ? "timeout" : "user_cancelled", externalEffectsMayContinue: false,
+      } } as PluginAgentRunResult;
+    }
     const toolSystemContent = buildToolSystemPrompt("work", tools);
     const promptLayers = buildHarnessPromptLayers({
       ...built.options,

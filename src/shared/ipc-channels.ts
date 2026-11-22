@@ -29,6 +29,7 @@ export interface SpeechInputCommitResult {
 }
 
 export const IPC = {
+  APP_RUNTIME_IPC_READY: "app:runtime-ipc-ready",
   // pet window
   WINDOW_MINIMIZE: "window:minimize",
   WINDOW_CLOSE: "window:close",

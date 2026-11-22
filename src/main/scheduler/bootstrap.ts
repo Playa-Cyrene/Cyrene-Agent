@@ -15,6 +15,7 @@ import { createSchedulerRunner } from "./scheduler-runner";
 
 export interface SchedulerSubsystemDeps {
   agentRuntime: AgentRuntime;
+  waitForTools(task: ScheduledTask): Promise<void>;
   getReactChatWindow(): BrowserWindow | null;
   store?: ReturnType<typeof getSchedulerStore>;
   createEngine?: (deps: SchedulerEngineDeps) => SchedulerEngine;
@@ -48,6 +49,7 @@ export function createSchedulerSubsystem(deps: SchedulerSubsystemDeps): Schedule
   const store = deps.store ?? getSchedulerStore();
 
   const runner = createSchedulerRunner({
+    waitForTools: deps.waitForTools,
     buildOptions: (task) => deps.agentRuntime.buildSchedulerOptions(task),
     createRunSession: async (task) => {
       if (!task.workspaceBinding) throw new Error("定时任务缺少绑定工作区");

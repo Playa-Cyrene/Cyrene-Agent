@@ -319,9 +319,11 @@ export class JsonVectorStore {
     source: string,
     provider: EmbeddingProvider,
     metadata?: Record<string, unknown>,
+    signal?: AbortSignal,
   ): Promise<MemoryEntry> {
     this.validateDimensionsForProvider(provider);
     const embedding = await provider.embed(text);
+    signal?.throwIfAborted();
     this.ensureIndexMeta(provider, embedding.length);
     return this.addPreparedBatch([{ text, source, embedding, metadata }])[0];
   }

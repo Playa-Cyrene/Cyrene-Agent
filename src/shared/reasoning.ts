@@ -78,8 +78,9 @@ export function resolveReasoningCapability(
  * 2. control = none / dynamic，或手动禁用 → 强制 auto
  * 3. control ∈ {toggle, effort, toggle-effort}：
  *    - 旧 auto / 缺省偏好 → 显式 on，使用模型支持的默认档位
- *    - off → 支持关闭时保持 off；否则回退到模型默认档位
- *    - on：effort 不在 supportedEfforts → 退回默认档位；
+ *    - off → 支持关闭时保持 off；否则回退到 lowEffortFallback（若声明），再到模型默认档位
+ *    - on：effort 为不支持的 minimal 且声明了 lowEffortFallback → 用该档；
+ *      其余不在 supportedEfforts 的 effort → 退回默认档位；
  *      effort 缺省时填默认档位，规则未声明默认值时取首个支持档位
  *
  * 注意：saved 永远不动（用户修订 #5），effective 仅用于运行时请求与 UI 当前显示。
@@ -114,6 +115,16 @@ export function resolveEffectiveReasoning(
   const defaultEffort = [capability.defaultEffort, capability.autoEffort, supportedEfforts?.[0]]
     .find((candidate) => candidate && (!supportedEfforts || supportedEfforts.includes(candidate)));
   let effort = pref.mode === "on" ? pref.effort : undefined;
+
+  // 想少用推理的用户（显式 off 或 minimal 但模型都不支持）→ 按规则声明的低档执行，不直接升到默认档。
+  const lowEffortFallback = capability.lowEffortFallback;
+  if (lowEffortFallback && (!supportedEfforts || supportedEfforts.includes(lowEffortFallback))) {
+    const wantsOff = pref.mode === "off" && !capability.supportsDisable;
+    const wantsUnsupportedMinimal = effort === "minimal" && supportedEfforts !== undefined && !supportedEfforts.includes("minimal");
+    if (wantsOff || wantsUnsupportedMinimal) {
+      effort = lowEffortFallback;
+    }
+  }
 
   // effort 不在 supportedEfforts → 退回默认档位
   if (effort !== undefined && supportedEfforts && !supportedEfforts.includes(effort)) {

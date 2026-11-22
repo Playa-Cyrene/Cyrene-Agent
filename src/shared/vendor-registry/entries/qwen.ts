@@ -23,6 +23,14 @@ export const QWEN_REGISTRY = defineVendor({
   },
   models: [
     {
+      model: "qwen4-max",
+      recommendedFor: ["chat"],
+      note: "2026-11-16 发布的正式版；固定型号名，无日期后缀。",
+      unknownCapabilities: [
+        { feature: "sampling", transport: "openai", note: "现有采样白名单未覆盖该型号。" },
+      ],
+    },
+    {
       model: "qwen-max",
       recommendedFor: ["chat"],
       unknownCapabilities: [
@@ -56,6 +64,24 @@ export const QWEN_REGISTRY = defineVendor({
     },
   ],
   structuredOutputRules: [
+    // Qwen4-Max：官方模型页写明支持 JSON Object 与 JSON Schema，Chat Completions 的 response_format 接受 json_schema。
+    {
+      id: "qwen4-max-structured-output",
+      transport: "openai",
+      modelPattern: /^qwen4-max$/i,
+      tier: "A",
+      mode: "provider_json_schema",
+      verification: "official",
+      metadata: {
+        status: "supported",
+        evidence: {
+          kind: "official",
+          url: "https://www.alibabacloud.com/help/en/model-studio/qwen4-max",
+          checkedAt: "2026-11-17",
+          transports: ["openai"],
+        },
+      },
+    },
     {
       id: "qwen-json-object",
 
@@ -69,6 +95,24 @@ export const QWEN_REGISTRY = defineVendor({
   ],
   reasoningRules: [
     // ── qwen（通义千问）──
+    // Qwen4-Max（核验 2026-11-17）：混合思考，默认开启。Chat Completions 的 reasoning_effort
+    // 支持 low/high/xhigh（默认 high），"none" 关闭思考。只覆盖正式版完整名称；
+    // 仅 Token Plan 可用的 qwen4-max-preview 默认 xhigh，规格不同，不在此列。
+    { modelPattern: /^qwen4-max$/i, modelInferencePattern: /^qwen4-max$/i, metadata: {
+      status: "supported",
+      evidence: {
+        kind: "official",
+        url: "https://www.alibabacloud.com/help/en/model-studio/qwen-api-via-openai-chat-completions",
+        checkedAt: "2026-11-17",
+        transports: ["openai"],
+      },
+    }, capability: {
+      control: "toggle-effort",
+      supportedEfforts: ["low", "high", "xhigh"],
+      defaultEffort: "high",
+      requestStyle: "openai-effort",
+      supportsDisable: true,
+    } },
     // /-thinking$/ 必须在 /^qwen3/ 之前。
     { familyLabel: "qwen-*-thinking 系列（厂商内后缀；跨厂商限明确千问前缀）", modelPattern: /-thinking$/i, modelInferencePattern: /^qwen(?:3(?:[.-].*)?|-(?:max|plus|turbo)(?:-.*)?)-thinking$/i, metadata: legacyMetadata("迁自 src/shared/vendor-registry/entries/qwen.ts"), capability: {
       control: "fixed-on",

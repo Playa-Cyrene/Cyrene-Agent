@@ -12,10 +12,9 @@ vi.mock("electron", () => ({
   BrowserWindow: { getAllWindows: vi.fn(() => []) },
   screen: { getCursorScreenPoint: vi.fn(() => ({ x: 0, y: 0 })) },
 }));
-vi.mock("../startup/create-pet-window", () => ({
+vi.mock(import("../startup/create-pet-window"), async (importOriginal) => ({
+  ...await importOriginal(),
   createPetWindow: mocks.createPetWindow,
-  PET_WINDOW_BASE_HEIGHT: 500,
-  PET_WINDOW_BASE_WIDTH: 400,
 }));
 vi.mock("./create-aux-windows", () => ({
   createCallWindow: vi.fn(), createReactChatWindowShell: vi.fn(), createStickerManagerWindow: vi.fn(),
@@ -25,8 +24,6 @@ vi.mock("./create-aux-windows", () => ({
 vi.mock("./startup-window-load", () => ({ CHAT_READY_TIMEOUT_MS: 1, loadWindowForStartup: vi.fn() }));
 vi.mock("./create-music-player-window", () => ({ createMusicPlayerWindow: vi.fn() }));
 vi.mock("./broadcast", () => ({ broadcastToAllWindows: vi.fn() }));
-vi.mock("../pet-window-movement", () => ({ PetWindowMoveController: class { dispose() {} finishDragging() {} moveRelative() {} queueAbsolute() {} } }));
-
 
 function createFakeWindow() {
   const listeners = new Map<string, Array<(...args: any[]) => void>>();
@@ -51,6 +48,8 @@ function createFakeWindow() {
     isVisible: vi.fn(() => visible),
     setAlwaysOnTop: vi.fn(),
     getPosition: vi.fn(() => [0, 0]),
+    setBounds: vi.fn(),
+    webContents: { send: vi.fn() },
   };
 }
 
@@ -90,6 +89,27 @@ describe("pet window resource release", () => {
     manager.showPetWindow();
     expect(mocks.createdWindows).toHaveLength(2);
     expect(mocks.createdWindows[1].setAlwaysOnTop).toHaveBeenCalledWith(true, "screen-saver");
+  });
+
+  it("keeps the configured dimensions when zooming and dragging a recreated window", () => {
+    const settings = { petZoom: 0.75 };
+    const manager = createWindowManager({
+      getCurrentAppIconPath: () => "icon",
+      isDev: false,
+      loadPetWindowSettingsSlice: () => settings,
+      persistPetWindowPosition: vi.fn(),
+    });
+    const firstWindow = manager.createPetWindow();
+    manager.applyPetWindowZoom(settings.petZoom);
+    expect(firstWindow.setBounds).toHaveBeenCalledWith({ x: 0, y: 0, width: 300, height: 375 }, false);
+
+    manager.hidePetWindow();
+    vi.advanceTimersByTime(30_000);
+    settings.petZoom = 1.25;
+    const recreated = manager.createPetWindow();
+    manager.movePetWindowTo(3160, 192);
+    vi.advanceTimersByTime(16);
+    expect(recreated.setBounds).toHaveBeenCalledWith({ x: 3160, y: 192, width: 500, height: 625 }, false);
   });
 
   it("cancels delayed destruction when shown again before the timeout", () => {

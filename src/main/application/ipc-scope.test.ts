@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createIpcScope, type IpcScopeMainLike } from "./ipc-scope";
+import { afterStartup, createIpcScope, type IpcScopeMainLike } from "./ipc-scope";
 
 function createFakeIpcMain(): IpcScopeMainLike & {
   handlers: Map<string, (...args: any[]) => unknown>;
@@ -38,6 +38,22 @@ describe("createIpcScope", () => {
     expect(main.removeListener).toHaveBeenCalledWith("b", listener);
     expect(main.handlers.size).toBe(0);
     expect(main.listeners).toHaveLength(0);
+  });
+
+  it("registers immediately and waits before entering a deferred handler", async () => {
+    const main = createFakeIpcMain();
+    let release!: () => void;
+    const ready = new Promise<void>(resolve => { release = resolve; });
+    const scope = afterStartup(createIpcScope(main), () => ready);
+    const listener = vi.fn(() => "ok");
+    scope.handle("test", listener);
+    const result = main.handlers.get("test")!("sender", "payload");
+    expect(listener).not.toHaveBeenCalled();
+    release();
+    await expect(result).resolves.toBe("ok");
+    expect(listener).toHaveBeenCalledWith("sender", "payload");
+    scope.dispose();
+    expect(main.handlers.size).toBe(0);
   });
 
   it("rejects duplicate registration inside one scope", () => {

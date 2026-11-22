@@ -70,7 +70,7 @@
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
-    "@lobehub/icons": "^5.19.3",
+    "@lobehub/icons": "^5.22.0",
     "@lobehub/ui": "^5.48.2",
     "@mantine/core": "^9.7.2",
     "@mantine/hooks": "^9.7.2",
@@ -147,8 +147,8 @@
     "@anthropic-ai/sdk": "^0.126.0",
     "@ast-grep/napi": "^0.45.1",
     "@googleapis/gmail": "^22.0.1",
-    "@larksuiteoapi/node-sdk": "^1.68.0",
-    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@larksuiteoapi/node-sdk": "^1.76.0",
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "@modelcontextprotocol/server-filesystem": "2026.8.31",
     "@node-rs/jieba": "^2.0.4",
     "@nut-tree-fork/nut-js": "^4.2.6",
@@ -156,7 +156,7 @@
     "@xenova/transformers": "^2.17.2",
     "ai": "7.0.127",
     "ajv": "^8.20.0",
-    "chokidar": "^4.0.3",
+    "chokidar": "^6.0.0",
     "cross-spawn": "^7.0.6",
     "diff": "^9.0.0",
     "docx": "^9.7.1",
@@ -170,7 +170,7 @@
     "marked": "^16.4.2",
     "music-metadata": "^12.2.1",
     "nodemailer": "^9.0.1",
-    "openai": "7.5.0",
+    "openai": "7.57.0",
     "package-manager-detector": "^1.8.0",
     "pdfkit": "^0.19.1",
     "playwright": "^1.63.0",
@@ -185,6 +185,6 @@
     "vscode-languageserver-types": "^3.18.4",
     "wink-bm25-text-search": "^3.1.2",
     "ws": "^8.21.0",
-    "yaml": "^2.9.0"
+    "yaml": "^2.9.1"
   }
 }

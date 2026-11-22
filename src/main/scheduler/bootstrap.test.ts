@@ -35,6 +35,7 @@ function makeSchedulerDeps(
   overrides: Partial<SchedulerSubsystemDeps> = {},
 ): SchedulerSubsystemDeps {
   return {
+    waitForTools: vi.fn(async () => {}),
     agentRuntime: {} as SchedulerSubsystemDeps["agentRuntime"],
     getReactChatWindow: () => null,
     ...overrides,

@@ -189,6 +189,48 @@ describe("G1 OpenAI chatgpt + reasoning 透传", () => {
     expect(JSON.parse(http.body).reasoning_effort).toBe("medium");
   });
 
+  // 官方推理指南：GPT-6.2 Astra / Sol 收到 effort=none 会拒绝请求；迁移指南要求 none / minimal 改用 low。
+  // 同一档案从别的模型切过来时，已保存的「关闭 / 最低」只降到 low，不升到默认 medium。
+  test.each([
+    ["gpt-6.2-astra", { mode: "off" }, "low"],
+    ["gpt-6.2-sol", { mode: "off" }, "low"],
+    ["gpt-6.2-sol", { mode: "on", effort: "minimal" }, "low"],
+    ["gpt-6.2-sol", { mode: "auto" }, "medium"],
+    ["gpt-6.2-sol", undefined, "medium"],
+  ] as const)("%s + %j → reasoning_effort=%s（不发送 none）", (model, reasoning, expected) => {
+    const http = adapter.buildRequest(
+      { model, messages: [{ role: "user", content: "hi" }] },
+      cfgOf(chatgptCap, { model, ...(reasoning ? { reasoning } : {}) }),
+    );
+    expect(JSON.parse(http.body).reasoning_effort).toBe(expected);
+  });
+
+  test("gpt-6.2-sol 经 Responses + 已保存的 off → reasoning.effort=low", () => {
+    const responses = new ResponsesAdapter("chatgpt", chatgptCap);
+    const http = responses.buildRequest(
+      { model: "gpt-6.2-sol", messages: [{ role: "user", content: "hi" }] },
+      cfgOf(chatgptCap, { model: "gpt-6.2-sol", reasoning: { mode: "off" } }),
+    );
+    expect(JSON.parse(http.body).reasoning).toEqual({ effort: "low" });
+  });
+
+  test("邻近反例：未声明低档回退的 gpt-6.1-sol 收到 minimal 仍回到默认 medium", () => {
+    const http = adapter.buildRequest(
+      { model: "gpt-6.1-sol", messages: [{ role: "user", content: "hi" }] },
+      cfgOf(chatgptCap, { model: "gpt-6.1-sol", reasoning: { mode: "on", effort: "minimal" } }),
+    );
+    expect(JSON.parse(http.body).reasoning_effort).toBe("medium");
+  });
+
+  test("gpt-6.2-sol 经 Responses + pro mode → reasoning:{effort, mode:'pro'}", () => {
+    const responses = new ResponsesAdapter("chatgpt", chatgptCap);
+    const http = responses.buildRequest(
+      { model: "gpt-6.2-sol", messages: [{ role: "user", content: "hi" }] },
+      cfgOf(chatgptCap, { model: "gpt-6.2-sol", reasoning: { mode: "on", effort: "high", proMode: true } }),
+    );
+    expect(JSON.parse(http.body).reasoning).toEqual({ effort: "high", mode: "pro" });
+  });
+
   test("gpt-4o + reasoning=auto → body 中无 reasoning_effort（非推理模型）", () => {
     const http = adapter.buildRequest(
       { model: "gpt-4o", messages: [{ role: "user", content: "hi" }] },
@@ -353,34 +395,77 @@ describe.each(["gemini-4-argon", "gemini-4-carbon"])("%s 请求体", (model) => 
   });
 });
 
-describe("gemini-4-hydrogen 请求体", () => {
+describe.each(["gemini-4-neon", "gemini-4-hydrogen"])("%s 请求体", (model) => {
   const adapter = new OpenAICompatAdapter("gemini", geminiCap);
-  // 官方：thinking_level 为 low/medium/high/xhigh，默认 high；兼容层 reasoning_effort 的 xhigh 只映射到 Hydrogen，
+  // 官方：thinking_level 为 low/medium/high/xhigh，默认 high；兼容层 reasoning_effort 的 xhigh 只映射到 Neon 与 Hydrogen，
   // Gemini 4 的思考不能关闭。验证实际请求体按这些档位发送，且不发采样参数。
-  const hydrogenBody = (reasoning?: ReasoningPreference) => {
+  const requestBody = (reasoning?: ReasoningPreference) => {
     const http = adapter.buildRequest(
-      { model: "gemini-4-hydrogen", messages: [{ role: "user", content: "hi" }] },
-      cfgOf(geminiCap, { model: "gemini-4-hydrogen", ...(reasoning ? { reasoning } : {}) }),
+      { model, messages: [{ role: "user", content: "hi" }] },
+      cfgOf(geminiCap, { model, ...(reasoning ? { reasoning } : {}) }),
     );
     return JSON.parse(http.body) as Record<string, unknown>;
   };
 
   test("未设置档位 → reasoning_effort=high，且不发 temperature", () => {
-    const body = hydrogenBody();
+    const body = requestBody();
     expect(body.reasoning_effort).toBe("high");
     expect("temperature" in body).toBe(false);
   });
 
   test("所选 xhigh 照常发送", () => {
-    expect(hydrogenBody({ mode: "on", effort: "xhigh" }).reasoning_effort).toBe("xhigh");
+    expect(requestBody({ mode: "on", effort: "xhigh" }).reasoning_effort).toBe("xhigh");
   });
 
   test("+ off → 不发送 none，回到默认 high", () => {
-    expect(hydrogenBody({ mode: "off" }).reasoning_effort).toBe("high");
+    expect(requestBody({ mode: "off" }).reasoning_effort).toBe("high");
   });
 
   test("+ 不支持的 max → 收敛到默认 high", () => {
-    expect(hydrogenBody({ mode: "on", effort: "max" }).reasoning_effort).toBe("high");
+    expect(requestBody({ mode: "on", effort: "max" }).reasoning_effort).toBe("high");
+  });
+});
+
+describe("qwen4-max 请求体", () => {
+  const qwenCap: ProviderCapability = {
+    id: "qwen",
+    displayName: "Qwen（通义千问）",
+    transport: "openai",
+    baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    authStyle: "bearer",
+    defaultModel: "qwen-max",
+    supportsTools: true,
+    supportsThinking: true,
+    thinkingField: "reasoning_content",
+    cacheStrategy: "auto",
+    testStrategy: "text",
+  };
+  const adapter = new OpenAICompatAdapter("qwen", qwenCap);
+  // 官方：reasoning_effort 支持 low/high/xhigh（默认 high），"none" 关闭思考；不再走 qwen3 的 enable_thinking 开关。
+  const qwenBody = (reasoning?: ReasoningPreference) => {
+    const http = adapter.buildRequest(
+      { model: "qwen4-max", messages: [{ role: "user", content: "hi" }] },
+      cfgOf(qwenCap, { model: "qwen4-max", ...(reasoning ? { reasoning } : {}) }),
+    );
+    return JSON.parse(http.body) as Record<string, unknown>;
+  };
+
+  test("未设置档位 → reasoning_effort=high，且不发 enable_thinking", () => {
+    const body = qwenBody();
+    expect(body.reasoning_effort).toBe("high");
+    expect("enable_thinking" in body).toBe(false);
+  });
+
+  test("所选 xhigh 照常发送", () => {
+    expect(qwenBody({ mode: "on", effort: "xhigh" }).reasoning_effort).toBe("xhigh");
+  });
+
+  test("+ off → reasoning_effort=none 关闭思考", () => {
+    expect(qwenBody({ mode: "off" }).reasoning_effort).toBe("none");
+  });
+
+  test("+ 不支持的 medium → 收敛到默认 high", () => {
+    expect(qwenBody({ mode: "on", effort: "medium" }).reasoning_effort).toBe("high");
   });
 });
 

@@ -12,6 +12,13 @@ describe("provider preset transport endpoints", () => {
     expect(claude.mainModels).toContain("claude-fable-5-2");
   });
 
+  it("keeps free-tier Hydrogen as the Gemini new-profile default and lists paid-only Neon", () => {
+    // 新建档案默认取 mainModels[0]；Neon 仅付费层可用，免费层 key 的新档案不能默认落到它。
+    const gemini = MODEL_PRESETS.find((preset) => preset.providerId === "gemini")!;
+    expect(gemini.mainModels[0]).toBe("gemini-4-hydrogen");
+    expect(gemini.mainModels).toContain("gemini-4-neon");
+  });
+
   it("keeps provider display order and custom entries independent of new candidates", () => {
     expect(MODEL_PRESETS.map(({ providerId }) => providerId)).toEqual([
       "minimax", "deepseek", "doubao", "glm", "kimi", "qwen", "chatgpt", "claude", "mimo", "grok", "gemini", "custom-cloud", "custom-local",

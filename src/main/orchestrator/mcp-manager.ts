@@ -95,31 +95,25 @@ export async function initMcpManager(options: { signal?: AbortSignal } = {}): Pr
       console.log(LOG_PREFIX, "restore aborted, remaining servers skipped:", config.name);
       break;
     }
-    // Built-in sync may have already connected this server before restore.
-    // Reuse it without taking ownership of its cancellation cleanup.
-    if (getMcpServerStates().some((state) => state.id === config.id && state.connected)) {
-      connected++;
-      continue;
-    }
-    try {
-      await connectMcpServer(config);
-      connected++;
-      // 连接完成后再核对一次信号：退出中则立刻断开这条迟到连接
-      if (signal?.aborted) {
-        try {
-          await disconnectMcpServer(config.id);
-        } catch {
-          // ignore
-        }
-        console.log(LOG_PREFIX, "late connection disconnected after abort:", config.name);
-      }
-    } catch (err) {
-      failed++;
-      console.error(LOG_PREFIX, "自动连接失败 [" + config.name + "]:", (err as Error).message);
-    }
+    if (await restoreMcpServer(config, signal)) connected++;
+    else failed++;
   }
 
   console.log(LOG_PREFIX, "初始化完成: " + connected + " 个成功, " + failed + " 个失败");
+}
+
+/** Restore one saved server; cancellation only closes a connection owned by this attempt. */
+export async function restoreMcpServer(config: McpServerConfig, signal?: AbortSignal): Promise<boolean> {
+  if (signal?.aborted) return false;
+  if (getMcpServerStates().some((state) => state.id === config.id && state.connected)) return true;
+  try {
+    await connectMcpServer(config);
+    if (!signal?.aborted) return true;
+    await disconnectMcpServer(config.id);
+  } catch (error) {
+    console.error(LOG_PREFIX, "自动连接失败 [" + config.name + "]:", error);
+  }
+  return false;
 }
 
 /**
@@ -140,8 +134,7 @@ export async function addMcpServer(config: McpServerConfig): Promise<{
 
   try {
     const toolIds = await connectMcpServer(config);
-    configs.push(config);
-    saveConfigs(configs);
+    saveConfigs([...loadConfigs().filter((saved) => saved.id !== config.id), config]);
     return { ok: true, toolIds };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

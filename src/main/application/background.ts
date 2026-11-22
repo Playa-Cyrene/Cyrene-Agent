@@ -4,13 +4,14 @@
  * 退出时 abort 并等待/放弃，迟到完成的任务立即执行其返回的 dispose。
  *
  * 依赖组（A–D 并发；组内箭头为严格顺序）：
- *   A: MCP 清理 → 内置同步 → MCP 恢复（30s 屏障）→ channels 启动 → scheduler 启动 → 主动触发器 → 动态反应队列扫描器
+ *   A: MCP 清理 → MCP 恢复（30s 屏障）→ channels 启动 → scheduler 启动 → 等待记忆与聊天能力 → 主动触发器 → 动态反应队列扫描器
  *   B: 记忆协调 → 重排序器预热
  *   C: 截图预热
  *   D: 更新检查
  * 全部组结算后推进 ready；失败进入 degradedReasons，不阻塞聊天。
  */
 
+import { checkStartupActive } from "./startup-cancellation";
 import type { StartupReadiness } from "./readiness";
 import type { ShutdownCoordinator } from "./shutdown";
 import type { CoreResult } from "./core-bootstrap";
@@ -34,7 +35,7 @@ export interface BackgroundDependencies {
   readiness: StartupReadiness;
   shutdown: ShutdownCoordinator;
   pruneRemovedMcp(signal: AbortSignal): Promise<void>;
-  syncBuiltInMcp(signal: AbortSignal): Promise<void>;
+  prepareChatCapabilities(signal: AbortSignal): Promise<void>;
   restoreMcp(signal: AbortSignal): Promise<void>;
   reconcileMemory(signal: AbortSignal): Promise<void>;
   initializeReranker(signal: AbortSignal): Promise<void>;
@@ -125,6 +126,30 @@ export function createBackgroundTaskRunner(): BackgroundTaskRunner {
   };
 }
 
+/** 首条消息和后台预热共享同一次初始化。 */
+export function createSharedStartupTasks(shutdown: ShutdownCoordinator, readiness: StartupReadiness) {
+  const runner = createBackgroundTaskRunner();
+  shutdown.register({ id: "shared-startup-tasks", phase: "quiesce", dispose: (signal) => runner.stop(signal) });
+  return function startupTask(name: string, run: (signal: AbortSignal) => void | Promise<void>) {
+    let task: Promise<void> | undefined;
+    return () => {
+      checkStartupActive(shutdown);
+      return task ??= runner.run(name, async (signal) => {
+        await Promise.resolve();
+        signal.throwIfAborted();
+        try {
+          await run(signal);
+        } catch (error) {
+          signal.throwIfAborted();
+          console.warn(`[Startup] ${name} failed:`, error);
+          readiness.markDegraded({ capability: name, message: String(error), at: Date.now(), error });
+        }
+        signal.throwIfAborted();
+      });
+    };
+  };
+}
+
 interface RunnerEntry {
   id: string;
   promise: Promise<unknown>;
@@ -210,9 +235,8 @@ export function startBackground(deps: BackgroundDependencies): BackgroundHandle 
     dispose: async () => { disposeOptional(updateCheckDisposer); },
   });
 
-  async function groupA(): Promise<void> {
+  async function groupA(producersReady: Promise<unknown>): Promise<void> {
     await runTracked("mcp-prune", "mcp", (signal) => deps.pruneRemovedMcp(signal));
-    await runTracked("mcp-sync-builtin", "mcp", (signal) => deps.syncBuiltInMcp(signal));
 
     // MCP 恢复屏障：等待“恢复尝试已结算”（成功/失败/30s 超时）。
     // 超时不让底层任务失去所有权 —— 恢复任务继续在 runner 内跟踪。
@@ -234,7 +258,7 @@ export function startBackground(deps: BackgroundDependencies): BackgroundHandle 
       });
     }
 
-    // MCP 结算后：channels 网络启动 → scheduler 定时器 → 主动触发器
+    // MCP 结算后即可连接渠道并启动调度计时器；实际请求由各入口等待所需依赖。
     await runTracked("channels-start", "channels", async (signal) => {
       if (signal.aborted) throw new Error("aborted before channels start");
       await channels.start(signal);
@@ -244,6 +268,7 @@ export function startBackground(deps: BackgroundDependencies): BackgroundHandle 
       scheduler.start();
       return Promise.resolve();
     });
+    await producersReady;
     await runTracked("proactive-trigger", "proactive", async (signal) => {
       if (signal.aborted) throw new Error("aborted before proactive trigger start");
       proactiveTriggerDisposer = await deps.startProactiveTrigger(signal);
@@ -271,7 +296,8 @@ export function startBackground(deps: BackgroundDependencies): BackgroundHandle 
   }
 
   const settled = (async () => {
-    await Promise.allSettled([groupA(), groupB(), groupC(), groupD()]);
+    const producersReady = Promise.all([groupB(), runTracked("chat-capabilities", "chat", deps.prepareChatCapabilities)]);
+    await Promise.allSettled([groupA(producersReady), producersReady, groupC(), groupD()]);
     try {
       if (readiness.getPhase() === "background-starting") {
         readiness.transition("ready");
