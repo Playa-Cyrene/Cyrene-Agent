@@ -1,10 +1,10 @@
 import { beforeEach, expect, it, vi } from "vitest";
 const state = vi.hoisted(() => ({ mode: "legacy" as "legacy" | "blocked", adapters: [] as any[], legacy: undefined as any,
-  stopAll: vi.fn(async () => {}), handlers: new Map<string, (...args: any[]) => any>() }));
+  stopAll: vi.fn(async () => {}), restartAll: vi.fn(async (_preserve: (id: any) => boolean) => {}), handlers: new Map<string, (...args: any[]) => any>() }));
 vi.mock("electron", () => ({ app: { getPath: () => "/synthetic-user-data" }, BrowserWindow: { getAllWindows: () => [] } }));
 vi.mock("../qq-modules/startup-recovery", () => ({ getQqStartupMode: () => state.mode }));
 vi.mock("../application/ipc-scope", () => ({ createIpcScope: () => ({ handle: (key: string, fn: any) => state.handlers.set(key, fn) }) }));
-vi.mock("./manager", () => ({ channelManager: { setDispatcher: vi.fn(), stopAll: state.stopAll, register: (a: any) => state.adapters.push(a), getAllStatus: () => ({}), listChannels: () => state.adapters.map(a => a.id) } }));
+vi.mock("./manager", () => ({ channelManager: { setDispatcher: vi.fn(), stopAll: state.stopAll, restartAll: state.restartAll, register: (a: any) => state.adapters.push(a), getAllStatus: () => ({}), listChannels: () => state.adapters.map(a => a.id) } }));
 vi.mock("./adapters/qq/napcat-adapter", () => ({ NapCatAdapter: class {
   id = "qq"; displayName = "QQ"; onMessage = null; capability = {};
   start = vi.fn(async () => {}); stop = vi.fn(async () => {}); testConnection = vi.fn(async () => ({ ok: true }));
@@ -23,7 +23,7 @@ vi.mock("./inbound-server", () => ({ startInboundServer: vi.fn(), stopInboundSer
 vi.mock("./message-log", () => ({ getRecentLog: vi.fn(), clearLog: vi.fn(), reloadLogFromDisk: vi.fn() }));
 vi.mock("../logger", () => ({ logger: { info: vi.fn() }, LogTag: { Channels: "Channels" } }));
 import { IPC } from "../../shared/ipc-channels";
-beforeEach(() => { vi.resetModules(); state.adapters = []; state.stopAll.mockClear(); state.handlers.clear(); state.mode = "legacy"; });
+beforeEach(() => { vi.resetModules(); state.adapters = []; state.stopAll.mockClear(); state.restartAll.mockClear(); state.handlers.clear(); state.mode = "legacy"; });
 it("registers one qq routing adapter and preserves default legacy start/test", async () => {
   const { initializeChannels } = await import("./init");
   initializeChannels({ handleIncoming: async () => null, reloadDispatcherSettings: vi.fn() });
@@ -69,4 +69,34 @@ it("rejects legacy QQ setting edits while blocked without preventing other chann
   expect(settings.saveChannelsSettings).not.toHaveBeenCalled();
   save(null, { feishu: { enabled: false } });
   expect(settings.saveChannelsSettings).toHaveBeenCalledOnce();
+});
+
+it.each(["legacy", "blocked", "module"])("generic restart preserves only nonlegacy QQ (%s)", async (driver) => {
+  const { initializeChannels } = await import("./init");
+  initializeChannels({ handleIncoming: async () => null, reloadDispatcherSettings: vi.fn() });
+  const qq = state.adapters.find(a => a.id === "qq");
+  vi.spyOn(qq, "isLegacyBlocked").mockReturnValue(driver !== "legacy");
+  expect(await state.handlers.get(IPC.CHANNELS_RESTART)!(null)).toEqual({ ok: true });
+  expect(state.stopAll).not.toHaveBeenCalled();
+  expect(state.restartAll).toHaveBeenCalledOnce();
+  const preserve = state.restartAll.mock.calls[0][0];
+  expect(preserve("qq")).toBe(driver !== "legacy");
+  expect(preserve("wechat")).toBe(false); expect(preserve("feishu")).toBe(false); expect(preserve("qqbot")).toBe(false);
+});
+
+
+it("waits for an accepted restart before full shutdown and rejects new restarts during shutdown", async () => {
+  const { initializeChannels, shutdownChannels } = await import("./init");
+  initializeChannels({ handleIncoming: async () => null, reloadDispatcherSettings: vi.fn() });
+  let release!: () => void;
+  state.restartAll.mockImplementationOnce(() => new Promise<void>(resolve => { release = resolve; }));
+  const restart = state.handlers.get(IPC.CHANNELS_RESTART)!;
+  const accepted = restart(null);
+  const shutdown = shutdownChannels();
+  expect(state.stopAll).not.toHaveBeenCalled();
+  expect(await restart(null)).toEqual({ ok: false, error: "CHANNELS_SHUTTING_DOWN" });
+  expect(state.restartAll).toHaveBeenCalledOnce();
+  release(); await accepted; await shutdown;
+  expect(state.stopAll).toHaveBeenCalledOnce();
+  expect(await restart(null)).toEqual({ ok: false, error: "CHANNELS_SHUTTING_DOWN" });
 });

@@ -86,7 +86,12 @@ export class ChannelManager {
 
   /** 启动所有已注册 adapter（失败的跳过、记 log） */
   async startAll(): Promise<void> {
+    await this.startAdapters(() => false);
+  }
+
+  private async startAdapters(preserve: (id: ChannelId) => boolean): Promise<void> {
     for (const [id, adapter] of this.adapters) {
+      if (preserve(id)) continue;
       // 跳过已启动的 adapter（插件注册渠道场景：registerChannelAdapter 已 startOne）
       if (this.startedAdapters.has(adapter.id)) continue;
       try {
@@ -145,18 +150,34 @@ export class ChannelManager {
     logger.info(LogTag.Channels, `started: ${id} (${adapter.displayName})`);
   }
 
-  /** 关闭所有已启动的 adapter */
+  /** 普通设置重启保留由独立显式生命周期管理的渠道。其余渠道仍先全停再全启。 */
+  async restartAll(preserve: (id: ChannelId) => boolean = () => false): Promise<void> {
+    // Once preserved during this restart, do not start it later even if its state changes.
+    const preserved = new Set<ChannelId>();
+    const shouldPreserve = (id: ChannelId): boolean => {
+      if (preserve(id)) preserved.add(id);
+      return preserved.has(id);
+    };
+    await this.stopAdapters(shouldPreserve);
+    await this.startAdapters(shouldPreserve);
+  }
+
+  /** 关闭所有已启动的 adapter；应用退出不采用普通重启的保留策略。 */
   async stopAll(): Promise<void> {
+    await this.stopAdapters(() => false);
+  }
+
+  private async stopAdapters(preserve: (id: ChannelId) => boolean): Promise<void> {
     for (const id of this.startedAdapters) {
+      if (preserve(id)) continue;
       const adapter = this.adapters.get(id);
-      if (!adapter) continue;
       try {
-        await adapter.stop();
+        await adapter?.stop();
       } catch (err) {
         console.warn(LOG, `渠道停止失败 [${id}]:`, err instanceof Error ? err.message : err);
       }
+      this.startedAdapters.delete(id);
     }
-    this.startedAdapters.clear();
   }
 
   getAdapter(channel: ChannelId): ChannelAdapter | undefined {

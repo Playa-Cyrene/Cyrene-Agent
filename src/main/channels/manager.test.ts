@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import { ChannelManager } from "./manager";
 import type { ChannelAdapter } from "./adapters/base";
 
+vi.mock("../logger", () => ({ logger: { info: vi.fn() }, LogTag: { Channels: "Channels" } }));
+
 function fakeAdapter(id: string): ChannelAdapter {
   let started = false;
   return {
@@ -185,5 +187,53 @@ describe("ChannelManager 宿主身份边界", () => {
     mgr.register(fakeAdapter("qq"));
     await oldHandler({ channel: "qq", chatId: "1", senderId: "1", text: "late", at: new Date(0) });
     expect(dispatch).not.toHaveBeenCalled();
+  });
+});
+
+describe("ordinary restart preservation", () => {
+  it("keeps an active managed route running while restarting other channels, then fully stops at shutdown", async () => {
+    const mgr = new ChannelManager();
+    const qq = fakeAdapter("qq"), wechat = fakeAdapter("wechat");
+    const qqStart = vi.spyOn(qq, "start"), qqStop = vi.spyOn(qq, "stop");
+    const wxStart = vi.spyOn(wechat, "start"), wxStop = vi.spyOn(wechat, "stop");
+    mgr.register(wechat); mgr.register(qq); await mgr.startAll();
+    await mgr.restartAll(id => id === "qq");
+    expect(qqStart).toHaveBeenCalledTimes(1); expect(qqStop).not.toHaveBeenCalled();
+    expect(qq.getStatus().phase).toBe("running");
+    expect(wxStart).toHaveBeenCalledTimes(2); expect(wxStop).toHaveBeenCalledTimes(1);
+    await mgr.stopAll();
+    expect(qqStop).toHaveBeenCalledTimes(1); expect(wxStop).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not silently start a preserved route that has not started", async () => {
+    const mgr = new ChannelManager(); const qq = fakeAdapter("qq"), wechat = fakeAdapter("wechat");
+    const start = vi.spyOn(qq, "start"), stop = vi.spyOn(qq, "stop");
+    mgr.register(qq); mgr.register(wechat);
+    await mgr.restartAll(id => id === "qq");
+    expect(start).not.toHaveBeenCalled(); expect(stop).not.toHaveBeenCalled();
+    expect(wechat.getStatus().phase).toBe("running");
+  });
+
+  it("retains legacy all-stop-then-all-start ordering", async () => {
+    const mgr = new ChannelManager(); const events: string[] = [];
+    for (const id of ["wechat", "qq", "qqbot"]) {
+      const adapter = fakeAdapter(id);
+      adapter.start = async () => { events.push(`start:${id}`); };
+      adapter.stop = async () => { events.push(`stop:${id}`); };
+      mgr.register(adapter);
+    }
+    await mgr.startAll(); events.length = 0; await mgr.restartAll();
+    expect(events).toEqual(["stop:wechat", "stop:qq", "stop:qqbot", "start:wechat", "start:qq", "start:qqbot"]);
+  });
+
+  it("rechecks preservation after another adapter yields and never starts a route preserved during stop", async () => {
+    const mgr = new ChannelManager(); const qq = fakeAdapter("qq"), wechat = fakeAdapter("wechat");
+    let managed = false;
+    wechat.stop = async () => { managed = true; };
+    wechat.start = async () => { managed = false; };
+    const qqStart = vi.spyOn(qq, "start"), qqStop = vi.spyOn(qq, "stop");
+    mgr.register(wechat); mgr.register(qq); await mgr.startAll();
+    await mgr.restartAll(id => id === "qq" && managed);
+    expect(qqStop).not.toHaveBeenCalled(); expect(qqStart).toHaveBeenCalledTimes(1);
   });
 });

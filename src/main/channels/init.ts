@@ -43,6 +43,8 @@ const LOG = "[ChannelsInit]";
 
 let initialized = false;
 let started = false;
+let shuttingDown = false;
+const pendingRestarts = new Set<Promise<void>>();
 let conversationLifecycle: {
   onUserMessage(): void;
   onConversationStarted(): void;
@@ -89,6 +91,7 @@ function getPublicChannelsSettings(): Record<string, unknown> {
 export function initializeChannels(options: InitializeChannelsOptions): void {
   if (initialized) return;
   initialized = true;
+  shuttingDown = false;
   reloadLogFromDisk();
 
   // 将当前子系统的消息入口注入渠道管理器。
@@ -158,6 +161,9 @@ export async function startChannels(signal?: AbortSignal): Promise<void> {
 
 /** app.on('before-quit') 调 */
 export async function shutdownChannels(): Promise<void> {
+  shuttingDown = true;
+  // Let already accepted restarts settle before the final full teardown.
+  if (pendingRestarts.size > 0) await Promise.allSettled([...pendingRestarts]);
   // Confirmed lifecycle work must settle before channel teardown can finish.
   // The trusted binding prevents a late candidate start after shutdown.
   try { await qqModuleActions?.shutdown(); }
@@ -205,8 +211,12 @@ function registerChannelsIpc(
   );
 
   ipc.handle(IPC.CHANNELS_RESTART, async () => {
-    await channelManager.stopAll();
-    await channelManager.startAll();
+    if (shuttingDown) return { ok: false, error: "CHANNELS_SHUTTING_DOWN" };
+    // Managed/blocked QQ requires an explicit activation flow. An unrelated
+    // settings restart must neither take an active module offline nor start one.
+    const restart = channelManager.restartAll((id) => id === "qq" && Boolean(qqRouting?.isLegacyBlocked()));
+    pendingRestarts.add(restart);
+    try { await restart; } finally { pendingRestarts.delete(restart); }
     broadcastChannelsStatus();
     return { ok: true };
   });
