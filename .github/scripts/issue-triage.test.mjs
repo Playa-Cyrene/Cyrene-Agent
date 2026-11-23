@@ -13,7 +13,8 @@ const issue = { number: 10, title: "sqlite persistence", body: "本 Issue 由我
 const json = (value) => ({ body: JSON.stringify(value) });
 const verdict = { duplicateOf: 20, duplicateConfidence: "high", needsInfo: true, needsMaintainer: false };
 const search = json({ items: [{ number: 20, title: "sqlite", body: "fixture" }] });
-const model = json({ choices: [{ message: { content: JSON.stringify(verdict) } }] });
+const modelContent = (content) => json({ choices: [{ message: { content } }] });
+const model = modelContent(JSON.stringify(verdict));
 
 // 在独立进程运行真实入口；fetch 完全替换，不会连接 GitHub、模型或写入外部状态。
 async function run(responses, { event = { issue }, env = {} } = {}) {
@@ -56,6 +57,7 @@ function noMutations(result) {
   assert.equal(result.remaining, 0);
   assert.equal(result.calls.filter(call => call.url.startsWith("https://api.github.com/repos/")).length, 0);
   assert.doesNotMatch(result.stderr, new RegExp(secret));
+  assert.doesNotMatch(result.stdout, new RegExp(secret));
 }
 
 test("正常搜索和模型判断仍添加候选限定的标签", async () => {
@@ -64,6 +66,16 @@ test("正常搜索和模型判断仍添加候选限定的标签", async () => {
   assert.equal(result.remaining, 0);
   assert.deepEqual(result.calls.at(-1).body, { labels: ["possible-duplicate", "needs-info"] });
   assert.equal(result.calls.at(-1).method, "POST");
+});
+
+test("合法判断可包含理由及空白，理由不进入诊断或写入", async () => {
+  const valid = { duplicateOf: null, duplicateConfidence: "low", needsInfo: false, needsMaintainer: true, reason: secret };
+  const result = await run([search, modelContent(`\n${JSON.stringify(valid)}\n`), json({}), json({})]);
+  assert.equal(result.code, undefined, result.stderr);
+  assert.equal(result.remaining, 0);
+  assert.deepEqual(result.calls.at(-1).body, { labels: ["needs-maintainer"] });
+  assert.doesNotMatch(result.stdout, new RegExp(secret));
+  assert.doesNotMatch(result.stderr, new RegExp(secret));
 });
 
 for (const [name, response] of [
@@ -98,6 +110,15 @@ for (const [name, response] of [
   ["错误 envelope", json({ choices: [] })],
   ["内容为 null", json({ choices: [{ message: { content: null } }] })],
   ["判断格式错误", json({ choices: [{ message: { content: "OK" } }] })],
+  ["判断顶层不是对象", modelContent(JSON.stringify([verdict]))],
+  ["判断附带非 JSON 文本", modelContent(`判断如下：${JSON.stringify(verdict)}`)],
+  ["判断重复编号类型错误", modelContent(JSON.stringify({ ...verdict, duplicateOf: "20" }))],
+  ["判断重复编号不是正的安全整数", modelContent(JSON.stringify({ ...verdict, duplicateOf: 0 }))],
+  ["判断置信度超出枚举", modelContent(JSON.stringify({ ...verdict, duplicateConfidence: "undetermined" }))],
+  ["判断缺少必要字段", modelContent(JSON.stringify({ ...verdict, needsMaintainer: undefined }))],
+  ["判断布尔值类型错误", modelContent(JSON.stringify({ ...verdict, needsMaintainer: "false" }))],
+  ["判断理由类型错误", modelContent(JSON.stringify({ ...verdict, reason: 42 }))],
+  ["判断存在额外字段", modelContent(JSON.stringify({ ...verdict, note: "reviewed" }))],
 ]) {
   test(`模型 ${name} 有阶段诊断且不产生外部修改`, async () => {
     const result = await run([search, response]);
@@ -111,6 +132,7 @@ test("模板闸门正常评论、打标和关闭，不调用模型", async () =>
   assert.equal(result.code, undefined, result.stderr);
   assert.equal(result.remaining, 0);
   assert.deepEqual(result.calls.map(call => call.method), ["POST", "POST", "POST", "PATCH"]);
+  assert.deepEqual(result.calls[1].body, { labels: ["needs-template"] });
   assert.deepEqual(result.calls.at(-1).body, { state: "closed", state_reason: "not_planned" });
 });
 

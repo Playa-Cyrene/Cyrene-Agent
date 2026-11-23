@@ -57,6 +57,8 @@ const GATE_LABEL = {
 // 判重所需的最低置信度。设为 high 是刻意保守：
 // 误标一个「好心来提 bug」的人，比漏标一次的代价大得多。
 const REQUIRED_DUPLICATE_CONFIDENCE = "high";
+const DUPLICATE_CONFIDENCES = new Set(["high", "medium", "low"]);
+const VERDICT_FIELDS = new Set(["duplicateOf", "duplicateConfidence", "needsInfo", "needsMaintainer", "reason"]);
 
 const MAX_CANDIDATES = 8;
 const MAX_BODY_CHARS = 1500;
@@ -238,12 +240,18 @@ function buildUserPrompt(issue, candidates) {
 
 function parseVerdict(content) {
   if (typeof content !== "string") return null;
-  const start = content.indexOf("{");
-  const end = content.lastIndexOf("}");
-  if (start === -1 || end === -1 || end < start) return null;
   try {
-    const verdict = JSON.parse(content.slice(start, end + 1));
-    return verdict && typeof verdict === "object" && !Array.isArray(verdict) ? verdict : null;
+    // 校验完整判定再允许任何模型分流写入，不从容器或附带文字中截取对象。
+    const verdict = JSON.parse(content);
+    if (!verdict || typeof verdict !== "object" || Array.isArray(verdict) ||
+        Object.keys(verdict).some((field) => !VERDICT_FIELDS.has(field))) return null;
+    const { duplicateOf, duplicateConfidence, needsInfo, needsMaintainer } = verdict;
+    if (!(duplicateOf === null || (Number.isSafeInteger(duplicateOf) && duplicateOf > 0)) ||
+        !DUPLICATE_CONFIDENCES.has(duplicateConfidence) ||
+        typeof needsInfo !== "boolean" || typeof needsMaintainer !== "boolean" ||
+        (Object.hasOwn(verdict, "reason") && typeof verdict.reason !== "string")) return null;
+    // 理由不参与打标；兼容省略理由的判定，且不将原始模型文本交给下游。
+    return { duplicateOf, duplicateConfidence, needsInfo, needsMaintainer };
   } catch {
     return null;
   }
@@ -273,7 +281,7 @@ async function judge(provider, issue, candidates) {
     return null;
   }
   const verdict = parseVerdict(content);
-  if (!verdict) console.warn("[issue-triage][model] 模型内容不是有效判断，本次跳过");
+  if (!verdict) console.warn("[issue-triage][model] 模型判定结构不符合约定，本次跳过");
   return verdict;
 }
 
@@ -410,11 +418,7 @@ async function main() {
   }
 
   const picked = selectLabels(verdict, candidates, existingLabels);
-  const confidence = typeof verdict.duplicateConfidence === "string" ? verdict.duplicateConfidence : "unknown";
-  console.log(
-    `[issue-triage] 候选 ${candidates.length} 条，判定 duplicate=${verdict.duplicateOf ?? "null"}/${confidence}` +
-      ` needsInfo=${verdict.needsInfo === true} needsMaintainer=${verdict.needsMaintainer === true}`,
-  );
+  console.log("[issue-triage][model] 判定结构已通过校验");
   if (picked.length === 0) {
     console.log("[issue-triage] 无需打标");
     return;

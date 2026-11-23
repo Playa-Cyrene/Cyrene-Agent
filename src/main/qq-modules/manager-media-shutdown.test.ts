@@ -86,6 +86,8 @@ it("retains deletion failure across stop/start and recovers only after a success
 
 it("tracks later discard of earlier attachments even when quiesce rejects", async () => {
   const { manager, broker, peers, handler, files } = await setup(true);
+  const peer = peers[0]; const original = peer.behavior;
+  peer.behavior = (request) => { if (request.method !== "mediaRelease") original(request); };
   const entered = deferred(); const release = deferred();
   fault.unlink = async () => { entered.resolve(); await release.promise; };
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
@@ -124,4 +126,115 @@ it("recognizes a confirmed closed descriptor despite a post-close error", async 
     expect(manager.isStoppedForMigration()).toBe(true);
     expect(broker.hasPendingCleanup).toBe(false); expect(await files()).toEqual([]);
   } finally { fault.afterClose = false; vi.useRealTimers(); }
+});
+
+async function setupIdle() {
+  const root = await mkdtemp(join(tmpdir(), "qq-stop-media-"));
+  const cache = join(root, "cache");
+  const broker = new QqMediaBroker(cache);
+  const peers: FakeTransport[] = [];
+  const manager = new QqModuleManager({
+    getConfiguration: configuration, mediaBroker: broker,
+    createTransport: () => { const peer = new FakeTransport(); peers.push(peer); return peer; },
+  });
+  cleanup.push(async () => { await manager.stop(); await rm(root, { recursive: true, force: true }); });
+  const handler = vi.fn(async () => null);
+  manager.onMessage = handler;
+  await manager.start();
+  return { broker, manager, handler, peers, files: () => readdir(cache) };
+}
+
+it("confirms stop after local preparation is revoked even without a reply to mediaRelease", async () => {
+  const { broker, manager, handler, peers, files } = await setupIdle();
+  const entered = deferred(); const releaseRequested = deferred();
+  const peer = peers[0]; const original = peer.behavior;
+  peer.behavior = (request) => {
+    if (request.method === "mediaRead") { entered.resolve(); return; }
+    if (request.method === "mediaRelease") { releaseRequested.resolve(); return; }
+    if (request.method !== "quiesce") original(request);
+  };
+  peer.event("inbound", { ...inbound(), attachments: [{ kind: "image", mediaId: "picture-id", size: 24 }] });
+  await entered.promise;
+  expect(await files()).toEqual([]); // image header must be read before opening a file
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const stopping = manager.stop();
+  await releaseRequested.promise;
+  await vi.advanceTimersByTimeAsync(5_000);
+  await stopping;
+  expect(await files()).toEqual([]);
+  expect(broker.hasPendingCleanup).toBe(false);
+  expect(peer.killed).toBe(true);
+  expect(manager.isStoppedForMigration()).toBe(true);
+  expect(handler).not.toHaveBeenCalled();
+  await manager.start();
+  expect(peers).toHaveLength(2);
+});
+
+it("does not block stop or restart when expiry unlink of a delivered file fails", async () => {
+  const { broker, manager, handler, peers, files } = await setupIdle();
+  const peer = peers[0]; const original = peer.behavior;
+  peer.behavior = (request) => request.method === "mediaRead" ? peer.reply(request, { data: "aGVsbG8=", eof: true }) : original(request);
+  peer.event("inbound", { ...inbound(), attachments: [{ kind: "file", mediaId: "delivered", size: 5 }] });
+  await vi.waitFor(() => expect(handler).toHaveBeenCalledOnce());
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(Date.now() + 25 * 60 * 60 * 1000);
+  fault.unlink = vi.fn(async () => { throw Object.assign(new Error("busy"), { code: "EBUSY" }); });
+  await broker.cleanup(); // create an actual background expiry debt first
+  expect(fault.unlink).toHaveBeenCalledOnce();
+  expect(await files()).toHaveLength(1);
+  await manager.stop();
+  expect(manager.isStoppedForMigration()).toBe(true);
+  expect(fault.unlink).toHaveBeenCalledOnce();
+  expect(broker.hasPendingCleanup).toBe(false);
+  await manager.start();
+  expect(peers).toHaveLength(2);
+  fault.unlink = undefined;
+  await broker.cleanup();
+  expect(await files()).toEqual([]);
+});
+
+it("does not wait for an in-flight expiry unlink when canceling a new attachment", async () => {
+  const { broker, manager, handler, peers, files } = await setupIdle();
+  const peer = peers[0]; const original = peer.behavior;
+  peer.behavior = (request) => request.method === "mediaRead" ? peer.reply(request, { data: "aGVsbG8=", eof: true }) : original(request);
+  peer.event("inbound", { ...inbound(), attachments: [{ kind: "file", mediaId: "delivered", size: 5 }] });
+  await vi.waitFor(() => expect(handler).toHaveBeenCalledOnce());
+  vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+  vi.setSystemTime(Date.now() + 25 * 60 * 60 * 1000);
+  const entered = deferred(); const release = deferred();
+  fault.unlink = async () => { entered.resolve(); await release.promise; };
+  peer.event("inbound", { ...inbound("another"), attachments: [{ kind: "file", mediaId: "second", size: 5 }] });
+  await entered.promise;
+  const stopping = manager.stop();
+  try {
+    await vi.advanceTimersByTimeAsync(0);
+    expect(manager.isStoppedForMigration()).toBe(true);
+    expect(broker.hasPendingCleanup).toBe(false);
+    expect(await files()).toHaveLength(1);
+    expect(handler).toHaveBeenCalledOnce();
+    expect(peer.messages.filter((request) => request.method === "mediaRead")).toHaveLength(1);
+  } finally {
+    release.resolve();
+    await broker.cleanup();
+    await stopping;
+  }
+  expect(await files()).toEqual([]);
+});
+
+it("still waits for mediaRelease before acknowledging successfully received media", async () => {
+  const { handler, peers } = await setupIdle();
+  const peer = peers[0]; const original = peer.behavior;
+  let release: (() => void) | undefined;
+  peer.behavior = (request) => {
+    if (request.method === "mediaRead") peer.reply(request, { data: "aGVsbG8=", eof: true });
+    else if (request.method === "mediaRelease") release = () => peer.reply(request, {});
+    else original(request);
+  };
+  peer.event("inbound", { ...inbound(), attachments: [{ kind: "file", mediaId: "ordered", size: 5 }] });
+  await vi.waitFor(() => expect(release).toBeDefined());
+  expect(handler).not.toHaveBeenCalled();
+  expect(peer.messages.some((request) => request.method === "ackInbound")).toBe(false);
+  release!();
+  await vi.waitFor(() => expect(handler).toHaveBeenCalledOnce());
+  expect(peer.messages.find((request) => request.method === "ackInbound")?.payload).toMatchObject({ outcome: "accepted" });
 });

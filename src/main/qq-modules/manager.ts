@@ -269,15 +269,14 @@ export class QqModuleManager {
         prepared();
         return await handler(incoming);
       } finally {
-        try {
-          if (!dispatched && message.attachments?.length) {
-            await Promise.all([
-              ...attachments.map((attachment) => this.options.mediaBroker!.discard(attachment)),
-              this.releaseInboundMedia(gen, message.connectionEpoch, unclaimed),
-            ]);
-            this.ack(gen, message.eventId, "stale-instance");
-          }
-        } finally { prepared(); }
+        if (!dispatched && message.attachments?.length) {
+          const released = this.releaseInboundMedia(gen, message.connectionEpoch, unclaimed);
+          try { await Promise.all(attachments.map((attachment) => this.options.mediaBroker!.discard(attachment))); }
+          finally { prepared(); }
+          // Remote handles are best effort; no local work remains in this turn.
+          await released;
+          this.ack(gen, message.eventId, "stale-instance");
+        }
       }
     }).catch(() => {}).finally(() => { lease.active = false; });
     gen.turns.add(turn);
@@ -384,7 +383,11 @@ export class QqModuleManager {
     const deadline = new Promise<void>((resolve) => { timer = setTimeout(resolve, this.options.drainTimeoutMs ?? 5000); });
     const drain = async () => {
       try {
-        if (!gen.runtime.isClosed) await gen.runtime.request("quiesce", {});
+        // A closed runtime cannot use those results. Its exit is still checked
+        // below, independently of draining potentially noncooperative handlers.
+        if (gen.runtime.isClosed) return;
+        await gen.runtime.request("quiesce", {});
+        if (gen.runtime.isClosed) return;
         await Promise.allSettled([...gen.turns, ...gen.sends]);
         if (gen.authorized) await gen.runtime.request("stop", {});
       } catch { /* bounded shutdown; pending sends retain unknown */ }
