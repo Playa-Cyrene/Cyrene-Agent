@@ -3,6 +3,7 @@ import { contextBridge, webUtils } from "electron";
 import { IPC } from "../shared/ipc-channels";
 import type { ContextCompactionPhaseEvent } from "../shared/context-usage";
 import type { QqListenAuthRequirement } from "../shared/qq-listen";
+import type { ChannelRestartResult, ChannelRestartTarget } from "../shared/channel-restart";
 import type { ApprovalRequest, ApprovalSettledPayload } from "../shared/permission-approval";
 import type { StartTtsRequest, TtsSessionEvent, TtsStartResult } from "../shared/tts-session";
 import type { ScreenshotInsertPayload } from "../shared/ipc-channels";
@@ -412,7 +413,7 @@ const settingsApi = {
   channelsSaveConfig: (patch: unknown) => ipcRenderer.invoke(IPC.CHANNELS_SAVE_CONFIG, patch),
   channelsList: () => ipcRenderer.invoke(IPC.CHANNELS_LIST),
   channelsGetStatus: () => ipcRenderer.invoke(IPC.CHANNELS_GET_STATUS),
-  channelsRestart: () => ipcRenderer.invoke(IPC.CHANNELS_RESTART),
+  channelsRestart: (requiredTarget?: ChannelRestartTarget): Promise<ChannelRestartResult> => ipcRenderer.invoke(IPC.CHANNELS_RESTART, requiredTarget),
   channelsWechatInstall: () => ipcRenderer.invoke(IPC.CHANNELS_WECHAT_INSTALL),
   channelsWechatLoginStart: () => ipcRenderer.invoke(IPC.CHANNELS_WECHAT_LOGIN_START),
   channelsWechatLoginCancel: () => ipcRenderer.invoke(IPC.CHANNELS_WECHAT_LOGIN_CANCEL),

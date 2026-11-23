@@ -99,7 +99,8 @@ export class ChannelManager {
     await this.startAdapters(() => false);
   }
 
-  private async startAdapters(preserve: (id: ChannelId) => boolean, signal?: AbortSignal): Promise<void> {
+  private async startAdapters(preserve: (id: ChannelId) => boolean, signal?: AbortSignal): Promise<Set<ChannelId>> {
+    const started = new Set<ChannelId>();
     const generation = this.stopGeneration;
     const canStart = () => generation === this.stopGeneration && !signal?.aborted;
     for (const [id, adapter] of this.adapters) {
@@ -107,10 +108,12 @@ export class ChannelManager {
       if (preserve(id)) continue;
       try {
         await this.startAdapter(id, adapter, canStart, signal);
+        if (this.adapters.get(id) === adapter && this.startedAdapters.has(id)) started.add(id);
       } catch (err) {
         console.error(LOG, `渠道启动失败 [${adapter.id}]:`, err instanceof Error ? err.message : err);
       }
     }
+    return started;
   }
 
   /** 注销 adapter：若已启动先 stop，再移除（运行时禁用插件渠道用） */
@@ -202,8 +205,8 @@ export class ChannelManager {
   }
 
   /** 普通设置重启保留由独立显式生命周期管理的渠道。其余渠道仍先全停再全启。 */
-  async restartAll(preserve: (id: ChannelId) => boolean = () => false, signal?: AbortSignal): Promise<void> {
-    if (signal?.aborted) return;
+  async restartAll(preserve: (id: ChannelId) => boolean = () => false, signal?: AbortSignal): Promise<ReadonlySet<ChannelId>> {
+    if (signal?.aborted) return new Set();
     // stopAdapters increments synchronously; a later stop owns the lifecycle.
     // Capture this stop generation before waiting, not after the stop phase.
     const generation = this.stopGeneration + 1;
@@ -223,7 +226,9 @@ export class ChannelManager {
       return true;
     };
     await this.stopAdapters(shouldPreserve, canRestart, suspended);
-    if (canRestart()) await this.startAdapters(shouldPreserve, signal);
+    if (!canRestart()) return new Set();
+    const restarted = await this.startAdapters(shouldPreserve, signal);
+    return canRestart() ? restarted : new Set();
   }
 
   /** 关闭所有已启动的 adapter；应用退出不采用普通重启的保留策略。 */

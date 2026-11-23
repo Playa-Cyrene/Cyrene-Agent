@@ -16,6 +16,7 @@ import type {
   SegmentedOutputMode,
 } from "../../../shared/preferences";
 import type { QqListenAuthRequirement } from "../../../shared/qq-listen";
+import type { ChannelRestartResult, ChannelRestartTarget } from "../../../shared/channel-restart";
 import type { CustomStyleConfig } from "../../../shared/style-sampling";
 import type { BuiltinProviderId } from "../../../shared/vendor-registry";
 import type { CustomEndpointMode } from "../custom-endpoint-state";
@@ -335,7 +336,7 @@ export interface SettingsApi {
   onSwitchSection?: (callback: (section: string) => void) => (() => void) | void;
   channelsGetConfig: () => Promise<any>;
   channelsSaveConfig: (patch: unknown) => Promise<any>;
-  channelsRestart: () => Promise<{ ok: boolean }>;
+  channelsRestart: (requiredTarget?: ChannelRestartTarget) => Promise<ChannelRestartResult>;
   channelsQqModuleAction?: (input: import("../../../shared/qq-module-actions").QqModuleActionCommand) => Promise<import("../../../shared/qq-module-actions").QqModuleActionResult>;
   channelsQqModuleInstallationStatus: (input: import("../../../shared/qq-module-installation").QqModuleListenInput) => Promise<import("../../../shared/qq-module-installation").QqModuleInstallationStatus>;
   channelsQqTestConnection: () => Promise<{ ok: boolean; error?: string; detail?: Record<string, unknown> }>;

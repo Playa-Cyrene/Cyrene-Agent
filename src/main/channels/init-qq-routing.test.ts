@@ -7,7 +7,7 @@ import { QqModuleManager } from "../qq-modules/manager";
 import { FakeTransport, configuration, inbound } from "../../../scripts/verify/qq-module/fixtures";
 const state = vi.hoisted(() => ({ mode: "legacy" as "legacy" | "blocked", adapters: [] as any[], legacy: undefined as any,
   manager: undefined as ChannelManager | undefined, stopAll: vi.fn(async () => {}),
-  restartAll: vi.fn(async (_preserve: (id: any) => boolean, _signal?: AbortSignal) => {}),
+  restartAll: vi.fn(async (_preserve: (id: any) => boolean, _signal?: AbortSignal): Promise<ReadonlySet<string>> => new Set()),
   stopInboundServer: vi.fn(async () => {}), handlers: new Map<string, (...args: any[]) => any>() }));
 vi.mock("electron", () => ({ app: { getPath: () => "/synthetic-user-data" }, BrowserWindow: { getAllWindows: () => [] } }));
 vi.mock("../qq-modules/startup-recovery", () => ({ getQqStartupMode: () => state.mode }));
@@ -40,7 +40,7 @@ import { IPC } from "../../shared/ipc-channels";
 beforeEach(() => {
   vi.resetModules(); state.adapters = []; state.manager = undefined;
   state.stopAll.mockReset().mockImplementation(async () => state.manager?.stopAll());
-  state.restartAll.mockReset().mockImplementation(async (preserve, signal) => state.manager?.restartAll(preserve, signal));
+  state.restartAll.mockReset().mockImplementation(async (preserve, signal) => (await state.manager?.restartAll(preserve, signal)) ?? new Set());
   state.stopInboundServer.mockClear(); state.handlers.clear(); state.mode = "legacy";
 });
 async function useRealManager() {
@@ -295,4 +295,68 @@ it("does not enter a trusted activation when an ordinary restart has detached th
     expect(await invoke(confirm)).toEqual({ ok: true, state: "committed" });
     expect(execute).toHaveBeenLastCalledWith(confirm);
   } finally { releaseStop.resolve(); await restart; await shutdownChannels(); }
+});
+
+it("blocks QQ writes during confirmed handoff and reports an earlier saved change that was skipped even if migration settles first", async () => {
+  const manager = await useRealManager();
+  const { initializeChannels, shutdownChannels } = await import("./init");
+  const settings = await import("./settings-store");
+  vi.mocked(settings.loadChannelsSettings).mockReturnValue({ qq: {}, qqbot: {} } as any);
+  vi.mocked(settings.saveChannelsSettings).mockClear();
+  const entered = Promise.withResolvers<void>(), finish = Promise.withResolvers<void>();
+  let route!: QqRoutingAdapter;
+  initializeChannels({
+    handleIncoming: async () => null, reloadDispatcherSettings: vi.fn(),
+    configureQqRouting(router) {
+      route = router;
+      const port: QqModuleActionPort = { async execute(command) {
+        if (command.action === "preview-migration") return { ok: true, state: "preview-migration", preview: firstSetupPreview };
+        entered.resolve(); await finish.promise;
+        // Synthetic failed pre-stop proof: old listener remains in legacy mode.
+        return { ok: true, state: "rolled-back" };
+      } };
+      return { port, isTrustedSender: () => true, shutdown: () => router.shutdown() };
+    },
+  });
+  await manager.startAll();
+  const save = state.handlers.get(IPC.CHANNELS_SAVE_CONFIG)!;
+  const restart = state.handlers.get(IPC.CHANNELS_RESTART)!;
+  const invoke = trustedAction();
+  const feishu = state.adapters.find(a => a.id === "feishu");
+  const stopping = Promise.withResolvers<void>(), resume = Promise.withResolvers<void>();
+  feishu.stop.mockImplementationOnce(async () => { stopping.resolve(); await resume.promise; });
+  let migration: Promise<unknown> | undefined, applying: Promise<unknown> | undefined;
+  try {
+    save(null, { qq: { port: 6201 } });
+    expect(settings.saveChannelsSettings).toHaveBeenCalledExactlyOnceWith({ qq: { port: 6201 } });
+    expect(await invoke({ action: "preview-migration" })).toMatchObject({ ok: true, state: "preview-migration" });
+    migration = invoke({ action: "confirm-migration", operationId: "setup", accountId: "10000", userConfirmed: true });
+    await entered.promise;
+    expect(route.isLegacyBlocked()).toBe(false);
+    expect(() => save(null, { qq: { port: 6202 } })).toThrow("QQ_MODULE_SETTINGS_BUSY");
+    expect(settings.saveChannelsSettings).toHaveBeenCalledOnce();
+    save(null, { feishu: { enabled: false } });
+    expect(settings.saveChannelsSettings).toHaveBeenCalledTimes(2);
+    applying = restart(null, "qq");
+    await stopping.promise;
+    finish.resolve(); expect(await migration).toEqual({ ok: true, state: "rolled-back" });
+    expect(route.shouldPreserveForSettingsRestart()).toBe(false);
+    resume.resolve(); expect(await applying).toEqual({ ok: false, error: "QQ_MODULE_SETTINGS_BUSY" });
+    expect(state.legacy.stop).not.toHaveBeenCalled(); expect(state.legacy.start).toHaveBeenCalledOnce();
+    expect(await restart(null, "qq")).toEqual({ ok: true });
+    expect(state.legacy.stop).toHaveBeenCalledOnce(); expect(state.legacy.start).toHaveBeenCalledTimes(2);
+  } finally { finish.resolve(); resume.resolve(); await migration; await applying; await shutdownChannels(); }
+});
+
+it("reports QQ cannot be applied to a blocked route, but an ordinary restart remains valid", async () => {
+  await useRealManager();
+  state.mode = "blocked";
+  const { initializeChannels, shutdownChannels } = await import("./init");
+  initializeChannels({ handleIncoming: async () => null, reloadDispatcherSettings: vi.fn() });
+  const restart = state.handlers.get(IPC.CHANNELS_RESTART)!;
+  try {
+    expect(await restart(null, "qq")).toEqual({ ok: false, error: "QQ_MODULE_SETTINGS_REQUIRE_EXPLICIT_RECONFIGURATION" });
+    expect(await restart(null)).toEqual({ ok: true });
+    expect(state.legacy.start).not.toHaveBeenCalled();
+  } finally { await shutdownChannels(); }
 });

@@ -14,6 +14,7 @@ import { getQqStartupMode } from "../qq-modules/startup-recovery";
 import { registerQqModuleActionIpc, type QqModuleActionBinding } from "../qq-modules/action-ipc";
 import { getQqModuleInstallationStatus } from "../qq-modules/installation-status";
 import { IPC } from "../../shared/ipc-channels";
+import { CHANNEL_RESTART_ERROR, type ChannelRestartResult } from "../../shared/channel-restart";
 import { createIpcScope, type IpcScope } from "../application/ipc-scope";
 import {
   loadChannelsSettings,
@@ -204,9 +205,11 @@ function registerChannelsIpc(
   ipc.handle(IPC.CHANNELS_SAVE_CONFIG, (_e, patch: unknown) => {
     // The module runs a confirmed configuration snapshot. Do not report legacy
     // setting edits as effective permission revocation while it still uses that snapshot.
-    if (qqRouting?.isLegacyBlocked() && patch && typeof patch === "object"
-      && Object.prototype.hasOwnProperty.call(patch, "qq")) {
-      throw new Error("QQ_MODULE_SETTINGS_REQUIRE_EXPLICIT_RECONFIGURATION");
+    if (qqRouting && patch && typeof patch === "object" && Object.prototype.hasOwnProperty.call(patch, "qq")) {
+      if (qqRouting.isLegacyBlocked()) throw new Error(CHANNEL_RESTART_ERROR.qqManaged);
+      // During the confirmed handoff the old route may still be serving its
+      // existing listener. Do not persist settings that ordinary restart must skip.
+      if (qqRouting.shouldPreserveForSettingsRestart()) throw new Error(CHANNEL_RESTART_ERROR.qqBusy);
     }
     saveChannelsSettings(patch as Parameters<typeof saveChannelsSettings>[0]);
     reloadDispatcherSettings();
@@ -227,12 +230,24 @@ function registerChannelsIpc(
   );
 
   const restartSignal = channelsLifetime.signal;
-  ipc.handle(IPC.CHANNELS_RESTART, async () => {
-    if (restartSignal.aborted) return { ok: false, error: "CHANNELS_SHUTTING_DOWN" };
-    // Preserve explicit QQ lifecycle work even while the legacy route is draining.
-    await channelManager.restartAll((id) => id === "qq" && Boolean(qqRouting?.shouldPreserveForSettingsRestart()), restartSignal);
-    if (restartSignal.aborted) return { ok: false, error: "CHANNELS_SHUTTING_DOWN" };
+  ipc.handle(IPC.CHANNELS_RESTART, async (_e, requiredTarget?: unknown): Promise<ChannelRestartResult> => {
+    if (restartSignal.aborted) return { ok: false, error: CHANNEL_RESTART_ERROR.shuttingDown };
+    if (requiredTarget !== undefined && requiredTarget !== "qq") return { ok: false, error: CHANNEL_RESTART_ERROR.invalidTarget };
+    let qqSkipped: typeof CHANNEL_RESTART_ERROR.qqManaged | typeof CHANNEL_RESTART_ERROR.qqBusy | undefined;
+    // Preserve explicit QQ lifecycle work even while the old route is draining.
+    // Remember which stop/start iteration skipped it, even if the handoff
+    // finishes while another adapter's stop or start is still pending.
+    const restarted = await channelManager.restartAll((id) => {
+      if (id !== "qq" || !qqRouting?.shouldPreserveForSettingsRestart()) return false;
+      qqSkipped ??= qqRouting.isLegacyBlocked() ? CHANNEL_RESTART_ERROR.qqManaged : CHANNEL_RESTART_ERROR.qqBusy;
+      return true;
+    }, restartSignal);
+    if (restartSignal.aborted) return { ok: false, error: CHANNEL_RESTART_ERROR.shuttingDown };
     broadcastChannelsStatus();
+    if (requiredTarget === "qq") {
+      if (qqSkipped) return { ok: false, error: qqSkipped };
+      if (!restarted.has("qq")) return { ok: false, error: CHANNEL_RESTART_ERROR.qqNotApplied };
+    }
     return { ok: true };
   });
 
