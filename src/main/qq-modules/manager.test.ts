@@ -141,26 +141,6 @@ describe("QQ host runtime manager", () => {
     peers[0].event("status", { phase: "running", selfId: "999", connectionEpoch: 9 });
     expect(manager.getState().phase).toBe("running");
   });
-  it("starts after confirmed exit without draining an old text handler", async () => {
-    const peers: FakeTransport[] = [];
-    const { manager } = setup({ createTransport: () => { const peer = new FakeTransport(); peers.push(peer); return peer; }, drainTimeoutMs: undefined });
-    let release!: () => void; const gate = new Promise<void>((r) => { release = r; });
-    const handler = vi.fn(async () => { await gate; return manager.send(outgoing()).then((result) => { expect(result.outcome).toBe("failed"); return null; }); });
-    manager.onMessage = handler;
-    await manager.start();
-    peers[0].event("inbound", inbound());
-    expect(handler).toHaveBeenCalledOnce();
-    peers[0].crash();
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    const starting = manager.start();
-    try {
-      await vi.advanceTimersByTimeAsync(0);
-      expect(peers).toHaveLength(2);
-      expect(manager.getState()).toMatchObject({ phase: "running", runtimeEpoch: 2 });
-    } finally { release(); await starting; vi.useRealTimers(); }
-    await handler.mock.results[0].value;
-    expect(peers[1].messages.some((request) => request.method === "send")).toBe(false);
-  });
   it("reports post-dispatch timeout/crash as unknown without retrying", async () => {
     const { peer, manager } = setup({ requestTimeoutMs: 10, sendTimeoutMs: 10 }); await manager.start();
     const original = peer.behavior; peer.behavior = (request) => { if (request.method !== "send") original(request); };

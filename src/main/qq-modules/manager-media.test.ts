@@ -62,15 +62,8 @@ describe("QQ manager media authorization", () => {
     peer.behavior = (request) => request.method === "mediaRead" ? read = request : original(request);
     const handler = vi.fn(async () => null); manager.onMessage = handler;
     peer.event("inbound", { ...inbound(), attachments: [{ kind: "file", mediaId: "incoming-id", size: 5 }] });
-    await vi.waitFor(() => expect(read).toBeDefined());
-    // This case verifies successful cancellation/cleanup, not the shutdown deadline.
-    // Keep real filesystem I/O, but do not let runner speed consume the 100ms budget.
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    try {
-      await manager.stop();
-      expect(manager.getState().phase).toBe("stopped");
-      expect(handler).not.toHaveBeenCalled(); expect(await readdir(join(root, "cache"))).toEqual([]);
-    } finally { vi.useRealTimers(); }
+    await vi.waitFor(() => expect(read).toBeDefined()); await manager.stop();
+    expect(handler).not.toHaveBeenCalled(); expect(await readdir(join(root, "cache"))).toEqual([]);
   });
   it("rejects an upload prepared across backend reconnection", async () => {
     const { peer, manager, message } = await setup(); const original = peer.behavior;

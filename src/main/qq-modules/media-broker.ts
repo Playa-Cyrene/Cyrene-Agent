@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { lstat, mkdir, open, readdir, realpath, unlink, type FileHandle } from "node:fs/promises";
+import { lstat, mkdir, open, readdir, realpath, unlink } from "node:fs/promises";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { QQ_MEDIA_LIMITS, type QqConversation, type QqMedia } from "../../shared/qq-module";
 import type { ChannelAttachment, OutgoingPart } from "../channels/types";
@@ -20,18 +20,8 @@ function safeFilename(filename: string): string {
 interface CachedFile {
   size: number;
   created: number;
-  deletion?: "expiry" | "required";
+  pendingDeletion?: boolean;
   removing?: Promise<void>;
-}
-/** Keep ordinary ordering, without waiting for best-effort work after revocation. */
-async function waitWhileActive(work: Promise<void>, signal?: AbortSignal): Promise<void> {
-  if (!signal) return work;
-  let aborted!: () => void;
-  const cancelled = new Promise<void>((resolve) => { aborted = resolve; });
-  signal.addEventListener("abort", aborted, { once: true });
-  if (signal.aborted) aborted();
-  try { await Promise.race([work, cancelled]); }
-  finally { signal.removeEventListener("abort", aborted); }
 }
 export interface QqMediaTransferContext {
   runtime: QqModuleRuntime;
@@ -44,42 +34,6 @@ export interface QqMediaTransferContext {
 /** Construct only in trusted host composition. Module metadata never selects a path or URL. */
 export class QqMediaBroker {
   private reserved = 0;
-  private active = new Set<Promise<unknown>>();
-  private pendingClosures = new Set<FileHandle>();
-  private closing = new Map<FileHandle, Promise<void>>();
-  private closeFile(fd: FileHandle): Promise<void> {
-    const existing = this.closing.get(fd); if (existing) return existing;
-    this.pendingClosures.add(fd);
-    const work = (async () => {
-      try { await fd.close(); }
-      catch (error) {
-        // FileHandle.fd is -1 after a confirmed close; a post-close error must
-        // not permanently block recovery, unlike an actually open descriptor.
-        if (fd.fd === -1) this.pendingClosures.delete(fd);
-        throw error;
-      }
-      this.pendingClosures.delete(fd);
-    })();
-    this.closing.set(fd, work);
-    return work.finally(() => { this.closing.delete(fd); });
-  }
-  /** Local media work must settle before a stopped generation can be discarded. */
-  get hasPendingCleanup(): boolean {
-    return this.active.size > 0 || this.pendingClosures.size > 0 || [...this.files.values()].some((file) => file.deletion === "required");
-  }
-  private async track<T>(work: Promise<T>): Promise<T> {
-    this.active.add(work);
-    try { return await work; } finally { this.active.delete(work); }
-  }
-  async settleForShutdown(): Promise<void> {
-    await Promise.allSettled([...this.active]);
-    await Promise.allSettled([...this.pendingClosures].map((fd) => this.closeFile(fd)));
-    // Expired, already delivered cache files retain quota and retry on the next
-    // housekeeping pass, but are not unfinished transfer/discard work.
-    for (const [path, info] of this.files) {
-      if (info.deletion === "required") await this.removeFile(path, info, true);
-    }
-  }
   private initialized?: Promise<void>;
   private files = new Map<string, CachedFile>();
   constructor(private cacheDir: string) {}
@@ -109,33 +63,20 @@ export class QqMediaBroker {
   }
   async cleanup(): Promise<void> {
     await (this.initialized ??= this.initialize());
-    await this.prune();
-  }
-  private async cleanupBeforeTransfer(signal?: AbortSignal): Promise<void> {
-    await (this.initialized ??= this.initialize());
-    // A best-effort expiry unlink may be slow, but no new file has been opened.
-    // Required removals remain separately tracked even if this wait is canceled.
-    await waitWhileActive(this.prune(signal), signal);
-  }
-  private async prune(signal?: AbortSignal): Promise<void> {
     for (const [path, info] of this.files) {
-      if (signal?.aborted) return;
-      if (!info.deletion && Date.now() - info.created < CACHE_TTL_MS) continue;
-      await this.removeFile(path, info, false);
+      if (!info.pendingDeletion && Date.now() - info.created < CACHE_TTL_MS) continue;
+      await this.removeFile(path, info);
     }
   }
-  discard(attachment: ChannelAttachment): Promise<void> {
-    return this.track(this.discardInternal(attachment));
-  }
-  private async discardInternal(attachment: ChannelAttachment): Promise<void> {
+  async discard(attachment: ChannelAttachment): Promise<void> {
     const path = attachment.filePath; if (!path) return;
     const info = this.files.get(path); if (!info) return;
-    await this.removeFile(path, info, true);
+    await this.removeFile(path, info);
   }
-  private async removeFile(path: string, info: CachedFile, required: boolean): Promise<void> {
-    // Keep both tracking and quota until deletion is confirmed. An explicit
-    // discard can upgrade a TTL unlink that is already in progress.
-    info.deletion = required ? "required" : info.deletion ?? "expiry";
+  private async removeFile(path: string, info: CachedFile): Promise<void> {
+    // Keep both tracking and quota until deletion is confirmed. Failed discards
+    // and incomplete downloads retry on the next cleanup, without waiting a day.
+    info.pendingDeletion = true;
     if (info.removing) return info.removing;
     info.removing = (async () => {
       try { await unlink(path); }
@@ -157,18 +98,15 @@ export class QqMediaBroker {
   async release(context: QqMediaTransferContext, mediaId: string): Promise<void> {
     try { await context.runtime.request("mediaRelease", { connectionEpoch: context.connectionEpoch, mediaId }); } catch { /* disconnect/expiry also revokes handles */ }
   }
-  upload(context: QqMediaTransferContext, operationId: string, conversation: QqConversation, part: Exclude<OutgoingPart, { kind: "text" | "card" | "sticker" }>): Promise<QqMedia> {
-    return this.track(this.uploadInternal(context, operationId, conversation, part));
-  }
-  private async uploadInternal(context: QqMediaTransferContext, operationId: string, conversation: QqConversation, part: Exclude<OutgoingPart, { kind: "text" | "card" | "sticker" }>): Promise<QqMedia> {
+  async upload(context: QqMediaTransferContext, operationId: string, conversation: QqConversation, part: Exclude<OutgoingPart, { kind: "text" | "card" | "sticker" }>): Promise<QqMedia> {
     context = { ...context, signal: AbortSignal.any([...(context.signal ? [context.signal] : []), AbortSignal.timeout(QQ_MEDIA_LIMITS.transferTimeoutMs)]) };
-    const check = this.guard(context); check(); await this.cleanupBeforeTransfer(context.signal); check();
+    const check = this.guard(context); check(); await this.cleanup(); check();
     if (!part.filePath) throw new Error("QQ_MEDIA_LOCAL_FILE_REQUIRED");
     // Windows does not guarantee O_NOFOLLOW. Check lstat before opening, match
     // exact file identity to the fd, and recheck the path before reading any bytes.
     const source = await lstat(part.filePath, { bigint: true }); check();
     if (source.isSymbolicLink() || !source.isFile()) throw new Error("QQ_MEDIA_NOT_FILE");
-    const fd = await open(part.filePath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)); let reserved = 0; let mediaId: string | undefined; let uploaded = false;
+    const fd = await open(part.filePath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)); let reserved = 0; let mediaId: string | undefined;
     try {
       check(); const identity = await fd.stat({ bigint: true }); check();
       const pathIdentity = await lstat(part.filePath, { bigint: true }); check();
@@ -191,25 +129,17 @@ export class QqMediaBroker {
       for (let offset = 0; offset < bytes.length; offset += QQ_MEDIA_LIMITS.chunkBytes) {
         await context.runtime.request("mediaWrite", { connectionEpoch: context.connectionEpoch, mediaId, offset, data: bytes.subarray(offset, offset + QQ_MEDIA_LIMITS.chunkBytes).toString("base64") }, context.signal); check();
       }
-      uploaded = true;
       return { ...media, mediaId };
-    } finally {
-      this.reserved -= reserved;
-      try { await this.closeFile(fd); }
-      finally { if (!uploaded && mediaId) await waitWhileActive(this.release(context, mediaId), context.signal); }
-    }
+    } catch (error) { if (mediaId) await this.release(context, mediaId); throw error; }
+    finally { this.reserved -= reserved; await fd.close(); }
   }
   async download(context: QqMediaTransferContext, eventId: string, media: QqMedia): Promise<ChannelAttachment> {
-    try { return await this.track(this.receive(context, eventId, media)); }
-    finally {
-      // Request release even after cancellation, without making its ACK a
-      // prerequisite for handling local files (or shutting down) once revoked.
-      await waitWhileActive(this.release(context, media.mediaId), context.signal);
-    }
+    try { return await this.receive(context, eventId, media); }
+    finally { await this.release(context, media.mediaId); }
   }
   private async receive(context: QqMediaTransferContext, eventId: string, media: QqMedia): Promise<ChannelAttachment> {
     context = { ...context, signal: AbortSignal.any([...(context.signal ? [context.signal] : []), AbortSignal.timeout(QQ_MEDIA_LIMITS.transferTimeoutMs)]) };
-    const check = this.guard(context); check(); await this.cleanupBeforeTransfer(context.signal); check();
+    const check = this.guard(context); check(); await this.cleanup(); check();
     if (media.kind === "sticker" || media.size === undefined) throw new Error("QQ_MEDIA_UNSUPPORTED");
     this.reserve(media.size); let path: string | undefined; let complete = false;
     try {
@@ -243,7 +173,7 @@ export class QqMediaBroker {
           while (written < bytes.length) { const result = await fd.write(bytes, written, bytes.length - written, offset + written); check(); if (!result.bytesWritten) throw new Error("QQ_MEDIA_WRITE_FAILED"); written += result.bytesWritten; }
           offset += bytes.length;
         }
-      } finally { await this.closeFile(fd); }
+      } finally { await fd.close(); }
       check(); this.files.set(path, { size: media.size, created: Date.now() }); complete = true;
       return { kind: media.kind, filePath: path, ...(mime ? { mime } : {}), ...(media.caption ? { caption: media.caption } : {}) };
     } finally {
@@ -253,7 +183,7 @@ export class QqMediaBroker {
           // writes or close errors. Restart reconstructs actual sizes from disk.
           const info: CachedFile = { size: media.size, created: Date.now() };
           this.files.set(path, info);
-          await this.removeFile(path, info, true);
+          await this.removeFile(path, info);
         } else { this.reserved -= media.size; }
       }
     }

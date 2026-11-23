@@ -25,7 +25,6 @@ interface Generation {
   authorized: boolean;
   seen: Set<string>;
   turns: Set<Promise<unknown>>;
-  mediaPreparations: Set<Promise<void>>;
   sends: Set<Promise<unknown>>;
 }
 interface TurnLease { active: boolean; generation: Generation; connectionEpoch: number; conversation: QqInboundMessageV1["conversation"] }
@@ -112,8 +111,7 @@ export class QqModuleManager {
   private async startInternal(): Promise<void> {
     if (this.current) {
       if (!this.current.runtime.isClosed) return;
-      await this.stopInternal();
-      if (this.current) return;
+      if (!this.current.runtime.hasExited && !await this.current.runtime.close()) { this.setPhase("failed"); return; }
     }
     const input = this.options.getConfiguration();
     this.state = { ...this.state, enabled: input !== null };
@@ -129,7 +127,7 @@ export class QqModuleManager {
       if (this.options.mediaBroker) initialize.mediaTransfer = "chunked-v1";
       else delete initialize.mediaTransfer;
       const runtime = new QqModuleRuntime(this.options.createTransport(), this.state.runtimeEpoch, this.options.requestTimeoutMs);
-      gen = { runtime, config: initialize.config, policy: initialize.config, capabilities: null, highestConnectionEpoch: -1, startComplete: false, mediaEpoch: 0, mediaAbort: new AbortController(), accepting: false, authorized: true, seen: new Set(), turns: new Set(), mediaPreparations: new Set(), sends: new Set() };
+      gen = { runtime, config: initialize.config, policy: initialize.config, capabilities: null, highestConnectionEpoch: -1, startComplete: false, mediaEpoch: 0, mediaAbort: new AbortController(), accepting: false, authorized: true, seen: new Set(), turns: new Set(), sends: new Set() };
       this.current = gen;
       const instance = gen;
       runtime.onClose(() => {
@@ -245,10 +243,6 @@ export class QqModuleManager {
       if (this.current !== gen || !gen.authorized || gen.connectionEpoch !== message.connectionEpoch || !lease.active || !allowedNow
         || (message.attachments?.length && mediaEpoch !== gen.mediaEpoch)) throw new Error("QQ_MEDIA_REVOKED");
     };
-    let finishPreparation!: () => void;
-    const preparation = new Promise<void>((resolve) => { finishPreparation = resolve; });
-    if (message.attachments?.length) gen.mediaPreparations.add(preparation);
-    const prepared = () => { gen.mediaPreparations.delete(preparation); finishPreparation(); };
     const turn = this.context.run(lease, async () => {
       const attachments = [];
       const unclaimed = new Set((message.attachments ?? []).map((media) => media.mediaId));
@@ -266,15 +260,13 @@ export class QqModuleManager {
         check(); if (attachments.length) incoming.attachments = attachments;
         if (message.attachments?.length) this.ack(gen, message.eventId, "accepted");
         dispatched = true;
-        prepared();
         return await handler(incoming);
       } finally {
         if (!dispatched && message.attachments?.length) {
-          const released = this.releaseInboundMedia(gen, message.connectionEpoch, unclaimed);
-          try { await Promise.all(attachments.map((attachment) => this.options.mediaBroker!.discard(attachment))); }
-          finally { prepared(); }
-          // Remote handles are best effort; no local work remains in this turn.
-          await released;
+          await Promise.all([
+            ...attachments.map((attachment) => this.options.mediaBroker!.discard(attachment)),
+            this.releaseInboundMedia(gen, message.connectionEpoch, unclaimed),
+          ]);
           this.ack(gen, message.eventId, "stale-instance");
         }
       }
@@ -383,27 +375,16 @@ export class QqModuleManager {
     const deadline = new Promise<void>((resolve) => { timer = setTimeout(resolve, this.options.drainTimeoutMs ?? 5000); });
     const drain = async () => {
       try {
-        // A closed runtime cannot use those results. Its exit is still checked
-        // below, independently of draining potentially noncooperative handlers.
-        if (gen.runtime.isClosed) return;
         await gen.runtime.request("quiesce", {});
-        if (gen.runtime.isClosed) return;
         await Promise.allSettled([...gen.turns, ...gen.sends]);
         if (gen.authorized) await gen.runtime.request("stop", {});
       } catch { /* bounded shutdown; pending sends retain unknown */ }
     };
-    // Media cleanup runs independently of potentially uncooperative chat handlers.
-    // Its failure remains observable through the broker's pending state.
-    const mediaCleanup = (async () => {
-      // Includes later discard of earlier attachments after a cancelled download.
-      await Promise.allSettled([...gen.mediaPreparations]);
-      await this.options.mediaBroker?.settleForShutdown();
-    })().catch(() => {});
-    await Promise.race([Promise.all([drain(), mediaCleanup]), deadline]);
+    await Promise.race([drain(), deadline]);
     clearTimeout(timer);
     gen.authorized = false;
     const exited = await gen.runtime.close();
-    if ((!exited && !gen.runtime.hasExited) || gen.mediaPreparations.size > 0 || this.options.mediaBroker?.hasPendingCleanup) {
+    if (!exited && !gen.runtime.hasExited) {
       this.state = { ...this.state, enabled: false, phase: "failed" };
       return;
     }
