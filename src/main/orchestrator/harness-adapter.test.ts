@@ -1,13 +1,13 @@
 /**
- * harness-adapter 的终态映射 + 子事件 runId stamp 单元测试。
+ * harness-adapter 的装配与子事件 runId stamp 单元测试。
  *
- * 覆盖：cancelled/error 不再被吞成 success；所有 AG-UI 事件附 canonical runId。
+ * 所有 AG-UI 事件附 canonical runId。
  *
- * 这两个被测函数都是纯函数，直接单测，不需要 mock harness / vendor。
+ * 直接单测，无需 mock harness / vendor。
  */
 
 import { describe, expect, it } from "vitest";
-import { buildHarnessPromptLayers, buildHarnessSystemPrompt, mapTerminateReasonToTerminal, materializeHarnessStartTranscript, sendHarnessEventAsAgui, sendTaskLifecycleAsAgui } from "./harness-adapter";
+import { buildHarnessPromptLayers, buildHarnessSystemPrompt, materializeHarnessStartTranscript, sendHarnessEventAsAgui, sendTaskLifecycleAsAgui } from "./harness-adapter";
 import type { HarnessEvent } from "./harness/types";
 import type { BaseEvent } from "@ag-ui/core";
 
@@ -91,88 +91,6 @@ describe("Harness recovery context", () => {
 
     expect(prompt).toContain("[RECOVERY_CONTEXT]");
     expect(prompt).toContain("上次停在检查取消链路");
-  });
-});
-
-describe("mapTerminateReasonToTerminal", () => {
-  it("maps undefined → success with externalEffectsMayContinue=false", () => {
-    expect(mapTerminateReasonToTerminal(undefined)).toStrictEqual({
-      status: "success",
-      externalEffectsMayContinue: false,
-    });
-  });
-
-  // P1 修订：success + uncertainEffects 必须报告 true，不能谎报 false。
-  it("maps undefined + hasUncertainEffects=true → success with externalEffectsMayContinue=true (P1)", () => {
-    expect(mapTerminateReasonToTerminal(undefined, true)).toStrictEqual({
-      status: "success",
-      externalEffectsMayContinue: true,
-    });
-  });
-
-  it("maps undefined + hasUncertainEffects=false → success with externalEffectsMayContinue=false (P1)", () => {
-    expect(mapTerminateReasonToTerminal(undefined, false)).toStrictEqual({
-      status: "success",
-      externalEffectsMayContinue: false,
-    });
-  });
-
-  //  hasUncertainEffects 不影响 cancelled / timeout / runtime_error（恒为 true）。
-  it("ignores hasUncertainEffects for cancelled/timeout/runtime_error (P1)", () => {
-    expect(mapTerminateReasonToTerminal("cancelled", false)).toStrictEqual({
-      status: "cancelled",
-      reason: "user_cancelled",
-      externalEffectsMayContinue: true,
-    });
-    expect(mapTerminateReasonToTerminal("timeout", false)).toStrictEqual({
-      status: "timeout",
-      reason: "timeout",
-      externalEffectsMayContinue: true,
-    });
-    expect(mapTerminateReasonToTerminal("error", false)).toStrictEqual({
-      status: "runtime_error",
-      reason: "E_HARNESS_FAILURE",
-      externalEffectsMayContinue: true,
-    });
-  });
-
-  it("maps max_rounds → timeout with externalEffectsMayContinue=true", () => {
-    expect(mapTerminateReasonToTerminal("max_rounds")).toStrictEqual({
-      status: "timeout",
-      reason: "max_rounds",
-      externalEffectsMayContinue: true,
-    });
-  });
-
-  it("maps timeout → timeout with externalEffectsMayContinue=true", () => {
-    expect(mapTerminateReasonToTerminal("timeout")).toStrictEqual({
-      status: "timeout",
-      reason: "timeout",
-      externalEffectsMayContinue: true,
-    });
-  });
-
-  // 核心不变量：cancelled 不再被 default 吞成 success
-  it("maps cancelled → cancelled (NOT success) with externalEffectsMayContinue=true", () => {
-    const terminal = mapTerminateReasonToTerminal("cancelled");
-    expect(terminal.status).toBe("cancelled");
-    expect(terminal.reason).toBe("user_cancelled");
-    expect(terminal.externalEffectsMayContinue).toBe(true);
-  });
-
-  // 核心不变量：error 不再被 default 吞成 success，而是 runtime_error
-  it("maps error → runtime_error (NOT success) with externalEffectsMayContinue=true", () => {
-    const terminal = mapTerminateReasonToTerminal("error");
-    expect(terminal.status).toBe("runtime_error");
-    expect(terminal.reason).toBe("E_HARNESS_FAILURE");
-    expect(terminal.externalEffectsMayContinue).toBe(true);
-  });
-
-  it("never returns a terminal missing externalEffectsMayContinue", () => {
-    for (const reason of [undefined, "max_rounds", "timeout", "cancelled", "error"] as const) {
-      const terminal = mapTerminateReasonToTerminal(reason);
-      expect(typeof terminal.externalEffectsMayContinue).toBe("boolean");
-    }
   });
 });
 

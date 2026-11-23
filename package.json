@@ -44,6 +44,8 @@
     "start": "electron .",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:scripts": "node --test \"scripts/**/*.test.mjs\"",
+    "test:plugin-sdk": "vitest run --config vitest.plugin-sdk.config.mts",
     "smoke:music": "pnpm run build:main && node scripts/verify/music-smoke.mjs",
     "build:sim": "tsc -p tsconfig.sim.json",
     "sim": "tsc -p tsconfig.sim.json && node dist/sim/main/sim/dmae-sim.js",
