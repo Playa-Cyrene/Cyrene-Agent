@@ -4,6 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readQqLifecycleDiagnostics } from "./lifecycle-diagnostics";
 import { validateQqLifecycleDiagnostics } from "../../shared/qq-module-diagnostics";
+import { configuration } from "../../../scripts/verify/qq-module/fixtures";
+import { QqFirstSetupStore } from "./first-setup-store";
+import { QqMigrationStore, type QqMigrationRecord } from "./migration-store";
+import { readQqRecoveryOrigin } from "./recovery";
 const roots: string[] = [];
 const root = () => { const r = mkdtempSync(join(tmpdir(), "qq-diagnostic-")); roots.push(r); return r; };
 afterEach(() => roots.splice(0).forEach(r => rmSync(r, { recursive: true, force: true })));
@@ -69,8 +73,34 @@ it("reports adoption intent as a durable record, not a grant, and never clears i
   const before = readFileSync(join(store.root, "intent-lock"));
   const v = readQqLifecycleDiagnostics(r);
   expect(v.stores.adoption).toEqual({ status: "recorded", phase: "prepared" }); expect(v.startupMode).toBe("blocked");
+  expect(v.manualReviewRequired).toBe(false);
   expect(validateQqLifecycleDiagnostics(v)).toBe(true); expect(JSON.stringify(v)).not.toContain("private");
   expect(readFileSync(join(store.root, "intent-lock"))).toEqual(before);
   writeFileSync(join(store.root, "state.tmp"), "partial");
   expect(readQqLifecycleDiagnostics(r).stores.adoption).toEqual({ status: "incomplete" });
 });
+
+it.each(["prepared", "legacy-stopped", "module-staged", "committed", "rolled-back"] as const)(
+  "requires review for a preserved migration record in %s and never alters its startup/recovery gate",
+  async phase => {
+    const r = root();
+    const migration = new QqMigrationStore(join(r, "qq-module-migration"));
+    const setup = new QqFirstSetupStore(join(r, "qq-module-first-setup"));
+    const config = configuration().config;
+    const record: QqMigrationRecord = {
+      schemaVersion: 1, transactionId: "12345678-1234-1234-1234-123456789abc", packageId: `pkg-${"a".repeat(64)}`, phase,
+      plan: { schemaVersion: 1, channelId: "qq", config, sourceDigest: "b".repeat(64),
+        identity: { selfId: config.expectedSelfId, connectionEpoch: 1 }, credentialKind: "none" },
+    };
+    await migration.locked(async save => { save(record); });
+    const path = join(migration.root, "state.json"), before = readFileSync(path);
+    const v = readQqLifecycleDiagnostics(r);
+    expect(v).toMatchObject({ startupMode: "blocked", manualReviewRequired: true, stores: { migration: { status: "incomplete" } } });
+    expect(v.stores.migration).toEqual({ status: "incomplete" });
+    expect(() => readQqRecoveryOrigin(setup, migration)).toThrow("QQ_RECOVERY_incomplete-source");
+    expect(validateQqLifecycleDiagnostics(v)).toBe(true);
+    expect(validateQqLifecycleDiagnostics({ ...v, manualReviewRequired: false, stores: { ...v.stores, migration: { status: "recorded", phase } } })).toBe(false);
+    expect(readdirSync(migration.root).sort()).toEqual(["marker", "state.json"]);
+    expect(readFileSync(path)).toEqual(before);
+  },
+);

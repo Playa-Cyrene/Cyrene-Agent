@@ -210,11 +210,19 @@ export class ChannelManager {
     const canRestart = () => generation === this.stopGeneration && !signal?.aborted;
     // Once preserved during this restart, do not start it later even if its state changes.
     const preserved = new Set<ChannelId>();
+    const suspended = new Set<ChannelAdapter>();
     const shouldPreserve = (id: ChannelId): boolean => {
       if (preserve(id)) preserved.add(id);
-      return preserved.has(id);
+      if (!preserved.has(id)) return false;
+      const adapter = this.adapters.get(id);
+      // An independently protected route discovered during teardown can keep
+      // its connection if not yet stopped, but its revoked callback stays dead.
+      if (canRestart() && adapter && suspended.delete(adapter) && this.dispatchFn && !this.handlerLeases.has(adapter)) {
+        setAdapterHandler(adapter, this.makeAdapterHandler(id, adapter));
+      }
+      return true;
     };
-    await this.stopAdapters(shouldPreserve, canRestart);
+    await this.stopAdapters(shouldPreserve, canRestart, suspended);
     if (canRestart()) await this.startAdapters(shouldPreserve, signal);
   }
 
@@ -234,13 +242,21 @@ export class ChannelManager {
     return work;
   }
 
-  private async stopAdapters(preserve?: (id: ChannelId) => boolean, canContinue: () => boolean = () => true): Promise<void> {
+  private async stopAdapters(preserve?: (id: ChannelId) => boolean, canContinue: () => boolean = () => true,
+    suspended?: Set<ChannelAdapter>): Promise<void> {
     this.stopGeneration++;
-    // A full stop invalidates every handler, even adapters that never started.
-    // A selective restart must leave the preserved route's live handler intact.
+    // Revoke ingress for all affected adapters before awaiting any network stop.
+    // Leave the started set intact until each adapter's own stop is initiated.
     if (!preserve) this.handlerLeases = new WeakMap();
+    else {
+      for (const [id, adapter] of this.adapters) {
+        if (!preserve(id) && this.handlerLeases.delete(adapter)) suspended?.add(adapter);
+      }
+    }
     for (const adapter of this.startingAdapters.keys()) {
-      if (!preserve?.(adapter.id)) this.cancelStartingAdapter(adapter);
+      if (preserve?.(adapter.id)) continue;
+      suspended?.delete(adapter);
+      this.cancelStartingAdapter(adapter);
     }
     const started = [...this.startedAdapters];
     if (!preserve) this.startedAdapters.clear();
@@ -250,6 +266,7 @@ export class ChannelManager {
       if (preserve && !this.startedAdapters.delete(id)) continue;
       const adapter = this.adapters.get(id);
       if (!adapter) continue;
+      suspended?.delete(adapter);
       this.handlerLeases.delete(adapter);
       try {
         await this.stopAdapter(adapter);

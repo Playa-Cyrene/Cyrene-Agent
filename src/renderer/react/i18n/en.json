@@ -1059,6 +1059,7 @@
           "read": "View recovery diagnostics",
           "failed": "Diagnostics unavailable. Preserve state; do not delete locks or records.",
           "notice": "Read-only disk snapshot, not proof of stopped processes or permission to reactivate.",
+          "reviewRequired": "Records need manual review. Do not attempt to activate again.",
           "manual": "After an abnormal exit, stop activation attempts and preserve records for maintainer review. Do not delete locks, empty folders, or replay messages with unknown outcomes.",
           "store-migration": "migration",
           "store-firstSetup": "firstSetup",

@@ -22,6 +22,7 @@ it("reads only on explicit request and has no reset/unlock controls", async () =
  expect(host.textContent).toContain("不证明进程已停止");
  expect(host.querySelectorAll("button")).toHaveLength(1);
  expect(host.textContent).toContain("不要删除锁");
+ expect(host.textContent).not.toContain("发现需要人工核查");
 });
 it("blocks duplicate requests and rejects unexpected secret-bearing results", async () => {
  let complete!: (v: unknown) => void;
@@ -49,4 +50,15 @@ it("ignores an old action response without unlocking a newer request", async () 
  expect(host.querySelector("button")!.disabled).toBe(true); expect(host.querySelector("ul")).toBeNull();
  await act(async () => newDone({ ok: true, state: "diagnostics", diagnostics }));
  expect(host.querySelector("button")!.disabled).toBe(false); expect(host.querySelector("ul")).not.toBeNull();
+});
+
+it("highlights an interrupted migration without offering an unsafe recovery action", async () => {
+ const report = { ...diagnostics, startupMode: "blocked", manualReviewRequired: true,
+  stores: { ...diagnostics.stores, migration: { status: "incomplete" } } };
+ const action = vi.fn().mockResolvedValue({ ok: true, state: "diagnostics", diagnostics: report });
+ await act(async () => root.render(<QqModuleDiagnosticsPanel action={action} disabled={false} />));
+ await act(async () => host.querySelector("button")!.click());
+ expect(host.textContent).toContain("旧驱动迁移: 未完成记录");
+ expect(host.textContent).toContain("发现需要人工核查");
+ expect(host.querySelectorAll("button")).toHaveLength(1);
 });

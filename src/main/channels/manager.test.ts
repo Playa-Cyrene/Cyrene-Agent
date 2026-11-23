@@ -353,14 +353,45 @@ describe("ordinary restart preservation", () => {
     expect(events).toEqual(["stop:wechat", "stop:qq", "stop:qqbot", "start:wechat", "start:qq", "start:qqbot"]);
   });
 
-  it("rechecks preservation after another adapter yields and never starts a route preserved during stop", async () => {
+  it("rechecks preservation after another stop yields and uses a fresh lease only when still owned", async () => {
     const mgr = new ChannelManager(); const qq = fakeAdapter("qq"), wechat = fakeAdapter("wechat");
     let managed = false;
     wechat.stop = async () => { managed = true; };
     wechat.start = async () => { managed = false; };
     const qqStart = vi.spyOn(qq, "start"), qqStop = vi.spyOn(qq, "stop");
-    mgr.register(wechat); mgr.register(qq); await mgr.startAll();
-    await mgr.restartAll(id => id === "qq" && managed);
+    const dispatch = vi.fn(async () => null);
+    mgr.setDispatcher(dispatch); mgr.register(wechat); mgr.register(qq); await mgr.startAll();
+    const old = qq.onMessage;
+    const restarting = mgr.restartAll(id => id === "qq" && managed);
+    expect(mgr.hasLiveDispatcher(qq)).toBe(false);
+    await restarting;
     expect(qqStop).not.toHaveBeenCalled(); expect(qqStart).toHaveBeenCalledTimes(1);
+    expect(mgr.hasLiveDispatcher(qq)).toBe(true);
+    expect(qq.onMessage).not.toBe(old);
+    await mgr.stopAll();
+  });
+
+  it("revokes later ordinary channels before the first asynchronous stop without detaching a preserved route", async () => {
+    const mgr = new ChannelManager();
+    const first = fakeAdapter("wechat"), later = fakeAdapter("qqbot"), managed = fakeAdapter("qq");
+    mgr.setDispatcher(async () => null);
+    for (const a of [first, later, managed]) mgr.register(a);
+    await mgr.startAll();
+    const initial = managed.onMessage;
+    const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+    vi.spyOn(first, "stop").mockImplementationOnce(async () => { entered.resolve(); await release.promise; });
+    const laterStop = vi.spyOn(later, "stop");
+    const restarting = mgr.restartAll(id => id === "qq");
+    try {
+      await entered.promise;
+      expect(laterStop).not.toHaveBeenCalled();
+      expect(mgr.hasLiveDispatcher(first)).toBe(false);
+      expect(mgr.hasLiveDispatcher(later)).toBe(false);
+      expect(mgr.hasLiveDispatcher(managed)).toBe(true);
+      expect(managed.onMessage).toBe(initial);
+    } finally { release.resolve(); await restarting; }
+    expect(laterStop).toHaveBeenCalledOnce();
+    expect(mgr.hasLiveDispatcher(later)).toBe(true); // normal restart acquired a new connection lease
+    await mgr.stopAll();
   });
 });

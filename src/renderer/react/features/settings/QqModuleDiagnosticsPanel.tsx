@@ -24,6 +24,7 @@ export function QqModuleDiagnosticsPanel({ action, disabled, onBusy }: { onBusy?
     <Button disabled={disabled || busy} onClick={() => void read()}>{t(`${key}.read`)}</Button>
     {failed && <Alert role="status" type="warning" title={t(`${key}.failed`)} />}
     {report && <><Alert role="status" type="info" title={t(`${key}.notice`)} />
+      {report.manualReviewRequired && <Alert role="status" type="warning" title={t(`${key}.reviewRequired`)} />}
       <ul>{Object.entries(report.stores).map(([name, value]) => <li key={name}>{t(`${key}.store-${name}`)}: {t(`${key}.status-${value.status}`)}</li>)}</ul>
       <p>{t(`${key}.manual`)}</p></>}
   </section>;

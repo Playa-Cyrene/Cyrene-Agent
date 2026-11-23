@@ -8,7 +8,7 @@
 - `locked`：发现锁，不推断进程是否存在或锁是否过期。主机崩溃后保留现场，转人工处理。
 - `dirty`、`incomplete`、`corrupt`、`unavailable`：不能确认安全状态，禁止自动清理或恢复。
 - `clean-retired`：文件记录正常退役，但诊断不是运行时停止证明、scope 匹配或激活许可。
-- `recorded`：格式有效的生命周期记录，仅展示阶段，不表示模块正在运行。
+- `recorded`：格式有效、阶段本身不要求人工核查的生命周期记录，仅展示阶段，不表示模块正在运行。对迁移或首次配置，只有已选择的初始记录（`selected`）归此类；尚不能作为恢复来源的事务显示 `incomplete`。显式恢复的 `prepared` / `module-staged` 同样显示 `incomplete`。设置页会在需要人工核查时额外提示。
 
 任何持久 artifact 都返回 `startupMode: blocked`。`manualReviewRequired` 仅对 dirty/locked/incomplete/corrupt/unavailable 为 true；正常 recorded/clean-retired 不显示人工异常，但仍不授权启动。这保留保守启动门控；诊断不能替代经过验证的首次安装/升级资格、可信签名配对发布、所有权 supervisor 或显式确认。结果是非原子的观察快照；正在运行时发现锁正常，不能仅凭此声称发生崩溃。应用/恢复前必须重新执行原有可信证明和事务检查。
 

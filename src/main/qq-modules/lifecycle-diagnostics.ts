@@ -6,7 +6,7 @@ import { validateQqMigrationRecord } from "./migration-store";
 import { validateQqFirstSetupRecord } from "./first-setup-store";
 import { validateQqRecoveryRecord } from "./recovery-store";
 
-import type { QqLifecycleDiagnostics, QqLifecycleStoreDiagnostic } from "../../shared/qq-module-diagnostics";
+import { isRecordedQqLifecyclePhase, type QqLifecycleDiagnostics, type QqLifecycleStoreDiagnostic } from "../../shared/qq-module-diagnostics";
 export type { QqLifecycleDiagnostics } from "../../shared/qq-module-diagnostics";
 
 const missing = (e: unknown) => (e as NodeJS.ErrnoException).code === "ENOENT";
@@ -63,7 +63,10 @@ function inspect(root: string, kind: keyof QqLifecycleDiagnostics["stores"]): Qq
     }
     const valid = kind === "migration" ? validateQqMigrationRecord(value) : kind === "firstSetup" ? validateQqFirstSetupRecord(value) : validateQqRecoveryRecord(value);
     if (!valid) return { status: "corrupt" };
-    return { status: "recorded", phase: (value as { phase: QqLifecycleStoreDiagnostic["phase"] }).phase };
+    const { phase } = value as { phase: QqLifecycleStoreDiagnostic["phase"] };
+    // A valid record can still represent an interrupted or unsafe-to-resume
+    // transaction; keep it intact and say explicitly that review is needed.
+    return isRecordedQqLifecyclePhase(kind, phase) ? { status: "recorded", phase } : { status: "incomplete" };
   } catch (e) {
     const code = (e as NodeJS.ErrnoException).code;
     return { status: code === "EACCES" || code === "EPERM" ? "unavailable" : "corrupt" };
