@@ -1,7 +1,7 @@
 import { lstatSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, isAbsolute, join, parse, resolve } from "node:path";
 import { QqAdoptionIntentStore } from "./adoption-intent";
-import { qqLifecyclePaths } from "./startup-recovery";
+import { qqFirstSetupLockPath, qqLifecyclePaths } from "./startup-recovery";
 import { validateQqMigrationRecord } from "./migration-store";
 import { validateQqFirstSetupRecord } from "./first-setup-store";
 import { validateQqRecoveryRecord } from "./recovery-store";
@@ -26,6 +26,10 @@ function file(path: string, limit: number): string {
 }
 function inspect(root: string, kind: keyof QqLifecycleDiagnostics["stores"]): QqLifecycleStoreDiagnostic {
   try {
+    if (kind === "firstSetup") {
+      try { lstatSync(qqFirstSetupLockPath(root)); return { status: "locked" }; }
+      catch (e) { if (!missing(e)) throw e; }
+    }
     try { const s = lstatSync(root); if (!s.isDirectory() || s.isSymbolicLink()) return { status: "corrupt" }; }
     catch (e) { if (missing(e)) return { status: "absent" }; throw e; }
     if (kind === "adoption") {

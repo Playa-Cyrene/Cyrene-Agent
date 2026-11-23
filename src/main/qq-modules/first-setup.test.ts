@@ -5,6 +5,10 @@ import { afterEach, expect, it, vi } from "vitest";
 import { QqFirstSetupCoordinator } from "./first-setup";
 import { QqFirstSetupStore, type QqFirstSetupRecord } from "./first-setup-store";
 import { QqModuleManager } from "./manager";
+import { getQqStartupMode, qqFirstSetupLockPath, qqLifecyclePaths } from "./startup-recovery";
+import { QqMigrationStore } from "./migration-store";
+import { readQqRecoveryOrigin } from "./recovery";
+import { readQqLifecycleDiagnostics } from "./lifecycle-diagnostics";
 import { FakeTransport, configuration, inbound } from "../../../scripts/verify/qq-module/fixtures";
 const roots: string[] = [];
 const managers: QqModuleManager[] = [];
@@ -12,7 +16,7 @@ afterEach(async () => { await Promise.all(managers.splice(0).map((m) => m.stop()
 const packageId = `pkg-${"a".repeat(64)}`;
 function setup(checkpoint: (record: QqFirstSetupRecord) => void = () => {}) {
   const root = mkdtempSync(join(tmpdir(), "qq-first-setup-")); roots.push(root);
-  const directory = join(root, "setup"), store = new QqFirstSetupStore(directory, checkpoint);
+  const directory = qqLifecyclePaths(root).firstSetup, store = new QqFirstSetupStore(directory, checkpoint);
   let config = configuration().config;
   const secureStorage = { isSecureAvailable: vi.fn(() => true) };
   const readCredential = vi.fn(() => "synthetic-secret-DO-NOT-PERSIST");
@@ -50,6 +54,8 @@ it("requires secure storage, exact account consent and unchanged configuration",
   await expect(s.coordinator.confirmSetup({ previewId: p.previewId, accountId: "999", userConfirmed: true })).rejects.toThrow("stale-confirmation");
   await expect(s.coordinator.confirmSetup({ previewId: p.previewId, accountId: p.accountId, userConfirmed: true, path: "/untrusted" })).rejects.toThrow("explicit-account-confirmation");
   s.changeConfig(); await expect(s.confirm(p)).rejects.toThrow("configuration-changed");
+  expect(getQqStartupMode(s.root)).toBe("legacy");
+  expect(readdirSync(s.root)).toEqual([]);
   expect(s.readCredential).not.toHaveBeenCalled(); expect(s.createModule).not.toHaveBeenCalled();
 });
 it("persists recovery intent before checking unknown legacy and never reads credentials on failed proof", async () => {
@@ -138,8 +144,44 @@ it.each(["trust", "secure", "credential"] as const)("rejects changed %s authorit
     expect(s.store.read()?.phase).toBe("rolled-back");
   } else {
     await expect(s.confirm(p)).rejects.toThrow(); expect(s.store.read()).toBeNull();
+    expect(getQqStartupMode(s.root)).toBe("legacy"); expect(readdirSync(s.root)).toEqual([]);
   }
   expect(s.createModule).not.toHaveBeenCalled();
+});
+
+it("revalidates under an exclusive reservation and can retry after a transient input failure", async () => {
+  const s = setup(); const p = s.preview();
+  s.verifyCandidate.mockImplementationOnce(() => {
+    expect(existsSync(qqFirstSetupLockPath(s.directory))).toBe(true);
+    expect(existsSync(s.directory)).toBe(false);
+    throw Error("fixture candidate unavailable");
+  });
+  await expect(s.confirm(p)).rejects.toThrow("fixture candidate unavailable");
+  expect(readdirSync(s.root)).toEqual([]);
+  expect(s.verifyNoLegacyDriver).not.toHaveBeenCalled();
+  expect(await s.confirm(s.preview())).toEqual({ outcome: "committed" });
+});
+
+it("does not overwrite an existing marker with unknown state", async () => {
+  const s = setup(); const p = s.preview();
+  await s.store.locked(async () => {});
+  await expect(s.confirm(p)).rejects.toThrow("existing-setup-requires-review");
+  expect(readdirSync(s.directory)).toEqual(["marker"]);
+  expect(getQqStartupMode(s.root)).toBe("blocked");
+  expect(s.verifyNoLegacyDriver).not.toHaveBeenCalled();
+});
+
+it("preserves an existing reservation and reports blocked startup", async () => {
+  const s = setup(); const p = s.preview();
+  const lock = qqFirstSetupLockPath(s.directory);
+  writeFileSync(lock, "", { flag: "wx" });
+  await expect(s.confirm(p)).rejects.toThrow("busy-or-recovery-required");
+  expect(existsSync(lock)).toBe(true);
+  expect(existsSync(s.directory)).toBe(false);
+  expect(getQqStartupMode(s.root)).toBe("blocked");
+  expect(() => readQqRecoveryOrigin(s.store, new QqMigrationStore(qqLifecyclePaths(s.root).migration))).toThrow("source-locked");
+  expect(readQqLifecycleDiagnostics(s.root)).toMatchObject({ startupMode: "blocked", manualReviewRequired: true, stores: { firstSetup: { status: "locked" } } });
+  expect(s.verifyNoLegacyDriver).not.toHaveBeenCalled();
 });
 
 it("writes prepared before the first asynchronous proof and leaves restart-visible intent while blocked", async () => {

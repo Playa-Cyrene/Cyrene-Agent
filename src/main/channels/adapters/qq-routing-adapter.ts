@@ -23,6 +23,7 @@ export class QqRoutingAdapter implements ChannelAdapter, QqMigrationLegacyPort {
   private stopRequested = false;
   private closed = false;
   private legacyDraining = false;
+  private protectedOperations = 0;
   private moduleDraining = false;
   private readonly turns = new AsyncLocalStorage<number>();
   constructor(private readonly legacy: Legacy, initial: "legacy" | "blocked" = "legacy") {
@@ -39,6 +40,15 @@ export class QqRoutingAdapter implements ChannelAdapter, QqMigrationLegacyPort {
     };
   }
   isLegacyBlocked(): boolean { return this.mode !== "legacy"; }
+  /** Ordinary settings changes must not interrupt the an approved QQ lifecycle operation. */
+  shouldPreserveForSettingsRestart(): boolean {
+    return this.isLegacyBlocked() || this.legacyDraining || this.protectedOperations > 0;
+  }
+  async protectConfirmedOperation<T>(confirm: () => T | Promise<T>): Promise<T> {
+    this.protectedOperations++;
+    try { return await confirm(); }
+    finally { this.protectedOperations--; }
+  }
   getDriver(): "legacy" | "blocked" | "module" { return this.mode; }
   get capability(): ChannelCapability { return this.module?.capability ?? this.legacy.capability; }
   private runOperation<T>(work: () => Promise<T>): Promise<T> {

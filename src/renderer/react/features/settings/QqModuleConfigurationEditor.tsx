@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Alert, Button, Checkbox, Input, Space, Spin } from "antd";
 import type { QqModuleActionCommand, QqModuleActionResult, QqModuleConfigurationView } from "../../../../shared/qq-module-actions";
+import { isQqModuleLoopbackLiteral } from "../../../../shared/qq-module-loopback";
 import { useTranslation } from "../../i18n";
 import { createQqModuleInitialReader, runQqModuleAction } from "./qq-module-initial-read";
 
@@ -43,7 +44,7 @@ export function QqModuleConfigurationEditor({ action, onBusy, onClose, onSaved }
   }, [action]);
   const ids = (raw: string) => raw.split(/[\s,，]+/).filter(Boolean);
   // Only non-secret fields are editable. Host repeats the authoritative validation.
-  const loopback = host === "::1" || /^127(?:\.(?:0|[1-9]\d{0,2})){3}$/.test(host) && host.split(".").every(part => Number(part) <= 255);
+  const loopback = isQqModuleLoopbackLiteral(host);
   const valid = !!view && /^\d{1,128}$/.test(account) && loopback && /^\d+$/.test(port) && Number(port) >= 1 && Number(port) <= 65535
     && [...ids(privateIds), ...ids(groupIds)].every(value => /^\d{1,128}$/.test(value))
     && (!enabled || view.credentialAccountId === account);

@@ -43,8 +43,7 @@ const LOG = "[ChannelsInit]";
 
 let initialized = false;
 let started = false;
-let shuttingDown = false;
-const pendingRestarts = new Set<Promise<void>>();
+let channelsLifetime = new AbortController();
 let conversationLifecycle: {
   onUserMessage(): void;
   onConversationStarted(): void;
@@ -65,7 +64,7 @@ export interface InitializeChannelsOptions {
   ipc?: IpcScope;
   /** Host-only recovery decision. Unknown/incomplete module state must block QQ startup. */
   qqStartupMode?: "legacy" | "blocked";
-  /** Trusted composition only; never renderer input. Called before registration/start. */
+  /** Trusted composition only; never renderer input. Called after dispatch binding and before ordinary startup. */
   configureQqRouting?: (router: QqRoutingAdapter) => QqModuleActionBinding | void;
   handleIncoming: MessageHandler;
   reloadDispatcherSettings: () => void;
@@ -91,7 +90,7 @@ function getPublicChannelsSettings(): Record<string, unknown> {
 export function initializeChannels(options: InitializeChannelsOptions): void {
   if (initialized) return;
   initialized = true;
-  shuttingDown = false;
+  channelsLifetime = new AbortController();
   reloadLogFromDisk();
 
   // 将当前子系统的消息入口注入渠道管理器。
@@ -125,9 +124,26 @@ function registerAdapters(options: InitializeChannelsOptions): void {
   channelManager.register(wxAdapter);
 
   qqAdapter = new NapCatAdapter(broadcastChannelsStatus);
-  qqRouting = new QqRoutingAdapter(qqAdapter, options.qqStartupMode === "blocked" ? "blocked" : getQqStartupMode(app.getPath("userData")));
-  qqModuleActions = options.configureQqRouting?.(qqRouting) || undefined;
-  channelManager.register(qqRouting);
+  const router = new QqRoutingAdapter(qqAdapter, options.qqStartupMode === "blocked" ? "blocked" : getQqStartupMode(app.getPath("userData")));
+  qqRouting = router;
+  // Trusted QQ actions can start a quarantined module before background startAll.
+  channelManager.register(router, { bindBeforeStart: true });
+  const binding = options.configureQqRouting?.(router);
+  const lifetime = channelsLifetime.signal;
+  qqModuleActions = binding ? {
+    isTrustedSender: (event) => binding.isTrustedSender(event),
+    shutdown: () => binding.shutdown(),
+    port: { execute: (command) => {
+      const action = command.action;
+      if (action !== "confirm-setup" && action !== "confirm-migration" && action !== "confirm-recovery" && action !== "confirm-reconfigure") {
+        return binding.port.execute(command);
+      }
+      // An ordinary legacy restart may already have revoked the route's lease.
+      // Do not start any transaction or ACK events through a detached dispatcher.
+      if (lifetime.aborted || !channelManager.hasLiveDispatcher(router)) return { ok: false, error: "busy" };
+      return router.protectConfirmedOperation(() => binding.port.execute(command));
+    } },
+  } : undefined;
 
   qqBotAdapter = new QqBotAdapter(broadcastChannelsStatus);
   channelManager.register(qqBotAdapter);
@@ -161,9 +177,9 @@ export async function startChannels(signal?: AbortSignal): Promise<void> {
 
 /** app.on('before-quit') 调 */
 export async function shutdownChannels(): Promise<void> {
-  shuttingDown = true;
-  // Let already accepted restarts settle before the final full teardown.
-  if (pendingRestarts.size > 0) await Promise.allSettled([...pendingRestarts]);
+  // Do not wait for ordinary restart: stopAll owns cancellation of in-flight
+  // starts, and this signal prevents a restart still stopping from starting later.
+  channelsLifetime.abort();
   // Confirmed lifecycle work must settle before channel teardown can finish.
   // The trusted binding prevents a late candidate start after shutdown.
   try { await qqModuleActions?.shutdown(); }
@@ -210,13 +226,12 @@ function registerChannelsIpc(
     ),
   );
 
+  const restartSignal = channelsLifetime.signal;
   ipc.handle(IPC.CHANNELS_RESTART, async () => {
-    if (shuttingDown) return { ok: false, error: "CHANNELS_SHUTTING_DOWN" };
-    // Managed/blocked QQ requires an explicit activation flow. An unrelated
-    // settings restart must neither take an active module offline nor start one.
-    const restart = channelManager.restartAll((id) => id === "qq" && Boolean(qqRouting?.isLegacyBlocked()));
-    pendingRestarts.add(restart);
-    try { await restart; } finally { pendingRestarts.delete(restart); }
+    if (restartSignal.aborted) return { ok: false, error: "CHANNELS_SHUTTING_DOWN" };
+    // Preserve explicit QQ lifecycle work even while the legacy route is draining.
+    await channelManager.restartAll((id) => id === "qq" && Boolean(qqRouting?.shouldPreserveForSettingsRestart()), restartSignal);
+    if (restartSignal.aborted) return { ok: false, error: "CHANNELS_SHUTTING_DOWN" };
     broadcastChannelsStatus();
     return { ok: true };
   });

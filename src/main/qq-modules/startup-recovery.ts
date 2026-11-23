@@ -1,6 +1,8 @@
 import { lstatSync } from "node:fs";
 import { join } from "node:path";
 
+export function qqFirstSetupLockPath(firstSetupPath: string): string { return `${firstSetupPath}.lock`; }
+
 /** Fixed host-owned locations, never renderer input. Reading never creates a store. */
 export function qqLifecyclePaths(userDataPath: string): { migration: string; firstSetup: string; recovery: string; driverOwnership: string; adoption: string } {
   return { adoption: join(userDataPath, "qq-module-adoption"), driverOwnership: join(userDataPath, "qq-module-driver-ownership"), recovery: join(userDataPath, "qq-module-recovery"), migration: join(userDataPath, "qq-module-migration"), firstSetup: join(userDataPath, "qq-module-first-setup") };
@@ -13,7 +15,7 @@ export function qqLifecyclePaths(userDataPath: string): { migration: string; fir
 export function getQqStartupMode(userDataPath: string): "legacy" | "blocked" {
   try {
     const paths = qqLifecyclePaths(userDataPath);
-    for (const root of Object.values(paths)) {
+    for (const root of [...Object.values(paths), qqFirstSetupLockPath(paths.firstSetup)]) {
       // Even an empty/valid-marked directory is an ambiguous durable artifact:
       // a selected state may have been lost. Never infer "never configured" from
       // a missing state file and restart legacy. Read-only; do not repair/delete.

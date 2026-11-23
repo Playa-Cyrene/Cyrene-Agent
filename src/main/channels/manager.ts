@@ -34,14 +34,21 @@ export class ChannelManager {
   private stopGeneration = 0;
   private handlerLeases = new WeakMap<ChannelAdapter, object>();
   private startingAdapters = new Map<ChannelAdapter, { promise: Promise<void>; cancelled: boolean; cancel: () => void; settled: Promise<void> }>();
+  private stoppingAdapters = new Map<ChannelAdapter, Promise<void>>();
 
   has(id: ChannelId): boolean {
     return this.adapters.has(id);
   }
 
   /** 注册 adapter（必须在 startAll 之前调用；重复 id 一律拒绝） */
-  register(adapter: ChannelAdapter): void {
+  register(adapter: ChannelAdapter, options: { bindBeforeStart?: boolean } = {}): void {
     this.registerOwned(adapter, this.hostOwner);
+    // Some host-controlled routes have an explicit activation path outside startAll.
+    if (options.bindBeforeStart && this.dispatchFn) setAdapterHandler(adapter, this.makeAdapterHandler(adapter.id, adapter));
+  }
+
+  hasLiveDispatcher(adapter: ChannelAdapter): boolean {
+    return !!this.dispatchFn && this.adapters.get(adapter.id) === adapter && this.handlerLeases.has(adapter);
   }
 
   /**
@@ -92,13 +99,14 @@ export class ChannelManager {
     await this.startAdapters(() => false);
   }
 
-  private async startAdapters(preserve: (id: ChannelId) => boolean): Promise<void> {
+  private async startAdapters(preserve: (id: ChannelId) => boolean, signal?: AbortSignal): Promise<void> {
     const generation = this.stopGeneration;
+    const canStart = () => generation === this.stopGeneration && !signal?.aborted;
     for (const [id, adapter] of this.adapters) {
-      if (generation !== this.stopGeneration) break;
+      if (!canStart()) break;
       if (preserve(id)) continue;
       try {
-        await this.startAdapter(id, adapter);
+        await this.startAdapter(id, adapter, canStart, signal);
       } catch (err) {
         console.error(LOG, `渠道启动失败 [${adapter.id}]:`, err instanceof Error ? err.message : err);
       }
@@ -114,8 +122,7 @@ export class ChannelManager {
     this.assertOwner(id, owner);
     const adapter = this.adapters.get(id);
     if (!adapter) return false;
-    const starting = this.startingAdapters.get(adapter);
-    if (starting) { starting.cancelled = true; starting.cancel(); }
+    this.cancelStartingAdapter(adapter);
     setAdapterHandler(adapter, null);
     this.adapters.delete(id);
     this.owners.delete(id);
@@ -139,23 +146,31 @@ export class ChannelManager {
     this.assertOwner(id, owner);
     const adapter = this.adapters.get(id);
     if (!adapter) return;
-    return this.startAdapter(id, adapter);
+    const generation = this.stopGeneration;
+    return this.startAdapter(id, adapter, () => generation === this.stopGeneration);
   }
 
-  private async startAdapter(id: ChannelId, adapter: ChannelAdapter): Promise<void> {
+  private async startAdapter(id: ChannelId, adapter: ChannelAdapter, canStart: () => boolean, signal?: AbortSignal): Promise<void> {
+    if (!canStart()) return;
+    const stopping = this.stoppingAdapters.get(adapter);
+    if (stopping) {
+      await stopping.catch(() => undefined);
+      return this.startAdapter(id, adapter, canStart, signal);
+    }
     const pending = this.startingAdapters.get(adapter);
     if (pending) {
       if (!pending.cancelled) return pending.promise;
       // 显式重启等待旧启动完成清理，再重新启动同一实例。
       await pending.settled.catch(() => undefined);
-      return this.startAdapter(id, adapter);
+      return this.startAdapter(id, adapter, canStart, signal);
     }
     if (this.adapters.get(id) !== adapter || this.startedAdapters.has(id)) return;
     let cancel!: () => void;
     const cancelled = new Promise<void>((_, reject) => { cancel = () => reject(new Error(`channel startup cancelled: ${id}`)); });
     const entry = { promise: Promise.resolve(), settled: Promise.resolve(), cancelled: false, cancel };
+    const abortStart = () => this.cancelStartingAdapter(adapter);
     entry.settled = Promise.resolve().then(async () => {
-      if (entry.cancelled) throw new Error(`channel startup cancelled: ${id}`);
+      if (entry.cancelled || !canStart()) throw new Error(`channel startup cancelled: ${id}`);
       if (this.dispatchFn) setAdapterHandler(adapter, this.makeAdapterHandler(id, adapter));
       try {
         await adapter.start();
@@ -167,51 +182,77 @@ export class ChannelManager {
       }
       this.startedAdapters.add(id);
       logger.info(LogTag.Channels, `started: ${id} (${adapter.displayName})`);
-    }).finally(() => { this.startingAdapters.delete(adapter); });
+    }).finally(() => {
+      signal?.removeEventListener("abort", abortStart);
+      this.startingAdapters.delete(adapter);
+    });
     entry.promise = Promise.race([entry.settled, cancelled]);
     this.startingAdapters.set(adapter, entry);
+    signal?.addEventListener("abort", abortStart, { once: true });
     return entry.promise;
   }
 
+  private cancelStartingAdapter(adapter: ChannelAdapter): void {
+    const entry = this.startingAdapters.get(adapter);
+    if (!entry || entry.cancelled) return;
+    entry.cancelled = true;
+    entry.cancel();
+    this.handlerLeases.delete(adapter);
+    setAdapterHandler(adapter, null);
+  }
+
   /** 普通设置重启保留由独立显式生命周期管理的渠道。其余渠道仍先全停再全启。 */
-  async restartAll(preserve: (id: ChannelId) => boolean = () => false): Promise<void> {
+  async restartAll(preserve: (id: ChannelId) => boolean = () => false, signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) return;
+    // stopAdapters increments synchronously; a later stop owns the lifecycle.
+    // Capture this stop generation before waiting, not after the stop phase.
+    const generation = this.stopGeneration + 1;
+    const canRestart = () => generation === this.stopGeneration && !signal?.aborted;
     // Once preserved during this restart, do not start it later even if its state changes.
     const preserved = new Set<ChannelId>();
     const shouldPreserve = (id: ChannelId): boolean => {
       if (preserve(id)) preserved.add(id);
       return preserved.has(id);
     };
-    await this.stopAdapters(shouldPreserve);
-    await this.startAdapters(shouldPreserve);
+    await this.stopAdapters(shouldPreserve, canRestart);
+    if (canRestart()) await this.startAdapters(shouldPreserve, signal);
   }
 
   /** 关闭所有已启动的 adapter；应用退出不采用普通重启的保留策略。 */
   async stopAll(): Promise<void> {
-    await this.stopAdapters();
+    // An ordinary restart may already be stopping one adapter. Join the same
+    // work without calling stop twice or holding up cancellation of other starts.
+    const stopping = [...this.stoppingAdapters.values()];
+    await Promise.all([this.stopAdapters(), Promise.allSettled(stopping)]);
   }
 
-  private async stopAdapters(preserve?: (id: ChannelId) => boolean): Promise<void> {
+  private stopAdapter(adapter: ChannelAdapter): Promise<void> {
+    const stopping = this.stoppingAdapters.get(adapter);
+    if (stopping) return stopping;
+    const work = Promise.resolve().then(() => adapter.stop()).finally(() => { this.stoppingAdapters.delete(adapter); });
+    this.stoppingAdapters.set(adapter, work);
+    return work;
+  }
+
+  private async stopAdapters(preserve?: (id: ChannelId) => boolean, canContinue: () => boolean = () => true): Promise<void> {
     this.stopGeneration++;
     // A full stop invalidates every handler, even adapters that never started.
     // A selective restart must leave the preserved route's live handler intact.
     if (!preserve) this.handlerLeases = new WeakMap();
-    for (const [adapter, entry] of this.startingAdapters) {
-      if (preserve?.(adapter.id)) continue;
-      entry.cancelled = true;
-      entry.cancel();
-      this.handlerLeases.delete(adapter);
-      setAdapterHandler(adapter, null);
+    for (const adapter of this.startingAdapters.keys()) {
+      if (!preserve?.(adapter.id)) this.cancelStartingAdapter(adapter);
     }
     const started = [...this.startedAdapters];
     if (!preserve) this.startedAdapters.clear();
     for (const id of started) {
+      if (!canContinue()) break;
       if (preserve?.(id)) continue;
-      this.startedAdapters.delete(id);
+      if (preserve && !this.startedAdapters.delete(id)) continue;
       const adapter = this.adapters.get(id);
       if (!adapter) continue;
       this.handlerLeases.delete(adapter);
       try {
-        await adapter.stop();
+        await this.stopAdapter(adapter);
       } catch (err) {
         console.warn(LOG, `渠道停止失败 [${id}]:`, err instanceof Error ? err.message : err);
       }

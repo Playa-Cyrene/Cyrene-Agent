@@ -71,15 +71,12 @@ export class QqFirstSetupCoordinator {
     this.pending = undefined; this.busy = true;
     try {
       if (this.module && !this.module.isStoppedForMigration()) firstSetupFail("module-stop-unconfirmed");
+      const checkInputs = () => {
+        if (JSON.stringify(this.config()) !== JSON.stringify(preview.config)) firstSetupFail("configuration-changed");
+        if (!this.options.secureStorage.isSecureAvailable()) firstSetupFail("secure-storage-unavailable");
+        this.options.verifyCandidate(preview.packageId);
+      };
       return await this.options.store.locked(async (save) => {
-        const previous = this.options.store.read();
-        if (previous && previous.phase !== "rolled-back") firstSetupFail("existing-setup-requires-review");
-        const checkInputs = () => {
-          if (JSON.stringify(this.config()) !== JSON.stringify(preview.config)) firstSetupFail("configuration-changed");
-          if (!this.options.secureStorage.isSecureAvailable()) firstSetupFail("secure-storage-unavailable");
-          this.options.verifyCandidate(preview.packageId);
-        };
-        checkInputs();
         let token = "";
         const initialize = { config: structuredClone(preview.config), credentials: { accessToken: "" } };
         const record: QqFirstSetupRecord = { schemaVersion: 1, transactionId: preview.previewId,
@@ -120,6 +117,11 @@ export class QqFirstSetupCoordinator {
             return { outcome: "rolled-back", errorCode };
           } catch { return { outcome: "recovery-required", errorCode }; }
         } finally { token = ""; initialize.credentials.accessToken = ""; }
+      }, (existing) => {
+        // Revalidate under the storage lock before creating durable intent.
+        // A preexisting marker with missing state is ambiguous, not a fresh start.
+        if (existing && this.options.store.read()?.phase !== "rolled-back") firstSetupFail("existing-setup-requires-review");
+        checkInputs();
       });
     } finally { this.busy = false; }
   }

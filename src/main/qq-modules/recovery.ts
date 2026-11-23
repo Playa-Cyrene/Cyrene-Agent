@@ -7,9 +7,14 @@ import { isQqModuleLoopbackHost } from "./listen-policy";
 import type { QqModuleManager } from "./manager";
 import type { QqFirstSetupStore } from "./first-setup-store";
 import type { QqMigrationStore } from "./migration-store";
+import { qqFirstSetupLockPath } from "./startup-recovery";
 import { QqRecoveryError, QqRecoveryStore, recoveryFail, validateQqRecoveryDesired, validateQqRecoveryOrigin,
   type QqRecoveryBaseline, type QqRecoveryDesired, type QqRecoveryOrigin, type QqRecoveryRecord } from "./recovery-store";
 
+function assertSourceUnlocked(lock: string): void {
+  try { lstatSync(lock); recoveryFail("source-locked"); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+}
 function unlocked(root: string, lock: string, requireState = false): void {
   let rootPresent = false;
   try {
@@ -23,14 +28,16 @@ function unlocked(root: string, lock: string, requireState = false): void {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     if (rootPresent && requireState) recoveryFail("incomplete-source");
   }
-  try { lstatSync(join(root, lock)); recoveryFail("source-locked"); }
-  catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+  assertSourceUnlocked(join(root, lock));
 }
 /** Reads the single completed ORIGINAL selection. Never guesses among two sources,
  * never repairs corrupt/locked/interrupted state, never writes the source stores. */
 export function readQqRecoveryOrigin(setup: QqFirstSetupStore, migration: QqMigrationStore): QqRecoveryOrigin {
+  const setupReservation = qqFirstSetupLockPath(setup.root);
+  assertSourceUnlocked(setupReservation);
   unlocked(setup.root, "setup-lock", true); unlocked(migration.root, "migration-lock", true);
   const first = setup.read(), legacy = migration.read();
+  assertSourceUnlocked(setupReservation);
   if (Boolean(first) === Boolean(legacy)) recoveryFail("ambiguous-or-missing-source");
   if (first) {
     if (first.phase !== "selected") recoveryFail("incomplete-source");

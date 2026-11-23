@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import i18next from "i18next";
 import { QqModuleActionGateway } from "../../../../main/qq-modules/action-gateway";
+import { isQqModuleLoopbackHost } from "../../../../main/qq-modules/listen-policy";
 import type { QqModuleActionCommand, QqModuleActionResult } from "../../../../shared/qq-module-actions";
 import { QqModuleActionsPanel } from "./QqModuleActionsPanel";
 import { QqModuleConfigurationEditor } from "./QqModuleConfigurationEditor";
@@ -19,10 +20,10 @@ function deferred() {
   return { promise, resolve };
 }
 
-function fixtureState(account: string, state: "configuration" | "configuration-saved" = "configuration"): Result {
+function fixtureState(account: string, state: "configuration" | "configuration-saved" = "configuration", address = "127.0.0.1", enabled = true): Result {
   return { ok: true, state, configuration: {
-    credentialAccountId: account, enabled: true, proposalRevision: 2,
-    config: { configRevision: 1, expectedSelfId: account, listen: { host: "127.0.0.1", port: 3001 },
+    credentialAccountId: account, enabled, proposalRevision: 2,
+    config: { configRevision: 1, expectedSelfId: account, listen: { host: address, port: 3001 },
       allowedPrivateUserIds: [], allowedGroupIds: [], groupRequireMention: true },
   } };
 }
@@ -89,6 +90,31 @@ it("shows a delayed configuration after StrictMode replay and disables writes un
   expect(accountValue()).toBe("10001");
   expect(button(`${editor}.save`)?.disabled).toBe(false);
   expect(onBusy).toHaveBeenLastCalledWith(false);
+});
+
+it.each(["127.0.0.1", "::1", "::ffff:127.0.0.2", "0:0:0:0:0:0:0:1"])("saves an enablement change without rewriting loopback %s", async address => {
+  expect(isQqModuleLoopbackHost(address)).toBe(true);
+  const action = backend(command => {
+    if (command.action === "read-configuration") return fixtureState("10001", "configuration", address);
+    if (command.action === "propose-configuration" && isQqModuleLoopbackHost(command.config.listen.host)) {
+      return fixtureState("10001", "configuration-saved", command.config.listen.host, command.enabled);
+    }
+    throw new Error("unexpected command");
+  });
+  const onSaved = vi.fn();
+  await act(async () => root.render(<QqModuleConfigurationEditor action={action} onBusy={noOp} onClose={noOp} onSaved={onSaved} />));
+  const checkbox = Array.from(host.querySelectorAll("label")).find(label => label.textContent === i18next.t(`${editor}.enabled`))
+    ?.querySelector<HTMLInputElement>('input[type="checkbox"]');
+  expect(checkbox?.checked).toBe(true);
+  await act(async () => checkbox!.click());
+  expect(checkbox?.checked).toBe(false);
+  expect(button(`${editor}.save`)?.disabled).toBe(false);
+  await act(async () => button(`${editor}.save`)!.click());
+  expect(action).toHaveBeenLastCalledWith(expect.objectContaining({
+    action: "propose-configuration", expectedRevision: 2, enabled: false,
+    config: expect.objectContaining({ listen: { host: address, port: 3001 } }),
+  }));
+  expect(onSaved).toHaveBeenCalledOnce();
 });
 
 it("ignores old editor data and busy callbacks after the action dependency changes", async () => {

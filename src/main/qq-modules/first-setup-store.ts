@@ -4,6 +4,7 @@ import { dirname, isAbsolute, join, parse, resolve } from "node:path";
 import { strictObject, isBoundedJson } from "../../shared/qq-module/validation";
 import { validateRuntimeConfig } from "../../shared/qq-module";
 import type { QqRuntimeConfig } from "../../shared/qq-module";
+import { qqFirstSetupLockPath } from "./startup-recovery";
 
 export class QqFirstSetupError extends Error {
   constructor(readonly code: string) { super(`QQ_FIRST_SETUP_${code}`); }
@@ -50,31 +51,60 @@ export class QqFirstSetupStore {
     const fd = openSync(path, "wx", 0o600);
     try { writeFileSync(fd, bytes); fsyncSync(fd); } finally { closeSync(fd); }
   }
-  private ensure(create: boolean): boolean {
-    this.directory(dirname(this.root));
-    if (!existsSync(this.root)) {
-      if (!create) return false;
-      mkdirSync(this.root, { mode: 0o700 });
-      this.writeNew(join(this.root, "marker"), Buffer.from(MARKER));
+  private missing(path: string): boolean {
+    try { lstatSync(path); return false; }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
+      throw error;
     }
+  }
+  private exists(): boolean {
+    this.directory(dirname(this.root));
+    if (this.missing(this.root)) return false;
     this.directory(this.root);
     if (this.readFile(join(this.root, "marker"), 128).toString() !== MARKER) firstSetupFail("unrecognized-store");
     return true;
   }
   read(): QqFirstSetupRecord | null {
-    if (!this.ensure(false) || !existsSync(join(this.root, "state.json"))) return null;
+    if (!this.exists() || this.missing(join(this.root, "state.json"))) return null;
     let value: unknown;
     try { value = JSON.parse(this.readFile(join(this.root, "state.json"), 256 * 1024).toString()); } catch { return firstSetupFail("invalid-state"); }
     if (!validateQqFirstSetupRecord(value)) firstSetupFail("invalid-state");
     return value as QqFirstSetupRecord;
   }
-  async locked<T>(action: (save: (record: QqFirstSetupRecord) => void) => Promise<T>): Promise<T> {
-    this.ensure(true);
+  private acquireLock(path: string): number {
+    try { return openSync(path, "wx", 0o600); }
+    catch { return firstSetupFail("busy-or-recovery-required"); }
+  }
+  private releaseLock(path: string, fd: number): void {
+    try { closeSync(fd); unlinkSync(path); } catch { /* stale lock must fail closed, never auto-delete */ }
+  }
+  async locked<T>(
+    action: (save: (record: QqFirstSetupRecord) => void) => Promise<T>,
+    preflight: (storeExists: boolean) => void = () => {},
+  ): Promise<T> {
+    // Reserve even an uninitialized store without creating its durable marker.
+    this.directory(dirname(this.root));
+    const reservation = qqFirstSetupLockPath(this.root);
+    const reservationFd = this.acquireLock(reservation);
     const lock = join(this.root, "setup-lock");
-    let fd: number;
-    try { fd = openSync(lock, "wx", 0o600); } catch { return firstSetupFail("busy-or-recovery-required"); }
-    try { return await action((record) => this.commit(record)); }
-    finally { try { closeSync(fd); unlinkSync(lock); } catch { /* stale lock must fail closed, never auto-delete */ } }
+    let fd: number | undefined;
+    try {
+      const existing = this.exists();
+      // Continue honoring old in-store locks, including leftovers from a crash.
+      if (existing) fd = this.acquireLock(lock);
+      preflight(existing);
+      if (!existing) {
+        // Do not adopt a directory that appeared during preflight.
+        mkdirSync(this.root, { mode: 0o700 });
+        this.writeNew(join(this.root, "marker"), Buffer.from(MARKER));
+        fd = this.acquireLock(lock);
+      }
+      return await action((record) => this.commit(record));
+    } finally {
+      if (fd !== undefined) this.releaseLock(lock, fd);
+      this.releaseLock(reservation, reservationFd);
+    }
   }
   private commit(record: QqFirstSetupRecord): void {
     if (!validateQqFirstSetupRecord(record)) firstSetupFail("invalid-state");
