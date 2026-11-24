@@ -133,6 +133,46 @@ async function flushAsync(): Promise<void> {
 }
 
 describe("页面待发队列流程", () => {
+  it.each(["before", "after"] as const)("continues with B when withdrawal finishes %s A's pending claim", async (order) => {
+    const { flow, store, calls } = createHarness();
+    let queue = [makeQueueEntry("A"), makeQueueEntry("B")];
+    store.get.mockImplementation(async () => makeSession({ pendingMessages: queue }));
+    store.pendingList.mockImplementation(async () => queue);
+    let releaseClaim!: () => void;
+    store.pendingClaim.mockImplementationOnce(() => new Promise<PendingClaimResult>((resolve) => {
+      releaseClaim = () => resolve({ ok: true, claimed: false });
+    })).mockImplementationOnce(async () => makeClaimed({
+      userMessage: { id: "B", role: "user", content: "B", at: 1 },
+      remainingQueue: [],
+    }));
+    store.pendingRemove.mockImplementation(async () => {
+      queue = queue.filter((entry) => entry.id !== "A");
+      if (order === "after") {
+        releaseClaim();
+        await flushAsync();
+      }
+      return { ok: true, removed: true };
+    });
+    const consuming = flow.consume("chat", "s1");
+    await flushAsync();
+    expect(store.pendingClaim).toHaveBeenCalledOnce();
+    await flow.removeMessage("chat", "s1", "A");
+    releaseClaim();
+    await consuming;
+    expect(store.pendingRemove).toHaveBeenCalledWith("s1", "A");
+    expect(store.pendingClaim).toHaveBeenCalledTimes(2);
+    expect(calls.runs.map((run) => run.userMessageId)).toEqual(["B"]);
+  });
+
+  it("preserves the queue and reports failed withdrawal without consuming", async () => {
+    const { flow, store, calls } = createHarness();
+    store.pendingRemove.mockResolvedValue({ ok: false, error: "write-failed" });
+    expect(await flow.removeMessage("chat", "s1", "A")).toBe(false);
+    expect(calls.errors).toHaveLength(1);
+    expect(calls.projectionReplaces).toHaveLength(0);
+    expect(store.pendingClaim).not.toHaveBeenCalled();
+  });
+
   it("入队成功刷新投影；认领派发补占位并启动带 claimedPendingMessageId 的 run", async () => {
     const { flow, store, calls } = createHarness();
     store.pendingEnqueue.mockResolvedValue({
@@ -211,14 +251,17 @@ describe("页面待发队列流程", () => {
     const { flow, store, calls } = createHarness();
     store.pendingEnqueue.mockResolvedValueOnce({ ok: false, error: "write-failed" });
 
-    const first = await flow.enqueue("s1", "chat", { id: "a-1", rawContent: "同文", visibleContent: "同文" });
+    const onCommitted = vi.fn();
+    const first = await flow.enqueue("s1", "chat", { id: "a-1", rawContent: "同文", visibleContent: "同文", onCommitted });
     expect(first).toBe(false);
+    expect(onCommitted).not.toHaveBeenCalled();
     expect(calls.errors).toHaveLength(1);
 
     // 重试：调用方生成新 id，流程必须替换为失败缓存的 a-1（回执丢失靠主进程幂等去重）
     store.pendingEnqueue.mockResolvedValueOnce({ ok: true, queue: [] });
-    const retry = await flow.enqueue("s1", "chat", { id: "b-2", rawContent: "同文", visibleContent: "同文" });
+    const retry = await flow.enqueue("s1", "chat", { id: "b-2", rawContent: "同文", visibleContent: "同文", onCommitted });
     expect(retry).toBe(true);
+    expect(onCommitted).toHaveBeenCalledExactlyOnceWith("a-1");
     expect(store.pendingEnqueue).toHaveBeenLastCalledWith("s1", expect.objectContaining({ id: "a-1" }));
 
     // 成功后缓存清除：再发同内容使用新 id

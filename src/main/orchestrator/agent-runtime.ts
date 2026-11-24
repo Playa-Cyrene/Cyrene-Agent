@@ -78,6 +78,8 @@ type EnqueueLLMTask = <T>(
 ) => Promise<T>;
 
 export interface AgentRuntimeDeps {
+  waitForPromptSkills(signal?: AbortSignal): Promise<void>;
+  waitForStartup(mode: PluginPromptMode, toolIds?: readonly string[], signal?: AbortSignal): Promise<void>;
   runtimeStateService: RuntimeStateService;
   llmClient: LlmClient;
   enqueueLLMTask: EnqueueLLMTask;
@@ -119,7 +121,7 @@ export interface AgentRunFinishedContext {
 }
 
 export interface AgentRuntime {
-  buildOptions(input: AguiRunInput): Promise<{ options: CyreneRunOptions; latestUserText: string }>;
+  buildOptions(input: AguiRunInput & { signal?: AbortSignal }, toolIds?: readonly string[]): Promise<{ options: CyreneRunOptions; latestUserText: string }>;
   onRunFinished(result: CyreneRunResult, latestUserText: string, context: AgentRunFinishedContext): Promise<{ sticker: string | null }>;
   buildSchedulerOptions(task: ScheduledTask): Promise<SchedulerRunOptions>;
 }
@@ -181,8 +183,10 @@ export function createAgentRuntime(rawDeps: AgentRuntimeDeps): AgentRuntime {
     });
   }
 
-  function buildBuildOptionsDeps(): BuildOptionsDeps {
+  function buildBuildOptionsDeps(toolIds?: readonly string[]): BuildOptionsDeps {
     return {
+      waitForPromptSkills: rawDeps.waitForPromptSkills,
+      waitForStartup: (mode, signal) => rawDeps.waitForStartup(mode, toolIds, signal),
       loadModelSettings: (modelProfileId?: string) => resolveModelSettingsProfile(rawDeps.loadModelSettings(), modelProfileId),
       loadGeneralSettings: () => rawDeps.loadGeneralSettings(),
       loadUserProfile: () => rawDeps.loadUserProfile(),
@@ -302,8 +306,8 @@ export function createAgentRuntime(rawDeps: AgentRuntimeDeps): AgentRuntime {
     : undefined;
 
   return {
-    buildOptions: async (input) => {
-      const buildOptionsDeps = buildBuildOptionsDeps();
+    buildOptions: async (input, toolIds) => {
+      const buildOptionsDeps = buildBuildOptionsDeps(toolIds);
       const { options, latestUserText } = await buildAgentRunOptions(input, buildOptionsDeps);
       return {
         options: {

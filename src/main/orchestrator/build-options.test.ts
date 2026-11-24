@@ -15,6 +15,8 @@ import type { ConversationMode } from "../../shared/chat-types"
 
 function createBuildDeps(): BuildOptionsDeps {
   return {
+    waitForPromptSkills: async () => {},
+    waitForStartup: async () => {},
     loadModelSettings: () => ({ provider: "test", baseUrl: "https://example.test", model: "m", apiKey: "k" }),
     loadGeneralSettings: () => ({
       currentStyleId: "default",
@@ -76,6 +78,41 @@ async function buildAgentRunOptions(
 }
 
 describe("build-options", () => {
+  it("渠道与桌面共用请求前的就绪检查，按旧渠道执行模式解析依赖", async () => {
+    const deps = createBuildDeps()
+    let release!: () => void
+    deps.waitForStartup = vi.fn(() => new Promise<void>(resolve => { release = resolve }))
+    const settings = vi.spyOn(deps, "loadModelSettings")
+    const run = buildAgentRunOptions({ channel: "wechat", executionMode: "soul-only", messages: [{ role: "user", content: "hi" }] }, deps)
+    expect(deps.waitForStartup).toHaveBeenCalledWith("chat", undefined)
+    expect(settings).not.toHaveBeenCalled()
+    release()
+    await run
+    expect(settings).toHaveBeenCalled()
+  })
+  it("loads a chat slash command before composing its prompt but skips the wait for plain text", async () => {
+    const deps = createBuildDeps()
+    let ready = false
+    deps.waitForPromptSkills = vi.fn(async () => { ready = true })
+    deps.resolveSlashActivation = () => ready ? "SKILL_BODY" : ""
+    const run = (content: string) => buildAgentRunOptions({ mode: "chat", messages: [{ role: "user", content }] }, deps)
+    await run("hello")
+    expect(deps.waitForPromptSkills).not.toHaveBeenCalled()
+    expect((await run("/demo")).options.soulRuntimeContext).toContain("SKILL_BODY")
+  })
+
+  it("waits for the plan skill in a resumed chat without skill tools", async () => {
+    const { enterPlanDiscussing, exitPlanMode } = await import("./plan-mode")
+    const id = "startup-plan"
+    enterPlanDiscussing(id)
+    try {
+      const deps = createBuildDeps()
+      deps.waitForPromptSkills = async () => { deps.skillRegistry.getBody = () => "PLAN_BODY" }
+      const { options } = await buildAgentRunOptions({ mode: "chat", sessionId: id, messages: [{ role: "user", content: "继续" }] }, deps)
+      expect(options.planSkillContext).toContain("PLAN_BODY")
+    } finally { exitPlanMode(id) }
+  })
+
   it("keeps browser history and tools on desktop while a bound channel gets shared text and ordinary tools", async () => {
     const deps = createBuildDeps()
     deps.toolRegistry.getEnabled = () => [{ id: "browser_get_page_elements" }, { id: "read_file" }]

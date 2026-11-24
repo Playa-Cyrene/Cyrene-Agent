@@ -6,6 +6,15 @@ import { IPC } from "../../shared/ipc-channels";
 export const PET_WINDOW_BASE_WIDTH = 400;
 export const PET_WINDOW_BASE_HEIGHT = 500;
 
+/** 创建、拖动和缩放桌宠时共用的窗口逻辑尺寸。 */
+export function getPetWindowSize(zoom = 1): { width: number; height: number } {
+  const scale = Number.isFinite(zoom) && zoom > 0 ? zoom : 1;
+  return {
+    width: Math.round(PET_WINDOW_BASE_WIDTH * scale),
+    height: Math.round(PET_WINDOW_BASE_HEIGHT * scale),
+  };
+}
+
 /**
  * 仅创建阶段需要的 GeneralSettings 切片。
  * 避免反向依赖 index.ts 中的完整 loadGeneralSettings。
@@ -44,9 +53,7 @@ export function createPetWindow(
   const settings = ctx.loadGeneralSettings();
   const transparent = true;
   // 窗口实际尺寸随 petZoom 等比缩放；创建尺寸与离屏判定保持一致。
-  const zoom = typeof settings.petZoom === "number" && settings.petZoom > 0 ? settings.petZoom : 1;
-  const petWidth = Math.round(PET_WINDOW_BASE_WIDTH * zoom);
-  const petHeight = Math.round(PET_WINDOW_BASE_HEIGHT * zoom);
+  const { width: petWidth, height: petHeight } = getPetWindowSize(settings.petZoom);
   let restoreX: number | undefined;
   let restoreY: number | undefined;
 

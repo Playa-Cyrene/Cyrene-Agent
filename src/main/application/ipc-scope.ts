@@ -13,6 +13,19 @@ export interface IpcScope {
   dispose(): void;
 }
 
+/** 延迟首个调用，不延迟 handler 注册；退出仍由原 scope 统一注销。 */
+export function afterStartup(
+  scope: IpcScope, ready: (channel: string, payload: unknown) => Promise<unknown> | void,
+): IpcScope {
+  return {
+    ...scope,
+    handle: (channel, listener) => scope.handle(channel, async (event, ...args) => {
+      await ready(channel, args[0]);
+      return listener(event, ...args);
+    }),
+  };
+}
+
 export interface IpcScopeMainLike {
   handle(channel: string, listener: (...args: any[]) => unknown): unknown;
   on(channel: string, listener: (...args: any[]) => void): unknown;

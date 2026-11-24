@@ -19,6 +19,7 @@ import { buildCallSystemPrompt } from "../call/call-prompt-builder";
 import { reactChatWindow } from "../windows/window-state";
 
 export interface BootstrapConfigContext {
+  waitForCallContext(signal: AbortSignal): Promise<void>;
   loadGeneralSettings: () => GeneralSettings;
 }
 
@@ -146,7 +147,9 @@ export function bootstrapConfigGetters(ctx: BootstrapConfigContext): void {
       };
     },
     // 通话专用 system prompt 构建器
-    async (userText: string) => {
+    async (userText: string, signal: AbortSignal) => {
+      await ctx.waitForCallContext(signal);
+      signal.throwIfAborted();
       const messages = [{ role: "user" as const, content: userText }];
       return buildCallSystemPrompt(userText, messages);
     },

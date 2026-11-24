@@ -122,13 +122,6 @@ export function createChannelsSubsystem(
       channel: msg.channel,
       chatType: msg.chatType,
     });
-    const allTools = toolRegistry.getEnabledTools();
-    const exposedTools = policy.exposeTools ? allTools : [];
-    console.log(
-      "[Channels] bot run:",
-      `msg.channel=${msg.channel} sandbox=${sandbox} tools=${exposedTools.length}/${allTools.length}`,
-    );
-
     // 图片路由统一收口在 image-router（基于解析后的默认档案——顶层镜像可能是空壳）
     const channelModelSettings = resolveModelSettingsProfile(loadModelSettings());
     const channelImageRoute = resolveImageRoute("channel", channelModelSettings);
@@ -162,7 +155,14 @@ export function createChannelsSubsystem(
         userTurnId: channelInput.userTurnId,
         assistantTurnId: channelInput.assistantTurnId,
       } : {}),
-    });
+    }, policy.exposeTools ? undefined : []);
+    const allTools = toolRegistry.getEnabledTools();
+    const exposedTools = policy.exposeTools ? allTools : [];
+    console.log(
+      "[Channels] bot run:",
+      `msg.channel=${msg.channel} sandbox=${sandbox} tools=${exposedTools.length}/${allTools.length}`,
+    );
+
     if (channelInput.transcriptSink) options.transcriptSink = channelInput.transcriptSink;
     // 运行标识贯通：sink 写入、runStore 会话与生命周期事件使用同一 runId，
     // 崩溃孤儿工具才能按 assistant 条目上的 runId 查回运行状态。

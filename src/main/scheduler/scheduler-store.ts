@@ -172,6 +172,13 @@ export function createSchedulerStore(deps: StoreDeps) {
     } catch {
       tasks = [];
     }
+    // Keep interrupted attempts visible without replaying possible side effects.
+    for (const entry of readAllHistory()) {
+      if (entry.status === "running") recordHistory({
+        ...entry, status: "failed", finishedAt: deps.now().toISOString(),
+        reason: "application interrupted", errorMessage: "应用退出时任务尚未完成，请确认后手动重试",
+      });
+    }
   }
 
   function getTasks(): ScheduledTask[] {

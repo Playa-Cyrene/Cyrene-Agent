@@ -9,6 +9,18 @@ function tmpDir(): string {
 }
 
 describe("scheduler store", () => {
+  it("marks a persisted startup-waiting run interrupted on restart", () => {
+    const dir = tmpDir();
+    onTestFinished(() => fs.rmSync(dir, { recursive: true, force: true }));
+    const deps = { tasksFile: path.join(dir, "tasks.json"), historyFile: path.join(dir, "history.jsonl"), now: () => new Date("2026-11-21T00:00:00Z"), id: () => "task" };
+    const store = createSchedulerStore(deps);
+    store.recordHistory({ id: "run", taskId: "task", taskTitle: "once", firedAt: deps.now().toISOString(), status: "running", reason: "waiting for startup dependencies", effectiveToolIds: [] });
+    const restarted = createSchedulerStore(deps);
+    restarted.load();
+    expect(restarted.getHistory("task")).toEqual([expect.objectContaining({ id: "run", status: "failed", reason: "application interrupted" })]);
+    restarted.load();
+    expect(restarted.getHistory("task")).toHaveLength(1);
+  });
   it("rejects a user scheduled task that is not bound to a workspace", () => {
     const dir = tmpDir();
     const store = createSchedulerStore({

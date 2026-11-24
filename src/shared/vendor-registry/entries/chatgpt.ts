@@ -28,6 +28,24 @@ export const CHATGPT_REGISTRY = defineVendor({
   },
   models: [
     {
+      model: "gpt-6.2-astra",
+      recommendedFor: ["chat"],
+      note: "2026-11 发布的旗舰款；Chat Completions 下不支持工具调用，需走 Responses（预设默认）。",
+      unknownCapabilities: [
+        { feature: "sampling", transport: "responses", note: "现有采样白名单未覆盖该型号。" },
+        { feature: "structuredOutput", transport: "responses", note: "预设协议没有专用结构化输出规则，保留提示词 JSON 回退。" },
+      ],
+    },
+    {
+      model: "gpt-6.2-sol",
+      recommendedFor: ["chat"],
+      note: "2026-11 发布的日常工作款；Chat Completions 下不支持工具调用，需走 Responses（预设默认）。",
+      unknownCapabilities: [
+        { feature: "sampling", transport: "responses", note: "现有采样白名单未覆盖该型号。" },
+        { feature: "structuredOutput", transport: "responses", note: "预设协议没有专用结构化输出规则，保留提示词 JSON 回退。" },
+      ],
+    },
+    {
       model: "gpt-6-astra",
       recommendedFor: ["chat"],
       unknownCapabilities: [
@@ -135,12 +153,68 @@ export const CHATGPT_REGISTRY = defineVendor({
         },
       },
     },
+    // GPT-6.2 Astra / Sol：两个官方模型页都列出 Structured outputs 为已支持；家族规则同样匹配不到 "gpt-6.2-"。
+    {
+      id: "openai-gpt-6-2-astra-structured-output",
+      transport: "openai",
+      modelPattern: /^gpt-6\.2-astra$/i,
+      tier: "A",
+      mode: "provider_json_schema",
+      verification: "official",
+      metadata: {
+        status: "supported",
+        evidence: {
+          kind: "official",
+          url: "https://developers.openai.com/api/docs/models/gpt-6.2-astra",
+          checkedAt: "2026-11-18",
+          transports: ["openai"],
+        },
+      },
+    },
+    {
+      id: "openai-gpt-6-2-sol-structured-output",
+      transport: "openai",
+      modelPattern: /^gpt-6\.2-sol$/i,
+      tier: "A",
+      mode: "provider_json_schema",
+      verification: "official",
+      metadata: {
+        status: "supported",
+        evidence: {
+          kind: "official",
+          url: "https://developers.openai.com/api/docs/models/gpt-6.2-sol",
+          checkedAt: "2026-11-18",
+          transports: ["openai"],
+        },
+      },
+    },
   ],
   reasoningRules: [
     // ── chatgpt（OpenAI）──
     // 按具体型号拆分。
     // GPT-6.1 系按完整型号名拆分，都必须排在 /^gpt-6/（Astra 兜底，禁关思考）之前：
     // /^gpt-6-/ 匹配不到 "gpt-6.1-"，不前置会被 Astra 规则误吞。
+    // GPT-6.2 Astra / Sol（2026-11 发布）：推理指南写明两者都拒绝 effort=none → 不可关闭；
+    // 迁移指南要求把 none / minimal 改为 low，即档位为 low/medium/high/xhigh/max；
+    // 因此已保存「关闭 / 最低」的档案映射到 low，不直接升到默认 medium。
+    // 指南写明 GPT-6 系支持 pro mode，示例即用 gpt-6.2-sol。
+    { modelPattern: /^gpt-6\.2-(?:astra|sol)$/i, modelInferencePattern: /^gpt-6\.2-(?:astra|sol)$/i, metadata: {
+      status: "supported",
+      evidence: {
+        kind: "official",
+        url: "https://developers.openai.com/api/docs/guides/reasoning",
+        checkedAt: "2026-11-18",
+        transports: ["openai", "responses"],
+      },
+    }, capability: {
+      control: "effort",
+      supportedEfforts: ["low", "medium", "high", "xhigh", "max"],
+      defaultEffort: "medium",
+      requestStyle: "openai-effort",
+      supportsDisable: false,
+      supportsProMode: true,
+      lowEffortFallback: "low",
+    } },
     // GPT-6.1 Terra（2026-10 发布）：快速款。官方模型页 reasoning.effort 支持
     // none/low/medium(默认)/high/xhigh/max → 可关闭（off → "none"）。
     // 模型页与最新模型指南均未写明 pro mode，保守不开放。

@@ -116,6 +116,17 @@ describe("conversation SQLite transactions", () => {
     expect(await client.call('chats.claimPendingMessage', session.id)).toMatchObject({ ok: true, claimed: true });
     expect(await client.call('transcript.audit', session.id)).toEqual([expect.objectContaining({ kind: 'user', turnId: 'q1' })]);
   });
+  it("cancels only the claimed request and rejects a late dispatch without consuming its successor", async () => {
+    const { id } = await client.call<{ id: string }>("chats.createSession", { mode: "chat" });
+    for (const key of ["u1", "u2"]) {
+      await client.call("chats.enqueuePendingMessage", id, { id: key, rawContent: "hello", visibleContent: "hello" });
+    }
+    await client.call("chats.claimPendingMessage", id, "u1");
+    expect(await client.call("runs.cancelUnstartedRequest", id, "u1")).toBe(true);
+    expect(await client.call("runs.admit", id, "u1", facts(), "late")).toMatchObject({ status: "cancelled", duplicate: true });
+    expect(await client.call("chats.claimPendingMessage", id, "u1")).toMatchObject({ claimed: false });
+    expect(await client.call("chats.claimPendingMessage", id, "u2")).toMatchObject({ claimed: true, userMessage: { id: "u2" } });
+  });
   it("keeps successful tool receipts after restart", async () => {
     await client.call('tools.begin', 'c1', 'operation1', 'fingerprint');
     await client.call('tools.finish', 'c1', 'operation1', 'fingerprint', { status: 'succeeded', output: 'done' });

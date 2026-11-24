@@ -12,6 +12,19 @@ export function checkStartupActive(shutdown: Pick<ShutdownCoordinator, "isStoppi
   if (shutdown.isStopping()) throw new StartupCancelledError();
 }
 
+/** 取消当前调用方的等待；共享的启动任务继续供其他会话使用。 */
+export async function waitForStartupTask(task: Promise<unknown>, signal?: AbortSignal): Promise<void> {
+  if (!signal) { await task; return; }
+  let onAbort!: () => void;
+  const aborted = new Promise<never>((_, reject) => {
+    onAbort = () => reject(signal.reason);
+    if (signal.aborted) onAbort();
+    else signal.addEventListener("abort", onAbort, { once: true });
+  });
+  try { await Promise.race([aborted, task]); }
+  finally { signal.removeEventListener("abort", onAbort); }
+}
+
 /** 只在已请求退出、且正在等待 Electron 页面加载时使用。 */
 export function isCancelledPageLoad(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
