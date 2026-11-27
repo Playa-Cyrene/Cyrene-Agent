@@ -136,14 +136,20 @@ vi.mock("./permission", () => ({
   checkPermission: vi.fn(),
 }));
 
-beforeEach(() => { mocks.userDataRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-bridge-db-")); });
-afterEach(async () => { await closeConversationDatabases(); });
+let fixtureRoot: string;
+beforeEach(() => {
+  fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-bridge-db-"));
+  mocks.userDataRoot = fixtureRoot;
+});
+afterEach(async () => {
+  await closeConversationDatabases();
+  fs.rmSync(fixtureRoot, { recursive: true, force: true });
+});
 
 describe("agui-bridge sticker event ordering", () => {
   // 每个测试前重置可定制的终态行为字段，
   // 避免上一个测试的副作用泄漏到下一个测试。
   beforeEach(() => {
-    mocks.userDataRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cyrene-bridge-db-"));
     mocks.runFinishedResult = undefined;
     mocks.emitDuplicateRunFinished = false;
     mocks.errorAfterRunFinished = null;

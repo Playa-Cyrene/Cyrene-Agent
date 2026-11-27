@@ -1,7 +1,7 @@
 name: plugin-sdk
 
 # 插件开发包的构建、校验与发布：
-# - PR / master 推送只做构建、打包与示例编译测试
+# - PR / master 推送运行单测、打包校验与示例编译测试
 # - plugin-sdk-v* 标签通过 Trusted Publishing（OIDC + provenance）发布到 npm
 on:
   push:
@@ -30,6 +30,9 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Test SDK helpers
+        run: pnpm run test:plugin-sdk
 
       # 打包质量校验：Schema 无漂移、vendored 契约无漂移、包内容与内部路径检查、双入口加载
       - name: Build and verify SDK package

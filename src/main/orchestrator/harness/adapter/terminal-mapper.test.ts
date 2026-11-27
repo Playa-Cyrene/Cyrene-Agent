@@ -12,10 +12,10 @@ describe("harness terminal mapper", () => {
     expect(mapTerminateReason(reason)).toBe(expected);
   });
 
-  it("reports uncertain effects on a successful natural completion", () => {
-    expect(mapTerminateReasonToTerminal(undefined, true)).toStrictEqual({
+  it.each([undefined, false, true])("maps natural completion with uncertain effects = %s", (hasUncertainEffects) => {
+    expect(mapTerminateReasonToTerminal(undefined, hasUncertainEffects)).toStrictEqual({
       status: "success",
-      externalEffectsMayContinue: true,
+      externalEffectsMayContinue: hasUncertainEffects ?? false,
     });
   });
 
@@ -26,5 +26,6 @@ describe("harness terminal mapper", () => {
     ["error", { status: "runtime_error", reason: "E_HARNESS_FAILURE", externalEffectsMayContinue: true }],
   ] as const)("maps %s to its canonical terminal", (reason, expected) => {
     expect(mapTerminateReasonToTerminal(reason)).toStrictEqual(expected);
+    expect(mapTerminateReasonToTerminal(reason, false)).toStrictEqual(expected);
   });
 });

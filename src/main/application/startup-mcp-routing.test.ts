@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import ts from "typescript";
 import { expect, it, vi } from "vitest";
 import { IPC } from "../../shared/ipc-channels";
+import { waitForStartupTask } from "./startup-cancellation";
 
 // Execute the production registration callback without starting Electron or a user profile.
 const source = readFileSync(new URL("./default-dependencies.ts", import.meta.url), "utf8");
@@ -28,16 +29,15 @@ it("lists current servers and changes unrelated IDs while one restore is pending
   expect(removed).toBe(true);
 });
 
-import { waitForStartupTask } from "./startup-cancellation";
-import { performance } from "node:perf_hooks";
-it("measures Work waiting for selected MCP while Chat can proceed without it", async () => {
+it("lets Chat proceed while Work waits for the selected MCP", async () => {
   const from = source.indexOf("  async function waitForConversation(");
   const to = source.indexOf("\n  return {", from);
   const code = ts.transpileModule(source.slice(from, to) + "\nreturn waitForConversation;", { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
   const ready = async () => {};
-  let release!: () => void;
-  const slow = new Promise<void>(resolve => { release = resolve; });
-  let discovered = false;
+  const slow = Promise.withResolvers<void>();
+  const waitForMcp = vi.fn(async (select: (id: string) => boolean) => {
+    if (select("slow")) await slow.promise;
+  });
   const deps = {
     checkStartupActive: () => {}, shutdown: {}, readiness: { waitFor: ready },
     loadGeneralSettings: () => ({ toolModeOverrides: {}, chatToolsEnabled: false, momentsEnabled: false }),
@@ -46,24 +46,23 @@ it("measures Work waiting for selected MCP while Chat can proceed without it", a
     skillsReady: ready, sandboxReady: ready, momentsReady: Promise.resolve(),
     toolRegistry: { getEnabledToolsForMode: () => [] },
     pluginManager: { waitForStartupTools: ready },
-    waitForMcp: async (select: (id: string) => boolean) => { if (select("slow")) await slow; },
+    waitForMcp,
     PLAYWRIGHT_MCP_ID: "playwright", FILESYSTEM_MCP_ID: "filesystem", waitForStartupTask,
   };
   const wait = new Function(...Object.keys(deps), code)(...Object.values(deps));
-  const started = performance.now();
   let workReleased = false;
-  const work = wait("work").then(() => { expect(discovered).toBe(true); workReleased = true; return performance.now() - started; });
-  await wait("chat");
-  const chatMs = performance.now() - started;
-  expect(workReleased).toBe(false);
-  await new Promise(resolve => setTimeout(resolve, 1500));
-  discovered = true;
-  release();
-  const workMs = await work;
-  const readyAt = performance.now();
-  await wait("work");
-  process.stdout.write("WORK_MCP_MEASUREMENT " + JSON.stringify({ chatUnselectedMs: chatMs, workSelectedMs: workMs, workAlreadyReadyMs: performance.now() - readyAt, injectedDiscoveryDelayMs: 1500 }) + "\n");
-  expect(workMs).toBeGreaterThanOrEqual(1500);
+  const work = wait("work").then(() => { workReleased = true; });
+  try {
+    await wait("chat");
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(waitForMcp).toHaveBeenCalledOnce();
+    expect(waitForMcp.mock.calls[0]![0]("slow")).toBe(true);
+    expect(workReleased).toBe(false);
+  } finally {
+    slow.resolve();
+    await work;
+  }
+  expect(workReleased).toBe(true);
 });
 
 it("search settings wait only for affected builtins", async () => {
