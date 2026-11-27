@@ -14,6 +14,7 @@
 // 两个变量必须成对配置，只填其一视为配置错误并跳过判断，避免半配置状态下静默走错提供方。
 
 import { readFileSync } from "node:fs";
+import { fetchJsonObject, warnResponseShape } from "./issue-triage-response.mjs";
 
 const API_BASE = "https://api.github.com";
 const GITHUB_MODELS_ENDPOINT = "https://models.github.ai/inference/chat/completions";
@@ -56,6 +57,8 @@ const GATE_LABEL = {
 // 判重所需的最低置信度。设为 high 是刻意保守：
 // 误标一个「好心来提 bug」的人，比漏标一次的代价大得多。
 const REQUIRED_DUPLICATE_CONFIDENCE = "high";
+const DUPLICATE_CONFIDENCES = new Set(["high", "medium", "low"]);
+const VERDICT_FIELDS = new Set(["duplicateOf", "duplicateConfidence", "needsInfo", "needsMaintainer", "reason"]);
 
 const MAX_CANDIDATES = 8;
 const MAX_BODY_CHARS = 1500;
@@ -155,20 +158,30 @@ function extractKeywords(text) {
 async function searchCandidates(issue, keywords) {
   if (keywords.length === 0) return [];
   const query = `repo:${owner}/${repo} is:issue ${keywords.join(" OR ")}`;
-  const res = await api(`/search/issues?per_page=${MAX_CANDIDATES}&sort=relevance&q=${encodeURIComponent(query)}`);
-  if (!res.ok) {
-    // 搜索失败只影响重复判断，其余两类标签仍可继续，因此返回空数组而不中断
-    console.warn(`[issue-triage] 搜索候选失败（${res.status}）`);
+  const data = await fetchJsonObject("search", () => api(`/search/issues?per_page=${MAX_CANDIDATES}&sort=relevance&q=${encodeURIComponent(query)}`));
+  // 搜索不可用只影响重复判断，其余两类判断仍可继续。
+  if (!data) return [];
+  if (!Array.isArray(data.items) || data.items.some(item =>
+    !item || !Number.isInteger(item.number) || typeof item.title !== "string" ||
+    (item.body != null && typeof item.body !== "string")
+  )) {
+    warnResponseShape("search");
     return [];
   }
-  const data = await res.json();
-  return (data.items ?? []).filter((item) => item.number !== issue.number);
+  return data.items.filter((item) => item.number !== issue.number);
 }
 
 function resolveProvider() {
   const baseUrl = (process.env.LLM_BASE_URL ?? "").trim().replace(/\/+$/, "");
   const model = (process.env.LLM_MODEL ?? "").trim();
   if (baseUrl && model) {
+    try {
+      const url = new URL(baseUrl);
+      if (!["https:", "http:"].includes(url.protocol)) throw new Error("invalid protocol");
+    } catch {
+      console.warn("[issue-triage] LLM_BASE_URL 不是有效的 HTTP(S) 地址，本次跳过");
+      return null;
+    }
     const apiKey = (process.env.LLM_API_KEY ?? "").trim();
     if (!apiKey) {
       console.warn("[issue-triage] 配置了自有端点但缺少 LLM_API_KEY，本次跳过");
@@ -227,18 +240,25 @@ function buildUserPrompt(issue, candidates) {
 
 function parseVerdict(content) {
   if (typeof content !== "string") return null;
-  const start = content.indexOf("{");
-  const end = content.lastIndexOf("}");
-  if (start === -1 || end === -1 || end < start) return null;
   try {
-    return JSON.parse(content.slice(start, end + 1));
+    // 校验完整判定再允许任何模型分流写入，不从容器或附带文字中截取对象。
+    const verdict = JSON.parse(content);
+    if (!verdict || typeof verdict !== "object" || Array.isArray(verdict) ||
+        Object.keys(verdict).some((field) => !VERDICT_FIELDS.has(field))) return null;
+    const { duplicateOf, duplicateConfidence, needsInfo, needsMaintainer } = verdict;
+    if (!(duplicateOf === null || (Number.isSafeInteger(duplicateOf) && duplicateOf > 0)) ||
+        !DUPLICATE_CONFIDENCES.has(duplicateConfidence) ||
+        typeof needsInfo !== "boolean" || typeof needsMaintainer !== "boolean" ||
+        (Object.hasOwn(verdict, "reason") && typeof verdict.reason !== "string")) return null;
+    // 理由不参与打标；兼容省略理由的判定，且不将原始模型文本交给下游。
+    return { duplicateOf, duplicateConfidence, needsInfo, needsMaintainer };
   } catch {
     return null;
   }
 }
 
 async function judge(provider, issue, candidates) {
-  const res = await fetch(provider.endpoint, {
+  const data = await fetchJsonObject("model", () => fetch(provider.endpoint, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${provider.apiKey}`,
@@ -253,13 +273,16 @@ async function judge(provider, issue, candidates) {
       ],
       temperature: 0,
     }),
-  });
-  if (!res.ok) {
-    console.warn(`[issue-triage] 模型调用失败（${res.status}），本次跳过`);
+  }));
+  if (!data) return null;
+  const content = data.choices?.[0]?.message?.content;
+  if (!Array.isArray(data.choices) || typeof content !== "string") {
+    warnResponseShape("model");
     return null;
   }
-  const data = await res.json();
-  return parseVerdict(data.choices?.[0]?.message?.content);
+  const verdict = parseVerdict(content);
+  if (!verdict) console.warn("[issue-triage][model] 模型判定结构不符合约定，本次跳过");
+  return verdict;
 }
 
 // 从模型输出里挑出该打、且当前还没有的标签
@@ -395,11 +418,7 @@ async function main() {
   }
 
   const picked = selectLabels(verdict, candidates, existingLabels);
-  const confidence = typeof verdict.duplicateConfidence === "string" ? verdict.duplicateConfidence : "unknown";
-  console.log(
-    `[issue-triage] 候选 ${candidates.length} 条，判定 duplicate=${verdict.duplicateOf ?? "null"}/${confidence}` +
-      ` needsInfo=${verdict.needsInfo === true} needsMaintainer=${verdict.needsMaintainer === true}`,
-  );
+  console.log("[issue-triage][model] 判定结构已通过校验");
   if (picked.length === 0) {
     console.log("[issue-triage] 无需打标");
     return;
