@@ -141,8 +141,8 @@ importers:
         specifier: ^7.2.4
         version: 7.2.4
       vscode-jsonrpc:
-        specifier: ^9.0.1
-        version: 9.0.1
+        specifier: ^10.0.0
+        version: 10.0.0
       vscode-languageserver-types:
         specifier: ^3.18.4
         version: 3.18.4
@@ -7885,9 +7885,9 @@ packages:
   vscode-icons-js@11.6.1:
     resolution: {integrity: sha512-rht18IFYv117UlqBn6o9j258SOtwhDBmtVrGwdoLPpSj6Z5LKQIzarQDd/tCRWneU68KEX25+nsh48tAoknKNw==}
 
-  vscode-jsonrpc@9.0.1:
-    resolution: {integrity: sha512-rfuA6T75H6m5EkbhtEPzre9pT0HPcDI2MMy4+nPFIBks5J8JBAUHD4tRYSgaBOijIEC7SRkC1kKyXTLqbmh9jw==}
-    engines: {node: '>=14.0.0'}
+  vscode-jsonrpc@10.0.0:
+    resolution: {integrity: sha512-USSfxg0vDIpTQqlQBGxF3mBARyoS8cU7LHLpbYNh6dOJt32dlskxPWB0Irrh5TllTmyf7oNLAvqDqzklbwwnpA==}
+    engines: {node: '>=14.17.0'}
 
   vscode-languageserver-types@3.18.4:
     resolution: {integrity: sha512-nQsacoiijvl0fRf2q28uFDrAVwRhdCa3QveiF7/CX0r18mLR5FU/1WskSsCKOjmEbtteKUnY8x8Yzxop+k0zwg==}
@@ -16825,7 +16825,7 @@ snapshots:
     dependencies:
       '@types/jasmine': 3.10.19
 
-  vscode-jsonrpc@9.0.1: {}
+  vscode-jsonrpc@10.0.0: {}
 
   vscode-languageserver-types@3.18.4: {}
 
