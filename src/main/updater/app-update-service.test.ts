@@ -116,4 +116,124 @@ describe("createAppUpdateService", () => {
 
     expect(service.getState()).toMatchObject({ phase: "error", error: "download_failed" });
   });
+
+  it("已下载时周期检查保持安装状态，不再次联网", async () => {
+    const updater = new FakeUpdater();
+    updater.checkForUpdates.mockImplementation(async () => {
+      updater.emit("checking-for-update");
+      updater.emit("update-available", { version: "1.2.0" });
+      return null;
+    });
+    const service = createAppUpdateService({ updater, currentVersion: "1.1.7", isPackaged: true });
+    updater.emit("update-downloaded", { version: "1.2.0" });
+    expect((await service.check()).phase).toBe("downloaded");
+    expect(updater.checkForUpdates).not.toHaveBeenCalled();
+    expect(service.canInstall()).toBe(true);
+    expect(service.install()).toBe(true);
+  });
+
+  it("下载进行中不启动检查或丢失下载进度", async () => {
+    const updater = new FakeUpdater();
+    let complete!: (files: string[]) => void;
+    updater.downloadUpdate.mockImplementation(() => new Promise(resolve => { complete = resolve; }));
+    const service = createAppUpdateService({ updater, currentVersion: "1.1.7", isPackaged: true });
+    const downloading = service.download();
+    updater.emit("download-progress", { percent: 42 });
+    expect(await service.check()).toMatchObject({ phase: "downloading", percent: 42 });
+    expect(updater.checkForUpdates).not.toHaveBeenCalled();
+    updater.emit("update-downloaded", { version: "1.2.0" });
+    complete([]); await downloading;
+    expect(service.canInstall()).toBe(true);
+  });
+
+  it("迟到的检查事件和拒绝不会撤销已下载安装包", async () => {
+    const updater = new FakeUpdater();
+    let reject!: (error: Error) => void;
+    updater.checkForUpdates.mockImplementation(() => new Promise((_, fail) => { reject = fail; }));
+    const service = createAppUpdateService({ updater, currentVersion: "1.1.7", isPackaged: true });
+    const checking = service.check();
+    updater.emit("update-downloaded", { version: "1.2.0" });
+    for (const event of ["checking-for-update", "update-available", "update-not-available", "error"]) {
+      updater.emit(event, { version: "1.3.0" });
+      expect(service.getState()).toMatchObject({ phase: "downloaded", availableVersion: "1.2.0" });
+    }
+    reject(new Error("late check error")); await checking;
+    expect(service.canInstall()).toBe(true);
+  });
+
+  it.each([false, true])("安装启动失败仍报告错误（异步事件：%s）", async (deferred) => {
+    const updater = new FakeUpdater();
+    updater.quitAndInstall.mockImplementation(() => {
+      const fail = () => updater.emit("error", new Error("installer launch failed"));
+      if (deferred) queueMicrotask(fail);
+      else fail();
+    });
+    const service = createAppUpdateService({ updater, currentVersion: "1.1.7", isPackaged: true });
+    updater.emit("update-downloaded", { version: "1.2.0" });
+
+    service.install();
+    await Promise.resolve();
+
+    expect(updater.quitAndInstall).toHaveBeenCalledOnce();
+    expect(service.getState()).toMatchObject({ phase: "error", error: "check_failed" });
+    expect(service.canInstall()).toBe(false);
+  });
+
+  it("安装失败后重新下载会恢复检查错误保护和下载错误归类", async () => {
+    const updater = new FakeUpdater();
+    updater.quitAndInstall.mockImplementation(() => updater.emit("error", new Error("installer launch failed")));
+    const service = createAppUpdateService({ updater, currentVersion: "1.1.7", isPackaged: true });
+    updater.emit("update-downloaded", { version: "1.2.0" });
+    service.install();
+
+    updater.downloadUpdate.mockRejectedValueOnce(new Error("download retry failed"));
+    await service.download();
+    expect(updater.downloadUpdate).toHaveBeenCalledOnce();
+    expect(service.getState()).toMatchObject({ phase: "error", error: "download_failed" });
+
+    updater.downloadUpdate.mockImplementation(async () => {
+      updater.emit("update-downloaded", { version: "1.2.0" });
+      return [];
+    });
+    await service.download();
+    updater.emit("error", new Error("late check error"));
+    expect(service.getState()).toMatchObject({ phase: "downloaded", availableVersion: "1.2.0" });
+    expect(service.canInstall()).toBe(true);
+  });
+
+  it("检查结束后才开始下载，检查失败不会被误报为下载失败", async () => {
+    const updater = new FakeUpdater();
+    let reject!: (error: Error) => void;
+    updater.checkForUpdates.mockImplementation(() => new Promise((_, fail) => { reject = fail; }));
+    updater.downloadUpdate.mockImplementation(async () => {
+      updater.emit("update-downloaded", { version: "1.2.0" });
+      return [];
+    });
+    const service = createAppUpdateService({ updater, currentVersion: "1.1.7", isPackaged: true });
+    const checking = service.check();
+    updater.emit("update-available", { version: "1.2.0" });
+    const downloading = service.download();
+    expect(updater.downloadUpdate).not.toHaveBeenCalled();
+    updater.emit("error", new Error("check failed"));
+    expect(service.getState()).toMatchObject({ phase: "error", error: "check_failed" });
+    reject(new Error("check failed"));
+    await Promise.all([checking, downloading]);
+    expect(updater.downloadUpdate).toHaveBeenCalledOnce();
+    expect(service.canInstall()).toBe(true);
+  });
+
+  it("并发检查仍合并为一次请求，普通检查结束后允许再次检查", async () => {
+    const updater = new FakeUpdater();
+    let complete!: (value: null) => void;
+    updater.checkForUpdates.mockImplementation(() => new Promise(resolve => { complete = resolve; }));
+    const service = createAppUpdateService({ updater, currentVersion: "1.1.7", isPackaged: true });
+    const first = service.check();
+    const second = service.check();
+    expect(updater.checkForUpdates).toHaveBeenCalledOnce();
+    updater.emit("update-not-available"); complete(null);
+    await Promise.all([first, second]);
+    updater.checkForUpdates.mockResolvedValue(null);
+    await service.check();
+    expect(updater.checkForUpdates).toHaveBeenCalledTimes(2);
+  });
 });
