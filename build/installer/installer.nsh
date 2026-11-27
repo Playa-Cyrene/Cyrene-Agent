@@ -1,7 +1,18 @@
 !include "nsDialogs.nsh"
+!include "${__FILEDIR__}\content-preservation.nsh"
 
 !ifndef BUILD_UNINSTALLER
 !include "${__FILEDIR__}\install-validation.nsh"
+!include "${__FILEDIR__}\upgrade-preservation.nsh"
+!define CYRENE_INSTALLER_DIR "${__FILEDIR__}"
+
+; 标准模板仍由 electron-builder 生成/签名。只在该模板即将 include installUtil
+; 时临时切换搜索目录；覆盖文件第一行立即恢复，避免影响后续打包相对路径。
+!macro customHeader
+  !define CYRENE_NSIS_TEMPLATE_DIR "${__FILEDIR__}"
+  !system 'node "${CYRENE_INSTALLER_DIR}\..\..\scripts\verify\nsis-overlay.mjs" "${CYRENE_NSIS_TEMPLATE_DIR}"' = 0
+  !cd "${CYRENE_INSTALLER_DIR}\nsis-overrides"
+!macroend
 Var CyreneDesktopShortcutCheckbox
 Var CyreneLaunchAtLoginCheckbox
 Var CyreneCreateDesktopShortcut
@@ -55,35 +66,34 @@ FunctionEnd
   ${EndIf}
 !macroend
 
-; 升级保护：升级会先跑旧版卸载器，其 RMDir /r 会清空整个安装目录（models/skills/prompts
-; 连同用户放进去的文件）。这里在 .onInit（multiUser 已从注册表恢复 $INSTDIR 为旧安装目录）
-; 阶段把用户内容挪到同级暂存目录，等新版装完后再恢复/合并。
-; 仅静默安装（应用内更新/定制安装器/独立升级器）时启用：向导模式用户在场，取消安装不留烂摊子。
+; 初始化/向导取消均不移动用户文件；静默与交互升级统一在旧卸载器调用前保护。
 !macro customInit
-  ${If} ${Silent}
-    CreateDirectory "$INSTDIR\..\.Cyrene.content-preserve"
-    ClearErrors
-    ${If} ${FileExists} "$INSTDIR\prompts"
-      Rename "$INSTDIR\prompts" "$INSTDIR\..\.Cyrene.content-preserve\prompts"
-    ${EndIf}
-    ClearErrors
-    ${If} ${FileExists} "$INSTDIR\skills"
-      Rename "$INSTDIR\skills" "$INSTDIR\..\.Cyrene.content-preserve\skills"
-    ${EndIf}
-    ClearErrors
-    ${If} ${FileExists} "$INSTDIR\models"
-      Rename "$INSTDIR\models" "$INSTDIR\..\.Cyrene.models-preserve"
-    ${EndIf}
+  ; 上游 .onInit 把工作目录设为 $INSTDIR。必须在 UAC 外层等待前释放目录句柄，
+  ; 否则旧卸载器删完文件仍无法删除空目录，会在模型恢复前退出。
+  SetOutPath "$TEMP"
+!macroend
+
+; electron-builder 默认忽略启动旧卸载器失败。保护后必须停止，不能继续覆盖旧程序。
+!macro CyreneCheckOldUninstallResult
+  ${If} ${Errors}
+    !insertmacro CyreneContentFailure "无法启动旧卸载器：$CyreneOldDir"
+  ${EndIf}
+  ${If} $R0 != 0
+    !insertmacro CyreneContentFailure "旧卸载器失败（$R0）：$CyreneOldDir"
   ${EndIf}
 !macroend
 
+!macro customUnInstallCheck
+  !insertmacro CyreneCheckOldUninstallResult
+!macroend
+
+!macro customUnInstallCheckCurrentUser
+  !insertmacro CyreneCheckOldUninstallResult
+!macroend
+
 !macro customInstall
-  ; 恢复 customInit 暂存的 models（新版安装器不写 models 目录，原样搬回即可）
-  ClearErrors
-  ${If} ${FileExists} "$INSTDIR\..\.Cyrene.models-preserve"
-    CreateDirectory "$INSTDIR"
-    Rename "$INSTDIR\..\.Cyrene.models-preserve" "$INSTDIR\models"
-  ${EndIf}
+  ; 恢复升级保护暂存的 models（新版安装器不写 models 目录，原样搬回即可）
+  !insertmacro CyreneRestoreModels
 
   ; 先恢复已暂存的 models，再检查新程序，失败时不丢弃用户内容或误报成功。
   !insertmacro CyreneValidateInstallation
@@ -111,24 +121,13 @@ FunctionEnd
 !macro customRemoveFiles
   SetOutPath "$TEMP"
   ${If} ${isUpdated}
-    CreateDirectory "$INSTDIR\..\.Cyrene.content-preserve"
+    !insertmacro CyrenePreserveContent
     ClearErrors
-    ${If} ${FileExists} "$INSTDIR\prompts"
-      Rename "$INSTDIR\prompts" "$INSTDIR\..\.Cyrene.content-preserve\prompts"
-    ${EndIf}
-    ClearErrors
-    ${If} ${FileExists} "$INSTDIR\skills"
-      Rename "$INSTDIR\skills" "$INSTDIR\..\.Cyrene.content-preserve\skills"
-    ${EndIf}
-    ClearErrors
-    ${If} ${FileExists} "$INSTDIR\models"
-      Rename "$INSTDIR\models" "$INSTDIR\..\.Cyrene.models-preserve"
-    ${EndIf}
     RMDir /r "$INSTDIR"
-    ${If} ${FileExists} "$INSTDIR\..\.Cyrene.models-preserve"
-      CreateDirectory "$INSTDIR"
-      Rename "$INSTDIR\..\.Cyrene.models-preserve" "$INSTDIR\models"
+    ${If} ${Errors}
+      !insertmacro CyreneContentFailure "$INSTDIR"
     ${EndIf}
+    !insertmacro CyreneRestoreModels
   ${Else}
     RMDir /r "$INSTDIR"
   ${EndIf}
