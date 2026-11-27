@@ -148,7 +148,7 @@
     "@anthropic-ai/sandbox-runtime": "^0.0.80",
     "@anthropic-ai/sdk": "^0.126.0",
     "@ast-grep/napi": "^0.45.1",
-    "@googleapis/gmail": "^22.0.1",
+    "@googleapis/gmail": "^22.1.0",
     "@larksuiteoapi/node-sdk": "^1.76.0",
     "@modelcontextprotocol/sdk": "^1.32.2",
     "@modelcontextprotocol/server-filesystem": "2026.8.31",
