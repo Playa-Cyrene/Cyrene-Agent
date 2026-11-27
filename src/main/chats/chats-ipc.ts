@@ -57,6 +57,7 @@ import type { LlmClient } from "../services/llm/llm-client";
 import { enqueueLLMTask } from "../llm-queue";
 import { assertValidPresentationPatch, type TranscriptPresentationPatch } from "../orchestrator/conversation-transcript-types";
 import type { ChatMessage as VendorChatMessage } from "../orchestrator/vendors/types";
+import { releaseComputerUseConversation } from "../computer-use/conversation-release";
 import {
   createConversationTitleService,
   type ConversationTitleService,
@@ -341,6 +342,7 @@ export async function registerChatsIpc(
       releaseWikiMemorySessionCancellation(id);
     }
     if (ok) {
+      releaseComputerUseConversation(id);
       try {
         await wikiStore?.reconcileConversationSources(id, []);
       } catch (error) {

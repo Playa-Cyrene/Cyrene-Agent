@@ -71,6 +71,8 @@ export async function verifyInstallerArtifacts(options = {}) {
   // 4. win-unpacked 内的随包二进制（与安装器内容一致，免去装机检查）
   const resourcesDir = path.join(outputDir, "win-unpacked", "resources");
   const screenshot = await verifyScreenshotHelper(path.join(resourcesDir, "bin", "cyrene-screenshot.exe"));
+  // 缺少这个文件时功能只会在用户首次调用时才报错，所以在打包校验阶段就拦住。
+  await verifyScreenshotHelper(path.join(resourcesDir, "bin", "cyrene-computer.exe"));
   const mpv = await verifyMpvHelper(path.join(resourcesDir, "bin", "mpv", "mpv.exe"));
   // MinGit 的 cmd/git.exe 只是启动器（几十 KB），真二进制在 mingw64/bin/，
   // 体积阈值无意义，以 --version 运行探测为准（与 prepare-mingit 同一判定）

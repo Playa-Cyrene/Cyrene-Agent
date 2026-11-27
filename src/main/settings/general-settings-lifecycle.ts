@@ -7,6 +7,7 @@ import { validateSearchApiKey } from "../orchestrator/search-backend-filter";
 import { addMcpServer, listMcpServers, removeMcpServer } from "../orchestrator/mcp-manager";
 import { getAppIconPath } from "../app-icon";
 import { syncBuiltInToolToggles } from "../orchestrator/tools/registry/tool-toggles";
+import { applyComputerUseSettings } from "../computer-use/computer-use-lifecycle";
 import { loadModelSettings, getPublicModelConfig } from "./model-settings";
 import type { GeneralSettings } from "./general-settings";
 import type { UiIcon } from "../../shared/ui-icon";
@@ -142,6 +143,7 @@ export function handleGeneralSettingsChanged(
 ): void {
   applyGeneralSettings(after, deps, before);
   syncBuiltInToolToggles(after);
+  applyComputerUseSettings(after);
   if (before.language !== after.language || before.asrLanguage !== after.asrLanguage) {
     updateLocaleContext({
       uiLocale: after.language,
