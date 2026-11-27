@@ -141,3 +141,54 @@ describe("external channel settings migration", () => {
     expect(document.body.textContent).not.toContain("must-not-be-echoed");
   });
 });
+
+it("shows legacy QQ settings as saved but not applied when a protected restart skips them", async () => {
+  const saveConfig = vi.fn().mockResolvedValue({});
+  const restart = vi.fn().mockResolvedValue({ ok: false, error: "QQ_MODULE_SETTINGS_BUSY" });
+  Object.assign(window, { settings: {
+    getGeneral: async () => ({}),
+    channelsGetConfig: async () => ({ qq: { enabled: true, listenMode: "loopback", port: 6201 } }),
+    channelsGetStatus: async () => ({}),
+    channelsLogGet: async () => [],
+    channelsContextBindingsGet: async () => ({ externalChats: [], bindings: [], conversations: [] }),
+    channelsSaveConfig: saveConfig,
+    channelsRestart: restart,
+    channelsQqResolveAuthRequirement: async () => ({ ok: true, requiresAccessToken: false }),
+    onChannelsStatusChanged: () => () => {},
+    onChannelsWechatQrcode: () => () => {},
+    onChannelsWechatLoginDone: () => () => {},
+  } });
+  const host = await renderSettings();
+  await act(async () => { buttonByText(host, "连接手机")!.click(); });
+  const qqCard = Array.from(host.querySelectorAll("button")).find(button => button.textContent?.includes("QQ（NapCat）"))!;
+  await act(async () => { qqCard.click(); });
+  await act(async () => { buttonByText(document, "保存并启动监听")!.click(); });
+  expect(restart).toHaveBeenCalledExactlyOnceWith("qq");
+  expect(saveConfig).toHaveBeenCalledWith({ qq: expect.objectContaining({ port: 6201 }) });
+  expect(document.body.textContent).toContain("QQ 设置已保存，但因迁移进行中未应用到旧监听器");
+});
+
+it("leaves a legacy QQ switch unchanged when the settings write was rejected", async () => {
+  const saveConfig = vi.fn().mockRejectedValue(new Error("Error invoking remote method: QQ_MODULE_SETTINGS_BUSY"));
+  Object.assign(window, { settings: {
+    getGeneral: async () => ({}),
+    channelsGetConfig: async () => ({ qq: { enabled: true } }),
+    channelsGetStatus: async () => ({}),
+    channelsLogGet: async () => [],
+    channelsContextBindingsGet: async () => ({ externalChats: [], bindings: [], conversations: [] }),
+    channelsSaveConfig: saveConfig,
+    onChannelsStatusChanged: () => () => {},
+    onChannelsWechatQrcode: () => () => {},
+    onChannelsWechatLoginDone: () => () => {},
+  } });
+  const host = await renderSettings();
+  await act(async () => { buttonByText(host, "连接手机")!.click(); });
+  const qqCard = Array.from(host.querySelectorAll("button")).find(button => button.textContent?.includes("QQ（NapCat）"))!;
+  await act(async () => { qqCard.click(); });
+  const toggle = document.querySelector<HTMLButtonElement>('[role="dialog"] [role="switch"]')!;
+  expect(toggle.getAttribute("aria-checked")).toBe("true");
+  await act(async () => { toggle.click(); });
+  expect(saveConfig).toHaveBeenCalledExactlyOnceWith({ qq: { enabled: false } });
+  expect(toggle.getAttribute("aria-checked")).toBe("true");
+  expect(document.body.textContent).toContain("QQ 正在迁移，设置未保存");
+});

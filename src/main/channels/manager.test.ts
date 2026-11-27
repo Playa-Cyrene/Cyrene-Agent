@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { ChannelManager } from "./manager";
 import type { ChannelAdapter } from "./adapters/base";
+import type { IncomingMessage } from "./types";
+
+vi.mock("../logger", () => ({ logger: { info: vi.fn() }, LogTag: { Channels: "Channels" } }));
 
 function fakeAdapter(id: string): ChannelAdapter {
   let started = false;
@@ -287,5 +290,108 @@ describe("ChannelManager 宿主身份边界", () => {
     mgr.register(fakeAdapter("qq"));
     await oldHandler({ channel: "qq", chatId: "1", senderId: "1", text: "late", at: new Date(0) });
     expect(dispatch).not.toHaveBeenCalled();
+  });
+});
+
+describe("ordinary restart preservation", () => {
+  it("keeps an active managed route running while restarting other channels, then fully stops at shutdown", async () => {
+    const mgr = new ChannelManager();
+    const qq = fakeAdapter("qq"), wechat = fakeAdapter("wechat");
+    const qqStart = vi.spyOn(qq, "start"), qqStop = vi.spyOn(qq, "stop");
+    const wxStart = vi.spyOn(wechat, "start"), wxStop = vi.spyOn(wechat, "stop");
+    mgr.register(wechat); mgr.register(qq); await mgr.startAll();
+    await mgr.restartAll(id => id === "qq");
+    expect(qqStart).toHaveBeenCalledTimes(1); expect(qqStop).not.toHaveBeenCalled();
+    expect(qq.getStatus().phase).toBe("running");
+    expect(wxStart).toHaveBeenCalledTimes(2); expect(wxStop).toHaveBeenCalledTimes(1);
+    await mgr.stopAll();
+    expect(qqStop).toHaveBeenCalledTimes(1); expect(wxStop).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the live QQ handler while revoking restarted and fully stopped handler leases", async () => {
+    const mgr = new ChannelManager();
+    const qq = fakeAdapter("qq"), wechat = fakeAdapter("wechat");
+    const dispatch = vi.fn(async () => null);
+    const inbound = (channel: typeof qq.id, text: string): IncomingMessage => ({
+      channel, chatId: "1", senderId: "1", text, at: new Date(0),
+    });
+    mgr.register(qq); mgr.register(wechat); mgr.setDispatcher(dispatch);
+    await mgr.startAll();
+    const currentQq = qq.onMessage!, oldWechat = wechat.onMessage!;
+    await mgr.restartAll(id => id === "qq");
+    expect(qq.onMessage).toBe(currentQq);
+    expect(wechat.onMessage).not.toBe(oldWechat);
+    await oldWechat(inbound("wechat", "retired callback"));
+    await currentQq(inbound("qq", "preserved callback"));
+    const currentWechat = wechat.onMessage!;
+    await currentWechat(inbound("wechat", "new callback"));
+    expect(dispatch.mock.calls).toEqual([[inbound("qq", "preserved callback")], [inbound("wechat", "new callback")]]);
+    await mgr.stopAll();
+    await currentQq(inbound("qq", "after shutdown"));
+    await currentWechat(inbound("wechat", "after shutdown"));
+    expect(dispatch).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not silently start a preserved route that has not started", async () => {
+    const mgr = new ChannelManager(); const qq = fakeAdapter("qq"), wechat = fakeAdapter("wechat");
+    const start = vi.spyOn(qq, "start"), stop = vi.spyOn(qq, "stop");
+    mgr.register(qq); mgr.register(wechat);
+    await mgr.restartAll(id => id === "qq");
+    expect(start).not.toHaveBeenCalled(); expect(stop).not.toHaveBeenCalled();
+    expect(wechat.getStatus().phase).toBe("running");
+  });
+
+  it("retains legacy all-stop-then-all-start ordering", async () => {
+    const mgr = new ChannelManager(); const events: string[] = [];
+    for (const id of ["wechat", "qq", "qqbot"]) {
+      const adapter = fakeAdapter(id);
+      adapter.start = async () => { events.push(`start:${id}`); };
+      adapter.stop = async () => { events.push(`stop:${id}`); };
+      mgr.register(adapter);
+    }
+    await mgr.startAll(); events.length = 0; await mgr.restartAll();
+    expect(events).toEqual(["stop:wechat", "stop:qq", "stop:qqbot", "start:wechat", "start:qq", "start:qqbot"]);
+  });
+
+  it("rechecks preservation after another stop yields and uses a fresh lease only when still owned", async () => {
+    const mgr = new ChannelManager(); const qq = fakeAdapter("qq"), wechat = fakeAdapter("wechat");
+    let managed = false;
+    wechat.stop = async () => { managed = true; };
+    wechat.start = async () => { managed = false; };
+    const qqStart = vi.spyOn(qq, "start"), qqStop = vi.spyOn(qq, "stop");
+    const dispatch = vi.fn(async () => null);
+    mgr.setDispatcher(dispatch); mgr.register(wechat); mgr.register(qq); await mgr.startAll();
+    const old = qq.onMessage;
+    const restarting = mgr.restartAll(id => id === "qq" && managed);
+    expect(mgr.hasLiveDispatcher(qq)).toBe(false);
+    await restarting;
+    expect(qqStop).not.toHaveBeenCalled(); expect(qqStart).toHaveBeenCalledTimes(1);
+    expect(mgr.hasLiveDispatcher(qq)).toBe(true);
+    expect(qq.onMessage).not.toBe(old);
+    await mgr.stopAll();
+  });
+
+  it("revokes later ordinary channels before the first asynchronous stop without detaching a preserved route", async () => {
+    const mgr = new ChannelManager();
+    const first = fakeAdapter("wechat"), later = fakeAdapter("qqbot"), managed = fakeAdapter("qq");
+    mgr.setDispatcher(async () => null);
+    for (const a of [first, later, managed]) mgr.register(a);
+    await mgr.startAll();
+    const initial = managed.onMessage;
+    const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+    vi.spyOn(first, "stop").mockImplementationOnce(async () => { entered.resolve(); await release.promise; });
+    const laterStop = vi.spyOn(later, "stop");
+    const restarting = mgr.restartAll(id => id === "qq");
+    try {
+      await entered.promise;
+      expect(laterStop).not.toHaveBeenCalled();
+      expect(mgr.hasLiveDispatcher(first)).toBe(false);
+      expect(mgr.hasLiveDispatcher(later)).toBe(false);
+      expect(mgr.hasLiveDispatcher(managed)).toBe(true);
+      expect(managed.onMessage).toBe(initial);
+    } finally { release.resolve(); await restarting; }
+    expect(laterStop).toHaveBeenCalledOnce();
+    expect(mgr.hasLiveDispatcher(later)).toBe(true); // normal restart acquired a new connection lease
+    await mgr.stopAll();
   });
 });

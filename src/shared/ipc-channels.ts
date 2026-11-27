@@ -499,6 +499,7 @@ export const IPC = {
   // 飞书专属
   CHANNELS_FEISHU_TEST_CONNECTION: "channels:feishu:test-connection",
   CHANNELS_FEISHU_TEST_WEBHOOK_REACHABLE: "channels:feishu:test-webhook-reachable",
+  CHANNELS_QQ_MODULE_ACTION: "channels:qq-module:action",
   CHANNELS_QQ_MODULE_INSTALLATION_STATUS: "channels:qq-module:installation-status",
   CHANNELS_QQ_TEST_CONNECTION: "channels:qq:test-connection",
   /**

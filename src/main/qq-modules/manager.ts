@@ -160,12 +160,15 @@ export class QqModuleManager {
       if (!agreement.ok) { this.setPhase("incompatible"); runtime.close(); return; }
       const initialized = await runtime.request("initialize", initialize);
       instance.capabilities = initialized.capabilities;
-      const status = await runtime.request("start", {});
-      if (this.current === instance && instance.authorized) {
-        instance.startComplete = true;
-        this.applyStatus(instance, instance.pendingStatus ?? status);
-        instance.pendingStatus = undefined;
-      }
+      await runtime.request("start", {}, undefined, undefined, (status) => {
+        // Authorize only after a validated start reply, but before a following
+        // inbound event in the same IPC batch. An await here loses that event.
+        if (this.current === instance && instance.authorized) {
+          instance.startComplete = true;
+          this.applyStatus(instance, instance.pendingStatus ?? status);
+          instance.pendingStatus = undefined;
+        }
+      });
     } catch {
       if (!["incompatible", "account-mismatch", "crashed"].includes(this.state.phase)) this.setPhase("failed");
       gen?.runtime.close();

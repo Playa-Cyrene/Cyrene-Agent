@@ -4,6 +4,7 @@ import { Activity, ChevronDown, Link2, MessageSquareText, MessagesSquare, Smartp
 import { Lark } from "@lobehub/ui/icons";
 import { siQq, siWechat } from "simple-icons";
 import type { SettingsApi } from "../../../settings/shared/types";
+import { CHANNEL_RESTART_ERROR } from "../../../../shared/channel-restart";
 import { BrandIcon } from "../../components/ui/BrandIcon";
 import { SettingsInput, SettingsPasswordInput, SettingsSelect, SettingsSwitch } from "../../components/ui/SettingsControls";
 import { useTranslation } from "../../i18n";
@@ -153,15 +154,32 @@ export function ChannelsSettingsPanel() {
   const saveChannel = async (id: ChannelId, patch: ChannelConfig, restart = false) => {
     if (!api) return false;
     setBusy(id); setFeedback("");
+    let saved = false;
+    const qqKey = "settingsPage.channels.qq";
     try {
       await api.channelsSaveConfig({ [id]: patch });
-      if (restart) await api.channelsRestart();
+      saved = true;
+      if (restart && id === "qq") {
+        const result = await api.channelsRestart("qq");
+        if (!result.ok) {
+          setFeedback(t(result.error === CHANNEL_RESTART_ERROR.qqBusy ? `${qqKey}.savedRestartBusy`
+            : result.error === CHANNEL_RESTART_ERROR.qqManaged ? `${qqKey}.savedRestartManaged` : `${qqKey}.savedNotApplied`));
+          await refreshStatus();
+          return false;
+        }
+      } else if (restart) await api.channelsRestart();
       setValues((current) => ({ ...current, [id]: { ...current[id], ...patch } }));
       setFeedback(t("settingsPage.channels.saved"));
       await refreshStatus();
       return true;
-    } catch (error) { setFeedback(error instanceof Error ? error.message : t("settingsPage.saveFailed")); return false; }
-    finally { setBusy(""); }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      if (id === "qq" && restart && saved) setFeedback(t(`${qqKey}.savedNotApplied`));
+      else if (id === "qq" && message.includes(CHANNEL_RESTART_ERROR.qqBusy)) setFeedback(t(`${qqKey}.saveBusy`));
+      else if (id === "qq" && message.includes(CHANNEL_RESTART_ERROR.qqManaged)) setFeedback(t(`${qqKey}.saveManaged`));
+      else setFeedback(message || t("settingsPage.saveFailed"));
+      return false;
+    } finally { setBusy(""); }
   };
 
   const bindContext = async () => {
@@ -194,7 +212,7 @@ export function ChannelsSettingsPanel() {
 
   const changeChannelSwitch = (id: ChannelId, checked: boolean) => {
     const patch = { enabled: checked };
-    updateChannel(id, "enabled", checked);
+    if (id !== "qq") updateChannel(id, "enabled", checked);
     void saveChannel(id, patch);
   };
 

@@ -195,6 +195,57 @@ describe("QQ host runtime manager", () => {
     await manager.start(); expect(manager.getState().phase).toBe("running"); expect(handler).not.toHaveBeenCalled();
     peer.event("inbound", inbound("after-start")); await tick(); expect(handler).toHaveBeenCalledOnce();
   });
+  it("accepts inbound immediately after the validated start reply in the same IPC batch", async () => {
+    const { peer, manager } = setup(); const handler = vi.fn(async () => null); manager.onMessage = handler;
+    const original = peer.behavior;
+    peer.behavior = (request) => {
+      if (request.method !== "start") { original(request); return; }
+      peer.event("inbound", inbound("before-reply"));
+      peer.reply(request, { phase: "running", selfId: "10000", connectionEpoch: 1 });
+      peer.event("inbound", inbound("after-reply"));
+    };
+    await manager.start(); await tick();
+    expect(handler).toHaveBeenCalledOnce();
+    expect(peer.messages.filter((m) => m.method === "ackInbound").map((m) => m.payload)).toEqual([
+      { eventId: "before-reply", outcome: "stale-instance" }, { eventId: "after-reply", outcome: "accepted" },
+    ]);
+  });
+  it("keeps migration quarantine closed for inbound immediately following start", async () => {
+    const { peer, manager } = setup(); const handler = vi.fn(async () => null); manager.onMessage = handler;
+    const original = peer.behavior;
+    peer.behavior = (request) => {
+      original(request);
+      if (request.method === "start") peer.event("inbound", inbound("quarantined"));
+    };
+    await manager.stageForMigration(); await tick();
+    expect(manager.getMigrationIdentity()).toEqual({ selfId: "10000", connectionEpoch: 1 });
+    expect(handler).not.toHaveBeenCalled();
+    expect(peer.messages.filter((m) => m.method === "ackInbound").at(-1)?.payload).toMatchObject({ outcome: "stale-instance" });
+  });
+  it("keeps a disconnect following the start reply authoritative in the same IPC batch", async () => {
+    const { peer, manager } = setup(); const handler = vi.fn(async () => null); manager.onMessage = handler;
+    const original = peer.behavior;
+    peer.behavior = (request) => {
+      if (request.method !== "start") { original(request); return; }
+      peer.reply(request, { phase: "running", selfId: "10000", connectionEpoch: 1 });
+      peer.event("status", { phase: "waiting-backend" });
+      peer.event("inbound", inbound("disconnected"));
+    };
+    await manager.start(); await tick();
+    expect(manager.getState().phase).toBe("waiting-backend"); expect(handler).not.toHaveBeenCalled();
+  });
+  it.each(["wrong-account", "malformed", "closed"])("does not authorize same-batch inbound after %s start", async (mode) => {
+    const { peer, manager } = setup(); const handler = vi.fn(async () => null); manager.onMessage = handler;
+    const original = peer.behavior;
+    peer.behavior = (request) => {
+      if (request.method !== "start") { original(request); return; }
+      if (mode === "closed") peer.crash();
+      else peer.reply(request, { phase: "running", selfId: mode === "wrong-account" ? "999" : "10000", connectionEpoch: mode === "malformed" ? -1 : 1 });
+      peer.event("inbound", inbound("must-not-deliver"));
+    };
+    await manager.start(); await tick(); expect(handler).not.toHaveBeenCalled();
+    expect(manager.getState().phase).not.toBe("running");
+  });
   it("enforces dynamic text length limits before crossing IPC", async () => {
     const { peer, manager } = setup(); await manager.start();
     peer.event("capability-changed", { ...capabilities, messages: { ...capabilities.messages, maxTextLength: 1 } });

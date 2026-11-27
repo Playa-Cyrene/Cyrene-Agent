@@ -26,6 +26,8 @@ export interface QqMigrationOptions {
   legacyMachine: { userDataPath: string; appName: string };
   /** Must revalidate the exact installed digest/signature/compatibility, without executing it. */
   verifyCandidate(packageId: string): void;
+  /** Validate host inputs without writes; the returned writer runs only under the migration lock. */
+  prepareConfirmedMigration?(plan: QqMigrationPlan, token: string): (confirmedToken: string) => void;
   /** Trusted host construction only, no renderer-provided executable/config factory.
    * Factory must be side-effect-free. The coordinator stages this manager quarantined. */
   createModule(input: QqInitialize, packageId: string): QqModuleManager;
@@ -71,6 +73,24 @@ export class QqMigrationCoordinator {
     if (!strictObject(consent, { previewId: (v) => typeof v === "string", accountId: (v) => typeof v === "string", userConfirmed: (v) => v === true })) migrationFail("explicit-account-confirmation-required");
     const preview = this.preview;
     if (!preview || consent.previewId !== preview.id || consent.accountId !== preview.plan.identity.selfId) migrationFail("stale-or-mismatched-confirmation");
+    let preflight: { account: NonNullable<ReturnType<QqMigrationLegacyPort["getMigrationIdentity"]>>; token: string; importSidecars?: (confirmedToken: string) => void } | undefined;
+    const prior = this.options.store.read();
+    if ((!prior || prior.phase === "rolled-back") && prior?.transactionId !== preview.id
+      && (!this.module || this.module.isStoppedForMigration())) {
+      // Do not create the migration store or run host-side import first.
+      // A stale preview must leave a fresh profile eligible for a new attempt.
+      const bytes = Buffer.from(this.options.readLegacySettings());
+      if (qqMigrationDigest(bytes) !== preview.plan.sourceDigest) migrationFail("settings-changed");
+      const account = this.options.legacy.getMigrationIdentity();
+      if (!account || account.accountId !== preview.plan.identity.selfId || account.connectionEpoch !== preview.plan.identity.connectionEpoch) migrationFail("account-or-connection-changed");
+      const current = buildQqMigrationPlan(bytes, preview.plan.identity, this.options.interfaces);
+      if (JSON.stringify(current.config) !== JSON.stringify(preview.plan.config)) migrationFail("listen-address-changed");
+      this.options.verifyCandidate(preview.packageId);
+      let token = readQqMigrationToken(bytes, this.options.secureStorage, this.options.legacyMachine);
+      try {
+        preflight = { account, token, importSidecars: this.options.prepareConfirmedMigration?.(current, token) };
+      } finally { token = ""; }
+    }
     return this.options.store.locked(async (save) => {
       const existing = this.options.store.read();
       if (existing?.transactionId === preview.id) {
@@ -84,20 +104,21 @@ export class QqMigrationCoordinator {
       if (existing && existing.phase !== "rolled-back") migrationFail("existing-migration-requires-review");
       if (this.module && !this.module.isStoppedForMigration()) return this.outcome("recovery-required", "module-stop-unconfirmed");
       this.activation = undefined;
-      // Re-read every mutable input before touching the live legacy driver.
-      const bytes = Buffer.from(this.options.readLegacySettings());
-      if (qqMigrationDigest(bytes) !== preview.plan.sourceDigest) migrationFail("settings-changed");
-      const account = this.options.legacy.getMigrationIdentity();
-      if (!account || account.accountId !== preview.plan.identity.selfId || account.connectionEpoch !== preview.plan.identity.connectionEpoch) migrationFail("account-or-connection-changed");
-      const current = buildQqMigrationPlan(bytes, preview.plan.identity, this.options.interfaces);
-      if (JSON.stringify(current.config) !== JSON.stringify(preview.plan.config)) migrationFail("listen-address-changed");
-      this.options.verifyCandidate(preview.packageId);
-      let token = readQqMigrationToken(bytes, this.options.secureStorage, this.options.legacyMachine);
+      if (!preflight) migrationFail("existing-migration-requires-review");
+      const { account, importSidecars } = preflight;
+      let token = preflight.token;
+      preflight.token = "";
       const record: QqMigrationRecord = { schemaVersion: 1, transactionId: preview.id, packageId: preview.packageId,
         plan: structuredClone(preview.plan), phase: "prepared" };
       // Persist intent BEFORE stopping. Any crash marker requires explicit review; it
       // never authorizes starting both drivers or replaying queued messages on restart.
-      save(record);
+      try {
+        importSidecars?.(token);
+        save(record);
+      } catch (error) {
+        token = "";
+        throw error;
+      }
       try {
         const stopped = await this.options.legacy.prepareMigrationStop({ ...account });
         if (!stopped.safeToSwitch || !stopped.drained || !stopped.stopped) return this.outcome("recovery-required", "legacy-not-drained-and-stopped");
@@ -112,6 +133,9 @@ export class QqMigrationCoordinator {
         if (!isQqLegacyIdentity(identity) || identity.selfId !== record.plan.identity.selfId) migrationFail("module-account-unverified");
         record.phase = "module-staged"; save(record);
         if (qqMigrationDigest(this.options.readLegacySettings()) !== record.plan.sourceDigest) migrationFail("settings-changed");
+        // Staging is asynchronous: revalidate installed bytes, expiry and current
+        // trust immediately before persisting/activating the selected candidate.
+        this.options.verifyCandidate(preview.packageId);
         // Commit the local choice while the module is still quarantined. The
         // disk cannot prove activation (or a live process after a host restart).
         record.phase = "selected"; save(record);
@@ -135,7 +159,7 @@ export class QqMigrationCoordinator {
           return this.outcome("rolled-back", code);
         } catch { return this.outcome("recovery-required", code); }
       } finally { token = ""; }
-    });
+    }).finally(() => { if (preflight) preflight.token = ""; });
   }
   /** Explicit rollback/restart recovery only after host composition verifies BOTH
    * drivers are stopped, including any process left by the previous host instance.

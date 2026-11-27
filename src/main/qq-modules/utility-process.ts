@@ -29,7 +29,12 @@ export function createQqUtilityProcess(packageDirectory: string, entryPath: stri
     postMessage: (message) => child.postMessage(message),
     onMessage: (listener) => { child.on("message", listener); return () => { child.removeListener("message", listener); }; },
     onError: (listener) => { const safe = () => listener(); child.on("error", safe); return () => { child.removeListener("error", safe); }; },
-    onExit: (listener) => { child.on("exit", listener); return () => { child.removeListener("exit", listener); }; },
+    onExit: (listener) => {
+      // Ownership observers may attach after an early process exit. Replay in a
+      // microtask so runtime constructors can initialize their detach callbacks.
+      if (exited) { let active = true; queueMicrotask(() => { if (active) listener(); }); return () => { active = false; }; }
+      child.on("exit", listener); return () => { child.removeListener("exit", listener); };
+    },
     terminate: async () => {
       if (exited) return;
       // Electron kill() is graceful (SIGTERM on POSIX), not proof of exit.

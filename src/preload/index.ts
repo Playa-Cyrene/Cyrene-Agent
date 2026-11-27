@@ -3,6 +3,7 @@ import { contextBridge, webUtils } from "electron";
 import { IPC } from "../shared/ipc-channels";
 import type { ContextCompactionPhaseEvent } from "../shared/context-usage";
 import type { QqListenAuthRequirement } from "../shared/qq-listen";
+import type { ChannelRestartResult, ChannelRestartTarget } from "../shared/channel-restart";
 import type { ApprovalRequest, ApprovalSettledPayload } from "../shared/permission-approval";
 import type { StartTtsRequest, TtsSessionEvent, TtsStartResult } from "../shared/tts-session";
 import type { ScreenshotInsertPayload } from "../shared/ipc-channels";
@@ -412,7 +413,7 @@ const settingsApi = {
   channelsSaveConfig: (patch: unknown) => ipcRenderer.invoke(IPC.CHANNELS_SAVE_CONFIG, patch),
   channelsList: () => ipcRenderer.invoke(IPC.CHANNELS_LIST),
   channelsGetStatus: () => ipcRenderer.invoke(IPC.CHANNELS_GET_STATUS),
-  channelsRestart: () => ipcRenderer.invoke(IPC.CHANNELS_RESTART),
+  channelsRestart: (requiredTarget?: ChannelRestartTarget): Promise<ChannelRestartResult> => ipcRenderer.invoke(IPC.CHANNELS_RESTART, requiredTarget),
   channelsWechatInstall: () => ipcRenderer.invoke(IPC.CHANNELS_WECHAT_INSTALL),
   channelsWechatLoginStart: () => ipcRenderer.invoke(IPC.CHANNELS_WECHAT_LOGIN_START),
   channelsWechatLoginCancel: () => ipcRenderer.invoke(IPC.CHANNELS_WECHAT_LOGIN_CANCEL),
@@ -424,6 +425,7 @@ const settingsApi = {
   channelsWechatRuntimeUpdate: () => ipcRenderer.invoke(IPC.CHANNELS_WECHAT_RUNTIME_UPDATE),
   channelsFeishuTestConnection: () => ipcRenderer.invoke(IPC.CHANNELS_FEISHU_TEST_CONNECTION),
   channelsFeishuTestWebhookReachable: () => ipcRenderer.invoke(IPC.CHANNELS_FEISHU_TEST_WEBHOOK_REACHABLE),
+  channelsQqModuleAction: (input: import("../shared/qq-module-actions").QqModuleActionCommand) => ipcRenderer.invoke(IPC.CHANNELS_QQ_MODULE_ACTION, input) as Promise<import("../shared/qq-module-actions").QqModuleActionResult>,
   channelsQqModuleInstallationStatus: (input: import("../shared/qq-module-installation").QqModuleListenInput) => ipcRenderer.invoke(IPC.CHANNELS_QQ_MODULE_INSTALLATION_STATUS, input) as Promise<import("../shared/qq-module-installation").QqModuleInstallationStatus>,
   channelsQqTestConnection: () => ipcRenderer.invoke(IPC.CHANNELS_QQ_TEST_CONNECTION),
   // 权威鉴权预检：监听地址能否解析、是否必须配 token 只有主进程知道
