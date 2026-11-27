@@ -25,7 +25,7 @@ vi.mock("../components/ChatComposer", async (importOriginal) => {
         <button onClick={() => props.onQueueMessage?.("B")}>Queue B</button>
         <button onClick={() => props.onSelectSessionModel?.("new-model")}>Switch model</button>
         {props.recentProjects?.map((project) => (
-          <button key={project.path} onClick={() => props.onSelectRecentProject?.(project.path)}>{project.path}</button>
+          <button key={project} onClick={() => props.onSelectRecentProject?.(project)}>{project}</button>
         ))}
         <output data-testid="workspace">{props.workspaceName}</output>
         <output data-testid="waiting">{String(props.waitingToSend)}</output>
@@ -75,7 +75,7 @@ async function render(activeSession: ChatSession | null) {
     pendingClaim: vi.fn<ChatStoreApi["pendingClaim"]>().mockResolvedValue({ ok: true, claimed: false }),
     pendingEnqueue: vi.fn<ChatStoreApi["pendingEnqueue"]>().mockResolvedValue({ ok: true, queue: [] }),
     setSessionModel: vi.fn<ChatStoreApi["setSessionModel"]>(),
-    listRecentProjects: vi.fn(async () => [{ path: recentPath }]),
+    listRecentProjects: vi.fn<ChatStoreApi["listRecentProjects"]>().mockResolvedValue([recentPath]),
     validateWorkspacePath: vi.fn<ChatStoreApi["validateWorkspacePath"]>(),
     setWorkspace: vi.fn<ChatStoreApi["setWorkspace"]>(),
   };
@@ -93,19 +93,32 @@ async function click(label: string) {
 it("显示等待状态，模型切换提交后才入队及认领", async () => {
   const store = await render(session);
   const change = Promise.withResolvers<Awaited<ReturnType<ChatStoreApi["setSessionModel"]>>>();
+  const enqueue = Promise.withResolvers<Awaited<ReturnType<ChatStoreApi["pendingEnqueue"]>>>();
   store.setSessionModel.mockReturnValue(change.promise);
+  store.pendingEnqueue.mockReturnValueOnce(enqueue.promise);
   store.pendingClaim.mockClear();
-  await click("Switch model");
-  await click("Send A");
+  try {
+    await click("Switch model");
+    await click("Send A");
 
-  expect(store.setSessionModel).toHaveBeenCalledWith(session.id, "new-model");
-  expect(container.querySelector('[data-testid="waiting"]')?.textContent).toBe("true");
-  expect(store.pendingEnqueue).not.toHaveBeenCalled();
-  expect(store.pendingClaim).not.toHaveBeenCalled();
+    expect(store.setSessionModel).toHaveBeenCalledWith(session.id, "new-model");
+    expect(container.querySelector('[data-testid="waiting"]')?.textContent).toBe("true");
+    expect(store.pendingEnqueue).not.toHaveBeenCalled();
+    expect(store.pendingClaim).not.toHaveBeenCalled();
 
-  await act(async () => change.resolve({ ok: true, session: { ...session, model: "new-model" } }));
-  expect(store.pendingEnqueue).toHaveBeenCalledExactlyOnceWith(session.id, expect.objectContaining({ rawContent: "A" }));
-  expect(store.pendingClaim).toHaveBeenCalledWith(session.id);
+    await act(async () => change.resolve({ ok: true, session: { ...session, model: "new-model" } }));
+    expect(store.pendingEnqueue).toHaveBeenCalledExactlyOnceWith(session.id, expect.objectContaining({ rawContent: "A" }));
+    expect(store.pendingClaim).not.toHaveBeenCalled();
+
+    await act(async () => enqueue.resolve({ ok: true, queue: [] }));
+    expect(store.pendingClaim).toHaveBeenCalledWith(session.id);
+  } finally {
+    // Release both deferred replies even if an assertion fails.
+    await act(async () => {
+      change.resolve({ ok: true, session: { ...session, model: "new-model" } });
+      enqueue.resolve({ ok: true, queue: [] });
+    });
+  }
 });
 
 it("最近项目失效时提示重选，并保持工作区未选中", async () => {
