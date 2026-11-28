@@ -146,7 +146,7 @@ export function importTaskSessions(database: ConversationDatabase): void {
         }
         const session = parsed.status === "running" ? { ...parsed, status: "interrupted" as const } : parsed;
         database.transaction(() => {
-          database.db.prepare(`INSERT INTO task_sessions(id,parent_conversation_id,parent_run_id,child_run_id,description,subagent_type,
+          const inserted = database.db.prepare(`INSERT INTO task_sessions(id,parent_conversation_id,parent_run_id,child_run_id,description,subagent_type,
    companion_id,context_open,mode,resolved_workspace_root,status,messages_json,todo_items_json,result_text,error_code,error_message,created_at,updated_at,completed_at)
    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
    ON CONFLICT(id) DO NOTHING`).run(
@@ -156,7 +156,7 @@ export function importTaskSessions(database: ConversationDatabase): void {
             JSON.stringify(session.todoItems), session.resultText ?? null, session.error?.code ?? null,
             session.error?.message ?? null, session.createdAt, session.updatedAt, session.completedAt ?? null,
           );
-          writeTraceRows(database, session.id, session.trace);
+          if (inserted.changes > 0) writeTraceRows(database, session.id, session.trace);
         });
       } catch (error) {
         allValid = false;
