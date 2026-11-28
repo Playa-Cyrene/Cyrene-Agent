@@ -417,7 +417,7 @@
     "go": "前往",
     "loading": "正在加载",
     "agentControl": "Cyrene 控制中",
-    "actions": { "starting": "启动中", "opening": "打开网页", "switching": "切换标签", "clicking": "点击元素", "filling": "填写内容", "pressing": "按下按键", "scrolling": "滚动页面", "screenshot": "查看截图" },
+    "actions": { "starting": "启动中", "opening": "打开网页", "switching": "切换标签", "clicking": "点击元素", "filling": "填写内容", "pressing": "按下按键", "scrolling": "滚动页面", "screenshot": "查看截图", "waiting": "等待浏览器重新显示" },
     "emptyTitle": "浏览器尚未打开网页",
     "emptyHint": "输入网址开始浏览，如 example.com",
     "errors": {

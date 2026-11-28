@@ -433,7 +433,7 @@
     "go": "移動",
     "loading": "読み込み中",
     "agentControl": "Cyrene が操作中",
-    "actions": { "starting": "開始中", "opening": "ページを開いています", "switching": "タブを切り替えています", "clicking": "要素をクリックしています", "filling": "テキストを入力しています", "pressing": "キーを押しています", "scrolling": "ページをスクロールしています", "screenshot": "画面を撮影しています" },
+    "actions": { "starting": "開始中", "opening": "ページを開いています", "switching": "タブを切り替えています", "clicking": "要素をクリックしています", "filling": "テキストを入力しています", "pressing": "キーを押しています", "scrolling": "ページをスクロールしています", "screenshot": "画面を撮影しています", "waiting": "ブラウザーの再表示を待っています" },
     "emptyTitle": "ページが開かれていません",
     "emptyHint": "example.com のような URL を入力して閲覧を開始",
     "errors": {
